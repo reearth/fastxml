@@ -5,11 +5,12 @@
 [![docs.rs](https://docs.rs/fastxml/badge.svg)](https://docs.rs/fastxml)
 [![License](https://img.shields.io/crates/l/fastxml.svg)](LICENSE)
 
-A fast, memory-efficient XML library for Rust with XPath and streaming schema validation support. Designed for processing large XML documents like CityGML files used in PLATEAU.
+A fast, memory-efficient XML library for Rust with XPath and streaming schema validation support. Designed for processing large XML documents like CityGML files used in [PLATEAU](https://www.mlit.go.jp/plateau/).
 
 ## Features
 
-- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results
+- **Pure Rust**: No C dependencies, no unsafe code
+- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, but **17x more memory efficient**
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
 - **DOM Modification**: Mutable node API and streaming XPath-based transformation
@@ -63,6 +64,16 @@ fastxml is designed as a drop-in replacement for libxml in Rust projects:
 | Streaming | ❌ | ✅ |
 | Memory efficiency | Low | High |
 | Pure Rust | ❌ | ✅ |
+
+**Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes):
+
+| Metric | libxml | fastxml | Comparison |
+|--------|--------|---------|------------|
+| Parse Time | 3.51s | 4.02s | libxml 1.14x faster |
+| Throughput | 258 MB/s | 226 MB/s | - |
+| Memory | **4.19 GB** | **244 MB** | **fastxml 17x less** |
+
+fastxml trades ~14% speed for **17x better memory efficiency**, making it ideal for processing large XML files on memory-constrained systems.
 
 **Compatibility Testing**: 38 parse/XPath tests are verified against libxml2 to ensure consistent results. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
 
@@ -405,6 +416,10 @@ cat urls.txt | cargo run --release --features ureq --example load_test_cli
 
 # With schema validation
 cargo run --release --example load_test_cli -- --validate ./document.xml
+
+# Compare with libxml (requires libxml2-dev)
+cargo run --release --features compare-libxml --example load_test_cli -- \
+    --mode dom ./large_file.xml
 ```
 
 #### Options
