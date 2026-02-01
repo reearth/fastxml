@@ -6,6 +6,9 @@ description = "A fast, memory-efficient XML library with XPath and XSD validatio
 license = "MIT OR Apache-2.0"
 keywords = ["xml", "xpath", "xsd", "streaming", "parser"]
 categories = ["parser-implementations", "encoding"]
+repository = "https://github.com/reearth/fastxml"
+homepage = "https://github.com/reearth/fastxml"
+documentation = "https://docs.rs/fastxml"
 
 [dependencies]
 # XML parsing
