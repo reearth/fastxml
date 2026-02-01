@@ -28,6 +28,10 @@ pub enum TransformError {
     /// Node modification error
     #[error("modification error: {0}")]
     Modification(String),
+
+    /// General error from the crate
+    #[error(transparent)]
+    Other(#[from] crate::error::Error),
 }
 
 impl From<quick_xml::Error> for TransformError {

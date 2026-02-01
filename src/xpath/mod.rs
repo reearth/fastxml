@@ -137,3 +137,53 @@ pub use evaluator::{
 pub use operators::ArithmeticOp;
 pub use parser::{Axis, ComparisonOp, Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
 pub use types::{EvaluationContext, XPathValue};
+
+use crate::error::Result;
+
+/// Source of XPath expression - either a string or a pre-parsed AST.
+///
+/// This allows APIs to accept either a string (which will be parsed on use)
+/// or a pre-parsed AST for reuse or programmatic construction.
+#[derive(Debug, Clone)]
+pub enum XPathSource {
+    /// XPath as a string (will be parsed on use)
+    String(String),
+    /// Pre-parsed XPath AST
+    Ast(Expr),
+}
+
+impl XPathSource {
+    /// Parses the XPath source into an AST.
+    pub fn parse(&self) -> Result<Expr> {
+        match self {
+            XPathSource::String(s) => parse_xpath(s),
+            XPathSource::Ast(expr) => Ok(expr.clone()),
+        }
+    }
+
+    /// Returns the original string if this is a string source.
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            XPathSource::String(s) => Some(s),
+            XPathSource::Ast(_) => None,
+        }
+    }
+}
+
+impl From<&str> for XPathSource {
+    fn from(s: &str) -> Self {
+        XPathSource::String(s.to_string())
+    }
+}
+
+impl From<String> for XPathSource {
+    fn from(s: String) -> Self {
+        XPathSource::String(s)
+    }
+}
+
+impl From<Expr> for XPathSource {
+    fn from(expr: Expr) -> Self {
+        XPathSource::Ast(expr)
+    }
+}

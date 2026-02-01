@@ -94,14 +94,15 @@ pub use error::{TransformError, TransformResult};
 pub use span::ByteSpan;
 pub use xpath_analyze::{NotStreamableReason, StreamableXPath, XPathAnalysis};
 
-use crate::xpath::parser::parse_xpath;
+// Re-export XPath types for convenience
+pub use crate::xpath::{Expr, XPathSource};
 
 /// Builder for streaming XML transformations.
 ///
 /// Provides a fluent API for configuring and executing XML transformations.
 pub struct StreamTransformer<'a> {
     input: &'a str,
-    xpath_expr: Option<String>,
+    xpath_source: Option<XPathSource>,
     namespaces: HashMap<String, String>,
 }
 
@@ -110,14 +111,42 @@ impl<'a> StreamTransformer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            xpath_expr: None,
+            xpath_source: None,
             namespaces: HashMap::new(),
         }
     }
 
     /// Sets the XPath expression for matching elements to transform.
     pub fn xpath(mut self, xpath: &str) -> Self {
-        self.xpath_expr = Some(xpath.to_string());
+        self.xpath_source = Some(XPathSource::String(xpath.to_string()));
+        self
+    }
+
+    /// Sets a pre-parsed XPath AST for matching elements to transform.
+    ///
+    /// This is useful when you want to reuse a parsed XPath expression
+    /// or when you're constructing XPath programmatically.
+    ///
+    /// # Example
+    /// ```
+    /// use fastxml::transform::StreamTransformer;
+    /// use fastxml::xpath::parser::parse_xpath;
+    ///
+    /// let xml = r#"<root><item id="1">A</item></root>"#;
+    /// let expr = parse_xpath("//item").unwrap();
+    ///
+    /// let result = StreamTransformer::new(xml)
+    ///     .xpath_ast(expr)
+    ///     .transform(|node| {
+    ///         node.set_attribute("found", "true");
+    ///     })
+    ///     .to_string()
+    ///     .unwrap();
+    ///
+    /// assert!(result.contains(r#"found="true""#));
+    /// ```
+    pub fn xpath_ast(mut self, expr: Expr) -> Self {
+        self.xpath_source = Some(XPathSource::Ast(expr));
         self
     }
 
@@ -223,11 +252,11 @@ impl<'a> StreamTransformer<'a> {
     where
         F: FnMut(&EditableNode),
     {
-        let xpath_str = self.xpath_expr.as_ref().ok_or_else(|| {
+        let xpath_source = self.xpath_source.as_ref().ok_or_else(|| {
             TransformError::InvalidXPath("No XPath expression provided".to_string())
         })?;
 
-        stream_for_each_impl(self.input, xpath_str, &self.namespaces, |node| {
+        stream_for_each_impl(self.input, xpath_source, &self.namespaces, |node| {
             f(node);
         })
     }
@@ -274,13 +303,13 @@ where
 {
     /// Writes the transformation result to a writer.
     pub fn write_to<W: Write>(self, writer: &mut W) -> TransformResult<usize> {
-        let xpath_str = self.transformer.xpath_expr.as_ref().ok_or_else(|| {
+        let xpath_source = self.transformer.xpath_source.as_ref().ok_or_else(|| {
             TransformError::InvalidXPath("No XPath expression provided".to_string())
         })?;
 
         stream_transform_impl(
             self.transformer.input,
-            xpath_str,
+            xpath_source,
             &self.transformer.namespaces,
             self.transform_fn,
             writer,
@@ -335,7 +364,8 @@ where
     W: Write,
     F: FnMut(&mut EditableNode),
 {
-    stream_transform_impl(input, xpath, &HashMap::new(), transform_fn, writer)
+    let source = XPathSource::String(xpath.to_string());
+    stream_transform_impl(input, &source, &HashMap::new(), transform_fn, writer)
 }
 
 /// Streaming transform with namespace support.
@@ -350,12 +380,13 @@ where
     W: Write,
     F: FnMut(&mut EditableNode),
 {
-    stream_transform_impl(input, xpath, namespaces, transform_fn, writer)
+    let source = XPathSource::String(xpath.to_string());
+    stream_transform_impl(input, &source, namespaces, transform_fn, writer)
 }
 
 fn stream_transform_impl<W, F>(
     input: &str,
-    xpath_str: &str,
+    xpath_source: &XPathSource,
     namespaces: &HashMap<String, String>,
     transform_fn: F,
     writer: &mut W,
@@ -365,7 +396,7 @@ where
     F: FnMut(&mut EditableNode),
 {
     // Parse XPath expression
-    let expr = parse_xpath(xpath_str).map_err(|e| TransformError::InvalidXPath(e.to_string()))?;
+    let expr = xpath_source.parse()?;
 
     // Analyze for streamability
     let analysis = xpath_analyze::analyze_xpath(&expr);
@@ -376,7 +407,14 @@ where
             streaming::process_streaming(input, &streamable, namespaces, transform_fn, writer)
         }
         XPathAnalysis::NotStreamable(_reason) => {
-            // Fall back to two-pass
+            // Fall back to two-pass - requires string representation
+            let xpath_str = xpath_source.as_string().ok_or_else(|| {
+                TransformError::InvalidXPath(
+                    "XPath AST without string representation cannot use fallback processor. \
+                     Use a streamable XPath pattern or provide the expression as a string."
+                        .to_string(),
+                )
+            })?;
             fallback::process_fallback(input, xpath_str, transform_fn, writer)
         }
     }
@@ -384,7 +422,7 @@ where
 
 fn stream_for_each_impl<F>(
     input: &str,
-    xpath_str: &str,
+    xpath_source: &XPathSource,
     namespaces: &HashMap<String, String>,
     callback: F,
 ) -> TransformResult<usize>
@@ -392,7 +430,7 @@ where
     F: FnMut(&EditableNode),
 {
     // Parse XPath expression
-    let expr = parse_xpath(xpath_str).map_err(|e| TransformError::InvalidXPath(e.to_string()))?;
+    let expr = xpath_source.parse()?;
 
     // Analyze for streamability
     let analysis = xpath_analyze::analyze_xpath(&expr);
@@ -403,7 +441,14 @@ where
             streaming::process_for_each(input, &streamable, namespaces, callback)
         }
         XPathAnalysis::NotStreamable(_reason) => {
-            // Fall back to two-pass
+            // Fall back to two-pass - requires string representation
+            let xpath_str = xpath_source.as_string().ok_or_else(|| {
+                TransformError::InvalidXPath(
+                    "XPath AST without string representation cannot use fallback processor. \
+                     Use a streamable XPath pattern or provide the expression as a string."
+                        .to_string(),
+                )
+            })?;
             fallback::process_for_each(input, xpath_str, callback)
         }
     }
