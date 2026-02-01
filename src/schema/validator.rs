@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use compact_str::CompactString;
+
 use crate::document::XmlDocument;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
@@ -253,7 +255,7 @@ impl StreamingSchemaValidator {
         name: &str,
         prefix: Option<&str>,
         namespace: Option<&str>,
-        attributes: &[(String, String)],
+        attributes: &[(&str, &str)],
     ) {
         let qname = match prefix {
             Some(p) if !p.is_empty() => format!("{}:{}", p, name),
@@ -292,7 +294,7 @@ impl StreamingSchemaValidator {
         &mut self,
         name: &str,
         _namespace: Option<&str>,
-        _attributes: &[(String, String)],
+        _attributes: &[(&str, &str)],
     ) {
         // Mark current element as schema validated
         if let Some(ctx) = self.state.current_element_mut() {
@@ -313,8 +315,8 @@ impl StreamingSchemaValidator {
         }
     }
 
-    fn validate_attributes(&mut self, element_name: &str, attributes: &[(String, String)]) {
-        for (attr_name, attr_value) in attributes {
+    fn validate_attributes(&mut self, element_name: &str, attributes: &[(&str, &str)]) {
+        for &(attr_name, attr_value) in attributes {
             // Skip namespace declarations
             if attr_name.starts_with("xmlns") {
                 continue;
@@ -367,7 +369,11 @@ impl XmlEventHandler for StreamingSchemaValidator {
                 self.current_line = *line;
                 self.state.push_namespaces(namespace_decls);
                 self.state.push_element(name, namespace.as_deref());
-                self.validate_element(name, prefix.as_deref(), namespace.as_deref(), attributes);
+                let attrs: Vec<(&str, &str)> = attributes
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                self.validate_element(name, prefix.as_deref(), namespace.as_deref(), &attrs);
             }
             XmlEvent::EndElement { name, .. } => {
                 self.validate_element_end(name);
@@ -460,13 +466,16 @@ impl XmlSchemaValidationContext {
                 let attrs = node.get_attributes();
                 let ns_decls = node.get_namespace_declarations();
 
-                // Create attributes list
-                let attributes: Vec<(String, String)> = attrs.into_iter().collect();
+                // Create attributes list with CompactString
+                let attributes: Vec<(CompactString, CompactString)> = attrs
+                    .into_iter()
+                    .map(|(k, v)| (CompactString::from(k), CompactString::from(v)))
+                    .collect();
 
                 // Start element event
                 let _ = validator.handle(&XmlEvent::StartElement {
-                    name,
-                    prefix,
+                    name: name.into(),
+                    prefix: prefix.map(|p| p.into()),
                     namespace,
                     attributes,
                     namespace_decls: ns_decls,
@@ -480,8 +489,8 @@ impl XmlSchemaValidationContext {
 
                 // End element event
                 let _ = validator.handle(&XmlEvent::EndElement {
-                    name: node.get_name(),
-                    prefix: node.get_prefix(),
+                    name: node.get_name().into(),
+                    prefix: node.get_prefix().map(|p| p.into()),
                 });
             }
             NodeType::Text => {

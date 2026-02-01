@@ -125,6 +125,9 @@ pub use node::{NodeId, NodeType, XmlNode, XmlRoNode};
 // Re-export namespace types
 pub use namespace::{Namespace, NamespaceResolver};
 
+// Re-export compact_str for use in XmlEvent attributes
+pub use compact_str::CompactString;
+
 // Re-export parser functions
 pub use parser::{
     ParserOptions, parse, parse_from_bufread, parse_schema_locations, parse_with_options,

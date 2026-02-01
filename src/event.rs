@@ -3,27 +3,67 @@
 //! This module provides an event-based interface for processing XML
 //! that enables single-pass parsing with optional validation.
 
+use std::collections::HashMap;
 use std::io::BufRead;
+use std::sync::Arc;
 
+use compact_str::CompactString;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::error::Result;
 use crate::namespace::Namespace;
 
+/// String interner for reducing memory allocations.
+///
+/// Caches frequently used strings (element names, prefixes) to avoid
+/// repeated allocations for the same string values.
+#[derive(Debug, Default)]
+struct StringInterner {
+    cache: HashMap<Box<str>, Arc<str>>,
+}
+
+impl StringInterner {
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Interns a string, returning a shared reference.
+    ///
+    /// If the string is already interned, returns the existing Arc.
+    /// Otherwise, creates a new Arc and caches it.
+    fn intern(&mut self, s: &str) -> Arc<str> {
+        if let Some(interned) = self.cache.get(s) {
+            Arc::clone(interned)
+        } else {
+            let arc: Arc<str> = Arc::from(s);
+            self.cache.insert(s.into(), Arc::clone(&arc));
+            arc
+        }
+    }
+
+    /// Returns the number of interned strings.
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.cache.len()
+    }
+}
+
 /// An XML event for streaming processing.
 #[derive(Debug, Clone)]
 pub enum XmlEvent {
     /// Start of an element
     StartElement {
-        /// Local name of the element
-        name: String,
-        /// Namespace prefix (if any)
-        prefix: Option<String>,
+        /// Local name of the element (interned)
+        name: Arc<str>,
+        /// Namespace prefix (interned, if any)
+        prefix: Option<Arc<str>>,
         /// Namespace URI (if known)
         namespace: Option<String>,
-        /// Attributes as (name, value) pairs
-        attributes: Vec<(String, String)>,
+        /// Attributes as (name, value) pairs (using CompactString to avoid heap allocation for short strings)
+        attributes: Vec<(CompactString, CompactString)>,
         /// Namespace declarations on this element
         namespace_decls: Vec<Namespace>,
         /// Line number (if available)
@@ -31,10 +71,10 @@ pub enum XmlEvent {
     },
     /// End of an element
     EndElement {
-        /// Local name of the element
-        name: String,
-        /// Namespace prefix (if any)
-        prefix: Option<String>,
+        /// Local name of the element (interned)
+        name: Arc<str>,
+        /// Namespace prefix (interned, if any)
+        prefix: Option<Arc<str>>,
     },
     /// Text content
     Text(String),
@@ -85,6 +125,7 @@ pub trait XmlEventHandler: Send {
 pub struct StreamingParser<R: BufRead> {
     reader: Reader<R>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
+    interner: StringInterner,
 }
 
 impl<R: BufRead> StreamingParser<R> {
@@ -97,6 +138,7 @@ impl<R: BufRead> StreamingParser<R> {
         Self {
             reader: xml_reader,
             handlers: Vec::new(),
+            interner: StringInterner::new(),
         }
     }
 
@@ -115,11 +157,11 @@ impl<R: BufRead> StreamingParser<R> {
 
             match event_result {
                 Ok(Event::Start(ref e)) => {
-                    let event = convert_start_event(e, position)?;
+                    let event = convert_start_event(e, position, &mut self.interner)?;
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::Empty(ref e)) => {
-                    let start_event = convert_start_event(e, position)?;
+                    let start_event = convert_start_event(e, position, &mut self.interner)?;
                     self.dispatch_event(&start_event)?;
 
                     // For empty elements, also dispatch end event
@@ -141,8 +183,8 @@ impl<R: BufRead> StreamingParser<R> {
                     let full_name = std::str::from_utf8(&name_bytes)?;
                     let (prefix, name) = crate::namespace::split_qname(full_name);
                     let event = XmlEvent::EndElement {
-                        name: name.to_string(),
-                        prefix: prefix.map(String::from),
+                        name: self.interner.intern(name),
+                        prefix: prefix.map(|p| self.interner.intern(p)),
                     };
                     self.dispatch_event(&event)?;
                 }
@@ -233,7 +275,11 @@ impl<R: BufRead> StreamingParser<R> {
     }
 }
 
-fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> Result<XmlEvent> {
+fn convert_start_event(
+    e: &quick_xml::events::BytesStart<'_>,
+    position: u64,
+    interner: &mut StringInterner,
+) -> Result<XmlEvent> {
     let name_bytes = e.name().as_ref().to_vec();
     let full_name = std::str::from_utf8(&name_bytes)?;
     let (prefix, name) = crate::namespace::split_qname(full_name);
@@ -255,15 +301,18 @@ fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> 
         } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
             namespace_decls.push(Namespace::new(ns_prefix, value.as_ref()));
         } else {
-            attributes.push((key.to_string(), value.to_string()));
+            attributes.push((
+                CompactString::from(key),
+                CompactString::from(value.as_ref()),
+            ));
         }
     }
 
     let line = Some(position as usize);
 
     Ok(XmlEvent::StartElement {
-        name: name.to_string(),
-        prefix: prefix.map(String::from),
+        name: interner.intern(name),
+        prefix: prefix.map(|p| interner.intern(p)),
         namespace: None, // Would need namespace resolution
         attributes,
         namespace_decls,
@@ -331,7 +380,7 @@ mod tests {
         // Simulate events
         collector
             .handle(&XmlEvent::StartElement {
-                name: "root".to_string(),
+                name: Arc::from("root"),
                 prefix: None,
                 namespace: None,
                 attributes: vec![],
@@ -342,7 +391,7 @@ mod tests {
 
         collector
             .handle(&XmlEvent::StartElement {
-                name: "child".to_string(),
+                name: Arc::from("child"),
                 prefix: None,
                 namespace: None,
                 attributes: vec![],
@@ -353,14 +402,14 @@ mod tests {
 
         collector
             .handle(&XmlEvent::EndElement {
-                name: "child".to_string(),
+                name: Arc::from("child"),
                 prefix: None,
             })
             .unwrap();
 
         collector
             .handle(&XmlEvent::EndElement {
-                name: "root".to_string(),
+                name: Arc::from("root"),
                 prefix: None,
             })
             .unwrap();

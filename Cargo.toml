@@ -29,6 +29,9 @@ indexmap = "2"
 # Stack-based small vectors
 smallvec = "1"
 
+# Inline small strings (avoids heap allocation for short strings)
+compact_str = "0.8"
+
 # Hashing
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 

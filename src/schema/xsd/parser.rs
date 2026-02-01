@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use compact_str::CompactString;
+
 use crate::error::Result;
 use crate::event::{XmlEvent, XmlEventHandler};
 
@@ -125,8 +127,11 @@ impl XsdParser {
     }
 
     /// Parses attributes from a start element event.
-    fn parse_attributes(attrs: &[(String, String)]) -> HashMap<String, String> {
-        attrs.iter().cloned().collect()
+    fn parse_attributes(attrs: &[(&str, &str)]) -> HashMap<String, String> {
+        attrs
+            .iter()
+            .map(|&(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     /// Parses and validates minOccurs/maxOccurs from attributes.
@@ -166,7 +171,7 @@ impl XsdParser {
         &mut self,
         name: &str,
         prefix: Option<&str>,
-        attrs: &[(String, String)],
+        attrs: &[(&str, &str)],
         namespace_decls: &[crate::namespace::Namespace],
     ) -> Result<()> {
         // Check for XSD namespace binding
@@ -1448,7 +1453,11 @@ impl XmlEventHandler for XsdParser {
                 namespace_decls,
                 ..
             } => {
-                self.handle_start(name, prefix.as_deref(), attributes, namespace_decls)?;
+                let attrs: Vec<(&str, &str)> = attributes
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                self.handle_start(name, prefix.as_deref(), &attrs, namespace_decls)?;
             }
             XmlEvent::EndElement { name, prefix } => {
                 self.handle_end(name, prefix.as_deref())?;
@@ -1511,8 +1520,8 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
                 let full_name = std::str::from_utf8(&name_bytes)?;
                 let (prefix, name) = crate::namespace::split_qname(full_name);
                 let event = XmlEvent::EndElement {
-                    name: name.to_string(),
-                    prefix: prefix.map(String::from),
+                    name: name.into(),
+                    prefix: prefix.map(|p| p.into()),
                 };
                 xsd_parser.handle(&event)?;
             }
@@ -1569,15 +1578,18 @@ fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> 
         } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
             namespace_decls.push(crate::namespace::Namespace::new(ns_prefix, value.as_ref()));
         } else {
-            attributes.push((key.to_string(), value.to_string()));
+            attributes.push((
+                CompactString::from(key),
+                CompactString::from(value.as_ref()),
+            ));
         }
     }
 
     let line = Some(position as usize);
 
     Ok(XmlEvent::StartElement {
-        name: name.to_string(),
-        prefix: prefix.map(String::from),
+        name: name.into(),
+        prefix: prefix.map(|p| p.into()),
         namespace: None,
         attributes,
         namespace_decls,
