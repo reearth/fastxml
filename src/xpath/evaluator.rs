@@ -250,12 +250,22 @@ impl<'a> XPathEvaluator<'a> {
 
         for step in &path.steps {
             let mut next_nodes = Vec::new();
+            let mut seen = HashSet::new();
             for node in &current_nodes {
                 let selected = self.eval_step(step, node, ctx)?;
-                next_nodes.extend(selected);
+                for n in selected {
+                    // Deduplicate while preserving order
+                    if seen.insert(n.id()) {
+                        next_nodes.push(n);
+                    }
+                }
             }
             current_nodes = next_nodes;
         }
+
+        // Sort by node ID to ensure document order
+        // Node IDs are assigned in document order during parsing
+        current_nodes.sort_by_key(|n| n.id());
 
         Ok(XPathResult::Nodes(current_nodes))
     }

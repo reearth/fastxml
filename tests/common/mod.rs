@@ -231,13 +231,8 @@ pub mod libxml_compare {
             ));
         }
 
-        // Then compare non-empty text values (sorted, as document order may differ)
-        let mut fastxml_sorted = fastxml_texts.clone();
-        let mut libxml_sorted = libxml_texts.clone();
-        fastxml_sorted.sort();
-        libxml_sorted.sort();
-
-        if fastxml_sorted != libxml_sorted {
+        // Compare non-empty text values (should be in document order)
+        if fastxml_texts != libxml_texts {
             CompareResult::diff(format!(
                 "XPath '{}' text values differ:\n  fastxml: {:?}\n  libxml:  {:?}",
                 xpath, fastxml_texts, libxml_texts
