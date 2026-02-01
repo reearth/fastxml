@@ -385,6 +385,70 @@ mod libxml_bench {
         })
     }
 
+    /// Parse and validate XML with libxml using XSD schema
+    pub fn validate_with_libxml(
+        content: &[u8],
+        schema_content: &[u8],
+        iterations: usize,
+        get_memory: fn() -> Option<usize>,
+    ) -> Option<LibxmlValidationResult> {
+        use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
+
+        let xml_str = std::str::from_utf8(content).ok()?;
+        let schema_str = std::str::from_utf8(schema_content).ok()?;
+        let parser = libxml::parser::Parser::default();
+
+        // Parse schema once
+        let mut schema_parser = SchemaParserContext::from_buffer(schema_str);
+        let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
+        if schema_ctx.is_err() {
+            eprintln!("    libxml: Failed to parse schema");
+            return None;
+        }
+
+        let mut total_time = Duration::ZERO;
+        let mut node_count = 0usize;
+        let mut memory_delta = None;
+        let mut validation_errors = 0usize;
+
+        for i in 0..iterations {
+            // Need fresh schema context for each validation
+            let mut schema_parser = SchemaParserContext::from_buffer(schema_str);
+            let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
+            let mut schema_ctx = match schema_ctx {
+                Ok(ctx) => ctx,
+                Err(_) => return None,
+            };
+
+            let mem_before = if i == 0 { get_memory() } else { None };
+
+            let start = Instant::now();
+            let doc = parser.parse_string(xml_str).ok()?;
+            if let Err(errors) = schema_ctx.validate_document(&doc) {
+                if i == 0 {
+                    validation_errors = errors.len();
+                }
+            }
+            total_time += start.elapsed();
+
+            if i == 0 {
+                let mem_after = get_memory();
+                if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                    memory_delta = Some(after.saturating_sub(before));
+                }
+                node_count = count_nodes(&doc);
+            }
+        }
+
+        Some(LibxmlValidationResult {
+            avg_time: total_time / iterations as u32,
+            node_count,
+            size: content.len(),
+            memory_delta,
+            validation_errors,
+        })
+    }
+
     fn count_nodes(doc: &libxml::tree::Document) -> usize {
         fn count_recursive(node: &libxml::tree::Node) -> usize {
             let mut count = 1;
@@ -407,6 +471,20 @@ mod libxml_bench {
     }
 
     impl LibxmlResult {
+        pub fn throughput_mb_s(&self) -> f64 {
+            self.size as f64 / self.avg_time.as_secs_f64() / (1024.0 * 1024.0)
+        }
+    }
+
+    pub struct LibxmlValidationResult {
+        pub avg_time: Duration,
+        pub node_count: usize,
+        pub size: usize,
+        pub memory_delta: Option<usize>,
+        pub validation_errors: usize,
+    }
+
+    impl LibxmlValidationResult {
         pub fn throughput_mb_s(&self) -> f64 {
             self.size as f64 / self.avg_time.as_secs_f64() / (1024.0 * 1024.0)
         }
@@ -524,7 +602,7 @@ fn run_pattern_test(
 
     // DOM parsing test
     if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(&xml_bytes, iterations);
+        run_dom_benchmark(&xml_bytes, iterations, None);
 
         // XPath test
         println!("\n--- XPath Evaluation ---");
@@ -614,7 +692,7 @@ fn run_file_benchmark(
     println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
 
     // Get schema from xsi:schemaLocation if validation is enabled
-    let schema: Option<Arc<CompiledSchema>> = if validate {
+    let schema_info: Option<SchemaInfo> = if validate {
         get_schema_from_content(content)
     } else {
         None
@@ -622,18 +700,28 @@ fn run_file_benchmark(
 
     // DOM
     if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(content, iterations);
+        run_dom_benchmark(content, iterations, schema_info.as_ref());
     }
 
     // Streaming
     if processing_mode == "streaming" || processing_mode == "both" {
-        run_streaming_benchmark(content, iterations, schema.as_ref());
+        run_streaming_benchmark(
+            content,
+            iterations,
+            schema_info.as_ref().map(|s| &s.compiled),
+        );
     }
+}
+
+/// Schema info with both compiled schema and raw XSD bytes
+struct SchemaInfo {
+    compiled: Arc<CompiledSchema>,
+    xsd_bytes: Option<Vec<u8>>,
 }
 
 /// Extracts schema from XML content using xsi:schemaLocation.
 #[cfg(feature = "ureq")]
-fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
+fn get_schema_from_content(content: &[u8]) -> Option<SchemaInfo> {
     use fastxml::schema::xsd::parse_xsd_with_imports;
 
     let doc = match parse(content) {
@@ -643,7 +731,10 @@ fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
                 "  Warning: Failed to parse XML for schema extraction: {}",
                 e
             );
-            return Some(Arc::new(create_builtin_schema()));
+            return Some(SchemaInfo {
+                compiled: Arc::new(create_builtin_schema()),
+                xsd_bytes: None,
+            });
         }
     };
 
@@ -651,13 +742,19 @@ fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
         Ok(l) => l,
         Err(e) => {
             eprintln!("  Warning: Failed to extract schemaLocation: {}", e);
-            return Some(Arc::new(create_builtin_schema()));
+            return Some(SchemaInfo {
+                compiled: Arc::new(create_builtin_schema()),
+                xsd_bytes: None,
+            });
         }
     };
 
     if locations.is_empty() {
         println!("  No xsi:schemaLocation found, using built-in schema");
-        return Some(Arc::new(create_builtin_schema()));
+        return Some(SchemaInfo {
+            compiled: Arc::new(create_builtin_schema()),
+            xsd_bytes: None,
+        });
     }
 
     println!("  Found {} schema location(s):", locations.len());
@@ -674,6 +771,7 @@ fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
         match fetcher.fetch(location) {
             Ok(fetch_result) => {
                 println!("OK ({} bytes)", fetch_result.content.len());
+                let xsd_bytes = fetch_result.content.clone();
                 let _ = store.put(&fetch_result.final_url, &fetch_result.content);
 
                 match parse_xsd_with_imports(
@@ -684,7 +782,10 @@ fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
                 ) {
                     Ok(schema) => {
                         println!("  Schema compiled successfully");
-                        return Some(Arc::new(schema));
+                        return Some(SchemaInfo {
+                            compiled: Arc::new(schema),
+                            xsd_bytes: Some(xsd_bytes),
+                        });
                     }
                     Err(e) => {
                         eprintln!("  Warning: Failed to parse schema: {}", e);
@@ -699,16 +800,22 @@ fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
 
     // Fall back to built-in schema
     println!("  Falling back to built-in schema");
-    Some(Arc::new(create_builtin_schema()))
+    Some(SchemaInfo {
+        compiled: Arc::new(create_builtin_schema()),
+        xsd_bytes: None,
+    })
 }
 
 #[cfg(not(feature = "ureq"))]
-fn get_schema_from_content(_content: &[u8]) -> Option<Arc<CompiledSchema>> {
+fn get_schema_from_content(_content: &[u8]) -> Option<SchemaInfo> {
     println!("  Note: Schema fetching requires 'ureq' feature, using built-in schema");
-    Some(Arc::new(create_builtin_schema()))
+    Some(SchemaInfo {
+        compiled: Arc::new(create_builtin_schema()),
+        xsd_bytes: None,
+    })
 }
 
-fn run_dom_benchmark(content: &[u8], iterations: usize) {
+fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&SchemaInfo>) {
     println!("\n  [DOM]");
 
     let mut total_parse_time = Duration::ZERO;
@@ -789,7 +896,43 @@ fn run_dom_benchmark(content: &[u8], iterations: usize) {
                 }
             }
         }
+
+        // libxml validation comparison (if schema is available)
+        // TODO: libxml schema validation currently fails for CityGML because
+        // the schema has external imports (xAL.xsd, etc.) that need to be
+        // resolved. Need to implement proper schema catalog or prefetch all
+        // imported schemas for a fair comparison.
+        if let Some(info) = schema_info {
+            if let Some(xsd_bytes) = &info.xsd_bytes {
+                println!();
+                println!("    [Validation Comparison]");
+                if let Some(libxml_val_result) = libxml_bench::validate_with_libxml(
+                    content,
+                    xsd_bytes,
+                    iterations,
+                    get_memory_usage,
+                ) {
+                    println!(
+                        "    libxml + validate: {} ({:.2} MB/s)",
+                        format_duration(libxml_val_result.avg_time),
+                        libxml_val_result.throughput_mb_s()
+                    );
+                    if libxml_val_result.validation_errors > 0 {
+                        println!(
+                            "    libxml validation errors: {}",
+                            libxml_val_result.validation_errors
+                        );
+                    }
+                    if let Some(mem) = libxml_val_result.memory_delta {
+                        println!("    libxml val mem: Δ {}", format_bytes(mem));
+                    }
+                }
+            }
+        }
     }
+
+    // Suppress unused variable warning when compare-libxml is not enabled
+    let _ = schema_info;
 }
 
 fn run_streaming_benchmark(

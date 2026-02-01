@@ -10,7 +10,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 ## Features
 
 - 🦀 **Pure Rust** — No C dependencies, no unsafe code
-- ✅ **libxml Compatible** — Consistent parsing/XPath results, **50-3,600x better memory efficiency**
+- ✅ **libxml Compatible** — Consistent parsing/XPath results
 - ⚡ **Streaming** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
 - 🔄 **Zero-Copy Transform** — Stream-based XPath transformation with minimal allocations
 - 📋 **Full XPath & XSD** — Complete XPath 1.0, schema parsing with import resolution, built-in GML types
@@ -36,20 +36,19 @@ Parse only:
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 3.41s | 266 MB/s | 3.78 GB |
-| fastxml DOM | 3.80s | 239 MB/s | 666 MB |
-| fastxml Streaming | 3.10s | 293 MB/s | **~1 MB** |
+| libxml DOM | 3.29s | 276 MB/s | 4.19 GB |
+| fastxml DOM | 3.67s | 247 MB/s | 666 MB |
+| fastxml Streaming | 3.13s | 290 MB/s | **~1 MB** |
 
 Parse + Schema Validation (via xsi:schemaLocation):
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 3.81s | 238 MB/s | 3.66 GB |
-| fastxml DOM | 3.73s | 243 MB/s | 666 MB |
-| fastxml Streaming | 22.43s | 40 MB/s | **~1 MB** |
+| fastxml Streaming | 22.96s | 40 MB/s | **~1 MB** |
 
-- **DOM**: fastxml uses **5.7x less memory** than libxml
+- **DOM**: fastxml uses **6.3x less memory** than libxml
 - **Streaming**: Constant memory regardless of file size (only parser buffers)
+- Schema validation auto-fetches XSD from `xsi:schemaLocation`
 
 **Compatibility Testing**: Parsing, XPath, and validation results are verified against libxml2. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
 
