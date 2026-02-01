@@ -821,8 +821,12 @@ impl XsdParser {
             "maxInclusive" => XsdFacet::MaxInclusive(value),
             "minExclusive" => XsdFacet::MinExclusive(value),
             "maxExclusive" => XsdFacet::MaxExclusive(value),
-            "totalDigits" => XsdFacet::TotalDigits(Self::parse_facet_length("totalDigits", &value)?),
-            "fractionDigits" => XsdFacet::FractionDigits(Self::parse_facet_length("fractionDigits", &value)?),
+            "totalDigits" => {
+                XsdFacet::TotalDigits(Self::parse_facet_length("totalDigits", &value)?)
+            }
+            "fractionDigits" => {
+                XsdFacet::FractionDigits(Self::parse_facet_length("fractionDigits", &value)?)
+            }
             "whiteSpace" => XsdFacet::WhiteSpace(match value.as_str() {
                 "preserve" => WhiteSpaceValue::Preserve,
                 "replace" => WhiteSpaceValue::Replace,
@@ -1459,10 +1463,12 @@ impl XmlEventHandler for XsdParser {
 
     fn finish(&mut self) -> Result<()> {
         if !self.stack.is_empty() {
-            return Err(crate::schema::xsd::error::XsdParseError::UnexpectedEndOfSchema {
-                remaining_frames: self.stack.len(),
-            }
-            .into());
+            return Err(
+                crate::schema::xsd::error::XsdParseError::UnexpectedEndOfSchema {
+                    remaining_frames: self.stack.len(),
+                }
+                .into(),
+            );
         }
         Ok(())
     }
@@ -1511,11 +1517,11 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
                 xsd_parser.handle(&event)?;
             }
             Ok(Event::Text(ref e)) => {
-                let text = e.unescape().map_err(|e| {
-                    crate::parse_error::ParseError::TextDecodeError {
-                        message: e.to_string(),
-                    }
-                })?;
+                let text =
+                    e.unescape()
+                        .map_err(|e| crate::parse_error::ParseError::TextDecodeError {
+                            message: e.to_string(),
+                        })?;
                 if !text.is_empty() {
                     let event = XmlEvent::Text(text.into_owned());
                     xsd_parser.handle(&event)?;

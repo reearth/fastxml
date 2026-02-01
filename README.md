@@ -1,5 +1,10 @@
 # fastxml
 
+[![CI](https://github.com/reearth/fastxml/actions/workflows/ci.yml/badge.svg)](https://github.com/reearth/fastxml/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/fastxml.svg)](https://crates.io/crates/fastxml)
+[![docs.rs](https://docs.rs/fastxml/badge.svg)](https://docs.rs/fastxml)
+[![License](https://img.shields.io/crates/l/fastxml.svg)](LICENSE)
+
 A fast, memory-efficient XML library for Rust with XPath and streaming schema validation support. Designed for processing large XML documents like CityGML files used in PLATEAU.
 
 ## Features
@@ -292,29 +297,6 @@ let schema = parse_xsd(building_xsd.as_bytes())?;
 assert!(schema.types.contains_key("BuildingType"));
 ```
 
-## Supported XPath
-
-| Expression | Example | Description |
-|------------|---------|-------------|
-| Absolute path | `/root/child` | Direct path from root |
-| Descendant | `//element` | Any descendant |
-| Wildcard | `//*` | All elements |
-| Name predicate | `//*[name()='Building']` | Match by name |
-| Logical OR | `//*[name()='A' or name()='B']` | Multiple matches |
-| Logical AND | `//*[name()='A' and @id]` | Combined conditions |
-| NOT | `//*[not(name()='Skip')]` | Exclusion |
-| Text | `//element/text()` | Text content |
-| Namespace | `//bldg:Building` | Namespaced elements |
-| Child axis | `./child::*` | Direct children |
-| Parent axis | `../parent` | Parent element |
-| Ancestor axis | `ancestor::div` | All ancestors |
-| Following/Preceding | `following-sibling::*` | Sibling navigation |
-| Arithmetic | `@value + 10` | `+`, `-`, `*`, `div`, `mod` |
-| Comparison | `@count > 5` | `=`, `!=`, `<`, `>`, `<=`, `>=` |
-| Functions | `count(//item)` | `count`, `sum`, `position`, `last` |
-| String functions | `contains(@name, 'test')` | `contains`, `starts-with`, `substring` |
-| Math functions | `floor(@value)` | `floor`, `ceiling`, `round`, `sum` |
-
 ## Load Testing
 
 ### Run Benchmarks
@@ -374,43 +356,6 @@ cargo run --release --example load_test_cli -- --validate ./document.xml
 | `--iterations <N>` | Number of iterations (default: 3) |
 | `--validate` | Enable schema validation benchmark |
 | `--cache-dir <DIR>` | Cache directory for downloaded URLs (default: `benches/cache`) |
-
-## Architecture
-
-### Event-Driven Design
-
-```
-                    ┌─────────────────┐
-                    │  XML Input      │
-                    │  (File/Stream)  │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ StreamingParser │
-                    │   (quick-xml)   │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-      ┌───────────┐  ┌───────────┐  ┌───────────┐
-      │  Handler  │  │ Validator │  │  Builder  │
-      │ (counting)│  │ (schema)  │  │   (DOM)   │
-      └───────────┘  └───────────┘  └───────────┘
-```
-
-Multiple handlers can process the same event stream simultaneously, enabling:
-- Counting + validation in single pass
-- DOM building + validation
-- Custom processing pipelines
-
-### Memory Strategy
-
-| Mode | Memory Usage | Use Case |
-|------|--------------|----------|
-| Streaming | O(1) - buffer only | Large files, validation |
-| DOM | O(n) - full tree | XPath queries, modification |
 
 ## API Reference
 
@@ -479,58 +424,46 @@ let schema = parse_xsd_with_imports(
 )?;
 ```
 
-## Limitations & Roadmap
+## Limitations
 
 ### XPath
 
+**Supported expressions:**
+
+| Expression | Example | Description |
+|------------|---------|-------------|
+| Absolute path | `/root/child` | Direct path from root |
+| Descendant | `//element` | Any descendant |
+| Wildcard | `//*` | All elements |
+| Name predicate | `//*[name()='Building']` | Match by name |
+| Logical operators | `//*[name()='A' or name()='B']` | `and`, `or`, `not` |
+| Text | `//element/text()` | Text content |
+| Namespace | `//bldg:Building` | Namespaced elements |
+| Axes | `ancestor::div`, `following-sibling::*` | All standard axes |
+| Arithmetic | `@value + 10` | `+`, `-`, `*`, `div`, `mod` |
+| Comparison | `@count > 5` | `=`, `!=`, `<`, `>`, `<=`, `>=` |
+| Functions | `count(//item)`, `contains(@name, 'test')` | Position, string, math functions |
+
+**Not supported:**
+
 | Feature | Status |
 |---------|--------|
-| Absolute/relative paths | ✅ |
-| Descendant (`//`) | ✅ |
-| Wildcard (`*`) | ✅ |
-| Predicates (`[...]`) | ✅ |
-| All axes (child, parent, ancestor, following, etc.) | ✅ |
-| Arithmetic operators (`+`, `-`, `*`, `div`, `mod`) | ✅ |
-| Comparison operators (`=`, `!=`, `<`, `>`, `<=`, `>=`) | ✅ |
-| Logical operators (`and`, `or`, `not`) | ✅ |
-| Position functions (`position()`, `last()`, `count()`) | ✅ |
-| String functions (`contains()`, `starts-with()`, `substring()`, etc.) | ✅ |
-| Math functions (`sum()`, `floor()`, `ceiling()`, `round()`) | ✅ |
-| Boolean/type functions (`boolean()`, `number()`, `string()`) | ✅ |
 | Union operator (`\|`) | ❌ |
 | Namespace axis | ❌ |
 | Variables (`$var`) | ❌ |
 
 ### XSD Schema
 
-| Feature | Status |
-|---------|--------|
-| Element/attribute definitions | ✅ |
-| Complex types (sequence, choice, all) | ✅ |
-| Simple types (restriction, list, union) | ✅ |
-| Type inheritance (extension/restriction) | ✅ |
-| Facets (enumeration, pattern, length, min/max, etc.) | ✅ |
-| Attribute groups / Model groups | ✅ |
-| Import/include/redefine | ✅ |
-| Built-in XSD types | ✅ |
-| Built-in GML types | ✅ |
-| Substitution groups | ✅ (parsing) |
-| Identity constraints (unique/key/keyref) | ✅ |
-| Streaming validation | ✅ |
-| Error collection with location info | ✅ |
+**Supported:** Element/attribute definitions, complex types (sequence/choice/all), simple types (restriction/list/union), type inheritance, facets, attribute/model groups, import/include/redefine, built-in XSD and GML types, identity constraints (unique/key/keyref), streaming validation with error location info.
+
+**Partial:** Substitution groups (parsing only).
 
 ### Not Supported
 
-| Feature | Notes |
-|---------|-------|
-| XQuery | Not planned (use XPath) |
-| DTD validation | Not planned |
-| XSLT transformation | Not planned |
-| XInclude | Not planned |
-| XML Signature/Encryption | Not planned |
-| Catalog support | Not planned |
-| DOM modification | Read-only |
-| Entity expansion | Basic only |
+- XQuery, DTD validation, XSLT, XInclude, XML Signature/Encryption
+- Catalog support
+- DOM modification (read-only)
+- Entity expansion (basic only)
 
 ## License
 

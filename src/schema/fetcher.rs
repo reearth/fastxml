@@ -152,15 +152,15 @@ impl ReqwestFetcher {
 
     /// Fetches a schema asynchronously.
     pub async fn fetch_async(&self, url: &str) -> Result<FetchResult> {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| FetchError::RequestFailed {
-                url: url.to_string(),
-                message: e.to_string(),
-            })?;
+        let response =
+            self.client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| FetchError::RequestFailed {
+                    url: url.to_string(),
+                    message: e.to_string(),
+                })?;
 
         let final_url = response.url().to_string();
         let redirected = final_url != url;

@@ -52,14 +52,16 @@ pub enum XPathSyntaxError {
 impl std::fmt::Display for XPathSyntaxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            XPathSyntaxError::UnexpectedToken { found, expected } => {
-                match found {
-                    Some(token) => write!(f, "expected {}, found {:?}", expected, token),
-                    None => write!(f, "expected {}, found end of input", expected),
-                }
-            }
+            XPathSyntaxError::UnexpectedToken { found, expected } => match found {
+                Some(token) => write!(f, "expected {}, found {:?}", expected, token),
+                None => write!(f, "expected {}, found end of input", expected),
+            },
             XPathSyntaxError::UnexpectedCharacter { char, position } => {
-                write!(f, "unexpected character '{}' at position {}", char, position)
+                write!(
+                    f,
+                    "unexpected character '{}' at position {}",
+                    char, position
+                )
             }
             XPathSyntaxError::InvalidNumber { value } => {
                 write!(f, "invalid number '{}'", value)

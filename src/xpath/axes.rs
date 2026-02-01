@@ -299,12 +299,6 @@ mod tests {
     use super::*;
     use crate::parse;
 
-    fn get_root_child(name: &str) -> XmlNode {
-        let doc = parse(&format!("<root><{}/></root>", name)).unwrap();
-        let root = doc.get_root_element().unwrap();
-        root.get_child_nodes().into_iter().next().unwrap()
-    }
-
     #[test]
     fn test_select_child() {
         let doc = parse("<root><a/><b/><c/></root>").unwrap();

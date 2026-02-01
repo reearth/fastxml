@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub struct Namespace {
     /// Namespace prefix (e.g., "gml", "uro"). Empty string for default namespace.
     prefix: String,
-    /// Namespace URI (e.g., "http://www.opengis.net/gml")
+    /// Namespace URI (e.g., `http://www.opengis.net/gml`)
     uri: String,
 }
 

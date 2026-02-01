@@ -1,6 +1,6 @@
 //! Integration tests for XML parsing.
 
-use fastxml::{get_node_tag, get_root_node, parse, NodeType};
+use fastxml::{NodeType, get_node_tag, get_root_node, parse};
 
 #[test]
 fn test_parse_simple_xml() {
@@ -226,10 +226,12 @@ fn test_parse_html_with_comments() {
         .filter(|n| n.get_type() == NodeType::Comment)
         .collect();
     assert_eq!(root_comments.len(), 1);
-    assert!(root_comments[0]
-        .get_content()
-        .unwrap()
-        .contains("header comment"));
+    assert!(
+        root_comments[0]
+            .get_content()
+            .unwrap()
+            .contains("header comment")
+    );
 
     let body = root
         .get_child_elements()
@@ -258,10 +260,12 @@ fn test_parse_html_with_comments() {
         .filter(|n| n.get_type() == NodeType::Comment)
         .collect();
     assert_eq!(div_comments.len(), 1);
-    assert!(div_comments[0]
-        .get_content()
-        .unwrap()
-        .contains("Nested comment"));
+    assert!(
+        div_comments[0]
+            .get_content()
+            .unwrap()
+            .contains("Nested comment")
+    );
 
     let p = div.get_child_elements();
     assert_eq!(p.len(), 1);

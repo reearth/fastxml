@@ -124,7 +124,13 @@ mod schema_parsing {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser rejects minOccurs > maxOccurs
         assert!(
-            matches!(&result, Err(Error::Schema(SchemaError::MinOccursGreaterThanMaxOccurs { min: 5, max: 3 }))),
+            matches!(
+                &result,
+                Err(Error::Schema(SchemaError::MinOccursGreaterThanMaxOccurs {
+                    min: 5,
+                    max: 3
+                }))
+            ),
             "Expected error about minOccurs > maxOccurs, got: {:?}",
             result
         );
@@ -148,7 +154,10 @@ mod schema_parsing {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser accepts circular type references during parsing
         // Type resolution happens lazily during validation
-        assert!(result.is_ok(), "Parser accepts circular type references during parsing");
+        assert!(
+            result.is_ok(),
+            "Parser accepts circular type references during parsing"
+        );
     }
 
     #[test]
@@ -199,7 +208,13 @@ mod schema_parsing {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser rejects conflicting facets (minLength > maxLength)
         assert!(
-            matches!(&result, Err(Error::Schema(SchemaError::MinLengthGreaterThanMaxLength { min_length: 10, max_length: 5 }))),
+            matches!(
+                &result,
+                Err(Error::Schema(SchemaError::MinLengthGreaterThanMaxLength {
+                    min_length: 10,
+                    max_length: 5
+                }))
+            ),
             "Expected error about conflicting facets, got: {:?}",
             result
         );
@@ -212,7 +227,7 @@ mod schema_parsing {
 
 mod content_model {
     use fastxml::schema::xsd::content_model::{
-        ContentElement, ContentModelItem, ContentModelValidator, Occurrence, ContentModelError,
+        ContentElement, ContentModelError, ContentModelItem, ContentModelValidator, Occurrence,
     };
 
     #[test]
@@ -460,8 +475,7 @@ mod facet_violations {
 
     #[test]
     fn test_enumeration_violation() {
-        let constraints =
-            FacetConstraints::new().with_enumeration(vec!["red", "green", "blue"]);
+        let constraints = FacetConstraints::new().with_enumeration(vec!["red", "green", "blue"]);
         let validator = FacetValidator::new(&constraints);
 
         let result = validator.validate("yellow");
@@ -548,7 +562,7 @@ mod facet_violations {
 
 mod identity_constraints {
     use fastxml::schema::xsd::constraints::{
-        ConstraintValidator, ConstraintError, IdentityConstraint, KeyValue,
+        ConstraintError, ConstraintValidator, IdentityConstraint, KeyValue,
     };
 
     #[test]
@@ -584,7 +598,10 @@ mod identity_constraints {
         let constraint = IdentityConstraint::key("keyId", ".");
         let result = validator.add_key_value(&constraint, KeyValue::new(vec![]));
         // Current implementation accepts empty key values
-        assert!(result.is_ok(), "Implementation is lenient with empty key values");
+        assert!(
+            result.is_ok(),
+            "Implementation is lenient with empty key values"
+        );
     }
 
     #[test]
@@ -826,6 +843,9 @@ mod namespace_violations {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser accepts undeclared prefixes during parsing
         // Type resolution with the undeclared prefix happens at validation time
-        assert!(result.is_ok(), "Parser accepts undeclared prefixes during parsing");
+        assert!(
+            result.is_ok(),
+            "Parser accepts undeclared prefixes during parsing"
+        );
     }
 }

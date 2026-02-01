@@ -34,9 +34,9 @@
 //! ```
 
 use std::fs;
-use std::io::{BufRead, BufReader, IsTerminal, Read};
 #[cfg(feature = "ureq")]
 use std::io::Write;
+use std::io::{BufRead, BufReader, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -169,7 +169,10 @@ fn print_help(program: &str) {
     eprintln!("Usage: {} [OPTIONS] [FILES...]", program);
     eprintln!();
     eprintln!("Modes:");
-    eprintln!("  Synthetic data:  {} --pattern <PATTERN> --size <SIZE>", program);
+    eprintln!(
+        "  Synthetic data:  {} --pattern <PATTERN> --size <SIZE>",
+        program
+    );
     eprintln!("  Real files:      {} file1.xml file2.xml", program);
     eprintln!("  From stdin:      cat urls.txt | {}", program);
     eprintln!();
@@ -346,7 +349,10 @@ fn get_display_name(input: &str) -> &str {
 }
 
 #[cfg(feature = "ureq")]
-fn load_file(input: &str, cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn load_file(
+    input: &str,
+    cache_dir: &Path,
+) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
     if is_url(input) {
         let file_name = input.split('/').next_back().unwrap_or("unknown.xml");
         let cache_path = cache_dir.join(file_name);
@@ -374,7 +380,10 @@ fn load_file(input: &str, cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<
 }
 
 #[cfg(not(feature = "ureq"))]
-fn load_file(input: &str, _cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn load_file(
+    input: &str,
+    _cache_dir: &Path,
+) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
     if is_url(input) {
         Err("URL loading requires 'sync' feature. Use: cargo run --features sync --example load_test_cli".into())
     } else {
@@ -386,7 +395,12 @@ fn load_file(input: &str, _cache_dir: &Path) -> std::result::Result<Vec<u8>, Box
 // Pattern Mode Benchmark
 // =============================================================================
 
-fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: usize, validate: bool) {
+fn run_pattern_test(
+    config: GeneratorConfig,
+    processing_mode: &str,
+    iterations: usize,
+    validate: bool,
+) {
     println!();
     print_separator();
     println!("Configuration (Synthetic):");
@@ -395,7 +409,10 @@ fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: 
     println!("  Content Size: {:>10}", format_bytes(config.content_size));
     println!("  Attributes:   {:>10}/element", config.attribute_count);
     println!("  Namespaces:   {:>10}", config.with_namespaces);
-    println!("  Est. Size:    {:>10}", format_bytes(config.estimated_size()));
+    println!(
+        "  Est. Size:    {:>10}",
+        format_bytes(config.estimated_size())
+    );
     print_separator();
 
     // Generate XML once for DOM tests
@@ -407,7 +424,11 @@ fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: 
         let mut xml_gen = XmlStreamGenerator::new(config.clone());
         let mut bytes = Vec::new();
         xml_gen.read_to_end(&mut bytes).unwrap();
-        println!("  Generated {} in {}", format_bytes(bytes.len()), format_duration(start.elapsed()));
+        println!(
+            "  Generated {} in {}",
+            format_bytes(bytes.len()),
+            format_duration(start.elapsed())
+        );
         bytes
     };
 
@@ -428,13 +449,21 @@ fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: 
         let start = Instant::now();
         let result = evaluate(&doc, "//*").unwrap();
         let count = result.into_nodes().len();
-        println!("  //*: {} elements in {}", count, format_duration(start.elapsed()));
+        println!(
+            "  //*: {} elements in {}",
+            count,
+            format_duration(start.elapsed())
+        );
 
         if config.with_namespaces {
             let start = Instant::now();
             let result = evaluate(&doc, "//bldg:Building").unwrap();
             let count = result.into_nodes().len();
-            println!("  //bldg:Building: {} elements in {}", count, format_duration(start.elapsed()));
+            println!(
+                "  //bldg:Building: {} elements in {}",
+                count,
+                format_duration(start.elapsed())
+            );
         }
     }
 
@@ -477,8 +506,12 @@ fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: 
         println!("  Throughput:  {:.2} MB/s", throughput);
 
         if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!("  Memory:      {} -> {} (Δ {})",
-                format_bytes(before), format_bytes(after), format_bytes(after.saturating_sub(before)));
+            println!(
+                "  Memory:      {} -> {} (Δ {})",
+                format_bytes(before),
+                format_bytes(after),
+                format_bytes(after.saturating_sub(before))
+            );
         }
     }
 }
@@ -534,14 +567,25 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema: Option<&Arc<Comp
     let avg_parse = total_parse_time / iterations as u32;
     let throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
 
-    println!("    Parse:      {} ({:.2} MB/s)", format_duration(avg_parse), throughput);
+    println!(
+        "    Parse:      {} ({:.2} MB/s)",
+        format_duration(avg_parse),
+        throughput
+    );
 
     if let (Some(before), Some(after)) = (mem_before, mem_after) {
-        println!("    Memory:     Δ {}", format_bytes(after.saturating_sub(before)));
+        println!(
+            "    Memory:     Δ {}",
+            format_bytes(after.saturating_sub(before))
+        );
     }
 }
 
-fn run_streaming_benchmark(content: &[u8], iterations: usize, schema: Option<&Arc<CompiledSchema>>) {
+fn run_streaming_benchmark(
+    content: &[u8],
+    iterations: usize,
+    schema: Option<&Arc<CompiledSchema>>,
+) {
     println!("\n  [Streaming]");
     let mem_before = get_memory_usage();
 
@@ -559,7 +603,11 @@ fn run_streaming_benchmark(content: &[u8], iterations: usize, schema: Option<&Ar
 
     let avg_parse = total_parse_time / iterations as u32;
     let parse_throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
-    println!("    Parse:      {} ({:.2} MB/s)", format_duration(avg_parse), parse_throughput);
+    println!(
+        "    Parse:      {} ({:.2} MB/s)",
+        format_duration(avg_parse),
+        parse_throughput
+    );
 
     // With validation
     if let Some(s) = schema {
@@ -577,8 +625,13 @@ fn run_streaming_benchmark(content: &[u8], iterations: usize, schema: Option<&Ar
         }
 
         let avg_validate = total_validate_time / iterations as u32;
-        let validate_throughput = content.len() as f64 / avg_validate.as_secs_f64() / (1024.0 * 1024.0);
-        println!("    + Validate: {} ({:.2} MB/s)", format_duration(avg_validate), validate_throughput);
+        let validate_throughput =
+            content.len() as f64 / avg_validate.as_secs_f64() / (1024.0 * 1024.0);
+        println!(
+            "    + Validate: {} ({:.2} MB/s)",
+            format_duration(avg_validate),
+            validate_throughput
+        );
 
         let overhead = (avg_validate.as_secs_f64() / avg_parse.as_secs_f64() - 1.0) * 100.0;
         println!("    Overhead:   {:.1}%", overhead);
@@ -586,7 +639,10 @@ fn run_streaming_benchmark(content: &[u8], iterations: usize, schema: Option<&Ar
 
     let mem_after = get_memory_usage();
     if let (Some(before), Some(after)) = (mem_before, mem_after) {
-        println!("    Memory:     Δ {}", format_bytes(after.saturating_sub(before)));
+        println!(
+            "    Memory:     Δ {}",
+            format_bytes(after.saturating_sub(before))
+        );
     }
 }
 
@@ -605,8 +661,10 @@ fn main() {
     match config.mode {
         Mode::Pattern { pattern, size } => {
             println!("Mode: Synthetic ({})", pattern);
-            println!("Processing: {}, Iterations: {}, Validate: {}",
-                config.processing_mode, config.iterations, config.validate);
+            println!(
+                "Processing: {}, Iterations: {}, Validate: {}",
+                config.processing_mode, config.iterations, config.validate
+            );
 
             let gen_config = match pattern.as_str() {
                 "many-elements" => GeneratorConfig::many_elements(size),
@@ -619,13 +677,20 @@ fn main() {
                 }
             };
 
-            run_pattern_test(gen_config, &config.processing_mode, config.iterations, config.validate);
+            run_pattern_test(
+                gen_config,
+                &config.processing_mode,
+                config.iterations,
+                config.validate,
+            );
         }
 
         Mode::Files { inputs } => {
             println!("Mode: Real files ({} inputs)", inputs.len());
-            println!("Processing: {}, Iterations: {}, Validate: {}",
-                config.processing_mode, config.iterations, config.validate);
+            println!(
+                "Processing: {}, Iterations: {}, Validate: {}",
+                config.processing_mode, config.iterations, config.validate
+            );
 
             let schema = if config.validate {
                 Some(Arc::new(create_builtin_schema()))
@@ -641,7 +706,11 @@ fn main() {
             for input in &inputs {
                 match load_file(input, &config.cache_dir) {
                     Ok(content) => {
-                        println!("  OK: {} ({})", get_display_name(input), format_bytes(content.len()));
+                        println!(
+                            "  OK: {} ({})",
+                            get_display_name(input),
+                            format_bytes(content.len())
+                        );
                         total_size += content.len();
                         files.push((input.clone(), content));
                     }
@@ -656,7 +725,11 @@ fn main() {
                 std::process::exit(1);
             }
 
-            println!("\nTotal: {} files, {}", files.len(), format_bytes(total_size));
+            println!(
+                "\nTotal: {} files, {}",
+                files.len(),
+                format_bytes(total_size)
+            );
 
             // Run benchmarks
             for (input, content) in &files {

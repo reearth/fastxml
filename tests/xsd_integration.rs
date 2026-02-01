@@ -355,7 +355,7 @@ fn test_plateau_file_structure() {
         let gml_files: Vec<_> = std::fs::read_dir(cache_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "gml"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "gml"))
             .collect();
 
         println!("Found {} GML files in benches/cache", gml_files.len());

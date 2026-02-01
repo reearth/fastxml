@@ -282,7 +282,8 @@ impl<'a> Lexer<'a> {
                     Err(XPathSyntaxError::UnexpectedCharacter {
                         char: '!',
                         position: pos,
-                    }.into())
+                    }
+                    .into())
                 }
             }
             '<' => {
@@ -312,7 +313,8 @@ impl<'a> Lexer<'a> {
                     Err(XPathSyntaxError::UnexpectedCharacter {
                         char: ':',
                         position: pos,
-                    }.into())
+                    }
+                    .into())
                 }
             }
             '\'' | '"' => self.read_string(),
@@ -321,7 +323,8 @@ impl<'a> Lexer<'a> {
             _ => Err(XPathSyntaxError::UnexpectedCharacter {
                 char: ch,
                 position: pos,
-            }.into()),
+            }
+            .into()),
         }
     }
 
@@ -397,9 +400,9 @@ impl<'a> Lexer<'a> {
         }
 
         let s = &self.input[start..end];
-        let num: f64 = s
-            .parse()
-            .map_err(|_| XPathSyntaxError::InvalidNumber { value: s.to_string() })?;
+        let num: f64 = s.parse().map_err(|_| XPathSyntaxError::InvalidNumber {
+            value: s.to_string(),
+        })?;
 
         Ok(Token::Number(num))
     }
@@ -506,7 +509,8 @@ impl<'a> Lexer<'a> {
             _ if is_axis => {
                 return Err(XPathSyntaxError::UnknownAxis {
                     name: name.to_string(),
-                }.into());
+                }
+                .into());
             }
 
             _ => Token::Name(name.to_string()),

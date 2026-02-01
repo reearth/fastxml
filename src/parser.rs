@@ -114,11 +114,11 @@ fn parse_from_reader<R: BufRead>(
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
-                let text = e.unescape().map_err(|e| {
-                    crate::parse_error::ParseError::TextDecodeError {
-                        message: e.to_string(),
-                    }
-                })?;
+                let text =
+                    e.unescape()
+                        .map_err(|e| crate::parse_error::ParseError::TextDecodeError {
+                            message: e.to_string(),
+                        })?;
                 if !text.is_empty() {
                     check_memory(options, &mut memory_used, text.len())?;
                     builder.text(&text);
@@ -167,11 +167,9 @@ fn check_memory(options: &ParserOptions, used: &mut usize, additional: usize) ->
     if let Some(max) = options.max_memory
         && *used > max
     {
-        return Err(crate::parse_error::ParseError::MemoryLimitExceeded {
-            used: *used,
-            max,
-        }
-        .into());
+        return Err(
+            crate::parse_error::ParseError::MemoryLimitExceeded { used: *used, max }.into(),
+        );
     }
     Ok(())
 }

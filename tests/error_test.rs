@@ -4,7 +4,7 @@ use fastxml::error::Error;
 use fastxml::node_error::NodeError;
 use fastxml::parse_error::ParseError;
 use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
-use fastxml::{parse, parse_with_options, ParserOptions};
+use fastxml::{ParserOptions, parse, parse_with_options};
 
 // =============================================================================
 // Malformed XML Tests
@@ -49,7 +49,10 @@ mod malformed_xml {
         let xml = "<1root/>";
         let result = parse(xml);
         // quick-xml is lenient and accepts tags starting with numbers
-        assert!(result.is_ok(), "quick-xml accepts tags starting with numbers");
+        assert!(
+            result.is_ok(),
+            "quick-xml accepts tags starting with numbers"
+        );
     }
 
     #[test]
@@ -157,7 +160,10 @@ mod malformed_xml {
         let xml = " <?xml version=\"1.0\"?><root/>";
         let result = parse(xml);
         // quick-xml is lenient about whitespace before declaration
-        assert!(result.is_ok(), "quick-xml accepts whitespace before declaration");
+        assert!(
+            result.is_ok(),
+            "quick-xml accepts whitespace before declaration"
+        );
     }
 
     #[test]
@@ -179,7 +185,10 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
+            matches!(
+                doc.get_root_element(),
+                Err(Error::Node(NodeError::NoRootElement))
+            ),
             "Empty doc should have no root"
         );
     }
@@ -191,7 +200,10 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
+            matches!(
+                doc.get_root_element(),
+                Err(Error::Node(NodeError::NoRootElement))
+            ),
             "Whitespace-only doc should have no root"
         );
     }
@@ -203,7 +215,10 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
+            matches!(
+                doc.get_root_element(),
+                Err(Error::Node(NodeError::NoRootElement))
+            ),
             "Comment-only doc should have no root"
         );
     }
@@ -247,7 +262,10 @@ mod malformed_xml {
         let result = parse(xml);
         // ]]> inside CDATA ends it early, but quick-xml handles this gracefully
         // and parses the rest as text/another CDATA
-        assert!(result.is_ok(), "CDATA with ]]> inside is handled gracefully");
+        assert!(
+            result.is_ok(),
+            "CDATA with ]]> inside is handled gracefully"
+        );
     }
 
     #[test]
@@ -321,11 +339,17 @@ mod malformed_xml {
 
     #[test]
     fn test_invalid_utf8() {
-        let invalid_bytes: &[u8] = &[0x3c, 0x72, 0x6f, 0x6f, 0x74, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x72, 0x6f, 0x6f, 0x74, 0x3e];
+        let invalid_bytes: &[u8] = &[
+            0x3c, 0x72, 0x6f, 0x6f, 0x74, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x72, 0x6f, 0x6f, 0x74,
+            0x3e,
+        ];
         let result = parse(invalid_bytes);
         // Invalid UTF-8 should cause an error
         assert!(
-            matches!(result, Err(Error::Parse(_) | Error::Utf8(_) | Error::FromUtf8(_))),
+            matches!(
+                result,
+                Err(Error::Parse(_) | Error::Utf8(_) | Error::FromUtf8(_))
+            ),
             "Expected encoding error, got: {:?}",
             result
         );
@@ -349,7 +373,10 @@ mod parser_options {
         let large_xml = format!("<root>{}</root>", "x".repeat(1000));
         let result = parse_with_options(&large_xml, &options);
         assert!(
-            matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
+            matches!(
+                &result,
+                Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))
+            ),
             "Expected memory limit error, got: {:?}",
             result
         );
@@ -499,8 +526,8 @@ mod xpath_errors {
 // =============================================================================
 
 mod streaming_errors {
-    use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
     use fastxml::error::Result;
+    use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 
     struct EventCounter {
         count: usize,

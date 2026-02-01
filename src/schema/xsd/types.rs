@@ -79,7 +79,7 @@ impl Occurs {
         matches!(self, Occurs::Unbounded)
     }
 
-    /// Converts to an Option<u32> where None means unbounded.
+    /// Converts to an `Option<u32>` where None means unbounded.
     pub fn to_option(&self) -> Option<u32> {
         match self {
             Occurs::Count(n) => Some(*n),
@@ -95,11 +95,17 @@ impl Occurs {
         } else {
             // Check for negative values (string starts with '-')
             if s.starts_with('-') {
-                return Err(format!("invalid occurs value '{}': negative values not allowed", s));
+                return Err(format!(
+                    "invalid occurs value '{}': negative values not allowed",
+                    s
+                ));
             }
-            s.parse::<u32>()
-                .map(Occurs::Count)
-                .map_err(|_| format!("invalid occurs value '{}': must be a non-negative integer or 'unbounded'", s))
+            s.parse::<u32>().map(Occurs::Count).map_err(|_| {
+                format!(
+                    "invalid occurs value '{}': must be a non-negative integer or 'unbounded'",
+                    s
+                )
+            })
         }
     }
 }

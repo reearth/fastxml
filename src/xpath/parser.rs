@@ -224,7 +224,8 @@ impl Parser {
             Err(XPathSyntaxError::UnexpectedToken {
                 found: Some(self.current().clone()),
                 expected: format!("{:?}", expected),
-            }.into())
+            }
+            .into())
         }
     }
 
@@ -385,7 +386,8 @@ impl Parser {
             _ => Err(XPathSyntaxError::UnexpectedToken {
                 found: Some(self.current().clone()),
                 expected: "node test".to_string(),
-            }.into()),
+            }
+            .into()),
         }
     }
 
@@ -680,24 +682,24 @@ impl Parser {
 
                     self.expect(&Token::RightParen)?;
 
-                    Ok(Expr::Function { name: fn_name, args })
+                    Ok(Expr::Function {
+                        name: fn_name,
+                        args,
+                    })
                 } else {
                     let path = self.parse_path_expr()?;
                     Ok(Expr::Path(path))
                 }
             }
-            Token::Slash
-            | Token::DoubleSlash
-            | Token::Dot
-            | Token::At
-            | Token::Asterisk => {
+            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At | Token::Asterisk => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
             _ => Err(XPathSyntaxError::UnexpectedToken {
                 found: Some(self.current().clone()),
                 expected: "primary expression".to_string(),
-            }.into()),
+            }
+            .into()),
         }
     }
 
@@ -739,10 +741,13 @@ impl Parser {
             Token::CeilingFn => "ceiling",
             Token::RoundFn => "round",
 
-            _ => return Err(XPathSyntaxError::UnexpectedToken {
-                found: Some(self.current().clone()),
-                expected: "function".to_string(),
-            }.into()),
+            _ => {
+                return Err(XPathSyntaxError::UnexpectedToken {
+                    found: Some(self.current().clone()),
+                    expected: "function".to_string(),
+                }
+                .into());
+            }
         };
         let name = name.to_string();
         self.advance();

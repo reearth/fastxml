@@ -8,8 +8,8 @@ use fastxml::schema::{
     InMemoryStore, SchemaStore, TempDirStore, create_xml_schema_validation_context,
     validate_document_by_schema,
 };
-use fastxml::xpath::error::XPathEvalError;
 use fastxml::xpath::collect_text_values;
+use fastxml::xpath::error::XPathEvalError;
 use fastxml::{
     ParserOptions, create_context, evaluate, find_nodes_by_xpath, find_readonly_nodes_by_xpath,
     get_node_tag, get_root_node, get_root_readonly_node, node_to_xml_string, parse,
@@ -217,7 +217,10 @@ fn test_api_memory_limit() {
     let large_xml = format!("<root>{}</root>", "x".repeat(1000));
     let result = parse_with_options(&large_xml, &options);
     assert!(
-        matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
+        matches!(
+            &result,
+            Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))
+        ),
         "Expected memory limit error, got: {:?}",
         result
     );
@@ -633,7 +636,10 @@ fn test_error_handling_invalid_xml() {
     // Might succeed but have no root - either is acceptable
     if let Ok(doc) = result {
         assert!(
-            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
+            matches!(
+                doc.get_root_element(),
+                Err(Error::Node(NodeError::NoRootElement))
+            ),
             "Empty doc should return Node error, got: {:?}",
             doc.get_root_element()
         );
@@ -647,7 +653,10 @@ fn test_error_handling_invalid_xml() {
     let large_xml = format!("<root>{}</root>", "x".repeat(100));
     let result = parse_with_options(&large_xml, &options);
     assert!(
-        matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
+        matches!(
+            &result,
+            Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))
+        ),
         "Expected memory limit error, got: {:?}",
         result
     );

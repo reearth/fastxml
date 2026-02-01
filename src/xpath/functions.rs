@@ -723,17 +723,6 @@ fn get_first_node_or_context(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn make_value(s: &str) -> XPathValue {
-        XPathValue::String(s.to_string())
-    }
-
-    #[allow(dead_code)]
-    fn make_number(n: f64) -> XPathValue {
-        XPathValue::Number(n)
-    }
-
     #[test]
     fn test_substring() {
         // Test basic substring

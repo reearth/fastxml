@@ -5,9 +5,9 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::error::Result;
-use crate::node_error::NodeError;
 use crate::namespace::{Namespace, NamespaceResolver};
 use crate::node::{NodeData, NodeId, XmlNode, XmlRoNode};
+use crate::node_error::NodeError;
 
 /// An XML document.
 ///

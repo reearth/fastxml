@@ -152,12 +152,11 @@ pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
     }
 
     // Parse base URL
-    let base_url = Url::parse(base).map_err(|e| {
-        crate::schema::error::SchemaError::InvalidBaseUri {
+    let base_url =
+        Url::parse(base).map_err(|e| crate::schema::error::SchemaError::InvalidBaseUri {
             uri: base.to_string(),
             message: e.to_string(),
-        }
-    })?;
+        })?;
 
     // Resolve relative URL
     let resolved = base_url.join(relative).map_err(|e| {

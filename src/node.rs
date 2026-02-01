@@ -16,7 +16,7 @@ pub type NodeId = usize;
 pub enum NodeType {
     /// Document root node
     Document,
-    /// Element node (e.g., <element>)
+    /// Element node (e.g., `<element>`)
     Element,
     /// Text node
     Text,
