@@ -1,7 +1,6 @@
 //! Streaming XML schema validator.
 
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use compact_str::CompactString;
@@ -421,7 +420,6 @@ impl XmlEventHandler for StreamingSchemaValidator {
 /// Thread-safe wrapper for schema validation.
 pub struct XmlSchemaValidationContext {
     schema: Arc<CompiledSchema>,
-    _marker: PhantomData<*mut ()>,
 }
 
 impl XmlSchemaValidationContext {
@@ -429,16 +427,12 @@ impl XmlSchemaValidationContext {
     pub fn new(schema: CompiledSchema) -> Self {
         Self {
             schema: Arc::new(schema),
-            _marker: PhantomData,
         }
     }
 
     /// Creates a context from an Arc'd schema.
     pub fn from_arc(schema: Arc<CompiledSchema>) -> Self {
-        Self {
-            schema,
-            _marker: PhantomData,
-        }
+        Self { schema }
     }
 
     /// Validates a document by traversing the DOM tree.
@@ -526,9 +520,6 @@ impl XmlSchemaValidationContext {
     }
 }
 
-// Safety: Schema is immutable and wrapped in Arc
-unsafe impl Send for XmlSchemaValidationContext {}
-unsafe impl Sync for XmlSchemaValidationContext {}
 
 /// Creates a schema validation context from a schema location.
 ///

@@ -1,7 +1,5 @@
 //! XPath context for evaluation.
 
-use std::marker::PhantomData;
-
 use parking_lot::RwLock;
 
 use crate::document::XmlDocument;
@@ -74,7 +72,6 @@ impl Clone for XmlContext {
 /// Wraps an `XmlContext` with a read-write lock for safe concurrent access.
 pub struct XmlSafeContext {
     inner: RwLock<XmlContext>,
-    _marker: PhantomData<*mut ()>,
 }
 
 impl XmlSafeContext {
@@ -82,7 +79,6 @@ impl XmlSafeContext {
     pub fn new(doc: &XmlDocument) -> Self {
         Self {
             inner: RwLock::new(XmlContext::new(doc)),
-            _marker: PhantomData,
         }
     }
 
@@ -117,9 +113,6 @@ impl XmlSafeContext {
     }
 }
 
-// Safety: XmlSafeContext uses RwLock internally for thread safety
-unsafe impl Send for XmlSafeContext {}
-unsafe impl Sync for XmlSafeContext {}
 
 /// Creates an XPath context for a document.
 pub fn create_context(doc: &XmlDocument) -> Result<XmlContext> {
