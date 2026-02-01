@@ -73,7 +73,7 @@ name = "load_test"
 harness = false
 
 [[bench]]
-name = "plateau_benchmark"
+name = "xml_benchmark"
 harness = false
 required-features = ["sync"]
 
