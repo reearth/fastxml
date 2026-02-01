@@ -59,6 +59,18 @@ pub enum Error {
     /// String UTF-8 error
     #[error("string utf8 error: {0}")]
     FromUtf8(#[from] std::string::FromUtf8Error),
+
+    /// XSD parsing error
+    #[error("xsd parse error: {0}")]
+    XsdParse(String),
+
+    /// Circular dependency in schema imports
+    #[error("circular dependency in schema imports: {0}")]
+    CircularDependency(String),
+
+    /// Unresolved type reference
+    #[error("unresolved type reference: {0}")]
+    UnresolvedType(String),
 }
 
 impl From<quick_xml::Error> for Error {

@@ -7,7 +7,9 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
 - **XPath Evaluation**: Support for common XPath expressions including namespaces
+- **XSD Parser**: Full XSD schema parsing with import/include resolution
 - **Schema Validation**: Streaming XSD validation with SAX event sharing
+- **Built-in Types**: Pre-defined XSD primitives and GML types (CodeType, MeasureType, geometries)
 - **CityGML Ready**: Optimized for PLATEAU/CityGML document processing
 
 ## Performance
@@ -154,6 +156,40 @@ println!("Found {} buildings", buildings.into_nodes().len());
 let heights = evaluate(&doc, "//*[name()='measuredHeight']/text()")?;
 ```
 
+### PLATEAU/CityGML Support
+
+Built-in support for GML and CityGML types used in PLATEAU:
+
+```rust
+use fastxml::schema::xsd::{parse_xsd, create_builtin_schema};
+
+// Create schema with pre-registered GML types
+let schema = create_builtin_schema();
+
+// Available built-in types include:
+// - XSD primitives: xs:string, xs:integer, xs:double, xs:dateTime, etc.
+// - GML types: gml:CodeType, gml:MeasureType, gml:LengthType
+// - GML geometry: gml:PointType, gml:PolygonType, gml:MultiSurfaceType, gml:SolidType
+// - GML features: gml:AbstractFeatureType, gml:AbstractGMLType
+
+// Parse PLATEAU building schema
+let building_xsd = r#"
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:gml="http://www.opengis.net/gml/3.2">
+    <xs:complexType name="BuildingType">
+        <xs:sequence>
+            <xs:element name="class" type="gml:CodeType" minOccurs="0"/>
+            <xs:element name="measuredHeight" type="gml:LengthType" minOccurs="0"/>
+            <xs:element name="storeysAboveGround" type="xs:nonNegativeInteger" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+</xs:schema>
+"#;
+
+let schema = parse_xsd(building_xsd.as_bytes())?;
+assert!(schema.types.contains_key("BuildingType"));
+```
+
 ## Supported XPath
 
 | Expression | Example | Description |
@@ -275,15 +311,37 @@ parser.parse()?;
 ### Schema Validation
 
 ```rust
+// Parse XSD schema and create validation context
+let xsd_content = std::fs::read("schema.xsd")?;
+let schema = fastxml::parse_xsd(&xsd_content)?;
+
 // Create validation context
-let ctx = create_xml_schema_validation_context(schema_location)?;
+let ctx = create_xml_schema_validation_context_from_buffer(&xsd_content)?;
 
 // Validate document
 let errors = validate_document_by_schema(&doc, schema_location)?;
 
 // Streaming validation
-let validator = StreamingSchemaValidator::new(schema);
+let validator = StreamingSchemaValidator::new(Arc::new(schema));
 parser.add_handler(Box::new(validator));
+```
+
+### XSD Parsing with Import Resolution
+
+```rust
+use fastxml::schema::{parse_xsd_with_imports, UreqFetcher, TempDirStore};
+
+// Create fetcher and store for resolving imports
+let fetcher = UreqFetcher::new();
+let store = TempDirStore::new()?;
+
+// Parse XSD with all dependencies resolved
+let schema = parse_xsd_with_imports(
+    xsd_content,
+    "https://example.com/schema.xsd",
+    &fetcher,
+    &store,
+)?;
 ```
 
 ## Limitations & Roadmap
@@ -322,36 +380,40 @@ parser.add_handler(Box::new(validator));
 | Parent axis | `parent::*`, `..` | ✅ |
 | Self axis | `self::*`, `.` | ✅ |
 
-### XSD Schema - Not Yet Supported
-
-| Feature | Status |
-|---------|--------|
-| XSD file parsing | ❌ Not implemented (manual schema building only) |
-| Type inheritance | ❌ Not implemented |
-| Complex type validation | ⚠️ Basic only |
-| Simple type restrictions | ❌ Not implemented |
-| Pattern (regex) validation | ❌ Not implemented |
-| Enumeration validation | ❌ Not implemented |
-| Min/max length | ❌ Not implemented |
-| Min/max inclusive/exclusive | ❌ Not implemented |
-| Unique constraints | ❌ Not implemented |
-| Key/keyref constraints | ❌ Not implemented |
-| Substitution groups | ❌ Not implemented |
-| Abstract types | ❌ Not implemented |
-| Any/anyAttribute | ⚠️ Basic only |
-| Import/include | ❌ Not implemented |
-| Redefine | ❌ Not implemented |
-
 ### XSD Schema - Supported
 
 | Feature | Status |
 |---------|--------|
+| XSD file parsing | ✅ Full parser |
 | Element definition | ✅ |
+| Complex types (sequence, choice, all) | ✅ |
+| Simple types (restriction, list, union) | ✅ |
+| Type inheritance (extension/restriction) | ✅ |
+| Facets (enumeration, pattern, length, etc.) | ✅ |
 | Attribute definition | ✅ |
+| Attribute groups | ✅ |
+| Model groups | ✅ |
+| Import/include resolution | ✅ |
+| Built-in XSD types (string, integer, etc.) | ✅ |
+| Built-in GML types (CodeType, MeasureType, etc.) | ✅ |
+| Substitution groups | ✅ Parsing (validation pending) |
+| Abstract types | ✅ |
+| Any/anyAttribute | ✅ |
 | Namespace validation | ✅ |
 | Streaming validation | ✅ |
 | Multiple handlers | ✅ |
 | Error collection | ✅ |
+| Cycle detection in imports | ✅ |
+
+### XSD Schema - Not Yet Supported
+
+| Feature | Status |
+|---------|--------|
+| Unique constraints | ❌ Not implemented |
+| Key/keyref constraints | ❌ Not implemented |
+| Redefine | ❌ Not implemented |
+| Full content model validation | ⚠️ Partial (structure parsed, runtime validation basic) |
+| Identity constraints | ❌ Not implemented |
 
 ### XQuery
 

@@ -58,6 +58,7 @@ pub mod store;
 pub mod tempdir;
 pub mod types;
 pub mod validator;
+pub mod xsd;
 
 // Re-export main types
 pub use fetcher::{FetchResult, SchemaFetcher, NoopFetcher};
@@ -82,3 +83,6 @@ pub use fetcher::ReqwestFetcher;
 
 #[cfg(feature = "async")]
 pub use store::AsyncSchemaStore;
+
+// Re-export XSD parsing functions
+pub use xsd::{parse_xsd, parse_xsd_with_imports, parse_xsd_multiple, create_builtin_schema};

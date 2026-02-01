@@ -44,6 +44,11 @@ impl InMemoryStore {
     pub fn is_empty(&self) -> bool {
         self.schemas.is_empty()
     }
+
+    /// Returns the total size of all stored schemas in bytes.
+    pub fn total_size(&self) -> usize {
+        self.schemas.iter().map(|r| r.value().len()).sum()
+    }
 }
 
 impl Default for InMemoryStore {

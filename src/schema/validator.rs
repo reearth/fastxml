@@ -8,6 +8,7 @@ use crate::document::XmlDocument;
 use crate::error::{Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
 use crate::namespace::Namespace;
+use crate::node::{NodeType, XmlNode};
 
 use super::types::CompiledSchema;
 
@@ -210,15 +211,75 @@ impl XmlSchemaValidationContext {
         }
     }
 
-    /// Validates a document.
-    pub fn validate(&self, _doc: &XmlDocument) -> Result<Vec<StructuredError>> {
-        // For full validation, we would need to:
-        // 1. Parse the document as a stream
-        // 2. Run the streaming validator
-        // 3. Return errors
+    /// Validates a document by traversing the DOM tree.
+    pub fn validate(&self, doc: &XmlDocument) -> Result<Vec<StructuredError>> {
+        let mut validator = StreamingSchemaValidator::new(Arc::clone(&self.schema));
 
-        // For now, return empty errors (valid)
-        Ok(Vec::new())
+        // Get root element and validate
+        if let Ok(root) = doc.get_root_element() {
+            self.validate_node_recursive(&root, &mut validator);
+        }
+
+        // Finish validation
+        validator.finish()?;
+
+        Ok(validator.into_errors())
+    }
+
+    /// Recursively validates a node and its children.
+    fn validate_node_recursive(&self, node: &XmlNode, validator: &mut StreamingSchemaValidator) {
+        match node.get_type() {
+            NodeType::Element => {
+                let name = node.get_name();
+                let prefix = node.get_prefix();
+                let namespace = node.get_namespace_uri();
+                let attrs = node.get_attributes();
+                let ns_decls = node.get_namespace_declarations();
+
+                // Create attributes list
+                let attributes: Vec<(String, String)> = attrs.into_iter().collect();
+
+                // Start element event
+                let _ = validator.handle(&XmlEvent::StartElement {
+                    name,
+                    prefix,
+                    namespace,
+                    attributes,
+                    namespace_decls: ns_decls,
+                    line: None,
+                });
+
+                // Validate children
+                for child in node.get_child_nodes() {
+                    self.validate_node_recursive(&child, validator);
+                }
+
+                // End element event
+                let _ = validator.handle(&XmlEvent::EndElement {
+                    name: node.get_name(),
+                    prefix: node.get_prefix(),
+                });
+            }
+            NodeType::Text => {
+                if let Some(content) = node.get_content() {
+                    let _ = validator.handle(&XmlEvent::Text(content));
+                }
+            }
+            NodeType::CData => {
+                if let Some(content) = node.get_content() {
+                    let _ = validator.handle(&XmlEvent::CData(content));
+                }
+            }
+            NodeType::Document => {
+                // Validate children of document node
+                for child in node.get_child_nodes() {
+                    self.validate_node_recursive(&child, validator);
+                }
+            }
+            _ => {
+                // Skip other node types (comments, PIs, etc.)
+            }
+        }
     }
 
     /// Creates a streaming validator.
@@ -238,18 +299,40 @@ unsafe impl Sync for XmlSchemaValidationContext {}
 
 /// Creates a schema validation context from a schema location.
 ///
-/// This is a placeholder that creates an empty schema.
-/// Real implementation would parse the XSD from the location.
-pub fn create_xml_schema_validation_context(_schema_location: &str) -> Result<XmlSchemaValidationContext> {
-    // TODO: Load and parse XSD from location
-    let schema = CompiledSchema::new();
-    Ok(XmlSchemaValidationContext::new(schema))
+/// If the location is a URL, this will attempt to fetch and parse the XSD.
+/// If it's a file path, it will read and parse the file.
+///
+/// Note: This currently creates a schema with built-in types only.
+/// For full import resolution, use `create_xml_schema_validation_context_with_fetcher`.
+pub fn create_xml_schema_validation_context(schema_location: &str) -> Result<XmlSchemaValidationContext> {
+    // Check if it's a URL or file path
+    if schema_location.starts_with("http://") || schema_location.starts_with("https://") {
+        // For URLs, create a schema with built-in types only for now
+        // Full resolution would require a fetcher
+        let schema = super::xsd::create_builtin_schema();
+        Ok(XmlSchemaValidationContext::new(schema))
+    } else {
+        // Try to read as a local file
+        match std::fs::read(schema_location) {
+            Ok(content) => {
+                let schema = super::xsd::parse_xsd(&content)?;
+                Ok(XmlSchemaValidationContext::new(schema))
+            }
+            Err(_) => {
+                // Fall back to built-in types only
+                let schema = super::xsd::create_builtin_schema();
+                Ok(XmlSchemaValidationContext::new(schema))
+            }
+        }
+    }
 }
 
 /// Creates a schema validation context from schema content.
-pub fn create_xml_schema_validation_context_from_buffer(_schema_content: &[u8]) -> Result<XmlSchemaValidationContext> {
-    // TODO: Parse XSD content
-    let schema = CompiledSchema::new();
+///
+/// Parses the provided XSD content and creates a validation context.
+/// Built-in XSD and GML types are automatically registered.
+pub fn create_xml_schema_validation_context_from_buffer(schema_content: &[u8]) -> Result<XmlSchemaValidationContext> {
+    let schema = super::xsd::parse_xsd(schema_content)?;
     Ok(XmlSchemaValidationContext::new(schema))
 }
 

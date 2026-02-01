@@ -48,6 +48,25 @@ impl TempDirStore {
         self.dir.path()
     }
 
+    /// Returns the number of stored schemas.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Returns true if no schemas are stored.
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Returns the total size of all stored schemas in bytes.
+    pub fn total_size(&self) -> usize {
+        self.index
+            .iter()
+            .filter_map(|r| fs::metadata(r.value()).ok())
+            .map(|m| m.len() as usize)
+            .sum()
+    }
+
     /// Generates a safe filename from a URI.
     fn uri_to_filename(&self, uri: &str) -> String {
         // Convert URI to a safe filename

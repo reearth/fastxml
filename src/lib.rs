@@ -243,6 +243,22 @@ pub fn validate_document_by_schema_context(
     schema::validate_document_by_schema_context(document, ctx)
 }
 
+/// Parses XSD content and returns a compiled schema.
+pub fn parse_xsd(content: &[u8]) -> Result<schema::types::CompiledSchema> {
+    schema::parse_xsd(content)
+}
+
+/// Parses XSD content with import resolution.
+#[cfg(feature = "sync")]
+pub fn parse_xsd_with_imports(
+    content: &[u8],
+    base_uri: &str,
+    fetcher: &schema::UreqFetcher,
+    store: &impl schema::store::SchemaStore,
+) -> Result<schema::types::CompiledSchema> {
+    schema::parse_xsd_with_imports(content, base_uri, fetcher, store)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
