@@ -72,9 +72,17 @@ pub use types::{
     SimpleType, TypeDef,
 };
 pub use validator::{
-    StreamingSchemaValidator, ValidationMode, XmlSchemaValidationContext,
+    LazySchemaValidator, StreamingSchemaValidator, ValidationMode, XmlSchemaValidationContext,
     create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
-    validate_document_by_schema, validate_document_by_schema_context,
+    get_schema_from_schema_location_with_fetcher,
+    streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,
+    validate_document_by_schema_context, validate_with_schema_location_and_fetcher,
+};
+
+#[cfg(feature = "ureq")]
+pub use validator::{
+    get_schema_from_schema_location, streaming_validate_with_schema_location,
+    validate_with_schema_location,
 };
 
 #[cfg(feature = "ureq")]

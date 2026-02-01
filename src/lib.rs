@@ -295,6 +295,112 @@ pub fn parse_xsd_with_imports(
     schema::parse_xsd_with_imports(content, base_uri, fetcher, store)
 }
 
+/// Validates a document using schemas referenced in xsi:schemaLocation.
+///
+/// This function reads the `xsi:schemaLocation` attribute from the document's
+/// root element, fetches the referenced schemas, and validates the document.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::{parse, validate_with_schema_location};
+///
+/// let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+///                   xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
+///     <child>content</child>
+/// </root>"#;
+///
+/// let doc = parse(xml)?;
+/// let errors = validate_with_schema_location(&doc)?;
+/// ```
+#[cfg(feature = "ureq")]
+pub fn validate_with_schema_location(document: &XmlDocument) -> Result<Vec<StructuredError>> {
+    schema::validate_with_schema_location(document)
+}
+
+/// Validates a document using schemas referenced in xsi:schemaLocation with a custom fetcher.
+///
+/// This function reads the `xsi:schemaLocation` attribute from the document's
+/// root element, fetches the referenced schemas using the provided fetcher,
+/// and validates the document.
+pub fn validate_with_schema_location_and_fetcher<F: schema::SchemaFetcher>(
+    document: &XmlDocument,
+    fetcher: &F,
+) -> Result<Vec<StructuredError>> {
+    schema::validate_with_schema_location_and_fetcher(document, fetcher)
+}
+
+/// Gets a compiled schema from xsi:schemaLocation in XML content.
+///
+/// This function parses the XML to extract xsi:schemaLocation, fetches the
+/// referenced schemas, and returns a compiled schema suitable for streaming validation.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::get_schema_from_schema_location;
+/// use fastxml::event::StreamingParser;
+/// use fastxml::schema::validator::StreamingSchemaValidator;
+/// use std::sync::Arc;
+/// use std::io::BufReader;
+///
+/// let xml_bytes = std::fs::read("document.xml")?;
+/// let schema = Arc::new(get_schema_from_schema_location(&xml_bytes)?);
+///
+/// let mut parser = StreamingParser::new(BufReader::new(xml_bytes.as_slice()));
+/// parser.add_handler(Box::new(StreamingSchemaValidator::new(schema)));
+/// parser.parse()?;
+/// ```
+#[cfg(feature = "ureq")]
+pub fn get_schema_from_schema_location(
+    xml_content: &[u8],
+) -> Result<schema::types::CompiledSchema> {
+    schema::get_schema_from_schema_location(xml_content)
+}
+
+/// Gets a compiled schema from xsi:schemaLocation with a custom fetcher.
+pub fn get_schema_from_schema_location_with_fetcher<F: schema::SchemaFetcher>(
+    xml_content: &[u8],
+    fetcher: &F,
+) -> Result<schema::types::CompiledSchema> {
+    schema::get_schema_from_schema_location_with_fetcher(xml_content, fetcher)
+}
+
+/// Validates XML from a reader using streaming parser with schemas from xsi:schemaLocation.
+///
+/// This performs true single-pass streaming validation:
+/// 1. On the first StartElement, extracts xsi:schemaLocation
+/// 2. Fetches and compiles the referenced schemas
+/// 3. Continues streaming validation with the fetched schema
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::streaming_validate_with_schema_location;
+/// use std::fs::File;
+/// use std::io::BufReader;
+///
+/// let file = File::open("large_document.xml")?;
+/// let errors = streaming_validate_with_schema_location(BufReader::new(file))?;
+/// ```
+#[cfg(feature = "ureq")]
+pub fn streaming_validate_with_schema_location<R: std::io::BufRead>(
+    reader: R,
+) -> Result<Vec<StructuredError>> {
+    schema::streaming_validate_with_schema_location(reader)
+}
+
+/// Validates XML from a reader using streaming parser with a custom fetcher.
+pub fn streaming_validate_with_schema_location_and_fetcher<
+    R: std::io::BufRead,
+    F: schema::SchemaFetcher + 'static,
+>(
+    reader: R,
+    fetcher: F,
+) -> Result<Vec<StructuredError>> {
+    schema::streaming_validate_with_schema_location_and_fetcher(reader, fetcher)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

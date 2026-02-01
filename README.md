@@ -254,6 +254,31 @@ if errors.is_empty() {
 }
 ```
 
+#### Auto-detect Schema from xsi:schemaLocation
+
+Automatically fetch and validate against schemas referenced in the XML document:
+
+```rust
+use fastxml::{parse, validate_with_schema_location};
+
+let xml = r#"<?xml version="1.0"?>
+<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
+    <element>content</element>
+</root>"#;
+
+let doc = parse(xml.as_bytes())?;
+
+// Reads xsi:schemaLocation, fetches schemas, and validates
+let errors = validate_with_schema_location(&doc)?;
+```
+
+This requires the `ureq` feature:
+
+```toml
+fastxml = { version = "0.1", features = ["ureq"] }
+```
+
 ### Streaming Validation
 
 For large files, validate while parsing in a single pass:
@@ -280,6 +305,40 @@ parser.add_handler(Box::new(validator));
 // Parse and validate in single pass
 parser.parse()?;
 ```
+
+#### Streaming Validation with xsi:schemaLocation
+
+For files with `xsi:schemaLocation`, fetch schemas automatically and validate in streaming mode with a single pass:
+
+```rust
+use fastxml::streaming_validate_with_schema_location;
+use std::fs::File;
+use std::io::BufReader;
+
+let file = File::open("large_document.xml")?;
+
+// Single-pass: reads schemaLocation from first element, fetches schema, validates
+let errors = streaming_validate_with_schema_location(BufReader::new(file))?;
+```
+
+Or with more control using `LazySchemaValidator`:
+
+```rust
+use fastxml::event::StreamingParser;
+use fastxml::schema::{LazySchemaValidator, UreqFetcher};
+use std::fs::File;
+use std::io::BufReader;
+
+let file = File::open("document.xml")?;
+let mut parser = StreamingParser::new(BufReader::new(file));
+
+// LazySchemaValidator fetches schema on first StartElement
+let validator = LazySchemaValidator::new(UreqFetcher::new());
+parser.add_handler(Box::new(validator));
+parser.parse()?;
+```
+
+This requires the `ureq` feature.
 
 ### Error Handling
 
@@ -397,6 +456,9 @@ cargo run --release --example load_test_cli -- --pattern citygml --size 50000
 # Real files
 cargo run --release --example load_test_cli -- ./file.xml
 
+# Real files with schema validation (auto-fetches from xsi:schemaLocation)
+cargo run --release --features ureq --example load_test_cli -- ./file.xml --validate
+
 # Compare with libxml
 cargo run --release --features compare-libxml --example load_test_cli -- --mode dom ./file.xml
 ```
@@ -406,7 +468,7 @@ cargo run --release --features compare-libxml --example load_test_cli -- --mode 
 | `--pattern <PATTERN>` | `many-elements`, `deep-nesting`, `large-content`, `citygml` |
 | `--size <SIZE>` | Size for pattern |
 | `--mode <MODE>` | `dom`, `streaming`, or `both` (default) |
-| `--validate` | Enable schema validation |
+| `--validate` | Enable schema validation (reads `xsi:schemaLocation` and fetches schemas, requires `ureq` feature) |
 
 ## License
 

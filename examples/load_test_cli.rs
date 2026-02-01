@@ -50,9 +50,12 @@ use std::time::{Duration, Instant};
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
+use fastxml::parse_schema_locations;
 use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
+#[cfg(feature = "ureq")]
+use fastxml::schema::{InMemoryStore, SchemaFetcher, SchemaStore, UreqFetcher};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -606,9 +609,16 @@ fn run_file_benchmark(
     content: &[u8],
     processing_mode: &str,
     iterations: usize,
-    schema: Option<&Arc<CompiledSchema>>,
+    validate: bool,
 ) {
     println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
+
+    // Get schema from xsi:schemaLocation if validation is enabled
+    let schema: Option<Arc<CompiledSchema>> = if validate {
+        get_schema_from_content(content)
+    } else {
+        None
+    };
 
     // DOM
     if processing_mode == "dom" || processing_mode == "both" {
@@ -617,8 +627,85 @@ fn run_file_benchmark(
 
     // Streaming
     if processing_mode == "streaming" || processing_mode == "both" {
-        run_streaming_benchmark(content, iterations, schema);
+        run_streaming_benchmark(content, iterations, schema.as_ref());
     }
+}
+
+/// Extracts schema from XML content using xsi:schemaLocation.
+#[cfg(feature = "ureq")]
+fn get_schema_from_content(content: &[u8]) -> Option<Arc<CompiledSchema>> {
+    use fastxml::schema::xsd::parse_xsd_with_imports;
+
+    let doc = match parse(content) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!(
+                "  Warning: Failed to parse XML for schema extraction: {}",
+                e
+            );
+            return Some(Arc::new(create_builtin_schema()));
+        }
+    };
+
+    let locations = match parse_schema_locations(&doc) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("  Warning: Failed to extract schemaLocation: {}", e);
+            return Some(Arc::new(create_builtin_schema()));
+        }
+    };
+
+    if locations.is_empty() {
+        println!("  No xsi:schemaLocation found, using built-in schema");
+        return Some(Arc::new(create_builtin_schema()));
+    }
+
+    println!("  Found {} schema location(s):", locations.len());
+    for (ns, loc) in &locations {
+        println!("    {} -> {}", ns, loc);
+    }
+
+    let fetcher = UreqFetcher::new().timeout(60);
+    let store = InMemoryStore::new();
+
+    // Try to fetch and parse the first schema
+    for (_namespace, location) in &locations {
+        print!("  Fetching {}... ", location);
+        match fetcher.fetch(location) {
+            Ok(fetch_result) => {
+                println!("OK ({} bytes)", fetch_result.content.len());
+                let _ = store.put(&fetch_result.final_url, &fetch_result.content);
+
+                match parse_xsd_with_imports(
+                    &fetch_result.content,
+                    &fetch_result.final_url,
+                    &fetcher,
+                    &store,
+                ) {
+                    Ok(schema) => {
+                        println!("  Schema compiled successfully");
+                        return Some(Arc::new(schema));
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: Failed to parse schema: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("FAILED: {}", e);
+            }
+        }
+    }
+
+    // Fall back to built-in schema
+    println!("  Falling back to built-in schema");
+    Some(Arc::new(create_builtin_schema()))
+}
+
+#[cfg(not(feature = "ureq"))]
+fn get_schema_from_content(_content: &[u8]) -> Option<Arc<CompiledSchema>> {
+    println!("  Note: Schema fetching requires 'ureq' feature, using built-in schema");
+    Some(Arc::new(create_builtin_schema()))
 }
 
 fn run_dom_benchmark(content: &[u8], iterations: usize) {
@@ -816,12 +903,6 @@ fn main() {
                 config.processing_mode, config.iterations, config.validate
             );
 
-            let schema = if config.validate {
-                Some(Arc::new(create_builtin_schema()))
-            } else {
-                None
-            };
-
             // Load all files
             println!("\n--- Loading Files ---");
             let mut files: Vec<(String, Vec<u8>)> = Vec::new();
@@ -862,7 +943,7 @@ fn main() {
                     content,
                     &config.processing_mode,
                     config.iterations,
-                    schema.as_ref(),
+                    config.validate,
                 );
             }
 

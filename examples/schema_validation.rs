@@ -3,6 +3,7 @@
 //! Demonstrates validating XML documents against XSD schemas.
 //!
 //! Run with: cargo run --example schema_validation
+//! Run with schema fetching: cargo run --example schema_validation --features ureq
 
 use fastxml::error::{ErrorLevel, StructuredError, ValidationErrorType};
 use fastxml::parse;
@@ -39,8 +40,15 @@ fn main() -> fastxml::error::Result<()> {
         println!();
     }
 
-    // Example 2: Error handling with detailed information
-    println!("=== Example 2: Error Handling ===\n");
+    // Example 2: Validate using xsi:schemaLocation (auto-fetch schemas)
+    #[cfg(feature = "ureq")]
+    {
+        println!("=== Example 2: Validate with xsi:schemaLocation ===\n");
+        demonstrate_schema_location_validation()?;
+    }
+
+    // Example 3: Error handling with detailed information
+    println!("=== Example 3: Error Handling ===\n");
 
     // Demonstrate how to handle validation errors
     demonstrate_error_handling();
@@ -118,4 +126,49 @@ fn demonstrate_error_handling() {
         warnings.len(),
         errors_only.len()
     );
+}
+
+/// Demonstrates validation using xsi:schemaLocation attribute.
+///
+/// This function shows how to validate XML documents by automatically
+/// fetching schemas referenced in the xsi:schemaLocation attribute.
+#[cfg(feature = "ureq")]
+fn demonstrate_schema_location_validation() -> fastxml::error::Result<()> {
+    use fastxml::validate_with_schema_location;
+
+    // Example XML with schemaLocation pointing to a real schema
+    // In practice, this would reference actual schema URLs
+    let xml = r#"<?xml version="1.0"?>
+<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.w3.org/2001/XMLSchema http://www.w3.org/2001/XMLSchema.xsd">
+    <element>content</element>
+</root>
+"#;
+
+    let doc = parse(xml.as_bytes())?;
+    println!("Parsed document with {} nodes", doc.node_count());
+    println!("Validating with schemas from xsi:schemaLocation...\n");
+
+    // This will:
+    // 1. Read xsi:schemaLocation from the document
+    // 2. Fetch the referenced schemas
+    // 3. Validate the document against them
+    let errors = validate_with_schema_location(&doc)?;
+
+    if errors.is_empty() {
+        println!("Document is valid!\n");
+    } else {
+        println!("Validation results:");
+        for error in &errors {
+            let prefix = match error.level {
+                ErrorLevel::Warning => "[WARN]",
+                ErrorLevel::Error => "[ERROR]",
+                ErrorLevel::Fatal => "[FATAL]",
+            };
+            println!("  {} {}", prefix, error.message);
+        }
+        println!();
+    }
+
+    Ok(())
 }

@@ -4,6 +4,7 @@
 //! This is memory-efficient as it doesn't build a full DOM tree.
 //!
 //! Run with: cargo run --example streaming_validation
+//! Run with schema fetching: cargo run --example streaming_validation --features ureq
 
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
@@ -104,6 +105,53 @@ fn main() -> Result<()> {
 
     println!("\nStreaming validation complete!");
     println!("Note: Memory usage stays constant regardless of file size.");
+
+    // Example 2: Streaming validation with xsi:schemaLocation
+    #[cfg(feature = "ureq")]
+    {
+        println!("\n=== Streaming Validation with xsi:schemaLocation ===\n");
+        streaming_validation_with_schema_location()?;
+    }
+
+    Ok(())
+}
+
+/// Demonstrates single-pass streaming validation using schemas from xsi:schemaLocation.
+///
+/// Uses `LazySchemaValidator` which fetches the schema on the first StartElement event,
+/// enabling true single-pass streaming validation.
+#[cfg(feature = "ureq")]
+fn streaming_validation_with_schema_location() -> Result<()> {
+    use fastxml::schema::{LazySchemaValidator, UreqFetcher};
+
+    // Sample XML with schemaLocation
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.w3.org/2001/XMLSchema http://www.w3.org/2001/XMLSchema.xsd">
+    <element>content</element>
+</root>
+"#;
+
+    println!("Running single-pass streaming validation with LazySchemaValidator...");
+    println!("(Schema will be fetched on first StartElement)\n");
+
+    let element_count = Arc::new(AtomicUsize::new(0));
+    let reader = BufReader::new(xml.as_bytes());
+    let mut parser = StreamingParser::new(reader);
+
+    // Add counting handler
+    parser.add_handler(Box::new(CountingHandler::new(Arc::clone(&element_count))));
+
+    // LazySchemaValidator fetches schema lazily on first StartElement
+    let validator = LazySchemaValidator::new(UreqFetcher::new());
+    parser.add_handler(Box::new(validator));
+
+    parser.parse()?;
+
+    println!(
+        "\nValidation complete! Processed {} elements.",
+        element_count.load(Ordering::SeqCst)
+    );
 
     Ok(())
 }
