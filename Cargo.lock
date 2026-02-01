@@ -360,6 +360,7 @@ dependencies = [
  "memory-stats",
  "parking_lot",
  "quick-xml",
+ "regex",
  "reqwest",
  "serde_json",
  "smallvec",

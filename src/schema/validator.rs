@@ -11,7 +11,8 @@ use crate::event::{XmlEvent, XmlEventHandler};
 use crate::namespace::Namespace;
 use crate::node::{NodeType, XmlNode};
 
-use super::types::CompiledSchema;
+use super::types::{CompiledSchema, ContentModel, ElementDef, SimpleType, TypeDef};
+use super::xsd::facets::{FacetConstraints, FacetValidator};
 use super::xsd::constraints::ConstraintValidator;
 
 /// Validation mode controlling strictness.
@@ -49,6 +50,10 @@ struct ElementContext {
     text_content: String,
     /// Whether this element has been validated against schema
     schema_validated: bool,
+    /// Type reference for this element (if known from schema)
+    type_ref: Option<String>,
+    /// Expected child elements with their occurrence constraints (name -> (min, max))
+    expected_children: HashMap<String, (u32, Option<u32>)>,
 }
 
 impl ElementContext {
@@ -59,6 +64,8 @@ impl ElementContext {
             child_counts: HashMap::new(),
             text_content: String::new(),
             schema_validated: false,
+            type_ref: None,
+            expected_children: HashMap::new(),
         }
     }
 
@@ -249,11 +256,76 @@ impl StreamingSchemaValidator {
         error
     }
 
+    /// Looks up an element definition in the schema.
+    fn lookup_element(&self, name: &str, qname: &str) -> Option<&ElementDef> {
+        self.schema
+            .get_element(qname)
+            .or_else(|| self.schema.get_element(name))
+    }
+
+    /// Extracts child element occurrence constraints from an element definition.
+    fn get_child_constraints_for_element(&self, elem: &ElementDef) -> HashMap<String, (u32, Option<u32>)> {
+        // Try to get the type definition
+        let type_def = if let Some(ref type_ref) = elem.type_ref {
+            self.schema.get_type(type_ref)
+        } else {
+            elem.inline_type.as_ref()
+        };
+
+        let Some(type_def) = type_def else {
+            return HashMap::new();
+        };
+
+        let mut constraints = HashMap::new();
+
+        if let TypeDef::Complex(complex) = type_def {
+            let elements = match &complex.content {
+                ContentModel::Sequence(elems)
+                | ContentModel::Choice(elems)
+                | ContentModel::All(elems) => elems,
+                ContentModel::ComplexExtension { elements, .. } => elements,
+                _ => return constraints,
+            };
+
+            for elem in elements {
+                constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+            }
+        }
+
+        constraints
+    }
+
+    /// Creates FacetConstraints from a SimpleType definition.
+    fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
+        let mut constraints = FacetConstraints::new();
+
+        if let Some(min_len) = simple.min_length {
+            constraints = constraints.with_min_length(min_len as usize);
+        }
+        if let Some(max_len) = simple.max_length {
+            constraints = constraints.with_max_length(max_len as usize);
+        }
+        if let Some(ref min_inc) = simple.min_inclusive {
+            constraints = constraints.with_min_inclusive(min_inc.clone());
+        }
+        if let Some(ref max_inc) = simple.max_inclusive {
+            constraints = constraints.with_max_inclusive(max_inc.clone());
+        }
+        if !simple.enumeration.is_empty() {
+            constraints = constraints.with_enumeration(simple.enumeration.clone());
+        }
+        if let Some(ref pattern) = simple.pattern {
+            constraints = constraints.with_pattern(pattern.clone());
+        }
+
+        constraints
+    }
+
     fn validate_element(
         &mut self,
         name: &str,
         prefix: Option<&str>,
-        namespace: Option<&str>,
+        _namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
         let qname = match prefix {
@@ -261,19 +333,27 @@ impl StreamingSchemaValidator {
             _ => name.to_string(),
         };
 
-        // Look up element in schema - check existence first
-        let element_found =
-            self.schema.get_element(&qname).is_some() || self.schema.get_element(name).is_some();
+        // Look up element in schema
+        let elem_def = self.lookup_element(name, &qname);
         let schema_has_elements = !self.schema.elements.is_empty();
 
-        if element_found {
-            // Element found in schema - validate it
-            self.validate_known_element(name, namespace, attributes);
+        if let Some(elem) = elem_def {
+            // Get type information for this element
+            let type_ref = elem.type_ref.clone();
+            let expected_children = self.get_child_constraints_for_element(elem);
+
+            // Check max_occurs against parent's expected constraints
+            self.validate_max_occurs(name);
+
+            // Update current element context with type info
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.type_ref = type_ref;
+                ctx.expected_children = expected_children;
+            }
         } else {
             // Element not found in schema
             if self.mode == ValidationMode::Strict && schema_has_elements {
-                // Only report unknown elements if schema has elements defined
-                // and we're in strict mode
                 let error = self
                     .make_error(
                         ValidationErrorType::UnknownElement,
@@ -289,27 +369,33 @@ impl StreamingSchemaValidator {
         self.validate_attributes(name, attributes);
     }
 
-    fn validate_known_element(
-        &mut self,
-        name: &str,
-        _namespace: Option<&str>,
-        _attributes: &[(&str, &str)],
-    ) {
-        // Mark current element as schema validated
-        if let Some(ctx) = self.state.current_element_mut() {
-            ctx.schema_validated = true;
+    /// Validates that an element doesn't exceed its max_occurs constraint.
+    fn validate_max_occurs(&mut self, child_name: &str) {
+        if self.state.element_stack.len() < 2 {
+            return;
         }
 
-        // Check occurrence constraints against parent's child counts
-        if self.state.element_stack.len() > 1 {
-            let parent_idx = self.state.element_stack.len() - 2;
-            if let Some(parent) = self.state.element_stack.get(parent_idx) {
-                let count = parent.get_child_count(name);
+        let parent_idx = self.state.element_stack.len() - 2;
+        if let Some(parent) = self.state.element_stack.get(parent_idx) {
+            let count = parent.get_child_count(child_name);
 
-                // TODO: Get max_occurs from schema and validate
-                // For now, we don't have occurrence info easily accessible
-                // This would require looking up the parent's type definition
-                let _ = count; // Suppress unused warning
+            // Check against parent's expected children constraints
+            if let Some(&(_, max_occurs)) = parent.expected_children.get(child_name) {
+                if let Some(max) = max_occurs {
+                    if count > max {
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::TooManyOccurrences,
+                                format!(
+                                    "element '{}' occurs {} times, but maximum is {}",
+                                    child_name, count, max
+                                ),
+                            )
+                            .with_node_name(child_name)
+                            .with_level(ErrorLevel::Error);
+                        self.add_error(error);
+                    }
+                }
             }
         }
     }
@@ -344,12 +430,105 @@ impl StreamingSchemaValidator {
         if let Some(ctx) = self.state.pop_element() {
             // Validate text content if element has a type
             if !ctx.text_content.is_empty() {
-                // TODO: Validate text content against element type
-                // This requires looking up the element's type definition
+                self.validate_text_content_against_type(&ctx);
             }
 
-            // Validate required children were present
-            // TODO: Check minOccurs constraints
+            // Validate required children were present (minOccurs)
+            self.validate_min_occurs(&ctx);
+        }
+    }
+
+    /// Validates text content against the element's type definition.
+    fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
+        if let Some(ref type_ref) = ctx.type_ref {
+            if let Some(type_def) = self.schema.get_type(type_ref) {
+                match type_def {
+                    TypeDef::Simple(simple) => {
+                        let constraints = self.create_facet_constraints(simple);
+                        let validator = FacetValidator::new(&constraints);
+                        if let Err(facet_error) = validator.validate(&ctx.text_content) {
+                            let error = self
+                                .make_error(
+                                    ValidationErrorType::InvalidContent,
+                                    format!(
+                                        "invalid content for element '{}': {}",
+                                        ctx.name, facet_error
+                                    ),
+                                )
+                                .with_node_name(&ctx.name)
+                                .with_level(ErrorLevel::Error);
+                            self.add_error(error);
+                        }
+                    }
+                    TypeDef::Complex(complex) => {
+                        // For complex types with simple content, validate the base type
+                        if let ContentModel::SimpleContent { base_type } = &complex.content {
+                            if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
+                                let constraints = self.create_facet_constraints(simple);
+                                let validator = FacetValidator::new(&constraints);
+                                if let Err(facet_error) = validator.validate(&ctx.text_content) {
+                                    let error = self
+                                        .make_error(
+                                            ValidationErrorType::InvalidContent,
+                                            format!(
+                                                "invalid content for element '{}': {}",
+                                                ctx.name, facet_error
+                                            ),
+                                        )
+                                        .with_node_name(&ctx.name)
+                                        .with_level(ErrorLevel::Error);
+                                    self.add_error(error);
+                                }
+                            }
+                        } else if !complex.mixed {
+                            // Non-mixed complex types shouldn't have text content
+                            let trimmed = ctx.text_content.trim();
+                            if !trimmed.is_empty() {
+                                let error = self
+                                    .make_error(
+                                        ValidationErrorType::InvalidContent,
+                                        format!(
+                                            "element '{}' has element-only content but contains text",
+                                            ctx.name
+                                        ),
+                                    )
+                                    .with_node_name(&ctx.name)
+                                    .with_level(ErrorLevel::Error);
+                                self.add_error(error);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Validates that all required child elements are present (minOccurs).
+    fn validate_min_occurs(&mut self, ctx: &ElementContext) {
+        for (child_name, &(min_occurs, _)) in &ctx.expected_children {
+            if min_occurs > 0 {
+                let actual_count = ctx.get_child_count(child_name);
+                if actual_count < min_occurs {
+                    let error_type = if actual_count == 0 {
+                        ValidationErrorType::MissingRequiredElement
+                    } else {
+                        ValidationErrorType::TooFewOccurrences
+                    };
+                    let error = self
+                        .make_error(
+                            error_type,
+                            format!(
+                                "element '{}' requires child '{}' at least {} time(s), but found {}",
+                                ctx.name, child_name, min_occurs, actual_count
+                            ),
+                        )
+                        .with_node_name(&ctx.name)
+                        .with_expected(&format!("at least {} occurrence(s) of '{}'", min_occurs, child_name))
+                        .with_found(&format!("{} occurrence(s)", actual_count))
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
         }
     }
 }

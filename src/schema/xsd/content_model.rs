@@ -252,6 +252,8 @@ struct OccurrenceState {
     counts: HashMap<String, u32>,
     /// Current position in sequence
     sequence_position: usize,
+    /// Count of xs:any matches per index (for multiple xs:any in same content model)
+    any_counts: HashMap<usize, u32>,
 }
 
 impl OccurrenceState {
@@ -267,6 +269,16 @@ impl OccurrenceState {
 
     fn get_count(&self, name: &str) -> u32 {
         *self.counts.get(name).unwrap_or(&0)
+    }
+
+    fn increment_any(&mut self, index: usize) -> u32 {
+        let count = self.any_counts.entry(index).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    fn get_any_count(&self, index: usize) -> u32 {
+        *self.any_counts.get(&index).unwrap_or(&0)
     }
 }
 
@@ -399,9 +411,14 @@ impl ContentModelValidator {
                         return Ok(());
                     }
                 }
-                ContentModelItem::Any { .. } => {
-                    // Any element matches
-                    self.state.increment(name);
+                ContentModelItem::Any { occurrence, .. } => {
+                    // Any element matches - check occurrence constraint
+                    let count = self.state.get_any_count(idx);
+                    if !occurrence.can_add_more(count) {
+                        continue; // This xs:any is full, try next item
+                    }
+                    self.state.increment_any(idx);
+                    self.state.sequence_position = idx;
                     return Ok(());
                 }
             }
@@ -412,6 +429,7 @@ impl ContentModelValidator {
             .iter()
             .filter_map(|item| match item {
                 ContentModelItem::Element(e) => Some(e.name.clone()),
+                ContentModelItem::Any { .. } => Some("(any)".to_string()),
                 _ => None,
             })
             .collect();
@@ -428,7 +446,7 @@ impl ContentModelValidator {
         elements: &[ContentModelItem],
     ) -> Result<(), ContentModelError> {
         // In a choice, any one element is valid
-        for item in elements {
+        for (idx, item) in elements.iter().enumerate() {
             match item {
                 ContentModelItem::Element(elem) => {
                     if elem.name == name {
@@ -449,8 +467,12 @@ impl ContentModelValidator {
                         return Ok(());
                     }
                 }
-                ContentModelItem::Any { .. } => {
-                    self.state.increment(name);
+                ContentModelItem::Any { occurrence, .. } => {
+                    let count = self.state.get_any_count(idx);
+                    if !occurrence.can_add_more(count) {
+                        continue;
+                    }
+                    self.state.increment_any(idx);
                     return Ok(());
                 }
             }
@@ -477,7 +499,7 @@ impl ContentModelValidator {
     ) -> Result<(), ContentModelError> {
         // In an all group, elements can appear in any order
         // but each must appear exactly according to its occurrence
-        for item in elements {
+        for (idx, item) in elements.iter().enumerate() {
             match item {
                 ContentModelItem::Element(elem) => {
                     if elem.name == name {
@@ -498,8 +520,12 @@ impl ContentModelValidator {
                         return Ok(());
                     }
                 }
-                ContentModelItem::Any { .. } => {
-                    self.state.increment(name);
+                ContentModelItem::Any { occurrence, .. } => {
+                    let count = self.state.get_any_count(idx);
+                    if !occurrence.can_add_more(count) {
+                        continue;
+                    }
+                    self.state.increment_any(idx);
                     return Ok(());
                 }
             }
@@ -509,6 +535,7 @@ impl ContentModelValidator {
             .iter()
             .filter_map(|item| match item {
                 ContentModelItem::Element(e) => Some(e.name.clone()),
+                ContentModelItem::Any { .. } => Some("(any)".to_string()),
                 _ => None,
             })
             .collect();
@@ -528,11 +555,20 @@ impl ContentModelValidator {
         match group.compositor_type {
             CompositorType::Choice => {
                 // For choice, at least one item must have been provided
-                let any_provided = group.elements.iter().any(|item| match item {
-                    ContentModelItem::Element(elem) => self.state.get_count(&elem.name) > 0,
-                    ContentModelItem::Group(nested) => self.validate_complete_group(nested).is_ok(),
-                    ContentModelItem::Any { .. } => true,
-                });
+                let any_provided =
+                    group
+                        .elements
+                        .iter()
+                        .enumerate()
+                        .any(|(idx, item)| match item {
+                            ContentModelItem::Element(elem) => {
+                                self.state.get_count(&elem.name) > 0
+                            }
+                            ContentModelItem::Group(nested) => {
+                                self.validate_complete_group(nested).is_ok()
+                            }
+                            ContentModelItem::Any { .. } => self.state.get_any_count(idx) > 0,
+                        });
                 if !any_provided && group.occurrence.min > 0 {
                     return Err(ContentModelError::InvalidState {
                         message: "choice requires at least one element".into(),
@@ -542,7 +578,7 @@ impl ContentModelValidator {
             }
             CompositorType::Sequence | CompositorType::All => {
                 // For sequence and all, all required items must be provided
-                for item in &group.elements {
+                for (idx, item) in group.elements.iter().enumerate() {
                     match item {
                         ContentModelItem::Element(elem) => {
                             let count = self.state.get_count(&elem.name);
@@ -558,11 +594,13 @@ impl ContentModelValidator {
                             self.validate_complete_group(nested)?;
                         }
                         ContentModelItem::Any { occurrence, .. } => {
-                            // xs:any validation - typically more lenient
-                            let count = 0; // TODO: track any element counts
+                            // xs:any validation - check occurrence constraint
+                            let count = self.state.get_any_count(idx);
                             if !occurrence.min_satisfied(count) {
-                                return Err(ContentModelError::InvalidState {
-                                    message: "required xs:any element missing".into(),
+                                return Err(ContentModelError::TooFewOccurrences {
+                                    element: "(any)".to_string(),
+                                    expected: occurrence.min,
+                                    found: count,
                                 });
                             }
                         }

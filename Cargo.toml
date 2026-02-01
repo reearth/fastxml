@@ -35,6 +35,9 @@ compact_str = "0.8"
 # Hashing
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
 
+# Regular expressions (for XSD pattern facet validation)
+regex = "1"
+
 # URL parsing
 url = "2"
 

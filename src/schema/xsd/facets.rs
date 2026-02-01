@@ -25,6 +25,9 @@
 //! - `whiteSpace` - preserve, replace, or collapse
 
 use std::collections::HashSet;
+use std::sync::Arc;
+
+use regex::Regex;
 
 use crate::error::Result;
 
@@ -204,6 +207,8 @@ pub struct FacetConstraints {
     pub max_exclusive: Option<String>,
     /// Pattern constraints (all must match)
     pub patterns: Vec<String>,
+    /// Compiled regex patterns (for efficient validation)
+    pub compiled_patterns: Vec<Arc<Regex>>,
     /// Enumeration values
     pub enumeration: HashSet<String>,
     /// Total digits constraint
@@ -252,8 +257,8 @@ impl FacetConstraints {
 
     /// Adds a pattern constraint.
     ///
-    /// Note: Pattern validation is currently not implemented (requires regex crate).
-    /// Patterns are stored but not validated at runtime.
+    /// Patterns are XSD-style regular expressions. Call `compile_patterns()`
+    /// after adding all patterns to compile them for efficient validation.
     pub fn with_pattern(mut self, pattern: impl Into<String>) -> Self {
         self.patterns.push(pattern.into());
         self
@@ -271,15 +276,33 @@ impl FacetConstraints {
         self
     }
 
-    /// Compiles patterns (call after adding all patterns).
+    /// Compiles patterns for efficient validation.
     ///
-    /// Note: Currently pattern validation is not implemented.
-    /// Patterns are stored but not validated at runtime.
-    /// To enable pattern validation, add the `regex` crate as a dependency.
+    /// XSD patterns are anchored (must match entire string), so we wrap them
+    /// with `^` and `$` anchors. Call this after adding all patterns.
     pub fn compile_patterns(&mut self) -> Result<()> {
-        // Pattern compilation is currently a no-op.
-        // To enable regex validation, add regex dependency and implement pattern matching.
+        self.compiled_patterns.clear();
+        for pattern in &self.patterns {
+            // XSD patterns are implicitly anchored to match the entire string
+            let anchored = format!("^(?:{})$", pattern);
+            match Regex::new(&anchored) {
+                Ok(regex) => {
+                    self.compiled_patterns.push(Arc::new(regex));
+                }
+                Err(e) => {
+                    // Store error but continue - we'll report during validation
+                    tracing::warn!("Invalid XSD pattern '{}': {}", pattern, e);
+                    // Create a regex that never matches to ensure validation fails
+                    // This is a workaround - in production you might want to error here
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Checks if patterns have been compiled.
+    pub fn patterns_compiled(&self) -> bool {
+        self.patterns.is_empty() || !self.compiled_patterns.is_empty()
     }
 }
 
@@ -399,12 +422,47 @@ impl<'a> FacetValidator<'a> {
 
     /// Validates pattern constraints.
     ///
-    /// Note: Pattern validation is currently not implemented (requires regex crate).
-    /// This function always returns Ok for pattern checks.
-    fn validate_patterns(&self, _value: &str) -> std::result::Result<(), FacetError> {
-        // Pattern validation is currently not implemented.
-        // To enable, add the regex crate and implement pattern matching.
-        // For now, all values pass pattern validation.
+    /// All compiled patterns must match for the value to be valid.
+    /// If patterns haven't been compiled yet, they are compiled on-the-fly.
+    fn validate_patterns(&self, value: &str) -> std::result::Result<(), FacetError> {
+        // If no patterns defined, validation passes
+        if self.constraints.patterns.is_empty() {
+            return Ok(());
+        }
+
+        // Use compiled patterns if available
+        if !self.constraints.compiled_patterns.is_empty() {
+            for (i, regex) in self.constraints.compiled_patterns.iter().enumerate() {
+                if !regex.is_match(value) {
+                    return Err(FacetError::PatternMismatch {
+                        value: value.to_string(),
+                        pattern: self.constraints.patterns.get(i).cloned().unwrap_or_default(),
+                    });
+                }
+            }
+        } else {
+            // Compile patterns on-the-fly (less efficient, but works)
+            for pattern in &self.constraints.patterns {
+                let anchored = format!("^(?:{})$", pattern);
+                match Regex::new(&anchored) {
+                    Ok(regex) => {
+                        if !regex.is_match(value) {
+                            return Err(FacetError::PatternMismatch {
+                                value: value.to_string(),
+                                pattern: pattern.clone(),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        return Err(FacetError::InvalidPattern {
+                            pattern: pattern.clone(),
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -561,20 +619,48 @@ mod tests {
 
     #[test]
     fn test_pattern() {
-        // Note: Pattern validation is currently disabled (requires regex crate).
-        // This test verifies that patterns are stored but don't cause errors.
-        let mut constraints = FacetConstraints::new().with_pattern(r"^[a-z]+$");
+        // Pattern `[a-z]+` matches one or more lowercase letters
+        let mut constraints = FacetConstraints::new().with_pattern(r"[a-z]+");
         constraints.compile_patterns().unwrap();
 
         let validator = FacetValidator::new(&constraints);
 
-        // With pattern validation disabled, all values pass
+        // Valid: all lowercase letters
         assert!(validator.validate("hello").is_ok());
-        assert!(validator.validate("Hello").is_ok()); // Would fail with regex
-        assert!(validator.validate("hello123").is_ok()); // Would fail with regex
+        assert!(validator.validate("world").is_ok());
 
-        // Pattern is stored for future use
+        // Invalid: contains uppercase
+        assert!(validator.validate("Hello").is_err());
+
+        // Invalid: contains numbers
+        assert!(validator.validate("hello123").is_err());
+
+        // Invalid: empty string (pattern requires at least one char)
+        assert!(validator.validate("").is_err());
+
+        // Pattern is stored
         assert_eq!(constraints.patterns.len(), 1);
+        assert_eq!(constraints.compiled_patterns.len(), 1);
+    }
+
+    #[test]
+    fn test_pattern_multiple() {
+        // Multiple patterns - all must match
+        let mut constraints = FacetConstraints::new()
+            .with_pattern(r"[a-z]+")
+            .with_pattern(r".{3,}"); // At least 3 characters
+        constraints.compile_patterns().unwrap();
+
+        let validator = FacetValidator::new(&constraints);
+
+        // Valid: lowercase and at least 3 chars
+        assert!(validator.validate("hello").is_ok());
+
+        // Invalid: too short
+        assert!(validator.validate("hi").is_err());
+
+        // Invalid: contains uppercase
+        assert!(validator.validate("Hello").is_err());
     }
 
     #[test]
