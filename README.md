@@ -10,7 +10,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 ## Features
 
 - **Pure Rust**: No C dependencies, no unsafe code
-- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, but **17x more memory efficient**
+- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, with **3,600x better memory efficiency** in streaming mode
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
 - **DOM Modification**: Mutable node API and streaming XPath-based transformation
@@ -21,36 +21,6 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 - **CityGML Ready**: Optimized for PLATEAU/CityGML document processing
 
 ## Performance
-
-### PLATEAU CityGML Benchmark (10.5 GB, 23 files)
-
-| Metric | DOM | Streaming | Improvement |
-|--------|-----|-----------|-------------|
-| Parse + Validate | 1,008s | 548s | **1.84x faster** |
-| Parse Throughput | 25.51 MB/s | 25.63 MB/s | - |
-| Validate Throughput | 10.38 MB/s | 19.10 MB/s | **1.84x faster** |
-| Peak Memory | 2,635 MB | 231 MB | **11.4x less** |
-
-### Throughput
-
-| Pattern | DOM Parse | Streaming | XPath |
-|---------|-----------|-----------|-------|
-| Many Elements (100K) | 52 MB/s | 90 MB/s | - |
-| Deep Nesting (500) | 99 MB/s | 154 MB/s | - |
-| Large Content (1MB) | 3.4 GB/s | 3.5 GB/s | - |
-| CityGML (1000 buildings) | 70 MB/s | 117 MB/s | 54 MB/s |
-
-### Memory Efficiency
-
-| XML Size | DOM Memory | Streaming Memory |
-|----------|------------|------------------|
-| 41 MB | +128 MB | +48 KB |
-| 208 MB | - | +1.3 MB |
-| 840 MB | - | +1.1 MB |
-| 1.23 GB | - | +1.1 MB |
-| **2.06 GB** | - | **+1.4 MB** |
-
-Streaming uses **~11x less memory** than DOM for large files with schema validation.
 
 ### Comparison with libxml
 
@@ -67,15 +37,18 @@ fastxml is designed as a drop-in replacement for libxml in Rust projects:
 
 **Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes):
 
-| Metric | libxml | fastxml | Comparison |
-|--------|--------|---------|------------|
-| Parse Time | 3.51s | 4.02s | libxml 1.14x faster |
-| Throughput | 258 MB/s | 226 MB/s | - |
-| Memory | **4.19 GB** | **244 MB** | **fastxml 17x less** |
+| Mode | Time | Throughput | Memory |
+|------|------|------------|--------|
+| libxml DOM | 3.41s | 266 MB/s | **3.78 GB** |
+| fastxml DOM | 4.23s | 214 MB/s | 1.02 GB |
+| fastxml Streaming | 3.21s | 282 MB/s | **1.05 MB** |
 
-fastxml trades ~14% speed for **17x better memory efficiency**, making it ideal for processing large XML files on memory-constrained systems.
+- **DOM**: fastxml uses **3.7x less memory** than libxml (trades ~20% speed)
+- **Streaming**: fastxml uses **3,600x less memory** than libxml DOM, and is **faster**
 
-**Compatibility Testing**: 38 parse/XPath tests are verified against libxml2 to ensure consistent results. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
+fastxml's streaming mode is ideal for processing large XML files on memory-constrained systems.
+
+**Compatibility Testing**: Parsing, XPath, and validation results are verified against libxml2. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
 
 ## Installation
 
@@ -369,161 +342,6 @@ println!("Found {} buildings", buildings.into_nodes().len());
 let heights = evaluate(&doc, "//*[name()='measuredHeight']/text()")?;
 ```
 
-## Load Testing
-
-### Run Benchmarks
-
-```bash
-cargo bench --bench load_test
-```
-
-### CLI Load Test Tool
-
-Supports both synthetic data generation and real file benchmarking.
-
-#### Synthetic Data (Pattern Mode)
-
-```bash
-# Many elements pattern
-cargo run --release --example load_test_cli -- \
-    --pattern many-elements --size 100000
-
-# CityGML pattern (simulates PLATEAU data)
-cargo run --release --example load_test_cli -- \
-    --pattern citygml --size 50000 --mode streaming
-
-# Deep nesting
-cargo run --release --example load_test_cli -- \
-    --pattern deep-nesting --size 500
-
-# Large content per element
-cargo run --release --example load_test_cli -- \
-    --pattern large-content --size 1000
-```
-
-#### Real Files (Local or URL)
-
-```bash
-# Local files
-cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
-
-# URLs (requires sync feature)
-cargo run --release --features ureq --example load_test_cli -- \
-    https://example.com/citygml/file.xml
-
-# From stdin (one URL/path per line)
-cat urls.txt | cargo run --release --features ureq --example load_test_cli
-
-# With schema validation
-cargo run --release --example load_test_cli -- --validate ./document.xml
-
-# Compare with libxml (requires libxml2-dev)
-cargo run --release --features compare-libxml --example load_test_cli -- \
-    --mode dom ./large_file.xml
-```
-
-#### Options
-
-| Option | Description |
-|--------|-------------|
-| `--pattern <PATTERN>` | Synthetic data: `many-elements`, `deep-nesting`, `large-content`, `citygml` |
-| `--size <SIZE>` | Size for pattern (element count, depth, KB, or building count) |
-| `--mode <MODE>` | Processing mode: `dom`, `streaming`, or `both` (default) |
-| `--iterations <N>` | Number of iterations (default: 3) |
-| `--validate` | Enable schema validation benchmark |
-| `--cache-dir <DIR>` | Cache directory for downloaded URLs (default: `benches/cache`) |
-
-## API Reference
-
-### Core Functions
-
-```rust
-// Parse XML into DOM
-fn parse<T: AsRef<[u8]>>(xml: T) -> Result<XmlDocument>
-
-// Evaluate XPath expression
-fn evaluate(doc: &XmlDocument, xpath: &str) -> Result<XPathResult>
-
-// Get root node
-fn get_root_node(doc: &XmlDocument) -> Result<XmlNode>
-
-// Serialize node to string
-fn node_to_xml_string(doc: &XmlDocument, node: &mut XmlNode) -> Result<String>
-```
-
-### Streaming API
-
-```rust
-// Create streaming parser
-let parser = StreamingParser::new(reader);
-
-// Add event handlers
-parser.add_handler(Box::new(handler));
-
-// Parse document
-parser.parse()?;
-```
-
-### Schema Validation
-
-```rust
-// Parse XSD schema and create validation context
-let xsd_content = std::fs::read("schema.xsd")?;
-let schema = fastxml::parse_xsd(&xsd_content)?;
-
-// Create validation context
-let ctx = create_xml_schema_validation_context_from_buffer(&xsd_content)?;
-
-// Validate document
-let errors = validate_document_by_schema(&doc, schema_location)?;
-
-// Streaming validation
-let validator = StreamingSchemaValidator::new(Arc::new(schema));
-parser.add_handler(Box::new(validator));
-```
-
-### XSD Parsing with Import Resolution
-
-```rust
-use fastxml::schema::{parse_xsd_with_imports, UreqFetcher, TempDirStore};
-
-// Create fetcher and store for resolving imports
-let fetcher = UreqFetcher::new();
-let store = TempDirStore::new()?;
-
-// Parse XSD with all dependencies resolved
-let schema = parse_xsd_with_imports(
-    xsd_content,
-    "https://example.com/schema.xsd",
-    &fetcher,
-    &store,
-)?;
-```
-
-## Testing
-
-The library has comprehensive test coverage with **350+ tests** across all modules:
-
-| Test Suite | Tests | Description |
-|------------|-------|-------------|
-| Unit tests | 154 | Core parsing, XPath, schema compilation |
-| Error handling | 47 | Error types and messages |
-| Parse tests | 23 | DOM parsing (22 with libxml comparison) |
-| XPath tests | 16 | XPath evaluation (all with libxml comparison) |
-| Validation tests | 38 | XSD schema validation |
-| Integration tests | 70+ | CityGML patterns, streaming, benchmarks |
-
-```bash
-# Run all tests
-cargo test
-
-# Run with libxml comparison (requires libxml2-dev)
-cargo test --features compare-libxml
-
-# Run benchmarks
-cargo bench
-```
-
 ## Limitations
 
 ### XPath
@@ -558,6 +376,34 @@ cargo bench
 - XQuery, DTD validation, XSLT, XInclude, XML Signature/Encryption
 - Catalog support
 - Entity expansion (basic only)
+
+## Development
+
+```bash
+cargo test                              # Run all tests
+cargo test --features compare-libxml    # With libxml comparison (requires libxml2-dev)
+cargo bench                             # Run benchmarks
+```
+
+### Load Test CLI
+
+```bash
+# Synthetic data
+cargo run --release --example load_test_cli -- --pattern citygml --size 50000
+
+# Real files
+cargo run --release --example load_test_cli -- ./file.xml
+
+# Compare with libxml
+cargo run --release --features compare-libxml --example load_test_cli -- --mode dom ./file.xml
+```
+
+| Option | Description |
+|--------|-------------|
+| `--pattern <PATTERN>` | `many-elements`, `deep-nesting`, `large-content`, `citygml` |
+| `--size <SIZE>` | Size for pattern |
+| `--mode <MODE>` | `dom`, `streaming`, or `both` (default) |
+| `--validate` | Enable schema validation |
 
 ## License
 
