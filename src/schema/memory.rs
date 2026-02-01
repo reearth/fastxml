@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use dashmap::DashMap;
 
-use crate::error::Result;
 use super::store::SchemaStore;
+use crate::error::Result;
 
 /// Schema store using in-memory storage.
 ///

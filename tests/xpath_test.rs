@@ -1,7 +1,9 @@
 //! Integration tests for XPath evaluation.
 
-use fastxml::{parse, evaluate, create_context, find_readonly_nodes_by_xpath, get_root_readonly_node};
 use fastxml::xpath::collect_text_values;
+use fastxml::{
+    create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node, parse,
+};
 
 #[test]
 fn test_xpath_simple_path() {
@@ -190,7 +192,11 @@ fn test_xpath_citysgml_style() {
     </gml:Dictionary>"#;
     let doc = parse(xml).unwrap();
 
-    let result = evaluate(&doc, "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name").unwrap();
+    let result = evaluate(
+        &doc,
+        "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name",
+    )
+    .unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts.len(), 2);
     assert!(texts.contains(&"Value1".to_string()));

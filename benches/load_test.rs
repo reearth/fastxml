@@ -6,20 +6,18 @@
 //! - Large content per element
 //! - CityGML-style documents
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::io::{BufRead, Read as _};
 use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::error::Result;
+use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
+use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
 use fastxml::schema::types::{CompiledSchema, ElementDef};
 use fastxml::schema::validator::StreamingSchemaValidator;
-use fastxml::{parse, evaluate};
+use fastxml::{evaluate, parse};
 
 // =============================================================================
 // Streaming SAX Handler for Counting
@@ -123,17 +121,37 @@ fn create_test_schema(with_namespaces: bool) -> Arc<CompiledSchema> {
     if with_namespaces {
         // CityGML-style schema
         schema.target_namespace = Some("http://www.opengis.net/citygml/2.0".to_string());
-        schema.elements.insert("core:CityModel".to_string(), ElementDef::new("CityModel"));
-        schema.elements.insert("bldg:Building".to_string(), ElementDef::new("Building"));
-        schema.elements.insert("bldg:measuredHeight".to_string(), ElementDef::new("measuredHeight"));
-        schema.elements.insert("gml:name".to_string(), ElementDef::new("name"));
-        schema.elements.insert("bldg:lod0FootPrint".to_string(), ElementDef::new("lod0FootPrint"));
+        schema
+            .elements
+            .insert("core:CityModel".to_string(), ElementDef::new("CityModel"));
+        schema
+            .elements
+            .insert("bldg:Building".to_string(), ElementDef::new("Building"));
+        schema.elements.insert(
+            "bldg:measuredHeight".to_string(),
+            ElementDef::new("measuredHeight"),
+        );
+        schema
+            .elements
+            .insert("gml:name".to_string(), ElementDef::new("name"));
+        schema.elements.insert(
+            "bldg:lod0FootPrint".to_string(),
+            ElementDef::new("lod0FootPrint"),
+        );
     } else {
         // Simple schema for many-elements pattern
-        schema.elements.insert("root".to_string(), ElementDef::new("root"));
-        schema.elements.insert("element".to_string(), ElementDef::new("element"));
-        schema.elements.insert("item".to_string(), ElementDef::new("item"));
-        schema.elements.insert("data".to_string(), ElementDef::new("data"));
+        schema
+            .elements
+            .insert("root".to_string(), ElementDef::new("root"));
+        schema
+            .elements
+            .insert("element".to_string(), ElementDef::new("element"));
+        schema
+            .elements
+            .insert("item".to_string(), ElementDef::new("item"));
+        schema
+            .elements
+            .insert("data".to_string(), ElementDef::new("data"));
     }
 
     Arc::new(schema)
@@ -155,30 +173,22 @@ fn bench_many_elements(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("dom_parse", count),
-            &xml,
-            |b, xml| {
-                b.iter(|| {
-                    let doc = parse(black_box(xml)).unwrap();
-                    black_box(doc.node_count())
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("dom_parse", count), &xml, |b, xml| {
+            b.iter(|| {
+                let doc = parse(black_box(xml)).unwrap();
+                black_box(doc.node_count())
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("streaming", count),
-            &xml,
-            |b, xml| {
-                b.iter(|| {
-                    let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("streaming", count), &xml, |b, xml| {
+            b.iter(|| {
+                let reader = std::io::Cursor::new(black_box(xml));
+                let mut parser = StreamingParser::new(reader);
+                let handler = CountingHandler::new();
+                parser.add_handler(Box::new(handler));
+                parser.parse().unwrap()
+            })
+        });
     }
 
     group.finish();
@@ -199,30 +209,22 @@ fn bench_deep_nesting(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("dom_parse", depth),
-            &xml,
-            |b, xml| {
-                b.iter(|| {
-                    let doc = parse(black_box(xml)).unwrap();
-                    black_box(doc.node_count())
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("dom_parse", depth), &xml, |b, xml| {
+            b.iter(|| {
+                let doc = parse(black_box(xml)).unwrap();
+                black_box(doc.node_count())
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("streaming", depth),
-            &xml,
-            |b, xml| {
-                b.iter(|| {
-                    let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("streaming", depth), &xml, |b, xml| {
+            b.iter(|| {
+                let reader = std::io::Cursor::new(black_box(xml));
+                let mut parser = StreamingParser::new(reader);
+                let handler = CountingHandler::new();
+                parser.add_handler(Box::new(handler));
+                parser.parse().unwrap()
+            })
+        });
     }
 
     group.finish();

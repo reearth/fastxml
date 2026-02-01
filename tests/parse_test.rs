@@ -1,6 +1,6 @@
 //! Integration tests for XML parsing.
 
-use fastxml::{parse, get_root_node, get_node_tag};
+use fastxml::{get_node_tag, get_root_node, parse};
 
 #[test]
 fn test_parse_simple_xml() {
@@ -26,7 +26,10 @@ fn test_parse_with_attributes() {
     assert_eq!(root.get_attribute("name"), Some("test".to_string()));
 
     let children = root.get_child_elements();
-    assert_eq!(children[0].get_attribute("type"), Some("element".to_string()));
+    assert_eq!(
+        children[0].get_attribute("type"),
+        Some("element".to_string())
+    );
 }
 
 #[test]

@@ -61,16 +61,16 @@ pub mod validator;
 pub mod xsd;
 
 // Re-export main types
-pub use fetcher::{FetchResult, SchemaFetcher, NoopFetcher};
+pub use fetcher::{FetchResult, NoopFetcher, SchemaFetcher};
 pub use memory::InMemoryStore;
 pub use store::SchemaStore;
 pub use tempdir::TempDirStore;
 pub use types::{
-    CompiledSchema, ElementDef, TypeDef, SimpleType, ComplexType,
-    ContentModel, ProcessContents, AttributeDef,
+    AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
+    SimpleType, TypeDef,
 };
 pub use validator::{
-    StreamingSchemaValidator, XmlSchemaValidationContext, ValidationMode,
+    StreamingSchemaValidator, ValidationMode, XmlSchemaValidationContext,
     create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
     validate_document_by_schema, validate_document_by_schema_context,
 };
@@ -85,4 +85,4 @@ pub use fetcher::ReqwestFetcher;
 pub use store::AsyncSchemaStore;
 
 // Re-export XSD parsing functions
-pub use xsd::{parse_xsd, parse_xsd_with_imports, parse_xsd_multiple, create_builtin_schema};
+pub use xsd::{create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports};

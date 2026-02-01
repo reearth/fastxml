@@ -113,31 +113,26 @@
 //! ```
 
 // Core modules
-pub mod types;
+pub mod context;
+pub mod evaluator;
 pub mod lexer;
 pub mod parser;
-pub mod evaluator;
-pub mod context;
+pub mod types;
 
 // New modular implementation
-pub mod functions;
 pub mod axes;
+pub mod functions;
 pub mod operators;
 
 // Re-export main types and functions
 pub use context::{
-    XmlContext, XmlSafeContext,
-    create_context, create_safe_context,
-    find_nodes_by_xpath, find_readonly_nodes_by_xpath,
-    find_safe_readonly_nodes_by_xpath, find_readonly_nodes_in_elements,
+    XmlContext, XmlSafeContext, create_context, create_safe_context, find_nodes_by_xpath,
+    find_readonly_nodes_by_xpath, find_readonly_nodes_in_elements,
+    find_safe_readonly_nodes_by_xpath,
 };
 pub use evaluator::{
-    XPathResult, XPathEvaluator,
-    evaluate, collect_text_values, collect_text_value,
+    XPathEvaluator, XPathResult, collect_text_value, collect_text_values, evaluate,
 };
-pub use parser::{
-    Axis, NodeTest, Predicate, ComparisonOp, Expr, PathExpr, Step,
-    parse_xpath,
-};
-pub use types::{XPathValue, EvaluationContext};
 pub use operators::ArithmeticOp;
+pub use parser::{Axis, ComparisonOp, Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
+pub use types::{EvaluationContext, XPathValue};

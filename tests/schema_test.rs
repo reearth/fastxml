@@ -1,8 +1,7 @@
 //! Integration tests for schema validation.
 
 use fastxml::schema::{
-    TempDirStore, InMemoryStore, SchemaStore,
-    CompiledSchema, ElementDef, ComplexType, ContentModel,
+    CompiledSchema, ComplexType, ContentModel, ElementDef, InMemoryStore, SchemaStore, TempDirStore,
 };
 
 #[test]
@@ -102,7 +101,10 @@ fn test_complex_type() {
 #[test]
 fn test_schema_with_namespace() {
     let schema = CompiledSchema::with_namespace("http://example.com/ns");
-    assert_eq!(schema.target_namespace, Some("http://example.com/ns".to_string()));
+    assert_eq!(
+        schema.target_namespace,
+        Some("http://example.com/ns".to_string())
+    );
 }
 
 #[test]

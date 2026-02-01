@@ -57,7 +57,6 @@ pub enum Token {
     // =========================================================================
     // Functions
     // =========================================================================
-
     /// `not` function
     Not,
     /// `name` function
@@ -128,7 +127,6 @@ pub enum Token {
     // =========================================================================
     // Axes
     // =========================================================================
-
     /// `child` axis
     ChildAxis,
     /// `descendant` axis
@@ -280,7 +278,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Ok(Token::NotEquals)
                 } else {
-                    Err(Error::XPathSyntax(format!("unexpected character '!' at position {}", pos)))
+                    Err(Error::XPathSyntax(format!(
+                        "unexpected character '!' at position {}",
+                        pos
+                    )))
                 }
             }
             '<' => {
@@ -307,21 +308,19 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Ok(Token::DoubleColon)
                 } else {
-                    Err(Error::XPathSyntax(format!("unexpected ':' at position {}", pos)))
+                    Err(Error::XPathSyntax(format!(
+                        "unexpected ':' at position {}",
+                        pos
+                    )))
                 }
             }
-            '\'' | '"' => {
-                self.read_string()
-            }
-            c if c.is_ascii_digit() => {
-                self.read_number()
-            }
-            c if is_name_start_char(c) => {
-                self.read_name_or_keyword()
-            }
-            _ => {
-                Err(Error::XPathSyntax(format!("unexpected character '{}' at position {}", ch, pos)))
-            }
+            '\'' | '"' => self.read_string(),
+            c if c.is_ascii_digit() => self.read_number(),
+            c if is_name_start_char(c) => self.read_name_or_keyword(),
+            _ => Err(Error::XPathSyntax(format!(
+                "unexpected character '{}' at position {}",
+                ch, pos
+            ))),
         }
     }
 
@@ -345,7 +344,11 @@ impl<'a> Lexer<'a> {
 
     fn read_string(&mut self) -> Result<Token> {
         let quote = self.advance().unwrap(); // ' or "
-        let start = self.chars.peek().map(|(i, _)| *i).unwrap_or(self.input.len());
+        let start = self
+            .chars
+            .peek()
+            .map(|(i, _)| *i)
+            .unwrap_or(self.input.len());
         let mut end = start;
 
         while let Some(&(pos, ch)) = self.chars.peek() {
@@ -362,7 +365,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self) -> Result<Token> {
-        let start = self.chars.peek().map(|(i, _)| *i).unwrap_or(self.input.len());
+        let start = self
+            .chars
+            .peek()
+            .map(|(i, _)| *i)
+            .unwrap_or(self.input.len());
         let mut end = start;
         let mut has_dot = false;
 
@@ -389,15 +396,19 @@ impl<'a> Lexer<'a> {
         }
 
         let s = &self.input[start..end];
-        let num: f64 = s.parse().map_err(|_| {
-            Error::XPathSyntax(format!("invalid number '{}'", s))
-        })?;
+        let num: f64 = s
+            .parse()
+            .map_err(|_| Error::XPathSyntax(format!("invalid number '{}'", s)))?;
 
         Ok(Token::Number(num))
     }
 
     fn read_name_or_keyword(&mut self) -> Result<Token> {
-        let start = self.chars.peek().map(|(i, _)| *i).unwrap_or(self.input.len());
+        let start = self
+            .chars
+            .peek()
+            .map(|(i, _)| *i)
+            .unwrap_or(self.input.len());
         let mut end = start;
 
         while let Some(&(pos, ch)) = self.chars.peek() {
@@ -518,55 +529,67 @@ mod tests {
     fn test_simple_path() {
         let mut lexer = Lexer::new("/root/child");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::Slash,
-            Token::Name("root".into()),
-            Token::Slash,
-            Token::Name("child".into()),
-            Token::Eof,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Slash,
+                Token::Name("root".into()),
+                Token::Slash,
+                Token::Name("child".into()),
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_double_slash() {
         let mut lexer = Lexer::new("//element");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::DoubleSlash,
-            Token::Name("element".into()),
-            Token::Eof,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::DoubleSlash,
+                Token::Name("element".into()),
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_predicate() {
         let mut lexer = Lexer::new("//*[name()='Building']");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::DoubleSlash,
-            Token::Asterisk,
-            Token::LeftBracket,
-            Token::NameFn,
-            Token::LeftParen,
-            Token::RightParen,
-            Token::Equals,
-            Token::String("Building".into()),
-            Token::RightBracket,
-            Token::Eof,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::DoubleSlash,
+                Token::Asterisk,
+                Token::LeftBracket,
+                Token::NameFn,
+                Token::LeftParen,
+                Token::RightParen,
+                Token::Equals,
+                Token::String("Building".into()),
+                Token::RightBracket,
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_namespaced() {
         let mut lexer = Lexer::new("/gml:root/gml:child");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::Slash,
-            Token::Name("gml:root".into()),
-            Token::Slash,
-            Token::Name("gml:child".into()),
-            Token::Eof,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Slash,
+                Token::Name("gml:root".into()),
+                Token::Slash,
+                Token::Name("gml:child".into()),
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
@@ -580,13 +603,16 @@ mod tests {
     fn test_axis() {
         let mut lexer = Lexer::new("./child::*");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::Dot,
-            Token::Slash,
-            Token::ChildAxis,
-            Token::DoubleColon,
-            Token::Asterisk,
-            Token::Eof,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Dot,
+                Token::Slash,
+                Token::ChildAxis,
+                Token::DoubleColon,
+                Token::Asterisk,
+                Token::Eof,
+            ]
+        );
     }
 }

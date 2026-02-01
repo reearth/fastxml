@@ -2,19 +2,15 @@
 //!
 //! This file tests all functional requirements from the implementation plan.
 
-use fastxml::{
-    parse, parse_with_options, ParserOptions,
-    evaluate, create_context,
-    find_nodes_by_xpath, find_readonly_nodes_by_xpath,
-    get_root_node, get_root_readonly_node, get_node_tag,
-    node_to_xml_string,
-    parse_schema_locations,
+use fastxml::schema::{
+    InMemoryStore, SchemaStore, TempDirStore, create_xml_schema_validation_context,
+    validate_document_by_schema,
 };
 use fastxml::xpath::collect_text_values;
-use fastxml::schema::{
-    create_xml_schema_validation_context,
-    validate_document_by_schema,
-    TempDirStore, InMemoryStore, SchemaStore,
+use fastxml::{
+    ParserOptions, create_context, evaluate, find_nodes_by_xpath, find_readonly_nodes_by_xpath,
+    get_node_tag, get_root_node, get_root_readonly_node, node_to_xml_string, parse,
+    parse_schema_locations, parse_with_options,
 };
 
 // =============================================================================
@@ -71,7 +67,11 @@ fn test_xpath_pattern_and_not_condition() {
     let doc = parse(xml).unwrap();
 
     // This should match Building and Room but exclude Window
-    let result = evaluate(&doc, "//*[(name()='Building' or name()='Room') and not(name()='Window')]").unwrap();
+    let result = evaluate(
+        &doc,
+        "//*[(name()='Building' or name()='Room') and not(name()='Window')]",
+    )
+    .unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -104,7 +104,11 @@ fn test_xpath_pattern_gml_dictionary() {
     let doc = parse(xml).unwrap();
 
     // Test full path with text()
-    let result = evaluate(&doc, "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name/text()").unwrap();
+    let result = evaluate(
+        &doc,
+        "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name/text()",
+    )
+    .unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts.len(), 3);
     assert!(texts.contains(&"BuildingType1".to_string()));
@@ -129,7 +133,12 @@ fn test_xpath_pattern_uro_building_id() {
     let ctx = create_context(&doc).unwrap();
     let root = get_root_readonly_node(&doc).unwrap();
 
-    let nodes = find_readonly_nodes_by_xpath(&ctx, ".//uro:buildingIDAttribute/uro:BuildingIDAttribute/uro:buildingID", &root).unwrap();
+    let nodes = find_readonly_nodes_by_xpath(
+        &ctx,
+        ".//uro:buildingIDAttribute/uro:BuildingIDAttribute/uro:buildingID",
+        &root,
+    )
+    .unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "buildingID");
     assert_eq!(nodes[0].get_content(), Some("13101-bldg-12345".to_string()));
@@ -466,7 +475,8 @@ fn test_citygml_building_structure() {
     assert_eq!(buildings.len(), 2);
 
     // Get building IDs
-    let ids: Vec<_> = buildings.iter()
+    let ids: Vec<_> = buildings
+        .iter()
         .map(|b| b.get_attribute("gml:id"))
         .collect();
     assert!(ids.contains(&Some("BLD_001".to_string())));
@@ -498,7 +508,11 @@ fn test_citygml_multiple_element_types() {
     assert_eq!(nodes.len(), 2);
 
     // Exclude Window and Door from the bldg: elements
-    let result = evaluate(&doc, "/root/*[not(name()='bldg:Window') and not(name()='bldg:Door')]").unwrap();
+    let result = evaluate(
+        &doc,
+        "/root/*[not(name()='bldg:Window') and not(name()='bldg:Door')]",
+    )
+    .unwrap();
     let nodes = result.into_nodes();
     // Should get: Building, BuildingPart, Room
     assert_eq!(nodes.len(), 3);
@@ -607,7 +621,10 @@ fn test_error_handling_invalid_xml() {
     let result = parse("");
     // Might succeed but have no root - either is acceptable
     if let Ok(doc) = result {
-        assert!(doc.get_root_element().is_err(), "Empty doc should have no root");
+        assert!(
+            doc.get_root_element().is_err(),
+            "Empty doc should have no root"
+        );
     }
 
     // Memory limit should be enforced

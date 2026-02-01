@@ -89,20 +89,15 @@ impl From<quick_xml::events::attributes::AttrError> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Error severity level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum ErrorLevel {
     /// Warning - validation can continue
     Warning,
     /// Error - validation issue but can continue
+    #[default]
     Error,
     /// Fatal - validation cannot continue
     Fatal,
-}
-
-impl Default for ErrorLevel {
-    fn default() -> Self {
-        ErrorLevel::Error
-    }
 }
 
 impl std::fmt::Display for ErrorLevel {

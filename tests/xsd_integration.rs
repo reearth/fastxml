@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use fastxml::schema::xsd;
-use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::event::{XmlEvent, XmlEventHandler};
+use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::xsd;
 
 /// Test parsing a simple CityGML-like schema
 #[test]
@@ -87,38 +87,48 @@ fn test_gml_document_validation() {
     let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
 
     // Simulate parsing a GML document
-    validator.handle(&XmlEvent::StartElement {
-        name: "Envelope".into(),
-        prefix: Some("gml".into()),
-        namespace: Some("http://www.opengis.net/gml/3.2".into()),
-        attributes: vec![
-            ("srsName".into(), "EPSG:6697".into()),
-            ("srsDimension".into(), "3".into()),
-        ],
-        namespace_decls: vec![],
-        line: Some(1),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::StartElement {
+            name: "Envelope".into(),
+            prefix: Some("gml".into()),
+            namespace: Some("http://www.opengis.net/gml/3.2".into()),
+            attributes: vec![
+                ("srsName".into(), "EPSG:6697".into()),
+                ("srsDimension".into(), "3".into()),
+            ],
+            namespace_decls: vec![],
+            line: Some(1),
+        })
+        .unwrap();
 
-    validator.handle(&XmlEvent::StartElement {
-        name: "lowerCorner".into(),
-        prefix: Some("gml".into()),
-        namespace: Some("http://www.opengis.net/gml/3.2".into()),
-        attributes: vec![],
-        namespace_decls: vec![],
-        line: Some(2),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::StartElement {
+            name: "lowerCorner".into(),
+            prefix: Some("gml".into()),
+            namespace: Some("http://www.opengis.net/gml/3.2".into()),
+            attributes: vec![],
+            namespace_decls: vec![],
+            line: Some(2),
+        })
+        .unwrap();
 
-    validator.handle(&XmlEvent::Text("35.0 135.0 0.0".into())).unwrap();
+    validator
+        .handle(&XmlEvent::Text("35.0 135.0 0.0".into()))
+        .unwrap();
 
-    validator.handle(&XmlEvent::EndElement {
-        name: "lowerCorner".into(),
-        prefix: Some("gml".into()),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::EndElement {
+            name: "lowerCorner".into(),
+            prefix: Some("gml".into()),
+        })
+        .unwrap();
 
-    validator.handle(&XmlEvent::EndElement {
-        name: "Envelope".into(),
-        prefix: Some("gml".into()),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::EndElement {
+            name: "Envelope".into(),
+            prefix: Some("gml".into()),
+        })
+        .unwrap();
 
     validator.handle(&XmlEvent::Eof).unwrap();
     validator.finish().unwrap();
@@ -245,7 +255,9 @@ fn test_plateau_iur_extension_pattern() {
     assert!(schema.types.contains_key("BuildingIDAttributeType"));
 
     // Check simple type restriction
-    if let Some(fastxml::schema::types::TypeDef::Simple(st)) = schema.types.get("BuildingIDAttributeType") {
+    if let Some(fastxml::schema::types::TypeDef::Simple(st)) =
+        schema.types.get("BuildingIDAttributeType")
+    {
         assert_eq!(st.base_type.as_deref(), Some("xs:string"));
         assert!(st.pattern.is_some());
         assert_eq!(st.pattern.as_deref(), Some("[0-9]{13}"));
@@ -305,19 +317,23 @@ fn test_streaming_parse_with_validator() {
     let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
 
     // Simulate validation by handling events
-    validator.handle(&XmlEvent::StartElement {
-        name: "Envelope".into(),
-        prefix: Some("gml".into()),
-        namespace: Some("http://www.opengis.net/gml/3.2".into()),
-        attributes: vec![("srsName".into(), "EPSG:6697".into())],
-        namespace_decls: vec![],
-        line: Some(1),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::StartElement {
+            name: "Envelope".into(),
+            prefix: Some("gml".into()),
+            namespace: Some("http://www.opengis.net/gml/3.2".into()),
+            attributes: vec![("srsName".into(), "EPSG:6697".into())],
+            namespace_decls: vec![],
+            line: Some(1),
+        })
+        .unwrap();
 
-    validator.handle(&XmlEvent::EndElement {
-        name: "Envelope".into(),
-        prefix: Some("gml".into()),
-    }).unwrap();
+    validator
+        .handle(&XmlEvent::EndElement {
+            name: "Envelope".into(),
+            prefix: Some("gml".into()),
+        })
+        .unwrap();
 
     validator.finish().unwrap();
 
@@ -352,14 +368,18 @@ fn test_plateau_file_structure() {
             match doc {
                 Ok(doc) => {
                     let root = doc.get_root_element().unwrap();
-                    println!("Successfully parsed: {} (root: {})",
+                    println!(
+                        "Successfully parsed: {} (root: {})",
                         first_file.file_name().to_string_lossy(),
                         root.qname()
                     );
                 }
                 Err(e) => {
-                    println!("Parse error for {}: {}",
-                        first_file.file_name().to_string_lossy(), e);
+                    println!(
+                        "Parse error for {}: {}",
+                        first_file.file_name().to_string_lossy(),
+                        e
+                    );
                 }
             }
         }

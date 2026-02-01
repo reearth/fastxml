@@ -137,13 +137,21 @@ pub fn find_nodes_by_xpath(ctx: &XmlContext, xpath: &str, node: &XmlNode) -> Res
 }
 
 /// Finds read-only nodes by XPath expression.
-pub fn find_readonly_nodes_by_xpath(ctx: &XmlContext, xpath: &str, node: &XmlRoNode) -> Result<Vec<XmlRoNode>> {
+pub fn find_readonly_nodes_by_xpath(
+    ctx: &XmlContext,
+    xpath: &str,
+    node: &XmlRoNode,
+) -> Result<Vec<XmlRoNode>> {
     let result = ctx.find_nodes_from(xpath, &node.clone().into_node())?;
     Ok(result.into_iter().map(XmlRoNode::from_node).collect())
 }
 
 /// Finds read-only nodes by XPath expression using a thread-safe context.
-pub fn find_safe_readonly_nodes_by_xpath(ctx: &XmlSafeContext, xpath: &str, node: &XmlRoNode) -> Result<Vec<XmlRoNode>> {
+pub fn find_safe_readonly_nodes_by_xpath(
+    ctx: &XmlSafeContext,
+    xpath: &str,
+    node: &XmlRoNode,
+) -> Result<Vec<XmlRoNode>> {
     let result = ctx.find_nodes_from(xpath, &node.clone().into_node())?;
     Ok(result.into_iter().map(XmlRoNode::from_node).collect())
 }
@@ -211,12 +219,16 @@ mod tests {
 
     #[test]
     fn test_namespace_registration() {
-        let doc = parse(r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
+        let doc = parse(
+            r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
             <gml:name>test</gml:name>
-        </gml:root>"#).unwrap();
+        </gml:root>"#,
+        )
+        .unwrap();
 
         let mut ctx = create_context(&doc).unwrap();
-        ctx.register_namespace("gml", "http://www.opengis.net/gml").unwrap();
+        ctx.register_namespace("gml", "http://www.opengis.net/gml")
+            .unwrap();
 
         let nodes = ctx.find_nodes("/gml:root/gml:name").unwrap();
         assert_eq!(nodes.len(), 1);

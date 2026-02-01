@@ -223,8 +223,8 @@ impl XmlStreamGenerator {
         let indent = "  ".repeat(self.current_depth);
 
         // Decide whether to go deeper, stay, or go up
-        let should_nest = self.current_depth < self.config.max_depth
-            && self.elements_generated.is_multiple_of(5); // Nest every 5th element
+        let should_nest =
+            self.current_depth < self.config.max_depth && self.elements_generated.is_multiple_of(5); // Nest every 5th element
 
         let element_name = if self.config.with_namespaces {
             match self.elements_generated % 4 {
@@ -246,11 +246,19 @@ impl XmlStreamGenerator {
 
         // Add attributes
         for i in 0..self.config.attribute_count {
-            let _ = write!(self.buffer, " attr{}=\"value{}\"", i, self.elements_generated);
+            let _ = write!(
+                self.buffer,
+                " attr{}=\"value{}\"",
+                i, self.elements_generated
+            );
         }
 
         if self.config.with_namespaces && element_name.contains("Building") {
-            let _ = write!(self.buffer, " gml:id=\"bldg_{:08}\"", self.elements_generated);
+            let _ = write!(
+                self.buffer,
+                " gml:id=\"bldg_{:08}\"",
+                self.elements_generated
+            );
         }
 
         let _ = write!(self.buffer, ">");
@@ -329,7 +337,8 @@ impl Read for XmlStreamGenerator {
         let to_copy = available.min(buf.len());
 
         if to_copy > 0 {
-            buf[..to_copy].copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
+            buf[..to_copy]
+                .copy_from_slice(&self.buffer[self.buffer_pos..self.buffer_pos + to_copy]);
             self.buffer_pos += to_copy;
         }
 

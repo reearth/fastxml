@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use dashmap::DashMap;
 use tempfile::TempDir;
 
-use crate::error::{Error, Result};
 use super::store::SchemaStore;
+use crate::error::{Error, Result};
 
 /// Schema store using a temporary directory.
 ///
@@ -23,8 +23,7 @@ pub struct TempDirStore {
 impl TempDirStore {
     /// Creates a new temporary directory store.
     pub fn new() -> Result<Self> {
-        let dir = TempDir::new()
-            .map_err(Error::Io)?;
+        let dir = TempDir::new().map_err(Error::Io)?;
 
         Ok(Self {
             dir,
@@ -34,8 +33,7 @@ impl TempDirStore {
 
     /// Creates a store with a custom prefix for the directory name.
     pub fn with_prefix(prefix: &str) -> Result<Self> {
-        let dir = TempDir::with_prefix(prefix)
-            .map_err(Error::Io)?;
+        let dir = TempDir::with_prefix(prefix).map_err(Error::Io)?;
 
         Ok(Self {
             dir,
@@ -71,7 +69,9 @@ impl TempDirStore {
     fn uri_to_filename(&self, uri: &str) -> String {
         // Convert URI to a safe filename
         let hash = xxhash_rust::xxh64::xxh64(uri.as_bytes(), 0);
-        let extension = uri.rsplit('.').next()
+        let extension = uri
+            .rsplit('.')
+            .next()
             .filter(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
             .unwrap_or("xsd");
 

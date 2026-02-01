@@ -63,9 +63,7 @@ pub fn compare(left: &XPathValue, op: &ComparisonOp, right: &XPathValue) -> bool
         }
 
         // String comparison
-        (XPathValue::String(l), XPathValue::String(r)) => {
-            compare_strings(l, r, op)
-        }
+        (XPathValue::String(l), XPathValue::String(r)) => compare_strings(l, r, op),
     }
 }
 
@@ -299,35 +297,91 @@ mod tests {
 
     #[test]
     fn test_compare_strings_equal() {
-        assert!(compare(&str_val("hello"), &ComparisonOp::Equal, &str_val("hello")));
-        assert!(!compare(&str_val("hello"), &ComparisonOp::Equal, &str_val("world")));
-        assert!(compare(&str_val("hello"), &ComparisonOp::NotEqual, &str_val("world")));
+        assert!(compare(
+            &str_val("hello"),
+            &ComparisonOp::Equal,
+            &str_val("hello")
+        ));
+        assert!(!compare(
+            &str_val("hello"),
+            &ComparisonOp::Equal,
+            &str_val("world")
+        ));
+        assert!(compare(
+            &str_val("hello"),
+            &ComparisonOp::NotEqual,
+            &str_val("world")
+        ));
     }
 
     #[test]
     fn test_compare_numbers() {
-        assert!(compare(&num_val(1.0), &ComparisonOp::LessThan, &num_val(2.0)));
-        assert!(compare(&num_val(2.0), &ComparisonOp::GreaterThan, &num_val(1.0)));
-        assert!(compare(&num_val(1.0), &ComparisonOp::LessOrEqual, &num_val(1.0)));
-        assert!(compare(&num_val(1.0), &ComparisonOp::GreaterOrEqual, &num_val(1.0)));
+        assert!(compare(
+            &num_val(1.0),
+            &ComparisonOp::LessThan,
+            &num_val(2.0)
+        ));
+        assert!(compare(
+            &num_val(2.0),
+            &ComparisonOp::GreaterThan,
+            &num_val(1.0)
+        ));
+        assert!(compare(
+            &num_val(1.0),
+            &ComparisonOp::LessOrEqual,
+            &num_val(1.0)
+        ));
+        assert!(compare(
+            &num_val(1.0),
+            &ComparisonOp::GreaterOrEqual,
+            &num_val(1.0)
+        ));
     }
 
     #[test]
     fn test_compare_booleans() {
-        assert!(compare(&bool_val(true), &ComparisonOp::Equal, &bool_val(true)));
-        assert!(compare(&bool_val(false), &ComparisonOp::Equal, &bool_val(false)));
-        assert!(compare(&bool_val(true), &ComparisonOp::NotEqual, &bool_val(false)));
+        assert!(compare(
+            &bool_val(true),
+            &ComparisonOp::Equal,
+            &bool_val(true)
+        ));
+        assert!(compare(
+            &bool_val(false),
+            &ComparisonOp::Equal,
+            &bool_val(false)
+        ));
+        assert!(compare(
+            &bool_val(true),
+            &ComparisonOp::NotEqual,
+            &bool_val(false)
+        ));
     }
 
     #[test]
     fn test_compare_mixed_types() {
         // Number comparison (number + string)
-        assert!(compare(&num_val(42.0), &ComparisonOp::Equal, &str_val("42")));
-        assert!(compare(&str_val("42"), &ComparisonOp::Equal, &num_val(42.0)));
+        assert!(compare(
+            &num_val(42.0),
+            &ComparisonOp::Equal,
+            &str_val("42")
+        ));
+        assert!(compare(
+            &str_val("42"),
+            &ComparisonOp::Equal,
+            &num_val(42.0)
+        ));
 
         // Boolean comparison (boolean + number)
-        assert!(compare(&bool_val(true), &ComparisonOp::Equal, &num_val(1.0)));
-        assert!(compare(&bool_val(false), &ComparisonOp::Equal, &num_val(0.0)));
+        assert!(compare(
+            &bool_val(true),
+            &ComparisonOp::Equal,
+            &num_val(1.0)
+        ));
+        assert!(compare(
+            &bool_val(false),
+            &ComparisonOp::Equal,
+            &num_val(0.0)
+        ));
     }
 
     #[test]
@@ -398,8 +452,16 @@ mod tests {
     #[test]
     fn test_string_numeric_comparison() {
         // Numeric strings should compare numerically
-        assert!(compare(&str_val("2"), &ComparisonOp::LessThan, &str_val("10")));
+        assert!(compare(
+            &str_val("2"),
+            &ComparisonOp::LessThan,
+            &str_val("10")
+        ));
         // Non-numeric strings compare lexicographically
-        assert!(!compare(&str_val("2"), &ComparisonOp::LessThan, &str_val("10a")));
+        assert!(!compare(
+            &str_val("2"),
+            &ComparisonOp::LessThan,
+            &str_val("10a")
+        ));
     }
 }

@@ -57,9 +57,10 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
 
             // Get imports and includes from the current schema
             let (imports, includes) = {
-                let schema = self.schemas.get(&current_uri).ok_or_else(|| {
-                    Error::Schema(format!("Schema not found: {}", current_uri))
-                })?;
+                let schema = self
+                    .schemas
+                    .get(&current_uri)
+                    .ok_or_else(|| Error::Schema(format!("Schema not found: {}", current_uri)))?;
                 (schema.imports.clone(), schema.includes.clone())
             };
 
@@ -118,7 +119,9 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
         }
 
         // Fetch from network
-        let FetchResult { content, final_url, .. } = self.fetcher.fetch(uri)?;
+        let FetchResult {
+            content, final_url, ..
+        } = self.fetcher.fetch(uri)?;
 
         // Store in cache
         self.store.put(&final_url, &content)?;
@@ -139,18 +142,23 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
 /// Resolves a relative URI against a base URI.
 pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
     // If relative is already absolute, use it directly
-    if relative.starts_with("http://") || relative.starts_with("https://") || relative.starts_with("file://") {
+    if relative.starts_with("http://")
+        || relative.starts_with("https://")
+        || relative.starts_with("file://")
+    {
         return Ok(relative.to_string());
     }
 
     // Parse base URL
-    let base_url = Url::parse(base).map_err(|e| {
-        Error::Schema(format!("Invalid base URI '{}': {}", base, e))
-    })?;
+    let base_url = Url::parse(base)
+        .map_err(|e| Error::Schema(format!("Invalid base URI '{}': {}", base, e)))?;
 
     // Resolve relative URL
     let resolved = base_url.join(relative).map_err(|e| {
-        Error::Schema(format!("Failed to resolve '{}' against '{}': {}", relative, base, e))
+        Error::Schema(format!(
+            "Failed to resolve '{}' against '{}': {}",
+            relative, base, e
+        ))
     })?;
 
     Ok(resolved.to_string())
@@ -159,15 +167,17 @@ pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
 /// Resolves schemas from content without network access.
 ///
 /// This is useful for testing or when all schemas are provided inline.
-pub fn resolve_schemas_from_content(
-    schemas: &[(&str, &[u8])],
-) -> Result<Vec<XsdSchema>> {
+pub fn resolve_schemas_from_content(schemas: &[(&str, &[u8])]) -> Result<Vec<XsdSchema>> {
     let mut result = Vec::new();
 
     for (uri, content) in schemas {
         let schema = parse_xsd_ast(content)?;
-        tracing::debug!("Parsed schema from {}: {} types, {} elements",
-            uri, schema.types.len(), schema.elements.len());
+        tracing::debug!(
+            "Parsed schema from {}: {} types, {} elements",
+            uri,
+            schema.types.len(),
+            schema.elements.len()
+        );
         result.push(schema);
     }
 
@@ -276,17 +286,15 @@ mod tests {
     fn test_resolve_uri_absolute() {
         let result = resolve_uri(
             "http://example.com/schemas/base.xsd",
-            "http://other.com/schema.xsd"
-        ).unwrap();
+            "http://other.com/schema.xsd",
+        )
+        .unwrap();
         assert_eq!(result, "http://other.com/schema.xsd");
     }
 
     #[test]
     fn test_resolve_uri_relative() {
-        let result = resolve_uri(
-            "http://example.com/schemas/base.xsd",
-            "types.xsd"
-        ).unwrap();
+        let result = resolve_uri("http://example.com/schemas/base.xsd", "types.xsd").unwrap();
         assert_eq!(result, "http://example.com/schemas/types.xsd");
     }
 
@@ -294,8 +302,9 @@ mod tests {
     fn test_resolve_uri_parent() {
         let result = resolve_uri(
             "http://example.com/schemas/v1/base.xsd",
-            "../common/types.xsd"
-        ).unwrap();
+            "../common/types.xsd",
+        )
+        .unwrap();
         assert_eq!(result, "http://example.com/schemas/common/types.xsd");
     }
 
@@ -332,9 +341,9 @@ mod tests {
             <xs:element name="test" type="xs:string"/>
         </xs:schema>"#;
 
-        let schemas = resolve_schemas_from_content(&[
-            ("http://example.com/a.xsd", xsd_a.as_bytes()),
-        ]).unwrap();
+        let schemas =
+            resolve_schemas_from_content(&[("http://example.com/a.xsd", xsd_a.as_bytes())])
+                .unwrap();
 
         assert_eq!(schemas.len(), 1);
         assert_eq!(schemas[0].elements.len(), 1);

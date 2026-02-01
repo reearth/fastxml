@@ -1,6 +1,6 @@
 //! Benchmarks for fastxml.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use fastxml::{parse, xpath};
 
 fn create_test_xml(depth: usize, breadth: usize) -> String {
@@ -9,11 +9,21 @@ fn create_test_xml(depth: usize, breadth: usize) -> String {
             return "<leaf>text content</leaf>".to_string();
         }
         let children: String = (0..breadth)
-            .map(|i| format!("<child{}>{}  </child{}>", i, build(depth, breadth, current + 1), i))
+            .map(|i| {
+                format!(
+                    "<child{}>{}  </child{}>",
+                    i,
+                    build(depth, breadth, current + 1),
+                    i
+                )
+            })
             .collect();
         format!("<node depth=\"{}\">{}</node>", current, children)
     }
-    format!(r#"<?xml version="1.0"?><root>{}</root>"#, build(depth, breadth, 0))
+    format!(
+        r#"<?xml version="1.0"?><root>{}</root>"#,
+        build(depth, breadth, 0)
+    )
 }
 
 fn bench_parsing(c: &mut Criterion) {
@@ -86,9 +96,7 @@ fn bench_namespaced(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("namespaced");
 
-    group.bench_function("parse", |b| {
-        b.iter(|| parse(black_box(xml)).unwrap())
-    });
+    group.bench_function("parse", |b| b.iter(|| parse(black_box(xml)).unwrap()));
 
     group.bench_function("xpath_namespaced", |b| {
         b.iter(|| xpath::evaluate(black_box(&doc), "//bldg:Building").unwrap())

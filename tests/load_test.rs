@@ -73,11 +73,20 @@ fn test_load_many_elements_10k() {
     let doc = parse(&xml).unwrap();
     let elapsed = start.elapsed();
 
-    println!("10K elements: {} nodes in {:?}, {} bytes", doc.node_count(), elapsed, xml.len());
+    println!(
+        "10K elements: {} nodes in {:?}, {} bytes",
+        doc.node_count(),
+        elapsed,
+        xml.len()
+    );
 
     assert!(doc.node_count() > 10_000);
     // Should complete in reasonable time
-    assert!(elapsed.as_secs() < 5, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -94,7 +103,11 @@ fn test_load_many_elements_streaming_10k() {
     let elapsed = start.elapsed();
 
     println!("10K elements streaming: {:?}", elapsed);
-    assert!(elapsed.as_secs() < 5, "Streaming took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "Streaming took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -108,13 +121,19 @@ fn test_load_many_elements_100k() {
     let doc = parse(&xml).unwrap();
     let elapsed = start.elapsed();
 
-    println!("100K elements: {} nodes in {:?}, {} MB",
+    println!(
+        "100K elements: {} nodes in {:?}, {} MB",
         doc.node_count(),
         elapsed,
-        xml.len() / (1024 * 1024));
+        xml.len() / (1024 * 1024)
+    );
 
     assert!(doc.node_count() > 100_000);
-    assert!(elapsed.as_secs() < 30, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 30,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 // =============================================================================
@@ -146,7 +165,11 @@ fn test_load_deep_nesting_500() {
     println!("500 depth: {} nodes in {:?}", doc.node_count(), elapsed);
 
     assert!(doc.node_count() > 500);
-    assert!(elapsed.as_secs() < 5, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -162,7 +185,11 @@ fn test_load_deep_nesting_1000() {
 
     println!("1000 depth: {} nodes in {:?}", doc.node_count(), elapsed);
 
-    assert!(elapsed.as_secs() < 10, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 10,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 // =============================================================================
@@ -180,12 +207,18 @@ fn test_load_large_content_1mb() {
     let doc = parse(&xml).unwrap();
     let elapsed = start.elapsed();
 
-    println!("1MB content: {} nodes in {:?}, {} MB total",
+    println!(
+        "1MB content: {} nodes in {:?}, {} MB total",
         doc.node_count(),
         elapsed,
-        xml.len() / (1024 * 1024));
+        xml.len() / (1024 * 1024)
+    );
 
-    assert!(elapsed.as_secs() < 10, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 10,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -199,12 +232,18 @@ fn test_load_large_content_10mb() {
     let doc = parse(&xml).unwrap();
     let elapsed = start.elapsed();
 
-    println!("10MB content: {} nodes in {:?}, {} MB total",
+    println!(
+        "10MB content: {} nodes in {:?}, {} MB total",
         doc.node_count(),
         elapsed,
-        xml.len() / (1024 * 1024));
+        xml.len() / (1024 * 1024)
+    );
 
-    assert!(elapsed.as_secs() < 30, "Parsing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 30,
+        "Parsing took too long: {:?}",
+        elapsed
+    );
 }
 
 // =============================================================================
@@ -243,10 +282,12 @@ fn test_load_citygml_1000_buildings() {
     let doc = parse(&xml).unwrap();
     let parse_elapsed = start.elapsed();
 
-    println!("1000 buildings: {} nodes in {:?}, {} MB",
+    println!(
+        "1000 buildings: {} nodes in {:?}, {} MB",
         doc.node_count(),
         parse_elapsed,
-        xml.len() / (1024 * 1024));
+        xml.len() / (1024 * 1024)
+    );
 
     // Test XPath performance
     let start = Instant::now();
@@ -254,7 +295,11 @@ fn test_load_citygml_1000_buildings() {
     let xpath_elapsed = start.elapsed();
     let buildings = result.into_nodes();
 
-    println!("XPath found {} buildings in {:?}", buildings.len(), xpath_elapsed);
+    println!(
+        "XPath found {} buildings in {:?}",
+        buildings.len(),
+        xpath_elapsed
+    );
 
     assert!(parse_elapsed.as_secs() < 30, "Parsing took too long");
     assert!(xpath_elapsed.as_secs() < 10, "XPath took too long");
@@ -330,8 +375,11 @@ fn test_throughput() {
     println!("  XML size: {} bytes", xml.len());
 
     // Should achieve at least 10 MB/s throughput
-    assert!(throughput_mb_per_sec > 10.0,
-        "Throughput too low: {:.2} MB/s", throughput_mb_per_sec);
+    assert!(
+        throughput_mb_per_sec > 10.0,
+        "Throughput too low: {:.2} MB/s",
+        throughput_mb_per_sec
+    );
 }
 
 // =============================================================================
@@ -361,11 +409,18 @@ fn test_xpath_performance_large() {
         let count = result.into_nodes().len();
         let elapsed = start.elapsed();
 
-        println!("XPath '{}' ({}): {} results in {:?}", xpath, desc, count, elapsed);
+        println!(
+            "XPath '{}' ({}): {} results in {:?}",
+            xpath, desc, count, elapsed
+        );
 
         // Each XPath should complete in reasonable time
-        assert!(elapsed.as_secs() < 5,
-            "XPath '{}' took too long: {:?}", xpath, elapsed);
+        assert!(
+            elapsed.as_secs() < 5,
+            "XPath '{}' took too long: {:?}",
+            xpath,
+            elapsed
+        );
     }
 }
 
@@ -376,10 +431,18 @@ fn test_xpath_performance_large() {
 /// Creates a test schema for validation.
 fn create_test_schema() -> Arc<CompiledSchema> {
     let mut schema = CompiledSchema::new();
-    schema.elements.insert("root".to_string(), ElementDef::new("root"));
-    schema.elements.insert("element".to_string(), ElementDef::new("element"));
-    schema.elements.insert("item".to_string(), ElementDef::new("item"));
-    schema.elements.insert("data".to_string(), ElementDef::new("data"));
+    schema
+        .elements
+        .insert("root".to_string(), ElementDef::new("root"));
+    schema
+        .elements
+        .insert("element".to_string(), ElementDef::new("element"));
+    schema
+        .elements
+        .insert("item".to_string(), ElementDef::new("item"));
+    schema
+        .elements
+        .insert("data".to_string(), ElementDef::new("data"));
     Arc::new(schema)
 }
 
@@ -387,11 +450,23 @@ fn create_test_schema() -> Arc<CompiledSchema> {
 fn create_citygml_schema() -> Arc<CompiledSchema> {
     let mut schema = CompiledSchema::new();
     schema.target_namespace = Some("http://www.opengis.net/citygml/2.0".to_string());
-    schema.elements.insert("core:CityModel".to_string(), ElementDef::new("CityModel"));
-    schema.elements.insert("bldg:Building".to_string(), ElementDef::new("Building"));
-    schema.elements.insert("bldg:measuredHeight".to_string(), ElementDef::new("measuredHeight"));
-    schema.elements.insert("gml:name".to_string(), ElementDef::new("name"));
-    schema.elements.insert("bldg:lod0FootPrint".to_string(), ElementDef::new("lod0FootPrint"));
+    schema
+        .elements
+        .insert("core:CityModel".to_string(), ElementDef::new("CityModel"));
+    schema
+        .elements
+        .insert("bldg:Building".to_string(), ElementDef::new("Building"));
+    schema.elements.insert(
+        "bldg:measuredHeight".to_string(),
+        ElementDef::new("measuredHeight"),
+    );
+    schema
+        .elements
+        .insert("gml:name".to_string(), ElementDef::new("name"));
+    schema.elements.insert(
+        "bldg:lod0FootPrint".to_string(),
+        ElementDef::new("lod0FootPrint"),
+    );
     Arc::new(schema)
 }
 
@@ -413,7 +488,11 @@ fn test_schema_validation_basic() {
     let elapsed = start.elapsed();
 
     println!("Schema validation (1K elements): {:?}", elapsed);
-    assert!(elapsed.as_secs() < 5, "Validation took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "Validation took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -433,8 +512,16 @@ fn test_schema_validation_10k_elements() {
     parser.parse().unwrap();
     let elapsed = start.elapsed();
 
-    println!("Schema validation (10K elements): {:?}, {} bytes", elapsed, xml.len());
-    assert!(elapsed.as_secs() < 10, "Validation took too long: {:?}", elapsed);
+    println!(
+        "Schema validation (10K elements): {:?}, {} bytes",
+        elapsed,
+        xml.len()
+    );
+    assert!(
+        elapsed.as_secs() < 10,
+        "Validation took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -455,7 +542,11 @@ fn test_schema_validation_citygml() {
     let elapsed = start.elapsed();
 
     println!("CityGML validation (100 buildings): {:?}", elapsed);
-    assert!(elapsed.as_secs() < 10, "Validation took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 10,
+        "Validation took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -482,7 +573,11 @@ fn test_schema_validation_with_counting() {
     let elapsed = start.elapsed();
 
     println!("Validation + counting (5K elements): {:?}", elapsed);
-    assert!(elapsed.as_secs() < 5, "Combined processing took too long: {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 5,
+        "Combined processing took too long: {:?}",
+        elapsed
+    );
 }
 
 #[test]
@@ -521,6 +616,9 @@ fn test_schema_validation_overhead() {
     let overhead_ratio = time_with.as_secs_f64() / time_without.as_secs_f64().max(0.001);
     println!("  Overhead ratio:     {:.2}x", overhead_ratio);
 
-    assert!(overhead_ratio < 5.0,
-        "Validation overhead too high: {:.2}x", overhead_ratio);
+    assert!(
+        overhead_ratio < 5.0,
+        "Validation overhead too high: {:.2}x",
+        overhead_ratio
+    );
 }

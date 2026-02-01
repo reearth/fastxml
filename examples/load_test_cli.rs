@@ -119,7 +119,10 @@ fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
     println!("  Content Size: {:>10}", format_bytes(config.content_size));
     println!("  Attributes:   {:>10}/element", config.attribute_count);
     println!("  Namespaces:   {:>10}", config.with_namespaces);
-    println!("  Est. Size:    {:>10}", format_bytes(config.estimated_size()));
+    println!(
+        "  Est. Size:    {:>10}",
+        format_bytes(config.estimated_size())
+    );
     println!("{}", "=".repeat(60));
 
     // Generate XML once for DOM tests
@@ -131,7 +134,11 @@ fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
         let mut xml_gen = XmlStreamGenerator::new(config.clone());
         let mut bytes = Vec::new();
         xml_gen.read_to_end(&mut bytes).unwrap();
-        println!("  Generated {} in {}", format_bytes(bytes.len()), format_duration(start.elapsed()));
+        println!(
+            "  Generated {} in {}",
+            format_bytes(bytes.len()),
+            format_duration(start.elapsed())
+        );
         bytes
     };
 
@@ -161,13 +168,18 @@ fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
 
         println!("  Avg Time:    {}", format_duration(avg_time));
         println!("  Throughput:  {:.2} MB/s", throughput);
-        println!("  Elements/s:  {:.0}", node_count as f64 / avg_time.as_secs_f64());
+        println!(
+            "  Elements/s:  {:.0}",
+            node_count as f64 / avg_time.as_secs_f64()
+        );
 
         if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!("  Memory:      {} -> {} (Δ {})",
+            println!(
+                "  Memory:      {} -> {} (Δ {})",
                 format_bytes(before),
                 format_bytes(after),
-                format_bytes(after.saturating_sub(before)));
+                format_bytes(after.saturating_sub(before))
+            );
         }
 
         // XPath test
@@ -177,13 +189,21 @@ fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
         let start = Instant::now();
         let result = evaluate(&doc, "//*").unwrap();
         let count = result.into_nodes().len();
-        println!("  //*: {} elements in {}", count, format_duration(start.elapsed()));
+        println!(
+            "  //*: {} elements in {}",
+            count,
+            format_duration(start.elapsed())
+        );
 
         if config.with_namespaces {
             let start = Instant::now();
             let result = evaluate(&doc, "//bldg:Building").unwrap();
             let count = result.into_nodes().len();
-            println!("  //bldg:Building: {} elements in {}", count, format_duration(start.elapsed()));
+            println!(
+                "  //bldg:Building: {} elements in {}",
+                count,
+                format_duration(start.elapsed())
+            );
         }
     }
 
@@ -226,10 +246,12 @@ fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
         println!("  Throughput:  {:.2} MB/s", throughput);
 
         if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!("  Memory:      {} -> {} (Δ {})",
+            println!(
+                "  Memory:      {} -> {} (Δ {})",
                 format_bytes(before),
                 format_bytes(after),
-                format_bytes(after.saturating_sub(before)));
+                format_bytes(after.saturating_sub(before))
+            );
         }
     }
 }
@@ -241,7 +263,10 @@ struct CountingReader<R> {
 
 impl<R> CountingReader<R> {
     fn new(inner: R) -> Self {
-        Self { inner, bytes_read: 0 }
+        Self {
+            inner,
+            bytes_read: 0,
+        }
     }
 }
 
@@ -319,7 +344,10 @@ fn main() {
     }
 
     println!("fastxml Load Test");
-    println!("Pattern: {}, Size: {}, Mode: {}, Iterations: {}", pattern, size, mode, iterations);
+    println!(
+        "Pattern: {}, Size: {}, Mode: {}, Iterations: {}",
+        pattern, size, mode, iterations
+    );
 
     let config = match pattern {
         "many-elements" => GeneratorConfig::many_elements(size),

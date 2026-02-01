@@ -105,7 +105,9 @@ impl KeyValue {
 
     /// Creates a single-field key value.
     pub fn single(value: impl Into<String>) -> Self {
-        Self { values: vec![value.into()] }
+        Self {
+            values: vec![value.into()],
+        }
     }
 
     /// Returns true if any field is null/empty.
@@ -167,22 +169,48 @@ impl std::fmt::Display for ConstraintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConstraintError::DuplicateKey { constraint, value } => {
-                write!(f, "duplicate value {:?} in constraint '{}'", value.values, constraint)
+                write!(
+                    f,
+                    "duplicate value {:?} in constraint '{}'",
+                    value.values, constraint
+                )
             }
-            ConstraintError::NullKeyValue { constraint, field_index } => {
-                write!(f, "null value in key field {} of constraint '{}'", field_index, constraint)
+            ConstraintError::NullKeyValue {
+                constraint,
+                field_index,
+            } => {
+                write!(
+                    f,
+                    "null value in key field {} of constraint '{}'",
+                    field_index, constraint
+                )
             }
-            ConstraintError::KeyRefNotFound { constraint, refer, value } => {
+            ConstraintError::KeyRefNotFound {
+                constraint,
+                refer,
+                value,
+            } => {
                 write!(
                     f,
                     "keyref '{}' value {:?} not found in key '{}'",
                     constraint, value.values, refer
                 )
             }
-            ConstraintError::SelectorError { constraint, message } => {
-                write!(f, "selector error in constraint '{}': {}", constraint, message)
+            ConstraintError::SelectorError {
+                constraint,
+                message,
+            } => {
+                write!(
+                    f,
+                    "selector error in constraint '{}': {}",
+                    constraint, message
+                )
             }
-            ConstraintError::FieldError { constraint, field_index, message } => {
+            ConstraintError::FieldError {
+                constraint,
+                field_index,
+                message,
+            } => {
                 write!(
                     f,
                     "field {} error in constraint '{}': {}",
@@ -275,10 +303,8 @@ impl ConstraintValidator {
 
     /// Registers a key constraint and initializes its value set.
     pub fn register_key(&mut self, name: &str, field_count: usize) {
-        self.key_values.insert(
-            name.to_string(),
-            KeyValueSet::new(name, field_count),
-        );
+        self.key_values
+            .insert(name.to_string(), KeyValueSet::new(name, field_count));
     }
 
     /// Adds a key value from a unique or key constraint.
@@ -300,7 +326,8 @@ impl ConstraintValidator {
         }
 
         // Get or create the key value set
-        let set = self.key_values
+        let set = self
+            .key_values
             .entry(constraint.name.clone())
             .or_insert_with(|| KeyValueSet::new(&constraint.name, constraint.fields.len()));
 
@@ -313,11 +340,7 @@ impl ConstraintValidator {
     }
 
     /// Adds a keyref value to be validated at the end.
-    pub fn add_keyref_value(
-        &mut self,
-        constraint: &IdentityConstraint,
-        value: KeyValue,
-    ) {
+    pub fn add_keyref_value(&mut self, constraint: &IdentityConstraint, value: KeyValue) {
         if let Some(refer) = &constraint.refer {
             // Null keyref values don't need to match
             if value.has_null() {
@@ -408,16 +431,23 @@ mod tests {
 
     #[test]
     fn test_unique_constraint() {
-        let constraint = IdentityConstraint::unique("id-unique", ".//item")
-            .with_field("@id");
+        let constraint = IdentityConstraint::unique("id-unique", ".//item").with_field("@id");
 
         let mut validator = ConstraintValidator::new();
 
         // Add first value
-        assert!(validator.add_key_value(&constraint, KeyValue::single("1")).is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::single("1"))
+                .is_ok()
+        );
 
         // Add different value
-        assert!(validator.add_key_value(&constraint, KeyValue::single("2")).is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::single("2"))
+                .is_ok()
+        );
 
         // Add duplicate - should fail
         let result = validator.add_key_value(&constraint, KeyValue::single("1"));
@@ -426,8 +456,7 @@ mod tests {
 
     #[test]
     fn test_key_constraint_no_nulls() {
-        let constraint = IdentityConstraint::key("item-key", ".//item")
-            .with_field("@id");
+        let constraint = IdentityConstraint::key("item-key", ".//item").with_field("@id");
 
         let mut validator = ConstraintValidator::new();
 
@@ -438,28 +467,38 @@ mod tests {
 
     #[test]
     fn test_unique_constraint_allows_nulls() {
-        let constraint = IdentityConstraint::unique("id-unique", ".//item")
-            .with_field("@id");
+        let constraint = IdentityConstraint::unique("id-unique", ".//item").with_field("@id");
 
         let mut validator = ConstraintValidator::new();
 
         // Null values are allowed for unique (they don't participate in uniqueness)
-        assert!(validator.add_key_value(&constraint, KeyValue::single("")).is_ok());
-        assert!(validator.add_key_value(&constraint, KeyValue::single("")).is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::single(""))
+                .is_ok()
+        );
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::single(""))
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_keyref_validation() {
-        let key = IdentityConstraint::key("category-key", ".//category")
-            .with_field("@id");
+        let key = IdentityConstraint::key("category-key", ".//category").with_field("@id");
         let keyref = IdentityConstraint::keyref("item-category", ".//item", "category-key")
             .with_field("@category");
 
         let mut validator = ConstraintValidator::new();
 
         // Add key values
-        validator.add_key_value(&key, KeyValue::single("cat1")).unwrap();
-        validator.add_key_value(&key, KeyValue::single("cat2")).unwrap();
+        validator
+            .add_key_value(&key, KeyValue::single("cat1"))
+            .unwrap();
+        validator
+            .add_key_value(&key, KeyValue::single("cat2"))
+            .unwrap();
 
         // Add valid keyref
         validator.add_keyref_value(&keyref, KeyValue::single("cat1"));
@@ -476,29 +515,35 @@ mod tests {
 
     #[test]
     fn test_composite_key() {
-        let constraint = IdentityConstraint::key("composite-key", ".//item")
-            .with_fields(["@type", "@id"]);
+        let constraint =
+            IdentityConstraint::key("composite-key", ".//item").with_fields(["@type", "@id"]);
 
         let mut validator = ConstraintValidator::new();
 
         // Add composite key
-        assert!(validator
-            .add_key_value(&constraint, KeyValue::new(vec!["A".into(), "1".into()]))
-            .is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::new(vec!["A".into(), "1".into()]))
+                .is_ok()
+        );
 
         // Same first field, different second - OK
-        assert!(validator
-            .add_key_value(&constraint, KeyValue::new(vec!["A".into(), "2".into()]))
-            .is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::new(vec!["A".into(), "2".into()]))
+                .is_ok()
+        );
 
         // Different first field, same second - OK
-        assert!(validator
-            .add_key_value(&constraint, KeyValue::new(vec!["B".into(), "1".into()]))
-            .is_ok());
+        assert!(
+            validator
+                .add_key_value(&constraint, KeyValue::new(vec!["B".into(), "1".into()]))
+                .is_ok()
+        );
 
         // Duplicate composite - should fail
-        let result = validator
-            .add_key_value(&constraint, KeyValue::new(vec!["A".into(), "1".into()]));
+        let result =
+            validator.add_key_value(&constraint, KeyValue::new(vec!["A".into(), "1".into()]));
         assert!(matches!(result, Err(ConstraintError::DuplicateKey { .. })));
     }
 

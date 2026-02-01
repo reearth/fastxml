@@ -66,15 +66,12 @@ impl XsdCompiler {
         }
 
         // Register types with their qualified names
-        let ns_prefix = schema
-            .target_namespace
-            .as_ref()
-            .and_then(|ns| {
-                self.namespace_bindings
-                    .iter()
-                    .find(|(_, v)| *v == ns)
-                    .map(|(k, _)| k.clone())
-            });
+        let ns_prefix = schema.target_namespace.as_ref().and_then(|ns| {
+            self.namespace_bindings
+                .iter()
+                .find(|(_, v)| *v == ns)
+                .map(|(k, _)| k.clone())
+        });
 
         for type_def in &schema.types {
             if let Some(name) = type_def.name() {
@@ -249,25 +246,20 @@ impl XsdCompiler {
 
             XsdComplexContent::Particle(particle) => self.compile_particle(particle),
 
-            XsdComplexContent::SimpleContent(sc) => {
-                match &sc.derivation {
-                    XsdSimpleContentDerivation::Extension(ext) => {
-                        Ok(ContentModel::SimpleContent {
-                            base_type: self.resolve_qname(&ext.base),
-                        })
-                    }
-                    XsdSimpleContentDerivation::Restriction(r) => {
-                        Ok(ContentModel::SimpleContent {
-                            base_type: self.resolve_qname(&r.base),
-                        })
-                    }
-                }
-            }
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => Ok(ContentModel::SimpleContent {
+                    base_type: self.resolve_qname(&ext.base),
+                }),
+                XsdSimpleContentDerivation::Restriction(r) => Ok(ContentModel::SimpleContent {
+                    base_type: self.resolve_qname(&r.base),
+                }),
+            },
 
             XsdComplexContent::ComplexContent(cc) => {
                 match &cc.derivation {
                     XsdComplexContentDerivation::Extension(ext) => {
-                        let elements = ext.particle
+                        let elements = ext
+                            .particle
                             .as_ref()
                             .map(|p| self.compile_particle_to_elements(p))
                             .transpose()?
@@ -311,24 +303,20 @@ impl XsdCompiler {
                 tracing::debug!("Group reference: {}", qname);
                 Ok(ContentModel::Empty)
             }
-            XsdParticle::Any(any) => {
-                Ok(ContentModel::Any {
-                    namespace: match &any.namespace {
-                        NamespaceConstraint::Any => None,
-                        NamespaceConstraint::Other => Some("##other".to_string()),
-                        NamespaceConstraint::TargetNamespace => {
-                            self.current_target_ns.clone()
-                        }
-                        NamespaceConstraint::Local => Some("##local".to_string()),
-                        NamespaceConstraint::List(uris) => Some(uris.join(" ")),
-                    },
-                    process_contents: match any.process_contents {
-                        ProcessContentsMode::Strict => ProcessContents::Strict,
-                        ProcessContentsMode::Lax => ProcessContents::Lax,
-                        ProcessContentsMode::Skip => ProcessContents::Skip,
-                    },
-                })
-            }
+            XsdParticle::Any(any) => Ok(ContentModel::Any {
+                namespace: match &any.namespace {
+                    NamespaceConstraint::Any => None,
+                    NamespaceConstraint::Other => Some("##other".to_string()),
+                    NamespaceConstraint::TargetNamespace => self.current_target_ns.clone(),
+                    NamespaceConstraint::Local => Some("##local".to_string()),
+                    NamespaceConstraint::List(uris) => Some(uris.join(" ")),
+                },
+                process_contents: match any.process_contents {
+                    ProcessContentsMode::Strict => ProcessContents::Strict,
+                    ProcessContentsMode::Lax => ProcessContents::Lax,
+                    ProcessContentsMode::Skip => ProcessContents::Skip,
+                },
+            }),
         }
     }
 
@@ -522,7 +510,10 @@ mod tests {
         let ast = parse_xsd_ast(xsd.as_bytes()).unwrap();
         let compiled = compile_schemas(vec![ast]).unwrap();
 
-        assert_eq!(compiled.target_namespace, Some("http://example.com/test".to_string()));
+        assert_eq!(
+            compiled.target_namespace,
+            Some("http://example.com/test".to_string())
+        );
         assert_eq!(compiled.elements.len(), 1);
         assert!(compiled.elements.contains_key("root"));
     }
@@ -600,7 +591,11 @@ mod tests {
         let compiled = compile_schemas(vec![ast]).unwrap();
 
         if let Some(TypeDef::Complex(ct)) = compiled.types.get("ExtendedType") {
-            if let ContentModel::ComplexExtension { base_type, elements } = &ct.content {
+            if let ContentModel::ComplexExtension {
+                base_type,
+                elements,
+            } = &ct.content
+            {
                 assert_eq!(base_type, "BaseType");
                 assert_eq!(elements.len(), 1);
                 assert_eq!(elements[0].name, "extra");

@@ -89,11 +89,10 @@ impl XPathValue {
     /// - String: unchanged
     pub fn to_string_value(&self) -> String {
         match self {
-            XPathValue::NodeSet(nodes) => {
-                nodes.first()
-                    .and_then(|n| n.get_content())
-                    .unwrap_or_default()
-            }
+            XPathValue::NodeSet(nodes) => nodes
+                .first()
+                .and_then(|n| n.get_content())
+                .unwrap_or_default(),
             XPathValue::String(s) => s.clone(),
             XPathValue::Boolean(b) => b.to_string(),
             XPathValue::Number(n) => {
@@ -139,14 +138,19 @@ impl XPathValue {
     /// - Number: unchanged
     pub fn to_number(&self) -> f64 {
         match self {
-            XPathValue::NodeSet(nodes) => {
-                nodes.first()
-                    .and_then(|n| n.get_content())
-                    .and_then(|s| parse_xpath_number(&s))
-                    .unwrap_or(f64::NAN)
-            }
+            XPathValue::NodeSet(nodes) => nodes
+                .first()
+                .and_then(|n| n.get_content())
+                .and_then(|s| parse_xpath_number(&s))
+                .unwrap_or(f64::NAN),
             XPathValue::String(s) => parse_xpath_number(s).unwrap_or(f64::NAN),
-            XPathValue::Boolean(b) => if *b { 1.0 } else { 0.0 },
+            XPathValue::Boolean(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             XPathValue::Number(n) => *n,
         }
     }
@@ -154,11 +158,7 @@ impl XPathValue {
     /// Collects text values from nodes.
     pub fn collect_text_values(&self) -> Vec<String> {
         match self {
-            XPathValue::NodeSet(nodes) => {
-                nodes.iter()
-                    .filter_map(|n| n.get_content())
-                    .collect()
-            }
+            XPathValue::NodeSet(nodes) => nodes.iter().filter_map(|n| n.get_content()).collect(),
             XPathValue::String(s) => vec![s.clone()],
             _ => Vec::new(),
         }
@@ -199,11 +199,7 @@ pub struct EvaluationContext<'a> {
 
 impl<'a> EvaluationContext<'a> {
     /// Creates a new evaluation context.
-    pub fn new(
-        node: XmlNode,
-        doc: &'a XmlDocument,
-        resolver: NamespaceResolver,
-    ) -> Self {
+    pub fn new(node: XmlNode, doc: &'a XmlDocument, resolver: NamespaceResolver) -> Self {
         Self {
             node,
             position: 1,
@@ -283,11 +279,17 @@ mod tests {
 
     #[test]
     fn test_xpath_value_to_string() {
-        assert_eq!(XPathValue::String("hello".into()).to_string_value(), "hello");
+        assert_eq!(
+            XPathValue::String("hello".into()).to_string_value(),
+            "hello"
+        );
         assert_eq!(XPathValue::Number(42.0).to_string_value(), "42");
         assert_eq!(XPathValue::Number(3.14).to_string_value(), "3.14");
         assert_eq!(XPathValue::Number(f64::NAN).to_string_value(), "NaN");
-        assert_eq!(XPathValue::Number(f64::INFINITY).to_string_value(), "Infinity");
+        assert_eq!(
+            XPathValue::Number(f64::INFINITY).to_string_value(),
+            "Infinity"
+        );
         assert_eq!(XPathValue::Boolean(true).to_string_value(), "true");
         assert_eq!(XPathValue::Boolean(false).to_string_value(), "false");
     }
@@ -307,7 +309,11 @@ mod tests {
     fn test_xpath_value_to_number() {
         assert_eq!(XPathValue::Number(42.0).to_number(), 42.0);
         assert_eq!(XPathValue::String("3.14".into()).to_number(), 3.14);
-        assert!(XPathValue::String("not a number".into()).to_number().is_nan());
+        assert!(
+            XPathValue::String("not a number".into())
+                .to_number()
+                .is_nan()
+        );
         assert_eq!(XPathValue::Boolean(true).to_number(), 1.0);
         assert_eq!(XPathValue::Boolean(false).to_number(), 0.0);
     }

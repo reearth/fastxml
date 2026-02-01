@@ -92,6 +92,11 @@
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
+// Allow some clippy lints for code clarity
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_else_if)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::large_enum_variant)]
 
 pub mod document;
 pub mod error;
@@ -118,7 +123,9 @@ pub use node::{NodeId, NodeType, XmlNode, XmlRoNode};
 pub use namespace::{Namespace, NamespaceResolver};
 
 // Re-export parser functions
-pub use parser::{parse, parse_with_options, parse_from_bufread, parse_schema_locations, ParserOptions};
+pub use parser::{
+    ParserOptions, parse, parse_from_bufread, parse_schema_locations, parse_with_options,
+};
 
 // Re-export XPath context (for libxml compatibility)
 pub use xpath::context::{XmlContext, XmlSafeContext};
@@ -130,7 +137,10 @@ pub use xpath::context::{XmlContext, XmlSafeContext};
 /// Evaluates an XPath expression on a document.
 ///
 /// This is the main XPath evaluation entry point, compatible with libxml's API.
-pub fn evaluate<T: AsRef<str>>(document: &XmlDocument, xpath_expr: T) -> Result<xpath::XPathResult> {
+pub fn evaluate<T: AsRef<str>>(
+    document: &XmlDocument,
+    xpath_expr: T,
+) -> Result<xpath::XPathResult> {
     xpath::evaluate(document, xpath_expr.as_ref())
 }
 
@@ -147,17 +157,29 @@ pub fn create_safe_context(document: &XmlDocument) -> Result<XmlSafeContext> {
 }
 
 /// Finds nodes by XPath expression relative to a node.
-pub fn find_nodes_by_xpath(ctx: &XmlContext, xpath_expr: &str, node: &XmlNode) -> Result<Vec<XmlNode>> {
+pub fn find_nodes_by_xpath(
+    ctx: &XmlContext,
+    xpath_expr: &str,
+    node: &XmlNode,
+) -> Result<Vec<XmlNode>> {
     xpath::find_nodes_by_xpath(ctx, xpath_expr, node)
 }
 
 /// Finds read-only nodes by XPath expression.
-pub fn find_readonly_nodes_by_xpath(ctx: &XmlContext, xpath_expr: &str, node: &XmlRoNode) -> Result<Vec<XmlRoNode>> {
+pub fn find_readonly_nodes_by_xpath(
+    ctx: &XmlContext,
+    xpath_expr: &str,
+    node: &XmlRoNode,
+) -> Result<Vec<XmlRoNode>> {
     xpath::find_readonly_nodes_by_xpath(ctx, xpath_expr, node)
 }
 
 /// Finds read-only nodes using a thread-safe context.
-pub fn find_safe_readonly_nodes_by_xpath(ctx: &XmlSafeContext, xpath_expr: &str, node: &XmlRoNode) -> Result<Vec<XmlRoNode>> {
+pub fn find_safe_readonly_nodes_by_xpath(
+    ctx: &XmlSafeContext,
+    xpath_expr: &str,
+    node: &XmlRoNode,
+) -> Result<Vec<XmlRoNode>> {
     xpath::find_safe_readonly_nodes_by_xpath(ctx, xpath_expr, node)
 }
 
@@ -221,17 +243,24 @@ pub fn readonly_node_to_xml_string(document: &XmlDocument, node: &XmlRoNode) -> 
 }
 
 /// Creates an XSD schema validation context.
-pub fn create_xml_schema_validation_context(schema_location: String) -> Result<schema::XmlSchemaValidationContext> {
+pub fn create_xml_schema_validation_context(
+    schema_location: String,
+) -> Result<schema::XmlSchemaValidationContext> {
     schema::create_xml_schema_validation_context(&schema_location)
 }
 
 /// Creates an XSD schema validation context from a buffer.
-pub fn create_xml_schema_validation_context_from_buffer(schema: &[u8]) -> Result<schema::XmlSchemaValidationContext> {
+pub fn create_xml_schema_validation_context_from_buffer(
+    schema: &[u8],
+) -> Result<schema::XmlSchemaValidationContext> {
     schema::create_xml_schema_validation_context_from_buffer(schema)
 }
 
 /// Validates a document against an XSD schema.
-pub fn validate_document_by_schema(document: &XmlDocument, schema_location: String) -> Result<Vec<StructuredError>> {
+pub fn validate_document_by_schema(
+    document: &XmlDocument,
+    schema_location: String,
+) -> Result<Vec<StructuredError>> {
     schema::validate_document_by_schema(document, &schema_location)
 }
 

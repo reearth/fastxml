@@ -86,7 +86,8 @@ impl ValidationState {
         if let Some(parent) = self.element_stack.last_mut() {
             parent.increment_child(name);
         }
-        self.element_stack.push(ElementContext::new(name, namespace));
+        self.element_stack
+            .push(ElementContext::new(name, namespace));
         self.depth += 1;
     }
 
@@ -120,7 +121,8 @@ impl ValidationState {
 
     #[allow(dead_code)]
     fn resolve_prefix(&self, prefix: &str) -> Option<&str> {
-        self.namespace_stack.last()
+        self.namespace_stack
+            .last()
             .and_then(|ns| ns.get(prefix).map(|s| s.as_str()))
     }
 
@@ -233,7 +235,11 @@ impl StreamingSchemaValidator {
         }
     }
 
-    fn make_error(&self, error_type: ValidationErrorType, message: impl Into<String>) -> StructuredError {
+    fn make_error(
+        &self,
+        error_type: ValidationErrorType,
+        message: impl Into<String>,
+    ) -> StructuredError {
         let mut error = StructuredError::new(message, error_type);
         if let Some(line) = self.current_line {
             error = error.with_line(line);
@@ -255,8 +261,8 @@ impl StreamingSchemaValidator {
         };
 
         // Look up element in schema - check existence first
-        let element_found = self.schema.get_element(&qname).is_some()
-            || self.schema.get_element(name).is_some();
+        let element_found =
+            self.schema.get_element(&qname).is_some() || self.schema.get_element(name).is_some();
         let schema_has_elements = !self.schema.elements.is_empty();
 
         if element_found {
@@ -267,12 +273,13 @@ impl StreamingSchemaValidator {
             if self.mode == ValidationMode::Strict && schema_has_elements {
                 // Only report unknown elements if schema has elements defined
                 // and we're in strict mode
-                let error = self.make_error(
-                    ValidationErrorType::UnknownElement,
-                    format!("element '{}' is not declared in schema", qname),
-                )
-                .with_node_name(&qname)
-                .with_level(ErrorLevel::Error);
+                let error = self
+                    .make_error(
+                        ValidationErrorType::UnknownElement,
+                        format!("element '{}' is not declared in schema", qname),
+                    )
+                    .with_node_name(&qname)
+                    .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
         }
@@ -360,12 +367,7 @@ impl XmlEventHandler for StreamingSchemaValidator {
                 self.current_line = *line;
                 self.state.push_namespaces(namespace_decls);
                 self.state.push_element(name, namespace.as_deref());
-                self.validate_element(
-                    name,
-                    prefix.as_deref(),
-                    namespace.as_deref(),
-                    attributes,
-                );
+                self.validate_element(name, prefix.as_deref(), namespace.as_deref(), attributes);
             }
             XmlEvent::EndElement { name, .. } => {
                 self.validate_element_end(name);
@@ -397,11 +399,9 @@ impl XmlEventHandler for StreamingSchemaValidator {
         // Validate keyref constraints
         if let Err(constraint_errors) = self.constraint_validator.validate_keyrefs() {
             for err in constraint_errors {
-                let error = StructuredError::new(
-                    err.to_string(),
-                    ValidationErrorType::IdentityConstraint,
-                )
-                .with_level(ErrorLevel::Error);
+                let error =
+                    StructuredError::new(err.to_string(), ValidationErrorType::IdentityConstraint)
+                        .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
         }
@@ -528,7 +528,9 @@ unsafe impl Sync for XmlSchemaValidationContext {}
 ///
 /// Note: This currently creates a schema with built-in types only.
 /// For full import resolution, use `create_xml_schema_validation_context_with_fetcher`.
-pub fn create_xml_schema_validation_context(schema_location: &str) -> Result<XmlSchemaValidationContext> {
+pub fn create_xml_schema_validation_context(
+    schema_location: &str,
+) -> Result<XmlSchemaValidationContext> {
     // Check if it's a URL or file path
     if schema_location.starts_with("http://") || schema_location.starts_with("https://") {
         // For URLs, create a schema with built-in types only for now
@@ -555,7 +557,9 @@ pub fn create_xml_schema_validation_context(schema_location: &str) -> Result<Xml
 ///
 /// Parses the provided XSD content and creates a validation context.
 /// Built-in XSD and GML types are automatically registered.
-pub fn create_xml_schema_validation_context_from_buffer(schema_content: &[u8]) -> Result<XmlSchemaValidationContext> {
+pub fn create_xml_schema_validation_context_from_buffer(
+    schema_content: &[u8],
+) -> Result<XmlSchemaValidationContext> {
     let schema = super::xsd::parse_xsd(schema_content)?;
     Ok(XmlSchemaValidationContext::new(schema))
 }
@@ -586,19 +590,23 @@ mod tests {
         let schema = CompiledSchema::new();
         let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
 
-        validator.handle(&XmlEvent::StartElement {
-            name: "root".into(),
-            prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(1),
-        }).unwrap();
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
 
-        validator.handle(&XmlEvent::EndElement {
-            name: "root".into(),
-            prefix: None,
-        }).unwrap();
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
 
         validator.handle(&XmlEvent::Eof).unwrap();
         validator.finish().unwrap();

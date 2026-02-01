@@ -94,16 +94,13 @@ impl SchemaFetcher for UreqFetcher {
         let redirected = final_url != url;
 
         if status != 200 {
-            return Err(Error::Fetch(format!(
-                "HTTP error {}: {}",
-                status,
-                url
-            )));
+            return Err(Error::Fetch(format!("HTTP error {}: {}", status, url)));
         }
 
         // Read content
         let mut content = Vec::new();
-        response.into_reader()
+        response
+            .into_reader()
             .read_to_end(&mut content)
             .map_err(|e| Error::Fetch(format!("failed to read response: {}", e)))?;
 
@@ -142,7 +139,8 @@ impl ReqwestFetcher {
 
     /// Fetches a schema asynchronously.
     pub async fn fetch_async(&self, url: &str) -> Result<FetchResult> {
-        let response = self.client
+        let response = self
+            .client
             .get(url)
             .send()
             .await
@@ -187,7 +185,10 @@ pub struct NoopFetcher;
 
 impl SchemaFetcher for NoopFetcher {
     fn fetch(&self, url: &str) -> Result<FetchResult> {
-        Err(Error::Fetch(format!("network access disabled, cannot fetch: {}", url)))
+        Err(Error::Fetch(format!(
+            "network access disabled, cannot fetch: {}",
+            url
+        )))
     }
 }
 

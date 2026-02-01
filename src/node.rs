@@ -86,7 +86,12 @@ impl NodeData {
     }
 
     /// Creates a new element node.
-    pub fn element(id: NodeId, name: String, prefix: Option<String>, namespace_uri: Option<String>) -> Self {
+    pub fn element(
+        id: NodeId,
+        name: String,
+        prefix: Option<String>,
+        namespace_uri: Option<String>,
+    ) -> Self {
         Self {
             id,
             node_type: NodeType::Element,
@@ -205,13 +210,19 @@ impl XmlNode {
     /// Returns the node type.
     pub fn get_type(&self) -> NodeType {
         let nodes = self.nodes.read();
-        nodes.get(self.id).map(|n| n.node_type).unwrap_or(NodeType::Document)
+        nodes
+            .get(self.id)
+            .map(|n| n.node_type)
+            .unwrap_or(NodeType::Document)
     }
 
     /// Returns the local name of the node.
     pub fn get_name(&self) -> String {
         let nodes = self.nodes.read();
-        nodes.get(self.id).map(|n| n.name.clone()).unwrap_or_default()
+        nodes
+            .get(self.id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default()
     }
 
     /// Returns the namespace prefix (if any).
@@ -230,9 +241,9 @@ impl XmlNode {
     pub fn get_namespace(&self) -> Option<Namespace> {
         let nodes = self.nodes.read();
         nodes.get(self.id).and_then(|n| {
-            n.namespace_uri.as_ref().map(|uri| {
-                Namespace::new(n.prefix.clone().unwrap_or_default(), uri.clone())
-            })
+            n.namespace_uri
+                .as_ref()
+                .map(|uri| Namespace::new(n.prefix.clone().unwrap_or_default(), uri.clone()))
         })
     }
 
@@ -263,7 +274,12 @@ impl XmlNode {
         }
     }
 
-    fn collect_text_content_recursive(&self, node_id: NodeId, nodes: &[NodeData], content: &mut String) {
+    fn collect_text_content_recursive(
+        &self,
+        node_id: NodeId,
+        nodes: &[NodeData],
+        content: &mut String,
+    ) {
         if let Some(node) = nodes.get(node_id) {
             match node.node_type {
                 NodeType::Text | NodeType::CData => {
@@ -284,7 +300,9 @@ impl XmlNode {
     /// Returns an attribute value by name.
     pub fn get_attribute(&self, name: &str) -> Option<String> {
         let nodes = self.nodes.read();
-        nodes.get(self.id).and_then(|n| n.attributes.get(name).cloned())
+        nodes
+            .get(self.id)
+            .and_then(|n| n.attributes.get(name).cloned())
     }
 
     /// Returns an attribute value by name and namespace.
@@ -315,7 +333,8 @@ impl XmlNode {
     /// Returns all attributes as a map.
     pub fn get_attributes(&self) -> HashMap<String, String> {
         let nodes = self.nodes.read();
-        nodes.get(self.id)
+        nodes
+            .get(self.id)
             .map(|n| n.attributes.clone())
             .unwrap_or_default()
     }
@@ -323,7 +342,8 @@ impl XmlNode {
     /// Returns namespace declarations on this element.
     pub fn get_namespace_declarations(&self) -> Vec<Namespace> {
         let nodes = self.nodes.read();
-        nodes.get(self.id)
+        nodes
+            .get(self.id)
             .map(|n| n.namespace_decls.clone())
             .unwrap_or_default()
     }
@@ -341,9 +361,11 @@ impl XmlNode {
     /// Returns all child nodes.
     pub fn get_child_nodes(&self) -> Vec<XmlNode> {
         let nodes = self.nodes.read();
-        nodes.get(self.id)
+        nodes
+            .get(self.id)
             .map(|n| {
-                n.children.iter()
+                n.children
+                    .iter()
                     .map(|&id| XmlNode {
                         id,
                         nodes: Arc::clone(&self.nodes),
@@ -356,9 +378,11 @@ impl XmlNode {
     /// Returns child element nodes (excluding text, comments, etc.).
     pub fn get_child_elements(&self) -> Vec<XmlNode> {
         let nodes = self.nodes.read();
-        nodes.get(self.id)
+        nodes
+            .get(self.id)
             .map(|n| {
-                n.children.iter()
+                n.children
+                    .iter()
                     .filter_map(|&id| {
                         nodes.get(id).and_then(|child| {
                             if child.node_type == NodeType::Element {
@@ -468,31 +492,49 @@ impl XmlRoNode {
     }
 
     /// Returns the node ID.
-    pub fn id(&self) -> NodeId { self.inner.id() }
+    pub fn id(&self) -> NodeId {
+        self.inner.id()
+    }
 
     /// Returns the node type.
-    pub fn get_type(&self) -> NodeType { self.inner.get_type() }
+    pub fn get_type(&self) -> NodeType {
+        self.inner.get_type()
+    }
 
     /// Returns the local name.
-    pub fn get_name(&self) -> String { self.inner.get_name() }
+    pub fn get_name(&self) -> String {
+        self.inner.get_name()
+    }
 
     /// Returns the namespace prefix.
-    pub fn get_prefix(&self) -> Option<String> { self.inner.get_prefix() }
+    pub fn get_prefix(&self) -> Option<String> {
+        self.inner.get_prefix()
+    }
 
     /// Returns the namespace URI.
-    pub fn get_namespace_uri(&self) -> Option<String> { self.inner.get_namespace_uri() }
+    pub fn get_namespace_uri(&self) -> Option<String> {
+        self.inner.get_namespace_uri()
+    }
 
     /// Returns the namespace.
-    pub fn get_namespace(&self) -> Option<Namespace> { self.inner.get_namespace() }
+    pub fn get_namespace(&self) -> Option<Namespace> {
+        self.inner.get_namespace()
+    }
 
     /// Returns the qualified name.
-    pub fn qname(&self) -> String { self.inner.qname() }
+    pub fn qname(&self) -> String {
+        self.inner.qname()
+    }
 
     /// Returns the text content.
-    pub fn get_content(&self) -> Option<String> { self.inner.get_content() }
+    pub fn get_content(&self) -> Option<String> {
+        self.inner.get_content()
+    }
 
     /// Returns an attribute value.
-    pub fn get_attribute(&self, name: &str) -> Option<String> { self.inner.get_attribute(name) }
+    pub fn get_attribute(&self, name: &str) -> Option<String> {
+        self.inner.get_attribute(name)
+    }
 
     /// Returns an attribute value with namespace.
     pub fn get_attribute_ns(&self, name: &str, ns_uri: &str) -> Option<String> {
@@ -500,7 +542,9 @@ impl XmlRoNode {
     }
 
     /// Returns all attributes.
-    pub fn get_attributes(&self) -> HashMap<String, String> { self.inner.get_attributes() }
+    pub fn get_attributes(&self) -> HashMap<String, String> {
+        self.inner.get_attributes()
+    }
 
     /// Returns namespace declarations.
     pub fn get_namespace_declarations(&self) -> Vec<Namespace> {
@@ -514,12 +558,20 @@ impl XmlRoNode {
 
     /// Returns child nodes.
     pub fn get_child_nodes(&self) -> Vec<XmlRoNode> {
-        self.inner.get_child_nodes().into_iter().map(XmlRoNode::from_node).collect()
+        self.inner
+            .get_child_nodes()
+            .into_iter()
+            .map(XmlRoNode::from_node)
+            .collect()
     }
 
     /// Returns child elements.
     pub fn get_child_elements(&self) -> Vec<XmlRoNode> {
-        self.inner.get_child_elements().into_iter().map(XmlRoNode::from_node).collect()
+        self.inner
+            .get_child_elements()
+            .into_iter()
+            .map(XmlRoNode::from_node)
+            .collect()
     }
 
     /// Returns the first child.
@@ -533,19 +585,29 @@ impl XmlRoNode {
     }
 
     /// Returns the line number.
-    pub fn line(&self) -> Option<usize> { self.inner.line() }
+    pub fn line(&self) -> Option<usize> {
+        self.inner.line()
+    }
 
     /// Returns the column number.
-    pub fn column(&self) -> Option<usize> { self.inner.column() }
+    pub fn column(&self) -> Option<usize> {
+        self.inner.column()
+    }
 
     /// Returns true if this is an element.
-    pub fn is_element(&self) -> bool { self.inner.is_element() }
+    pub fn is_element(&self) -> bool {
+        self.inner.is_element()
+    }
 
     /// Returns true if this is text.
-    pub fn is_text(&self) -> bool { self.inner.is_text() }
+    pub fn is_text(&self) -> bool {
+        self.inner.is_text()
+    }
 
     /// Converts to a mutable XmlNode (use with caution).
-    pub fn into_node(self) -> XmlNode { self.inner }
+    pub fn into_node(self) -> XmlNode {
+        self.inner
+    }
 }
 
 impl std::fmt::Debug for XmlRoNode {

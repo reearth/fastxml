@@ -38,11 +38,10 @@ impl XPathResult {
     /// Converts to string.
     pub fn to_string_value(&self) -> String {
         match self {
-            XPathResult::Nodes(nodes) => {
-                nodes.first()
-                    .and_then(|n| n.get_content())
-                    .unwrap_or_default()
-            }
+            XPathResult::Nodes(nodes) => nodes
+                .first()
+                .and_then(|n| n.get_content())
+                .unwrap_or_default(),
             XPathResult::String(s) => s.clone(),
             XPathResult::Boolean(b) => b.to_string(),
             XPathResult::Number(n) => format_xpath_number(*n),
@@ -62,14 +61,19 @@ impl XPathResult {
     /// Converts to number.
     pub fn to_number(&self) -> f64 {
         match self {
-            XPathResult::Nodes(nodes) => {
-                nodes.first()
-                    .and_then(|n| n.get_content())
-                    .and_then(|s| s.trim().parse().ok())
-                    .unwrap_or(f64::NAN)
-            }
+            XPathResult::Nodes(nodes) => nodes
+                .first()
+                .and_then(|n| n.get_content())
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(f64::NAN),
             XPathResult::String(s) => s.trim().parse().unwrap_or(f64::NAN),
-            XPathResult::Boolean(b) => if *b { 1.0 } else { 0.0 },
+            XPathResult::Boolean(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             XPathResult::Number(n) => *n,
         }
     }
@@ -77,11 +81,7 @@ impl XPathResult {
     /// Collects text values from nodes.
     pub fn collect_text_values(&self) -> Vec<String> {
         match self {
-            XPathResult::Nodes(nodes) => {
-                nodes.iter()
-                    .filter_map(|n| n.get_content())
-                    .collect()
-            }
+            XPathResult::Nodes(nodes) => nodes.iter().filter_map(|n| n.get_content()).collect(),
             XPathResult::String(s) => vec![s.clone()],
             _ => Vec::new(),
         }
@@ -189,27 +189,47 @@ impl<'a> XPathEvaluator<'a> {
             Expr::Add(left, right) => {
                 let l = result_to_value(self.eval_expr(left, ctx)?);
                 let r = result_to_value(self.eval_expr(right, ctx)?);
-                Ok(value_to_result(operators::arithmetic(&l, ArithmeticOp::Add, &r)))
+                Ok(value_to_result(operators::arithmetic(
+                    &l,
+                    ArithmeticOp::Add,
+                    &r,
+                )))
             }
             Expr::Subtract(left, right) => {
                 let l = result_to_value(self.eval_expr(left, ctx)?);
                 let r = result_to_value(self.eval_expr(right, ctx)?);
-                Ok(value_to_result(operators::arithmetic(&l, ArithmeticOp::Subtract, &r)))
+                Ok(value_to_result(operators::arithmetic(
+                    &l,
+                    ArithmeticOp::Subtract,
+                    &r,
+                )))
             }
             Expr::Multiply(left, right) => {
                 let l = result_to_value(self.eval_expr(left, ctx)?);
                 let r = result_to_value(self.eval_expr(right, ctx)?);
-                Ok(value_to_result(operators::arithmetic(&l, ArithmeticOp::Multiply, &r)))
+                Ok(value_to_result(operators::arithmetic(
+                    &l,
+                    ArithmeticOp::Multiply,
+                    &r,
+                )))
             }
             Expr::Divide(left, right) => {
                 let l = result_to_value(self.eval_expr(left, ctx)?);
                 let r = result_to_value(self.eval_expr(right, ctx)?);
-                Ok(value_to_result(operators::arithmetic(&l, ArithmeticOp::Divide, &r)))
+                Ok(value_to_result(operators::arithmetic(
+                    &l,
+                    ArithmeticOp::Divide,
+                    &r,
+                )))
             }
             Expr::Modulo(left, right) => {
                 let l = result_to_value(self.eval_expr(left, ctx)?);
                 let r = result_to_value(self.eval_expr(right, ctx)?);
-                Ok(value_to_result(operators::arithmetic(&l, ArithmeticOp::Modulo, &r)))
+                Ok(value_to_result(operators::arithmetic(
+                    &l,
+                    ArithmeticOp::Modulo,
+                    &r,
+                )))
             }
             Expr::Negate(inner) => {
                 let v = result_to_value(self.eval_expr(inner, ctx)?);
@@ -239,7 +259,12 @@ impl<'a> XPathEvaluator<'a> {
         Ok(XPathResult::Nodes(current_nodes))
     }
 
-    fn eval_step(&self, step: &Step, context: &XmlNode, ctx: &EvaluationContext<'_>) -> Result<Vec<XmlNode>> {
+    fn eval_step(
+        &self,
+        step: &Step,
+        context: &XmlNode,
+        ctx: &EvaluationContext<'_>,
+    ) -> Result<Vec<XmlNode>> {
         // Select nodes based on axis using the axes module
         let candidates = axes::select_axis(&step.axis, context);
 
@@ -333,9 +358,7 @@ impl<'a> XPathEvaluator<'a> {
             Predicate::Or(left, right) => {
                 Ok(self.eval_predicate(left, ctx)? || self.eval_predicate(right, ctx)?)
             }
-            Predicate::Not(inner) => {
-                Ok(!self.eval_predicate(inner, ctx)?)
-            }
+            Predicate::Not(inner) => Ok(!self.eval_predicate(inner, ctx)?),
             Predicate::Position(pos) => {
                 // Check if current position matches
                 Ok(ctx.position() == *pos)
@@ -352,7 +375,12 @@ impl<'a> XPathEvaluator<'a> {
         }
     }
 
-    fn eval_function(&self, name: &str, args: &[Expr], ctx: &EvaluationContext<'_>) -> Result<XPathResult> {
+    fn eval_function(
+        &self,
+        name: &str,
+        args: &[Expr],
+        ctx: &EvaluationContext<'_>,
+    ) -> Result<XPathResult> {
         // Evaluate arguments
         let mut evaluated_args = Vec::with_capacity(args.len());
         for arg in args {
@@ -465,9 +493,12 @@ mod tests {
 
     #[test]
     fn test_namespaced_xpath() {
-        let doc = parse(r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
+        let doc = parse(
+            r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
             <gml:name>test</gml:name>
-        </gml:root>"#).unwrap();
+        </gml:root>"#,
+        )
+        .unwrap();
 
         let result = evaluate(&doc, "/gml:root/gml:name").unwrap();
         if let XPathResult::Nodes(nodes) = &result {

@@ -64,11 +64,24 @@ impl std::fmt::Display for ProfileResult {
         writeln!(f, "  File size:      {} bytes", self.file_size)?;
         writeln!(f, "  Parse time:     {:?}", self.parse_time)?;
         writeln!(f, "  Node count:     {}", self.node_count)?;
-        writeln!(f, "  Parse rate:     {:.0} nodes/sec", self.nodes_per_second())?;
-        writeln!(f, "  Throughput:     {:.2} MB/sec", self.bytes_per_second() / 1_000_000.0)?;
+        writeln!(
+            f,
+            "  Parse rate:     {:.0} nodes/sec",
+            self.nodes_per_second()
+        )?;
+        writeln!(
+            f,
+            "  Throughput:     {:.2} MB/sec",
+            self.bytes_per_second() / 1_000_000.0
+        )?;
 
         if let Some(mem) = self.memory_current {
-            writeln!(f, "  Memory used:    {} bytes ({:.2} MB)", mem, mem as f64 / 1_000_000.0)?;
+            writeln!(
+                f,
+                "  Memory used:    {} bytes ({:.2} MB)",
+                mem,
+                mem as f64 / 1_000_000.0
+            )?;
         }
 
         if let Some(mem_per_node) = self.memory_per_node() {

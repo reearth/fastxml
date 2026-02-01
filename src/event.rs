@@ -123,7 +123,12 @@ impl<R: BufRead> StreamingParser<R> {
                     self.dispatch_event(&start_event)?;
 
                     // For empty elements, also dispatch end event
-                    if let XmlEvent::StartElement { ref name, ref prefix, .. } = start_event {
+                    if let XmlEvent::StartElement {
+                        ref name,
+                        ref prefix,
+                        ..
+                    } = start_event
+                    {
                         let end_event = XmlEvent::EndElement {
                             name: name.clone(),
                             prefix: prefix.clone(),
@@ -142,7 +147,8 @@ impl<R: BufRead> StreamingParser<R> {
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e.unescape()
+                    let text = e
+                        .unescape()
                         .map_err(|e| Error::Parse(format!("text decode error: {}", e)))?;
                     if !text.is_empty() {
                         let event = XmlEvent::Text(text.into_owned());
@@ -164,20 +170,30 @@ impl<R: BufRead> StreamingParser<R> {
                     let parts: Vec<&str> = content.splitn(2, char::is_whitespace).collect();
                     let target = parts.first().unwrap_or(&"").to_string();
                     let pi_content = parts.get(1).map(|s| s.trim().to_string());
-                    let event = XmlEvent::ProcessingInstruction { target, content: pi_content };
+                    let event = XmlEvent::ProcessingInstruction {
+                        target,
+                        content: pi_content,
+                    };
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::Decl(ref e)) => {
-                    let version = e.version().ok().map(|v| {
-                        String::from_utf8_lossy(v.as_ref()).into_owned()
-                    });
-                    let encoding = e.encoding().and_then(|r| r.ok()).map(|v| {
-                        String::from_utf8_lossy(v.as_ref()).into_owned()
-                    });
-                    let standalone = e.standalone().and_then(|r| r.ok()).map(|v| {
-                        v.as_ref() == b"yes"
-                    });
-                    let event = XmlEvent::Declaration { version, encoding, standalone };
+                    let version = e
+                        .version()
+                        .ok()
+                        .map(|v| String::from_utf8_lossy(v.as_ref()).into_owned());
+                    let encoding = e
+                        .encoding()
+                        .and_then(|r| r.ok())
+                        .map(|v| String::from_utf8_lossy(v.as_ref()).into_owned());
+                    let standalone = e
+                        .standalone()
+                        .and_then(|r| r.ok())
+                        .map(|v| v.as_ref() == b"yes");
+                    let event = XmlEvent::Declaration {
+                        version,
+                        encoding,
+                        standalone,
+                    };
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::DocType(_)) => {
@@ -191,8 +207,7 @@ impl<R: BufRead> StreamingParser<R> {
                 Err(e) => {
                     return Err(Error::Parse(format!(
                         "parse error at position {}: {}",
-                        position,
-                        e
+                        position, e
                     )));
                 }
             }
@@ -226,7 +241,8 @@ fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> 
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr.unescape_value()
+        let value = attr
+            .unescape_value()
             .map_err(|e| Error::Parse(format!("attribute value decode error: {}", e)))?;
 
         if key == "xmlns" {
@@ -308,33 +324,41 @@ mod tests {
         let mut collector = EventCollector::new();
 
         // Simulate events
-        collector.handle(&XmlEvent::StartElement {
-            name: "root".to_string(),
-            prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(1),
-        }).unwrap();
+        collector
+            .handle(&XmlEvent::StartElement {
+                name: "root".to_string(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
 
-        collector.handle(&XmlEvent::StartElement {
-            name: "child".to_string(),
-            prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(1),
-        }).unwrap();
+        collector
+            .handle(&XmlEvent::StartElement {
+                name: "child".to_string(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
 
-        collector.handle(&XmlEvent::EndElement {
-            name: "child".to_string(),
-            prefix: None,
-        }).unwrap();
+        collector
+            .handle(&XmlEvent::EndElement {
+                name: "child".to_string(),
+                prefix: None,
+            })
+            .unwrap();
 
-        collector.handle(&XmlEvent::EndElement {
-            name: "root".to_string(),
-            prefix: None,
-        }).unwrap();
+        collector
+            .handle(&XmlEvent::EndElement {
+                name: "root".to_string(),
+                prefix: None,
+            })
+            .unwrap();
 
         collector.handle(&XmlEvent::Eof).unwrap();
 

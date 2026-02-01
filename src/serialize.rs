@@ -263,9 +263,12 @@ mod tests {
 
     #[test]
     fn test_serialize_namespaced() {
-        let doc = parse(r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
+        let doc = parse(
+            r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
             <gml:child>text</gml:child>
-        </gml:root>"#).unwrap();
+        </gml:root>"#,
+        )
+        .unwrap();
         let root = doc.get_root_element().unwrap();
         let xml = node_to_xml_string(&doc, &root).unwrap();
 
@@ -277,7 +280,8 @@ mod tests {
     fn test_serialize_pretty() {
         let doc = parse(r#"<root><a/><b/></root>"#).unwrap();
         let root = doc.get_root_element().unwrap();
-        let xml = node_to_xml_string_with_options(&doc, &root, &SerializeOptions::pretty()).unwrap();
+        let xml =
+            node_to_xml_string_with_options(&doc, &root, &SerializeOptions::pretty()).unwrap();
 
         assert!(xml.contains('\n'));
     }

@@ -2,12 +2,12 @@
 
 use std::io::BufRead;
 
-use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesStart, Event};
 
 use crate::document::{DocumentBuilder, XmlDocument};
 use crate::error::{Error, Result};
-use crate::namespace::{split_qname, Namespace};
+use crate::namespace::{Namespace, split_qname};
 
 /// Parser options for controlling XML parsing behavior.
 #[derive(Debug, Clone)]
@@ -91,7 +91,10 @@ fn configure_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions)
     reader.config_mut().check_comments = options.check_comments;
 }
 
-fn parse_from_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions) -> Result<XmlDocument> {
+fn parse_from_reader<R: BufRead>(
+    reader: &mut Reader<R>,
+    options: &ParserOptions,
+) -> Result<XmlDocument> {
     let mut builder = DocumentBuilder::new();
     let mut buf = Vec::with_capacity(options.buffer_size);
     let mut memory_used = 0usize;
@@ -111,7 +114,8 @@ fn parse_from_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
-                let text = e.unescape()
+                let text = e
+                    .unescape()
                     .map_err(|e| Error::Parse(format!("text decode error: {}", e)))?;
                 if !text.is_empty() {
                     check_memory(options, &mut memory_used, text.len())?;
@@ -142,7 +146,13 @@ fn parse_from_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions
                 // DOCTYPE - skip for now
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(Error::Parse(format!("parse error at position {}: {}", reader.buffer_position(), e))),
+            Err(e) => {
+                return Err(Error::Parse(format!(
+                    "parse error at position {}: {}",
+                    reader.buffer_position(),
+                    e
+                )));
+            }
         }
         buf.clear();
     }
@@ -178,7 +188,8 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr.unescape_value()
+        let value = attr
+            .unescape_value()
             .map_err(|e| Error::Parse(format!("attribute value decode error: {}", e)))?;
 
         if key == "xmlns" {
@@ -193,7 +204,8 @@ fn process_start_element<R: BufRead>(
     }
 
     // Convert attributes to borrowed form for builder
-    let attr_refs: Vec<(&str, &str)> = attributes.iter()
+    let attr_refs: Vec<(&str, &str)> = attributes
+        .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
@@ -232,7 +244,8 @@ pub fn parse_schema_locations(doc: &XmlDocument) -> Result<Vec<(String, String)>
     let attrs = root.get_attributes();
 
     // Look for xsi:schemaLocation
-    let schema_location = attrs.get("xsi:schemaLocation")
+    let schema_location = attrs
+        .get("xsi:schemaLocation")
         .or_else(|| attrs.get("schemaLocation"));
 
     match schema_location {

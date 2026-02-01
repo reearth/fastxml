@@ -71,8 +71,10 @@ impl NamespaceResolver {
 
     /// Registers a namespace binding.
     pub fn register(&mut self, prefix: &str, uri: &str) {
-        self.prefix_to_uri.insert(prefix.to_string(), uri.to_string());
-        self.uri_to_prefix.insert(uri.to_string(), prefix.to_string());
+        self.prefix_to_uri
+            .insert(prefix.to_string(), uri.to_string());
+        self.uri_to_prefix
+            .insert(uri.to_string(), prefix.to_string());
     }
 
     /// Resolves a prefix to its namespace URI.
@@ -87,7 +89,9 @@ impl NamespaceResolver {
 
     /// Returns all registered namespace bindings as (prefix, uri) pairs.
     pub fn bindings(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.prefix_to_uri.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+        self.prefix_to_uri
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Returns the number of registered namespaces.
@@ -182,8 +186,14 @@ mod tests {
         resolver.register("gml", "http://www.opengis.net/gml");
         resolver.register("uro", "https://www.geospatial.jp/iur/uro/3.0");
 
-        assert_eq!(resolver.resolve_prefix("gml"), Some("http://www.opengis.net/gml"));
-        assert_eq!(resolver.resolve_uri("https://www.geospatial.jp/iur/uro/3.0"), Some("uro"));
+        assert_eq!(
+            resolver.resolve_prefix("gml"),
+            Some("http://www.opengis.net/gml")
+        );
+        assert_eq!(
+            resolver.resolve_uri("https://www.geospatial.jp/iur/uro/3.0"),
+            Some("uro")
+        );
         assert_eq!(resolver.resolve_prefix("unknown"), None);
         assert_eq!(resolver.len(), 2);
     }

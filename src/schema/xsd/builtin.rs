@@ -126,59 +126,176 @@ pub mod gml {
 pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
     vec![
         // String types
-        (xs::STRING.to_string(), TypeDef::Simple(SimpleType::new("string"))),
-        (xs::NORMALIZED_STRING.to_string(), TypeDef::Simple(SimpleType::new("normalizedString").with_base(xs::STRING))),
-        (xs::TOKEN.to_string(), TypeDef::Simple(SimpleType::new("token").with_base(xs::NORMALIZED_STRING))),
-        (xs::LANGUAGE.to_string(), TypeDef::Simple(SimpleType::new("language").with_base(xs::TOKEN))),
-        (xs::NMTOKEN.to_string(), TypeDef::Simple(SimpleType::new("NMTOKEN").with_base(xs::TOKEN))),
-        (xs::NAME.to_string(), TypeDef::Simple(SimpleType::new("Name").with_base(xs::TOKEN))),
-        (xs::NCNAME.to_string(), TypeDef::Simple(SimpleType::new("NCName").with_base(xs::NAME))),
-        (xs::ID.to_string(), TypeDef::Simple(SimpleType::new("ID").with_base(xs::NCNAME))),
-        (xs::IDREF.to_string(), TypeDef::Simple(SimpleType::new("IDREF").with_base(xs::NCNAME))),
-
+        (
+            xs::STRING.to_string(),
+            TypeDef::Simple(SimpleType::new("string")),
+        ),
+        (
+            xs::NORMALIZED_STRING.to_string(),
+            TypeDef::Simple(SimpleType::new("normalizedString").with_base(xs::STRING)),
+        ),
+        (
+            xs::TOKEN.to_string(),
+            TypeDef::Simple(SimpleType::new("token").with_base(xs::NORMALIZED_STRING)),
+        ),
+        (
+            xs::LANGUAGE.to_string(),
+            TypeDef::Simple(SimpleType::new("language").with_base(xs::TOKEN)),
+        ),
+        (
+            xs::NMTOKEN.to_string(),
+            TypeDef::Simple(SimpleType::new("NMTOKEN").with_base(xs::TOKEN)),
+        ),
+        (
+            xs::NAME.to_string(),
+            TypeDef::Simple(SimpleType::new("Name").with_base(xs::TOKEN)),
+        ),
+        (
+            xs::NCNAME.to_string(),
+            TypeDef::Simple(SimpleType::new("NCName").with_base(xs::NAME)),
+        ),
+        (
+            xs::ID.to_string(),
+            TypeDef::Simple(SimpleType::new("ID").with_base(xs::NCNAME)),
+        ),
+        (
+            xs::IDREF.to_string(),
+            TypeDef::Simple(SimpleType::new("IDREF").with_base(xs::NCNAME)),
+        ),
         // Boolean
-        (xs::BOOLEAN.to_string(), TypeDef::Simple(SimpleType::new("boolean"))),
-
+        (
+            xs::BOOLEAN.to_string(),
+            TypeDef::Simple(SimpleType::new("boolean")),
+        ),
         // Numeric types
-        (xs::DECIMAL.to_string(), TypeDef::Simple(SimpleType::new("decimal"))),
-        (xs::FLOAT.to_string(), TypeDef::Simple(SimpleType::new("float"))),
-        (xs::DOUBLE.to_string(), TypeDef::Simple(SimpleType::new("double"))),
-        (xs::INTEGER.to_string(), TypeDef::Simple(SimpleType::new("integer").with_base(xs::DECIMAL))),
-        (xs::LONG.to_string(), TypeDef::Simple(SimpleType::new("long").with_base(xs::INTEGER))),
-        (xs::INT.to_string(), TypeDef::Simple(SimpleType::new("int").with_base(xs::LONG))),
-        (xs::SHORT.to_string(), TypeDef::Simple(SimpleType::new("short").with_base(xs::INT))),
-        (xs::BYTE.to_string(), TypeDef::Simple(SimpleType::new("byte").with_base(xs::SHORT))),
-        (xs::NON_NEGATIVE_INTEGER.to_string(), TypeDef::Simple(SimpleType::new("nonNegativeInteger").with_base(xs::INTEGER))),
-        (xs::POSITIVE_INTEGER.to_string(), TypeDef::Simple(SimpleType::new("positiveInteger").with_base(xs::NON_NEGATIVE_INTEGER))),
-        (xs::UNSIGNED_LONG.to_string(), TypeDef::Simple(SimpleType::new("unsignedLong").with_base(xs::NON_NEGATIVE_INTEGER))),
-        (xs::UNSIGNED_INT.to_string(), TypeDef::Simple(SimpleType::new("unsignedInt").with_base(xs::UNSIGNED_LONG))),
-        (xs::UNSIGNED_SHORT.to_string(), TypeDef::Simple(SimpleType::new("unsignedShort").with_base(xs::UNSIGNED_INT))),
-        (xs::UNSIGNED_BYTE.to_string(), TypeDef::Simple(SimpleType::new("unsignedByte").with_base(xs::UNSIGNED_SHORT))),
-        (xs::NON_POSITIVE_INTEGER.to_string(), TypeDef::Simple(SimpleType::new("nonPositiveInteger").with_base(xs::INTEGER))),
-        (xs::NEGATIVE_INTEGER.to_string(), TypeDef::Simple(SimpleType::new("negativeInteger").with_base(xs::NON_POSITIVE_INTEGER))),
-
+        (
+            xs::DECIMAL.to_string(),
+            TypeDef::Simple(SimpleType::new("decimal")),
+        ),
+        (
+            xs::FLOAT.to_string(),
+            TypeDef::Simple(SimpleType::new("float")),
+        ),
+        (
+            xs::DOUBLE.to_string(),
+            TypeDef::Simple(SimpleType::new("double")),
+        ),
+        (
+            xs::INTEGER.to_string(),
+            TypeDef::Simple(SimpleType::new("integer").with_base(xs::DECIMAL)),
+        ),
+        (
+            xs::LONG.to_string(),
+            TypeDef::Simple(SimpleType::new("long").with_base(xs::INTEGER)),
+        ),
+        (
+            xs::INT.to_string(),
+            TypeDef::Simple(SimpleType::new("int").with_base(xs::LONG)),
+        ),
+        (
+            xs::SHORT.to_string(),
+            TypeDef::Simple(SimpleType::new("short").with_base(xs::INT)),
+        ),
+        (
+            xs::BYTE.to_string(),
+            TypeDef::Simple(SimpleType::new("byte").with_base(xs::SHORT)),
+        ),
+        (
+            xs::NON_NEGATIVE_INTEGER.to_string(),
+            TypeDef::Simple(SimpleType::new("nonNegativeInteger").with_base(xs::INTEGER)),
+        ),
+        (
+            xs::POSITIVE_INTEGER.to_string(),
+            TypeDef::Simple(SimpleType::new("positiveInteger").with_base(xs::NON_NEGATIVE_INTEGER)),
+        ),
+        (
+            xs::UNSIGNED_LONG.to_string(),
+            TypeDef::Simple(SimpleType::new("unsignedLong").with_base(xs::NON_NEGATIVE_INTEGER)),
+        ),
+        (
+            xs::UNSIGNED_INT.to_string(),
+            TypeDef::Simple(SimpleType::new("unsignedInt").with_base(xs::UNSIGNED_LONG)),
+        ),
+        (
+            xs::UNSIGNED_SHORT.to_string(),
+            TypeDef::Simple(SimpleType::new("unsignedShort").with_base(xs::UNSIGNED_INT)),
+        ),
+        (
+            xs::UNSIGNED_BYTE.to_string(),
+            TypeDef::Simple(SimpleType::new("unsignedByte").with_base(xs::UNSIGNED_SHORT)),
+        ),
+        (
+            xs::NON_POSITIVE_INTEGER.to_string(),
+            TypeDef::Simple(SimpleType::new("nonPositiveInteger").with_base(xs::INTEGER)),
+        ),
+        (
+            xs::NEGATIVE_INTEGER.to_string(),
+            TypeDef::Simple(SimpleType::new("negativeInteger").with_base(xs::NON_POSITIVE_INTEGER)),
+        ),
         // Date/time types
-        (xs::DATE_TIME.to_string(), TypeDef::Simple(SimpleType::new("dateTime"))),
-        (xs::DATE.to_string(), TypeDef::Simple(SimpleType::new("date"))),
-        (xs::TIME.to_string(), TypeDef::Simple(SimpleType::new("time"))),
-        (xs::DURATION.to_string(), TypeDef::Simple(SimpleType::new("duration"))),
-        (xs::G_YEAR.to_string(), TypeDef::Simple(SimpleType::new("gYear"))),
-        (xs::G_YEAR_MONTH.to_string(), TypeDef::Simple(SimpleType::new("gYearMonth"))),
-        (xs::G_MONTH.to_string(), TypeDef::Simple(SimpleType::new("gMonth"))),
-        (xs::G_MONTH_DAY.to_string(), TypeDef::Simple(SimpleType::new("gMonthDay"))),
-        (xs::G_DAY.to_string(), TypeDef::Simple(SimpleType::new("gDay"))),
-
+        (
+            xs::DATE_TIME.to_string(),
+            TypeDef::Simple(SimpleType::new("dateTime")),
+        ),
+        (
+            xs::DATE.to_string(),
+            TypeDef::Simple(SimpleType::new("date")),
+        ),
+        (
+            xs::TIME.to_string(),
+            TypeDef::Simple(SimpleType::new("time")),
+        ),
+        (
+            xs::DURATION.to_string(),
+            TypeDef::Simple(SimpleType::new("duration")),
+        ),
+        (
+            xs::G_YEAR.to_string(),
+            TypeDef::Simple(SimpleType::new("gYear")),
+        ),
+        (
+            xs::G_YEAR_MONTH.to_string(),
+            TypeDef::Simple(SimpleType::new("gYearMonth")),
+        ),
+        (
+            xs::G_MONTH.to_string(),
+            TypeDef::Simple(SimpleType::new("gMonth")),
+        ),
+        (
+            xs::G_MONTH_DAY.to_string(),
+            TypeDef::Simple(SimpleType::new("gMonthDay")),
+        ),
+        (
+            xs::G_DAY.to_string(),
+            TypeDef::Simple(SimpleType::new("gDay")),
+        ),
         // Binary types
-        (xs::HEX_BINARY.to_string(), TypeDef::Simple(SimpleType::new("hexBinary"))),
-        (xs::BASE64_BINARY.to_string(), TypeDef::Simple(SimpleType::new("base64Binary"))),
-
+        (
+            xs::HEX_BINARY.to_string(),
+            TypeDef::Simple(SimpleType::new("hexBinary")),
+        ),
+        (
+            xs::BASE64_BINARY.to_string(),
+            TypeDef::Simple(SimpleType::new("base64Binary")),
+        ),
         // URI and QName
-        (xs::ANY_URI.to_string(), TypeDef::Simple(SimpleType::new("anyURI"))),
-        (xs::QNAME.to_string(), TypeDef::Simple(SimpleType::new("QName"))),
-
+        (
+            xs::ANY_URI.to_string(),
+            TypeDef::Simple(SimpleType::new("anyURI")),
+        ),
+        (
+            xs::QNAME.to_string(),
+            TypeDef::Simple(SimpleType::new("QName")),
+        ),
         // Any types
-        (xs::ANY_TYPE.to_string(), TypeDef::Complex(ComplexType::new("anyType"))),
-        (xs::ANY_SIMPLE_TYPE.to_string(), TypeDef::Simple(SimpleType::new("anySimpleType"))),
+        (
+            xs::ANY_TYPE.to_string(),
+            TypeDef::Complex(ComplexType::new("anyType")),
+        ),
+        (
+            xs::ANY_SIMPLE_TYPE.to_string(),
+            TypeDef::Simple(SimpleType::new("anySimpleType")),
+        ),
     ]
 }
 
@@ -186,50 +303,140 @@ pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
 pub fn create_gml_types() -> Vec<(String, TypeDef)> {
     vec![
         // CodeType - text with codeSpace attribute
-        (gml::CODE_TYPE.to_string(), TypeDef::Complex(create_code_type())),
-        (gml::CODE_WITH_AUTHORITY_TYPE.to_string(), TypeDef::Complex(create_code_with_authority_type())),
-
+        (
+            gml::CODE_TYPE.to_string(),
+            TypeDef::Complex(create_code_type()),
+        ),
+        (
+            gml::CODE_WITH_AUTHORITY_TYPE.to_string(),
+            TypeDef::Complex(create_code_with_authority_type()),
+        ),
         // Measure types - numeric value with uom attribute
-        (gml::MEASURE_TYPE.to_string(), TypeDef::Complex(create_measure_type())),
-        (gml::LENGTH_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("LengthType"))),
-        (gml::ANGLE_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("AngleType"))),
-        (gml::AREA_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("AreaType"))),
-        (gml::VOLUME_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("VolumeType"))),
-        (gml::SPEED_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("SpeedType"))),
-        (gml::SCALE_TYPE.to_string(), TypeDef::Complex(create_measure_type_variant("ScaleType"))),
-
+        (
+            gml::MEASURE_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type()),
+        ),
+        (
+            gml::LENGTH_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("LengthType")),
+        ),
+        (
+            gml::ANGLE_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("AngleType")),
+        ),
+        (
+            gml::AREA_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("AreaType")),
+        ),
+        (
+            gml::VOLUME_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("VolumeType")),
+        ),
+        (
+            gml::SPEED_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("SpeedType")),
+        ),
+        (
+            gml::SCALE_TYPE.to_string(),
+            TypeDef::Complex(create_measure_type_variant("ScaleType")),
+        ),
         // Reference type
-        (gml::REFERENCE_TYPE.to_string(), TypeDef::Complex(create_reference_type())),
-
+        (
+            gml::REFERENCE_TYPE.to_string(),
+            TypeDef::Complex(create_reference_type()),
+        ),
         // Abstract types
-        (gml::ABSTRACT_GML_TYPE.to_string(), TypeDef::Complex(create_abstract_gml_type())),
-        (gml::ABSTRACT_FEATURE_TYPE.to_string(), TypeDef::Complex(create_abstract_feature_type())),
-        (gml::ABSTRACT_GEOMETRY_TYPE.to_string(), TypeDef::Complex(create_abstract_geometry_type())),
-
+        (
+            gml::ABSTRACT_GML_TYPE.to_string(),
+            TypeDef::Complex(create_abstract_gml_type()),
+        ),
+        (
+            gml::ABSTRACT_FEATURE_TYPE.to_string(),
+            TypeDef::Complex(create_abstract_feature_type()),
+        ),
+        (
+            gml::ABSTRACT_GEOMETRY_TYPE.to_string(),
+            TypeDef::Complex(create_abstract_geometry_type()),
+        ),
         // Geometry types
-        (gml::POINT_TYPE.to_string(), TypeDef::Complex(create_geometry_type("PointType"))),
-        (gml::LINE_STRING_TYPE.to_string(), TypeDef::Complex(create_geometry_type("LineStringType"))),
-        (gml::LINEAR_RING_TYPE.to_string(), TypeDef::Complex(create_geometry_type("LinearRingType"))),
-        (gml::POLYGON_TYPE.to_string(), TypeDef::Complex(create_geometry_type("PolygonType"))),
-        (gml::MULTI_POINT_TYPE.to_string(), TypeDef::Complex(create_geometry_type("MultiPointType"))),
-        (gml::MULTI_CURVE_TYPE.to_string(), TypeDef::Complex(create_geometry_type("MultiCurveType"))),
-        (gml::MULTI_SURFACE_TYPE.to_string(), TypeDef::Complex(create_geometry_type("MultiSurfaceType"))),
-        (gml::SOLID_TYPE.to_string(), TypeDef::Complex(create_geometry_type("SolidType"))),
-        (gml::COMPOSITE_SOLID_TYPE.to_string(), TypeDef::Complex(create_geometry_type("CompositeSolidType"))),
-        (gml::MULTI_SOLID_TYPE.to_string(), TypeDef::Complex(create_geometry_type("MultiSolidType"))),
-
+        (
+            gml::POINT_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("PointType")),
+        ),
+        (
+            gml::LINE_STRING_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("LineStringType")),
+        ),
+        (
+            gml::LINEAR_RING_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("LinearRingType")),
+        ),
+        (
+            gml::POLYGON_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("PolygonType")),
+        ),
+        (
+            gml::MULTI_POINT_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("MultiPointType")),
+        ),
+        (
+            gml::MULTI_CURVE_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("MultiCurveType")),
+        ),
+        (
+            gml::MULTI_SURFACE_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("MultiSurfaceType")),
+        ),
+        (
+            gml::SOLID_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("SolidType")),
+        ),
+        (
+            gml::COMPOSITE_SOLID_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("CompositeSolidType")),
+        ),
+        (
+            gml::MULTI_SOLID_TYPE.to_string(),
+            TypeDef::Complex(create_geometry_type("MultiSolidType")),
+        ),
         // Property types
-        (gml::GEOMETRY_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("GeometryPropertyType"))),
-        (gml::POINT_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("PointPropertyType"))),
-        (gml::CURVE_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("CurvePropertyType"))),
-        (gml::SURFACE_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("SurfacePropertyType"))),
-        (gml::SOLID_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("SolidPropertyType"))),
-        (gml::MULTI_SURFACE_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("MultiSurfacePropertyType"))),
-        (gml::MULTI_CURVE_PROPERTY_TYPE.to_string(), TypeDef::Complex(create_property_type("MultiCurvePropertyType"))),
-
+        (
+            gml::GEOMETRY_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("GeometryPropertyType")),
+        ),
+        (
+            gml::POINT_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("PointPropertyType")),
+        ),
+        (
+            gml::CURVE_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("CurvePropertyType")),
+        ),
+        (
+            gml::SURFACE_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("SurfacePropertyType")),
+        ),
+        (
+            gml::SOLID_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("SolidPropertyType")),
+        ),
+        (
+            gml::MULTI_SURFACE_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("MultiSurfacePropertyType")),
+        ),
+        (
+            gml::MULTI_CURVE_PROPERTY_TYPE.to_string(),
+            TypeDef::Complex(create_property_type("MultiCurvePropertyType")),
+        ),
         // Envelope
-        (gml::ENVELOPE_TYPE.to_string(), TypeDef::Complex(create_envelope_type())),
-        (gml::BOUNDING_SHAPE_TYPE.to_string(), TypeDef::Complex(create_bounding_shape_type())),
+        (
+            gml::ENVELOPE_TYPE.to_string(),
+            TypeDef::Complex(create_envelope_type()),
+        ),
+        (
+            gml::BOUNDING_SHAPE_TYPE.to_string(),
+            TypeDef::Complex(create_bounding_shape_type()),
+        ),
     ]
 }
 
@@ -238,7 +445,8 @@ fn create_code_type() -> ComplexType {
     ct.content = ContentModel::SimpleContent {
         base_type: xs::STRING.to_string(),
     };
-    ct.attributes.push(AttributeDef::new("codeSpace").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("codeSpace").with_type(xs::ANY_URI));
     ct
 }
 
@@ -247,7 +455,8 @@ fn create_code_with_authority_type() -> ComplexType {
     ct.content = ContentModel::SimpleContent {
         base_type: xs::STRING.to_string(),
     };
-    ct.attributes.push(AttributeDef::required("codeSpace").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::required("codeSpace").with_type(xs::ANY_URI));
     ct
 }
 
@@ -256,7 +465,8 @@ fn create_measure_type() -> ComplexType {
     ct.content = ContentModel::SimpleContent {
         base_type: xs::DOUBLE.to_string(),
     };
-    ct.attributes.push(AttributeDef::required("uom").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::required("uom").with_type(xs::ANY_URI));
     ct
 }
 
@@ -272,22 +482,14 @@ fn create_measure_type_variant(name: &str) -> ComplexType {
 fn create_reference_type() -> ComplexType {
     let mut ct = ComplexType::new("ReferenceType");
     ct.content = ContentModel::Empty;
-    ct.attributes.push(
-        AttributeDef::new("href")
-            .with_type(xs::ANY_URI)
-    );
-    ct.attributes.push(
-        AttributeDef::new("title")
-            .with_type(xs::STRING)
-    );
-    ct.attributes.push(
-        AttributeDef::new("role")
-            .with_type(xs::ANY_URI)
-    );
-    ct.attributes.push(
-        AttributeDef::new("nilReason")
-            .with_type(xs::STRING)
-    );
+    ct.attributes
+        .push(AttributeDef::new("href").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("title").with_type(xs::STRING));
+    ct.attributes
+        .push(AttributeDef::new("role").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("nilReason").with_type(xs::STRING));
     ct
 }
 
@@ -295,10 +497,16 @@ fn create_abstract_gml_type() -> ComplexType {
     let mut ct = ComplexType::new("AbstractGMLType");
     ct.is_abstract = true;
     ct.content = ContentModel::Sequence(vec![
-        ElementDef::new("description").with_type(xs::STRING).optional(),
-        ElementDef::new("name").with_type(gml::CODE_TYPE).optional().unbounded(),
+        ElementDef::new("description")
+            .with_type(xs::STRING)
+            .optional(),
+        ElementDef::new("name")
+            .with_type(gml::CODE_TYPE)
+            .optional()
+            .unbounded(),
     ]);
-    ct.attributes.push(AttributeDef::new("id").with_type(xs::ID));
+    ct.attributes
+        .push(AttributeDef::new("id").with_type(xs::ID));
     ct
 }
 
@@ -308,7 +516,9 @@ fn create_abstract_feature_type() -> ComplexType {
     ct.content = ContentModel::ComplexExtension {
         base_type: gml::ABSTRACT_GML_TYPE.to_string(),
         elements: vec![
-            ElementDef::new("boundedBy").with_type(gml::BOUNDING_SHAPE_TYPE).optional(),
+            ElementDef::new("boundedBy")
+                .with_type(gml::BOUNDING_SHAPE_TYPE)
+                .optional(),
         ],
     };
     ct
@@ -321,8 +531,10 @@ fn create_abstract_geometry_type() -> ComplexType {
         base_type: gml::ABSTRACT_GML_TYPE.to_string(),
         elements: Vec::new(),
     };
-    ct.attributes.push(AttributeDef::new("srsName").with_type(xs::ANY_URI));
-    ct.attributes.push(AttributeDef::new("srsDimension").with_type(xs::POSITIVE_INTEGER));
+    ct.attributes
+        .push(AttributeDef::new("srsName").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("srsDimension").with_type(xs::POSITIVE_INTEGER));
     ct
 }
 
@@ -338,14 +550,10 @@ fn create_geometry_type(name: &str) -> ComplexType {
 fn create_property_type(name: &str) -> ComplexType {
     let mut ct = ComplexType::new(name);
     ct.content = ContentModel::Empty;
-    ct.attributes.push(
-        AttributeDef::new("href")
-            .with_type(xs::ANY_URI)
-    );
-    ct.attributes.push(
-        AttributeDef::new("nilReason")
-            .with_type(xs::STRING)
-    );
+    ct.attributes
+        .push(AttributeDef::new("href").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("nilReason").with_type(xs::STRING));
     ct
 }
 
@@ -355,8 +563,10 @@ fn create_envelope_type() -> ComplexType {
         ElementDef::new("lowerCorner").with_type(xs::STRING),
         ElementDef::new("upperCorner").with_type(xs::STRING),
     ]);
-    ct.attributes.push(AttributeDef::new("srsName").with_type(xs::ANY_URI));
-    ct.attributes.push(AttributeDef::new("srsDimension").with_type(xs::POSITIVE_INTEGER));
+    ct.attributes
+        .push(AttributeDef::new("srsName").with_type(xs::ANY_URI));
+    ct.attributes
+        .push(AttributeDef::new("srsDimension").with_type(xs::POSITIVE_INTEGER));
     ct
 }
 

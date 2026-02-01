@@ -92,7 +92,9 @@ impl Occurs {
         if s == "unbounded" {
             Occurs::Unbounded
         } else {
-            s.parse::<u32>().map(Occurs::Count).unwrap_or(Occurs::Count(1))
+            s.parse::<u32>()
+                .map(Occurs::Count)
+                .unwrap_or(Occurs::Count(1))
         }
     }
 }
@@ -247,11 +249,7 @@ impl XsdIdentityConstraint {
     }
 
     /// Creates a new keyref constraint.
-    pub fn keyref(
-        name: impl Into<String>,
-        selector: impl Into<String>,
-        refer: QName,
-    ) -> Self {
+    pub fn keyref(name: impl Into<String>, selector: impl Into<String>, refer: QName) -> Self {
         Self {
             name: name.into(),
             constraint_type: XsdConstraintType::KeyRef,

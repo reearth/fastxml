@@ -29,20 +29,15 @@ use std::collections::HashSet;
 use crate::error::Result;
 
 /// Whitespace handling modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WhitespaceHandling {
     /// Preserve all whitespace as-is
     Preserve,
     /// Replace all whitespace characters with spaces
     Replace,
     /// Collapse consecutive whitespace to single space, trim ends
+    #[default]
     Collapse,
-}
-
-impl Default for WhitespaceHandling {
-    fn default() -> Self {
-        WhitespaceHandling::Collapse
-    }
 }
 
 /// Error types for facet validation.
@@ -138,13 +133,24 @@ impl std::fmt::Display for FacetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FacetError::TooShort { value_len, min_len } => {
-                write!(f, "value length {} is less than minimum {}", value_len, min_len)
+                write!(
+                    f,
+                    "value length {} is less than minimum {}",
+                    value_len, min_len
+                )
             }
             FacetError::TooLong { value_len, max_len } => {
                 write!(f, "value length {} exceeds maximum {}", value_len, max_len)
             }
-            FacetError::WrongLength { value_len, required_len } => {
-                write!(f, "value length {} does not match required {}", value_len, required_len)
+            FacetError::WrongLength {
+                value_len,
+                required_len,
+            } => {
+                write!(
+                    f,
+                    "value length {} does not match required {}",
+                    value_len, required_len
+                )
             }
             FacetError::BelowMinInclusive { value, min } => {
                 write!(f, "value '{}' is below minimum '{}'", value, min)
@@ -292,7 +298,7 @@ impl<'a> FacetValidator<'a> {
     pub fn validate(&self, value: &str) -> std::result::Result<(), FacetError> {
         // Apply whitespace handling first
         let processed = self.apply_whitespace(value);
-        let value = processed.as_ref().map(|s| s.as_str()).unwrap_or(value);
+        let value = processed.as_deref().unwrap_or(value);
 
         // Length constraints
         self.validate_length(value)?;
@@ -315,13 +321,23 @@ impl<'a> FacetValidator<'a> {
             WhitespaceHandling::Preserve => None,
             WhitespaceHandling::Replace => {
                 // Replace \t, \n, \r with space
-                Some(value.chars()
-                    .map(|c| if c == '\t' || c == '\n' || c == '\r' { ' ' } else { c })
-                    .collect())
+                Some(
+                    value
+                        .chars()
+                        .map(|c| {
+                            if c == '\t' || c == '\n' || c == '\r' {
+                                ' '
+                            } else {
+                                c
+                            }
+                        })
+                        .collect(),
+                )
             }
             WhitespaceHandling::Collapse => {
                 // Replace whitespace and collapse to single spaces
-                let replaced: String = value.chars()
+                let replaced: String = value
+                    .chars()
                     .map(|c| if c.is_whitespace() { ' ' } else { c })
                     .collect();
                 // Collapse consecutive spaces and trim
@@ -394,8 +410,7 @@ impl<'a> FacetValidator<'a> {
 
     /// Validates enumeration constraint.
     fn validate_enumeration(&self, value: &str) -> std::result::Result<(), FacetError> {
-        if !self.constraints.enumeration.is_empty()
-            && !self.constraints.enumeration.contains(value)
+        if !self.constraints.enumeration.is_empty() && !self.constraints.enumeration.contains(value)
         {
             return Err(FacetError::NotInEnumeration {
                 value: value.to_string(),
@@ -496,7 +511,10 @@ fn count_significant_digits(value: &str) -> usize {
 /// Counts fraction digits (digits after decimal point).
 fn count_fraction_digits(value: &str) -> usize {
     if let Some(pos) = value.find('.') {
-        value[pos + 1..].chars().filter(|c| c.is_ascii_digit()).count()
+        value[pos + 1..]
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .count()
     } else {
         0
     }
@@ -532,8 +550,7 @@ mod tests {
 
     #[test]
     fn test_enumeration() {
-        let constraints = FacetConstraints::new()
-            .with_enumeration(["red", "green", "blue"]);
+        let constraints = FacetConstraints::new().with_enumeration(["red", "green", "blue"]);
 
         let validator = FacetValidator::new(&constraints);
 
@@ -546,8 +563,7 @@ mod tests {
     fn test_pattern() {
         // Note: Pattern validation is currently disabled (requires regex crate).
         // This test verifies that patterns are stored but don't cause errors.
-        let mut constraints = FacetConstraints::new()
-            .with_pattern(r"^[a-z]+$");
+        let mut constraints = FacetConstraints::new().with_pattern(r"^[a-z]+$");
         constraints.compile_patterns().unwrap();
 
         let validator = FacetValidator::new(&constraints);

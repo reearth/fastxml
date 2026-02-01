@@ -117,7 +117,9 @@ fn fn_count(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPath
     let nodes = args.into_iter().next().unwrap();
     match nodes {
         XPathValue::NodeSet(ns) => Ok(XPathValue::Number(ns.len() as f64)),
-        _ => Err(Error::XPathEval("count() requires a node-set argument".into())),
+        _ => Err(Error::XPathEval(
+            "count() requires a node-set argument".into(),
+        )),
     }
 }
 
@@ -150,14 +152,16 @@ fn fn_id(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValu
     let ids: Vec<String> = match id_value {
         XPathValue::NodeSet(nodes) => {
             // Get string values of all nodes, split by whitespace
-            nodes.iter()
+            nodes
+                .iter()
                 .filter_map(|n| n.get_content())
                 .flat_map(|s| s.split_whitespace().map(String::from).collect::<Vec<_>>())
                 .collect()
         }
         _ => {
             // Split string value by whitespace
-            id_value.to_string_value()
+            id_value
+                .to_string_value()
                 .split_whitespace()
                 .map(String::from)
                 .collect()
@@ -206,12 +210,12 @@ fn fn_string(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPath
 /// `concat(string, string, ...)` - concatenates all arguments.
 fn fn_concat(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() < 2 {
-        return Err(Error::XPathEval("concat() requires at least 2 arguments".into()));
+        return Err(Error::XPathEval(
+            "concat() requires at least 2 arguments".into(),
+        ));
     }
 
-    let result: String = args.into_iter()
-        .map(|v| v.to_string_value())
-        .collect();
+    let result: String = args.into_iter().map(|v| v.to_string_value()).collect();
 
     Ok(XPathValue::String(result))
 }
@@ -219,7 +223,9 @@ fn fn_concat(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPat
 /// `starts-with(string, string)` - returns true if first string starts with second.
 fn fn_starts_with(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval("starts-with() requires 2 arguments".into()));
+        return Err(Error::XPathEval(
+            "starts-with() requires 2 arguments".into(),
+        ));
     }
 
     let mut iter = args.into_iter();
@@ -247,7 +253,9 @@ fn fn_contains(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XP
 /// Note: XPath uses 1-based indexing and rounds to nearest integer.
 fn fn_substring(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() < 2 || args.len() > 3 {
-        return Err(Error::XPathEval("substring() requires 2 or 3 arguments".into()));
+        return Err(Error::XPathEval(
+            "substring() requires 2 or 3 arguments".into(),
+        ));
     }
 
     let mut iter = args.into_iter();
@@ -274,10 +282,7 @@ fn fn_substring(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
             let end_idx = ((start.round() + len.round()) as i64 - 1).max(0) as usize;
             let actual_len = end_idx.saturating_sub(actual_start);
 
-            chars.iter()
-                .skip(actual_start)
-                .take(actual_len)
-                .collect()
+            chars.iter().skip(actual_start).take(actual_len).collect()
         }
     } else {
         chars.iter().skip(start_idx).collect()
@@ -289,7 +294,9 @@ fn fn_substring(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
 /// `substring-before(string, string)` - returns substring before first occurrence.
 fn fn_substring_before(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval("substring-before() requires 2 arguments".into()));
+        return Err(Error::XPathEval(
+            "substring-before() requires 2 arguments".into(),
+        ));
     }
 
     let mut iter = args.into_iter();
@@ -310,7 +317,9 @@ fn fn_substring_before(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> R
 /// `substring-after(string, string)` - returns substring after first occurrence.
 fn fn_substring_after(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval("substring-after() requires 2 arguments".into()));
+        return Err(Error::XPathEval(
+            "substring-after() requires 2 arguments".into(),
+        ));
     }
 
     let mut iter = args.into_iter();
@@ -336,7 +345,9 @@ fn fn_string_length(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Resul
     } else if args.len() == 1 {
         args.into_iter().next().unwrap().to_string_value()
     } else {
-        return Err(Error::XPathEval("string-length() takes 0 or 1 argument".into()));
+        return Err(Error::XPathEval(
+            "string-length() takes 0 or 1 argument".into(),
+        ));
     };
 
     Ok(XPathValue::Number(string.chars().count() as f64))
@@ -349,14 +360,13 @@ fn fn_normalize_space(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Res
     } else if args.len() == 1 {
         args.into_iter().next().unwrap().to_string_value()
     } else {
-        return Err(Error::XPathEval("normalize-space() takes 0 or 1 argument".into()));
+        return Err(Error::XPathEval(
+            "normalize-space() takes 0 or 1 argument".into(),
+        ));
     };
 
     // Split by whitespace and rejoin with single spaces
-    let result: String = string
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let result: String = string.split_whitespace().collect::<Vec<_>>().join(" ");
 
     Ok(XPathValue::String(result))
 }
@@ -375,7 +385,8 @@ fn fn_translate(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
     let from_chars: Vec<char> = from.chars().collect();
     let to_chars: Vec<char> = to.chars().collect();
 
-    let result: String = string.chars()
+    let result: String = string
+        .chars()
         .filter_map(|c| {
             if let Some(idx) = from_chars.iter().position(|&fc| fc == c) {
                 // Character found in 'from' string
@@ -441,16 +452,24 @@ fn fn_lang(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathVa
         return Err(Error::XPathEval("lang() requires 1 argument".into()));
     }
 
-    let lang_arg = args.into_iter().next().unwrap().to_string_value().to_lowercase();
+    let lang_arg = args
+        .into_iter()
+        .next()
+        .unwrap()
+        .to_string_value()
+        .to_lowercase();
 
     // Search for xml:lang attribute in context node and ancestors
     let mut node = Some(ctx.node.clone());
     while let Some(n) = node {
-        if let Some(lang_attr) = n.get_attribute("xml:lang").or_else(|| n.get_attribute("lang")) {
+        if let Some(lang_attr) = n
+            .get_attribute("xml:lang")
+            .or_else(|| n.get_attribute("lang"))
+        {
             let lang_lower = lang_attr.to_lowercase();
             // Check if lang matches or is a sublanguage
-            let matches = lang_lower == lang_arg
-                || lang_lower.starts_with(&format!("{}-", lang_arg));
+            let matches =
+                lang_lower == lang_arg || lang_lower.starts_with(&format!("{}-", lang_arg));
             return Ok(XPathValue::Boolean(matches));
         }
         node = n.get_parent();
@@ -485,18 +504,19 @@ fn fn_sum(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathVa
     let nodes = args.into_iter().next().unwrap();
     match nodes {
         XPathValue::NodeSet(ns) => {
-            let sum: f64 = ns.iter()
+            let sum: f64 = ns
+                .iter()
                 .map(|n| {
                     n.get_content()
                         .and_then(|s| s.trim().parse::<f64>().ok())
                         .unwrap_or(f64::NAN)
                 })
-                .fold(0.0, |acc, v| {
-                    if v.is_nan() { f64::NAN } else { acc + v }
-                });
+                .fold(0.0, |acc, v| if v.is_nan() { f64::NAN } else { acc + v });
             Ok(XPathValue::Number(sum))
         }
-        _ => Err(Error::XPathEval("sum() requires a node-set argument".into())),
+        _ => Err(Error::XPathEval(
+            "sum() requires a node-set argument".into(),
+        )),
     }
 }
 
@@ -530,11 +550,9 @@ fn fn_round(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPath
 
     let value = args.into_iter().next().unwrap().to_number();
 
-    // Handle special cases
-    let result = if value.is_nan() || value.is_infinite() {
+    // Handle special cases: NaN, Infinity, and zero are returned as-is
+    let result = if value.is_nan() || value.is_infinite() || value == 0.0 {
         value
-    } else if value == 0.0 {
-        value // Preserve sign of zero
     } else {
         // XPath rounds .5 towards positive infinity
         (value + 0.5).floor()
@@ -595,22 +613,10 @@ mod tests {
     #[test]
     fn test_substring() {
         // Test basic substring
-        assert_eq!(
-            extract_substring("12345", 2.0, None),
-            "2345"
-        );
-        assert_eq!(
-            extract_substring("12345", 2.0, Some(3.0)),
-            "234"
-        );
-        assert_eq!(
-            extract_substring("12345", 0.0, Some(3.0)),
-            "12"
-        );
-        assert_eq!(
-            extract_substring("12345", -1.0, Some(5.0)),
-            "123"
-        );
+        assert_eq!(extract_substring("12345", 2.0, None), "2345");
+        assert_eq!(extract_substring("12345", 2.0, Some(3.0)), "234");
+        assert_eq!(extract_substring("12345", 0.0, Some(3.0)), "12");
+        assert_eq!(extract_substring("12345", -1.0, Some(5.0)), "123");
     }
 
     fn extract_substring(s: &str, start: f64, len: Option<f64>) -> String {
@@ -632,9 +638,7 @@ mod tests {
 
     #[test]
     fn test_normalize_space() {
-        let normalize = |s: &str| -> String {
-            s.split_whitespace().collect::<Vec<_>>().join(" ")
-        };
+        let normalize = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
 
         assert_eq!(normalize("  hello   world  "), "hello world");
         assert_eq!(normalize("no\textra\nspace"), "no extra space");

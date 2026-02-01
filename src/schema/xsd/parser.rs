@@ -533,7 +533,8 @@ impl XsdParser {
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
             };
-            self.stack.push(StackFrame::SimpleContentExtension(extension));
+            self.stack
+                .push(StackFrame::SimpleContentExtension(extension));
         } else {
             // Complex content extension
             let extension = XsdComplexContentExtension {
@@ -603,7 +604,10 @@ impl XsdParser {
 
     fn handle_keyref(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let name = attrs.get("name").cloned().unwrap_or_default();
-        let refer = attrs.get("refer").map(|s| QName::parse(s)).unwrap_or_else(|| QName::new(""));
+        let refer = attrs
+            .get("refer")
+            .map(|s| QName::parse(s))
+            .unwrap_or_else(|| QName::new(""));
         let constraint = XsdIdentityConstraint::keyref(name, "", refer);
         self.stack.push(StackFrame::KeyRef(constraint));
         Ok(())
@@ -1353,8 +1357,8 @@ impl XmlEventHandler for XsdParser {
 
 /// Parses XSD content into an AST.
 pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
-    use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::events::Event;
 
     let mut reader = Reader::from_reader(content);
     reader.config_mut().trim_text(false);
@@ -1421,10 +1425,7 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
     Ok(xsd_parser.into_schema())
 }
 
-fn convert_start_event(
-    e: &quick_xml::events::BytesStart<'_>,
-    position: u64,
-) -> Result<XmlEvent> {
+fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> Result<XmlEvent> {
     let name_bytes = e.name().as_ref().to_vec();
     let full_name = std::str::from_utf8(&name_bytes)?;
     let (prefix, name) = crate::namespace::split_qname(full_name);

@@ -2,8 +2,8 @@
 //!
 //! Parses tokenized XPath expressions into an abstract syntax tree (AST).
 
-use crate::error::{Error, Result};
 use super::lexer::{Lexer, Token};
+use crate::error::{Error, Result};
 
 /// XPath axis specifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +250,10 @@ impl Parser {
         }
 
         // Parse steps
-        if !matches!(self.current(), Token::Eof | Token::Pipe | Token::RightBracket | Token::RightParen) {
+        if !matches!(
+            self.current(),
+            Token::Eof | Token::Pipe | Token::RightBracket | Token::RightParen
+        ) {
             steps.push(self.parse_step()?);
 
             while matches!(self.current(), Token::Slash | Token::DoubleSlash) {
@@ -261,7 +264,10 @@ impl Parser {
                     self.advance();
                 }
 
-                if !matches!(self.current(), Token::Eof | Token::Pipe | Token::RightBracket | Token::RightParen) {
+                if !matches!(
+                    self.current(),
+                    Token::Eof | Token::Pipe | Token::RightBracket | Token::RightParen
+                ) {
                     steps.push(self.parse_step()?);
                 }
             }
@@ -597,19 +603,41 @@ impl Parser {
                 Ok(inner)
             }
             // Function calls
-            Token::NameFn | Token::TextFn | Token::LocalNameFn | Token::NamespaceUriFn |
-            Token::ContainsFn | Token::StartsWithFn | Token::Not |
-            Token::StringFn | Token::ConcatFn | Token::SubstringFn |
-            Token::SubstringBeforeFn | Token::SubstringAfterFn |
-            Token::StringLengthFn | Token::NormalizeSpaceFn | Token::TranslateFn |
-            Token::PositionFn | Token::LastFn | Token::CountFn | Token::IdFn |
-            Token::TrueFn | Token::FalseFn | Token::BooleanFn | Token::LangFn |
-            Token::NumberFn | Token::SumFn | Token::FloorFn | Token::CeilingFn | Token::RoundFn => {
-                self.parse_function_call()
-            }
+            Token::NameFn
+            | Token::TextFn
+            | Token::LocalNameFn
+            | Token::NamespaceUriFn
+            | Token::ContainsFn
+            | Token::StartsWithFn
+            | Token::Not
+            | Token::StringFn
+            | Token::ConcatFn
+            | Token::SubstringFn
+            | Token::SubstringBeforeFn
+            | Token::SubstringAfterFn
+            | Token::StringLengthFn
+            | Token::NormalizeSpaceFn
+            | Token::TranslateFn
+            | Token::PositionFn
+            | Token::LastFn
+            | Token::CountFn
+            | Token::IdFn
+            | Token::TrueFn
+            | Token::FalseFn
+            | Token::BooleanFn
+            | Token::LangFn
+            | Token::NumberFn
+            | Token::SumFn
+            | Token::FloorFn
+            | Token::CeilingFn
+            | Token::RoundFn => self.parse_function_call(),
             // Path expressions
-            Token::Name(_) | Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
-            Token::Asterisk => {
+            Token::Name(_)
+            | Token::Slash
+            | Token::DoubleSlash
+            | Token::Dot
+            | Token::At
+            | Token::Asterisk => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
@@ -762,10 +790,13 @@ mod tests {
         let expr = parse_xpath("/gml:root/gml:child").unwrap();
         if let Expr::Path(path) = expr {
             assert_eq!(path.steps.len(), 2);
-            assert_eq!(path.steps[0].node_test, NodeTest::QName {
-                prefix: "gml".into(),
-                local: "root".into(),
-            });
+            assert_eq!(
+                path.steps[0].node_test,
+                NodeTest::QName {
+                    prefix: "gml".into(),
+                    local: "root".into(),
+                }
+            );
         } else {
             panic!("expected Path");
         }

@@ -24,7 +24,10 @@ pub struct Occurrence {
 
 impl Default for Occurrence {
     fn default() -> Self {
-        Self { min: 1, max: Some(1) }
+        Self {
+            min: 1,
+            max: Some(1),
+        }
     }
 }
 
@@ -36,12 +39,18 @@ impl Occurrence {
 
     /// Creates an optional occurrence (0..1).
     pub fn optional() -> Self {
-        Self { min: 0, max: Some(1) }
+        Self {
+            min: 0,
+            max: Some(1),
+        }
     }
 
     /// Creates a required occurrence (1..1).
     pub fn required() -> Self {
-        Self { min: 1, max: Some(1) }
+        Self {
+            min: 1,
+            max: Some(1),
+        }
     }
 
     /// Creates an unbounded occurrence (min..unbounded).
@@ -127,19 +136,43 @@ impl std::fmt::Display for ContentModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentModelError::UnexpectedElement { element, expected } => {
-                write!(f, "unexpected element '{}', expected one of: {:?}", element, expected)
+                write!(
+                    f,
+                    "unexpected element '{}', expected one of: {:?}",
+                    element, expected
+                )
             }
             ContentModelError::MissingElement { element } => {
                 write!(f, "missing required element '{}'", element)
             }
-            ContentModelError::TooFewOccurrences { element, expected, found } => {
-                write!(f, "element '{}' appears {} times, minimum is {}", element, found, expected)
+            ContentModelError::TooFewOccurrences {
+                element,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "element '{}' appears {} times, minimum is {}",
+                    element, found, expected
+                )
             }
-            ContentModelError::TooManyOccurrences { element, max, found } => {
-                write!(f, "element '{}' appears {} times, maximum is {}", element, found, max)
+            ContentModelError::TooManyOccurrences {
+                element,
+                max,
+                found,
+            } => {
+                write!(
+                    f,
+                    "element '{}' appears {} times, maximum is {}",
+                    element, found, max
+                )
             }
             ContentModelError::OutOfOrder { element, after } => {
-                write!(f, "element '{}' appears after '{}' in sequence", element, after)
+                write!(
+                    f,
+                    "element '{}' appears after '{}' in sequence",
+                    element, after
+                )
             }
             ContentModelError::InvalidState { message } => {
                 write!(f, "invalid content model state: {}", message)
@@ -485,16 +518,10 @@ impl ContentModelValidator {
         match group.compositor_type {
             CompositorType::Choice => {
                 // For choice, at least one item must have been provided
-                let any_provided = group.elements.iter().any(|item| {
-                    match item {
-                        ContentModelItem::Element(elem) => {
-                            self.state.get_count(&elem.name) > 0
-                        }
-                        ContentModelItem::Group(nested) => {
-                            self.validate_complete_group(nested).is_ok()
-                        }
-                        ContentModelItem::Any { .. } => true,
-                    }
+                let any_provided = group.elements.iter().any(|item| match item {
+                    ContentModelItem::Element(elem) => self.state.get_count(&elem.name) > 0,
+                    ContentModelItem::Group(nested) => self.validate_complete_group(nested).is_ok(),
+                    ContentModelItem::Any { .. } => true,
                 });
                 if !any_provided && group.occurrence.min > 0 {
                     return Err(ContentModelError::InvalidState {
@@ -600,9 +627,9 @@ mod tests {
 
     #[test]
     fn test_occurrence_bounds() {
-        let mut validator = ContentModelValidator::sequence(vec![
-            ContentModelItem::Element(ContentElement::new("item", Occurrence::new(1, Some(3)))),
-        ]);
+        let mut validator = ContentModelValidator::sequence(vec![ContentModelItem::Element(
+            ContentElement::new("item", Occurrence::new(1, Some(3))),
+        )]);
 
         assert!(validator.validate_element("item").is_ok()); // 1
         assert!(validator.validate_element("item").is_ok()); // 2
@@ -612,9 +639,9 @@ mod tests {
 
     #[test]
     fn test_unbounded_occurrence() {
-        let mut validator = ContentModelValidator::sequence(vec![
-            ContentModelItem::Element(ContentElement::new("item", Occurrence::unbounded(0))),
-        ]);
+        let mut validator = ContentModelValidator::sequence(vec![ContentModelItem::Element(
+            ContentElement::new("item", Occurrence::unbounded(0)),
+        )]);
 
         for _ in 0..100 {
             assert!(validator.validate_element("item").is_ok());
@@ -623,11 +650,14 @@ mod tests {
 
     #[test]
     fn test_unexpected_element() {
-        let mut validator = ContentModelValidator::sequence(vec![
-            ContentModelItem::Element(ContentElement::new("expected", Occurrence::required())),
-        ]);
+        let mut validator = ContentModelValidator::sequence(vec![ContentModelItem::Element(
+            ContentElement::new("expected", Occurrence::required()),
+        )]);
 
         let result = validator.validate_element("unexpected");
-        assert!(matches!(result, Err(ContentModelError::UnexpectedElement { .. })));
+        assert!(matches!(
+            result,
+            Err(ContentModelError::UnexpectedElement { .. })
+        ));
     }
 }

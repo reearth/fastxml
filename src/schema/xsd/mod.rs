@@ -57,10 +57,10 @@ use crate::schema::fetcher::SchemaFetcher;
 use crate::schema::store::SchemaStore;
 use crate::schema::types::CompiledSchema;
 
-pub use builtin::{gml, xs, register_builtin_types};
-pub use compiler::{compile_schemas, XsdCompiler};
-pub use parser::{parse_xsd_ast, XsdParser, XSD_NAMESPACE};
-pub use resolver::{resolve_uri, SchemaResolver};
+pub use builtin::{gml, register_builtin_types, xs};
+pub use compiler::{XsdCompiler, compile_schemas};
+pub use parser::{XSD_NAMESPACE, XsdParser, parse_xsd_ast};
+pub use resolver::{SchemaResolver, resolve_uri};
 pub use types::*;
 
 /// Parses XSD content and compiles it into a CompiledSchema.
@@ -203,7 +203,10 @@ mod tests {
 
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
         assert!(schema.elements.contains_key("root"));
-        assert_eq!(schema.target_namespace, Some("http://example.com/test".to_string()));
+        assert_eq!(
+            schema.target_namespace,
+            Some("http://example.com/test".to_string())
+        );
     }
 
     #[test]
@@ -297,7 +300,8 @@ mod tests {
         let schema = parse_xsd_multiple(&[
             ("http://example.com/types.xsd", types_xsd.as_bytes()),
             ("http://example.com/main.xsd", main_xsd.as_bytes()),
-        ]).unwrap();
+        ])
+        .unwrap();
 
         assert!(schema.types.contains_key("NameType"));
         assert!(schema.elements.contains_key("root"));
