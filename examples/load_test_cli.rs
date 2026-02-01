@@ -1,24 +1,206 @@
 //! Load testing CLI for fastxml.
 //!
-//! This tool generates large XML documents and measures parsing performance.
+//! This tool measures parsing performance with either generated or real XML files.
 //!
-//! Usage:
-//!   cargo run --release --example load_test_cli -- [OPTIONS]
+//! # Usage
 //!
-//! Options:
-//!   --pattern <PATTERN>   Test pattern: many-elements, deep-nesting, large-content, citygml
-//!   --size <SIZE>         Size parameter (element count, depth, or content size in KB)
-//!   --mode <MODE>         Processing mode: dom, streaming, both
-//!   --iterations <N>      Number of iterations for timing
+//! ## Synthetic data (generated XML)
+//! ```bash
+//! cargo run --release --example load_test_cli -- --pattern many-elements --size 10000
+//! cargo run --release --example load_test_cli -- --pattern citygml --size 1000
+//! ```
+//!
+//! ## Real files (URLs or local paths)
+//! ```bash
+//! # Local files
+//! cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
+//!
+//! # URLs (requires sync feature)
+//! cargo run --release --example load_test_cli --features sync -- \
+//!     https://example.com/file.xml
+//!
+//! # From stdin
+//! cat urls.txt | cargo run --release --example load_test_cli --features sync
+//! ```
+//!
+//! ## Options
+//! ```bash
+//! --pattern <PATTERN>   Test pattern: many-elements, deep-nesting, large-content, citygml
+//! --size <SIZE>         Size parameter for pattern
+//! --mode <MODE>         Processing mode: dom, streaming, both (default)
+//! --iterations <N>      Number of iterations (default: 3)
+//! --validate            Enable schema validation benchmark
+//! --cache-dir <DIR>     Cache directory for downloaded URLs (default: benches/cache)
+//! ```
 
-use std::io::{BufRead, BufReader, Read};
+use std::fs;
+use std::io::{BufRead, BufReader, IsTerminal, Read};
+#[cfg(feature = "sync")]
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
+use fastxml::schema::types::CompiledSchema;
+use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::xsd::create_builtin_schema;
 use fastxml::{evaluate, parse};
 
-/// Handler that collects statistics during streaming parse.
+// =============================================================================
+// Configuration
+// =============================================================================
+
+struct Config {
+    mode: Mode,
+    processing_mode: String,
+    iterations: usize,
+    validate: bool,
+    cache_dir: PathBuf,
+}
+
+enum Mode {
+    Pattern { pattern: String, size: usize },
+    Files { inputs: Vec<String> },
+}
+
+impl Config {
+    fn from_args() -> Self {
+        let args: Vec<String> = std::env::args().collect();
+
+        let mut pattern: Option<String> = None;
+        let mut size = 10_000usize;
+        let mut processing_mode = "both".to_string();
+        let mut iterations = 3usize;
+        let mut validate = false;
+        let mut cache_dir = PathBuf::from("benches/cache");
+        let mut inputs: Vec<String> = Vec::new();
+        let mut show_help = false;
+
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-h" | "--help" => show_help = true,
+                "--pattern" => {
+                    i += 1;
+                    if i < args.len() {
+                        pattern = Some(args[i].clone());
+                    }
+                }
+                "--size" => {
+                    i += 1;
+                    if i < args.len() {
+                        size = args[i].parse().unwrap_or(10_000);
+                    }
+                }
+                "--mode" => {
+                    i += 1;
+                    if i < args.len() {
+                        processing_mode = args[i].clone();
+                    }
+                }
+                "--iterations" => {
+                    i += 1;
+                    if i < args.len() {
+                        iterations = args[i].parse().unwrap_or(3);
+                    }
+                }
+                "--validate" => validate = true,
+                "--cache-dir" => {
+                    i += 1;
+                    if i < args.len() {
+                        cache_dir = PathBuf::from(&args[i]);
+                    }
+                }
+                arg if !arg.starts_with('-') => {
+                    inputs.push(arg.to_string());
+                }
+                _ => {
+                    eprintln!("Unknown option: {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
+            i += 1;
+        }
+
+        if show_help {
+            print_help(&args[0]);
+            std::process::exit(0);
+        }
+
+        // Read from stdin if no inputs and not a terminal
+        if inputs.is_empty() && pattern.is_none() && !std::io::stdin().is_terminal() {
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().map_while(|l| l.ok()) {
+                let line = line.trim();
+                if !line.is_empty() && !line.starts_with('#') {
+                    inputs.push(line.to_string());
+                }
+            }
+        }
+
+        let mode = if let Some(p) = pattern {
+            Mode::Pattern { pattern: p, size }
+        } else if !inputs.is_empty() {
+            Mode::Files { inputs }
+        } else {
+            // Default to pattern mode
+            Mode::Pattern {
+                pattern: "many-elements".to_string(),
+                size,
+            }
+        };
+
+        Self {
+            mode,
+            processing_mode,
+            iterations,
+            validate,
+            cache_dir,
+        }
+    }
+}
+
+fn print_help(program: &str) {
+    eprintln!("fastxml Load Test CLI");
+    eprintln!();
+    eprintln!("Usage: {} [OPTIONS] [FILES...]", program);
+    eprintln!();
+    eprintln!("Modes:");
+    eprintln!("  Synthetic data:  {} --pattern <PATTERN> --size <SIZE>", program);
+    eprintln!("  Real files:      {} file1.xml file2.xml", program);
+    eprintln!("  From stdin:      cat urls.txt | {}", program);
+    eprintln!();
+    eprintln!("Options:");
+    eprintln!("  --pattern <PATTERN>   Test pattern (synthetic mode):");
+    eprintln!("                        - many-elements: wide tree with many sibling elements");
+    eprintln!("                        - deep-nesting: deeply nested elements");
+    eprintln!("                        - large-content: elements with large text content");
+    eprintln!("                        - citygml: CityGML-style document with namespaces");
+    eprintln!("  --size <SIZE>         Size parameter for pattern (default: 10000)");
+    eprintln!("  --mode <MODE>         Processing mode: dom, streaming, both (default: both)");
+    eprintln!("  --iterations <N>      Number of iterations (default: 3)");
+    eprintln!("  --validate            Enable schema validation benchmark");
+    eprintln!("  --cache-dir <DIR>     Cache directory for URLs (default: benches/cache)");
+    eprintln!("  -h, --help            Show this help message");
+    eprintln!();
+    eprintln!("Examples:");
+    eprintln!("  # Synthetic: 100k elements");
+    eprintln!("  {} --pattern many-elements --size 100000", program);
+    eprintln!();
+    eprintln!("  # Synthetic: CityGML with 1000 buildings");
+    eprintln!("  {} --pattern citygml --size 1000 --validate", program);
+    eprintln!();
+    eprintln!("  # Real files");
+    eprintln!("  {} ./large.xml https://example.com/data.xml", program);
+}
+
+// =============================================================================
+// Handlers
+// =============================================================================
+
 struct StatsHandler {
     element_count: usize,
     max_depth: usize,
@@ -37,18 +219,10 @@ impl StatsHandler {
             attr_count: 0,
         }
     }
-
-    #[allow(dead_code)]
-    fn report(&self) {
-        println!("  Elements:    {:>10}", self.element_count);
-        println!("  Attributes:  {:>10}", self.attr_count);
-        println!("  Max Depth:   {:>10}", self.max_depth);
-        println!("  Text Bytes:  {:>10}", format_bytes(self.text_bytes));
-    }
 }
 
 impl XmlEventHandler for StatsHandler {
-    fn handle(&mut self, event: &XmlEvent) -> fastxml::error::Result<()> {
+    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         match event {
             XmlEvent::StartElement { attributes, .. } => {
                 self.element_count += 1;
@@ -65,194 +239,6 @@ impl XmlEventHandler for StatsHandler {
             _ => {}
         }
         Ok(())
-    }
-}
-
-fn format_bytes(bytes: usize) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.2} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-fn format_duration(d: Duration) -> String {
-    if d.as_secs() > 0 {
-        format!("{:.2}s", d.as_secs_f64())
-    } else if d.as_millis() > 0 {
-        format!("{}ms", d.as_millis())
-    } else {
-        format!("{}µs", d.as_micros())
-    }
-}
-
-fn get_memory_usage() -> Option<usize> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        let pid = std::process::id();
-        let output = Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        let rss = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse::<usize>()
-            .ok()?;
-        Some(rss * 1024) // ps reports in KB
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-fn run_test(config: GeneratorConfig, mode: &str, iterations: usize) {
-    println!("\n{}", "=".repeat(60));
-    println!("Configuration:");
-    println!("  Elements:     {:>10}", config.element_count);
-    println!("  Max Depth:    {:>10}", config.max_depth);
-    println!("  Content Size: {:>10}", format_bytes(config.content_size));
-    println!("  Attributes:   {:>10}/element", config.attribute_count);
-    println!("  Namespaces:   {:>10}", config.with_namespaces);
-    println!(
-        "  Est. Size:    {:>10}",
-        format_bytes(config.estimated_size())
-    );
-    println!("{}", "=".repeat(60));
-
-    // Generate XML once for DOM tests
-    let xml_bytes = if mode == "streaming" {
-        Vec::new()
-    } else {
-        println!("\nGenerating XML...");
-        let start = Instant::now();
-        let mut xml_gen = XmlStreamGenerator::new(config.clone());
-        let mut bytes = Vec::new();
-        xml_gen.read_to_end(&mut bytes).unwrap();
-        println!(
-            "  Generated {} in {}",
-            format_bytes(bytes.len()),
-            format_duration(start.elapsed())
-        );
-        bytes
-    };
-
-    // DOM parsing test
-    if mode == "dom" || mode == "both" {
-        println!("\n--- DOM Parsing ---");
-        let mem_before = get_memory_usage();
-
-        let mut total_time = Duration::ZERO;
-        let mut node_count = 0;
-
-        for i in 0..iterations {
-            let start = Instant::now();
-            let doc = parse(&xml_bytes).unwrap();
-            node_count = doc.node_count();
-            total_time += start.elapsed();
-
-            if i == 0 {
-                println!("  Nodes: {}", node_count);
-            }
-        }
-
-        let mem_after = get_memory_usage();
-
-        let avg_time = total_time / iterations as u32;
-        let throughput = xml_bytes.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
-
-        println!("  Avg Time:    {}", format_duration(avg_time));
-        println!("  Throughput:  {:.2} MB/s", throughput);
-        println!(
-            "  Elements/s:  {:.0}",
-            node_count as f64 / avg_time.as_secs_f64()
-        );
-
-        if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!(
-                "  Memory:      {} -> {} (Δ {})",
-                format_bytes(before),
-                format_bytes(after),
-                format_bytes(after.saturating_sub(before))
-            );
-        }
-
-        // XPath test
-        println!("\n--- XPath Evaluation ---");
-        let doc = parse(&xml_bytes).unwrap();
-
-        let start = Instant::now();
-        let result = evaluate(&doc, "//*").unwrap();
-        let count = result.into_nodes().len();
-        println!(
-            "  //*: {} elements in {}",
-            count,
-            format_duration(start.elapsed())
-        );
-
-        if config.with_namespaces {
-            let start = Instant::now();
-            let result = evaluate(&doc, "//bldg:Building").unwrap();
-            let count = result.into_nodes().len();
-            println!(
-                "  //bldg:Building: {} elements in {}",
-                count,
-                format_duration(start.elapsed())
-            );
-        }
-    }
-
-    // Streaming test
-    if mode == "streaming" || mode == "both" {
-        println!("\n--- Streaming Parse ---");
-        let mem_before = get_memory_usage();
-
-        let mut total_time = Duration::ZERO;
-        let mut total_bytes = 0usize;
-
-        for i in 0..iterations {
-            let xml_gen = XmlStreamGenerator::new(config.clone());
-            let reader = BufReader::with_capacity(64 * 1024, xml_gen);
-
-            let start = Instant::now();
-
-            // Count bytes while reading
-            let mut counting_reader = CountingReader::new(reader);
-            let mut parser = StreamingParser::new(&mut counting_reader);
-            let handler = StatsHandler::new();
-            parser.add_handler(Box::new(handler));
-            parser.parse().unwrap();
-
-            total_time += start.elapsed();
-            total_bytes = counting_reader.bytes_read;
-
-            if i == 0 {
-                // Can't easily get handler stats back, just show bytes
-                println!("  Processed: {}", format_bytes(total_bytes));
-            }
-        }
-
-        let mem_after = get_memory_usage();
-
-        let avg_time = total_time / iterations as u32;
-        let throughput = total_bytes as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
-
-        println!("  Avg Time:    {}", format_duration(avg_time));
-        println!("  Throughput:  {:.2} MB/s", throughput);
-
-        if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!(
-                "  Memory:      {} -> {} (Δ {})",
-                format_bytes(before),
-                format_bytes(after),
-                format_bytes(after.saturating_sub(before))
-            );
-        }
     }
 }
 
@@ -289,79 +275,413 @@ impl<R: BufRead> BufRead for CountingReader<R> {
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+// =============================================================================
+// Utilities
+// =============================================================================
 
-    let mut pattern = "many-elements";
-    let mut size = 10_000usize;
-    let mut mode = "both";
-    let mut iterations = 3usize;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pattern" => {
-                i += 1;
-                pattern = &args[i];
-            }
-            "--size" => {
-                i += 1;
-                size = args[i].parse().unwrap_or(10_000);
-            }
-            "--mode" => {
-                i += 1;
-                mode = &args[i];
-            }
-            "--iterations" => {
-                i += 1;
-                iterations = args[i].parse().unwrap_or(3);
-            }
-            "--help" | "-h" => {
-                println!("fastxml Load Test CLI");
-                println!();
-                println!("Usage: load_test_cli [OPTIONS]");
-                println!();
-                println!("Options:");
-                println!("  --pattern <PATTERN>   Test pattern:");
-                println!("                        - many-elements (default)");
-                println!("                        - deep-nesting");
-                println!("                        - large-content");
-                println!("                        - citygml");
-                println!("  --size <SIZE>         Size parameter (default: 10000)");
-                println!("                        - many-elements: element count");
-                println!("                        - deep-nesting: depth");
-                println!("                        - large-content: KB per element");
-                println!("                        - citygml: building count");
-                println!("  --mode <MODE>         Processing mode: dom, streaming, both (default)");
-                println!("  --iterations <N>      Number of iterations (default: 3)");
-                return;
-            }
-            _ => {
-                eprintln!("Unknown option: {}", args[i]);
-            }
-        }
-        i += 1;
+fn format_bytes(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.2} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
 
-    println!("fastxml Load Test");
-    println!(
-        "Pattern: {}, Size: {}, Mode: {}, Iterations: {}",
-        pattern, size, mode, iterations
-    );
+fn format_duration(d: Duration) -> String {
+    if d.as_secs() > 0 {
+        format!("{:.2}s", d.as_secs_f64())
+    } else if d.as_millis() > 0 {
+        format!("{}ms", d.as_millis())
+    } else {
+        format!("{}µs", d.as_micros())
+    }
+}
 
-    let config = match pattern {
-        "many-elements" => GeneratorConfig::many_elements(size),
-        "deep-nesting" => GeneratorConfig::deep_nesting(size),
-        "large-content" => GeneratorConfig::large_content(size * 1024),
-        "citygml" => GeneratorConfig::citygml_style(size),
-        _ => {
-            eprintln!("Unknown pattern: {}", pattern);
-            return;
+fn get_memory_usage() -> Option<usize> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let pid = std::process::id();
+        let output = Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        let rss = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<usize>()
+            .ok()?;
+        Some(rss * 1024)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn print_separator() {
+    println!("{}", "=".repeat(60));
+}
+
+// =============================================================================
+// File Loading
+// =============================================================================
+
+fn is_url(input: &str) -> bool {
+    input.starts_with("http://") || input.starts_with("https://")
+}
+
+fn get_display_name(input: &str) -> &str {
+    if is_url(input) {
+        input.split('/').next_back().unwrap_or("unknown.xml")
+    } else {
+        Path::new(input)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown.xml")
+    }
+}
+
+#[cfg(feature = "sync")]
+fn load_file(input: &str, cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if is_url(input) {
+        let file_name = input.split('/').next_back().unwrap_or("unknown.xml");
+        let cache_path = cache_dir.join(file_name);
+
+        if cache_path.exists() {
+            return Ok(fs::read(&cache_path)?);
         }
+
+        println!("  Downloading: {}", input);
+        let response = ureq::get(input)
+            .timeout(std::time::Duration::from_secs(60))
+            .call()?;
+
+        let mut bytes = Vec::new();
+        response.into_reader().read_to_end(&mut bytes)?;
+
+        fs::create_dir_all(cache_dir)?;
+        let mut file = fs::File::create(&cache_path)?;
+        file.write_all(&bytes)?;
+
+        Ok(bytes)
+    } else {
+        Ok(fs::read(input)?)
+    }
+}
+
+#[cfg(not(feature = "sync"))]
+fn load_file(input: &str, _cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if is_url(input) {
+        Err("URL loading requires 'sync' feature. Use: cargo run --features sync --example load_test_cli".into())
+    } else {
+        Ok(fs::read(input)?)
+    }
+}
+
+// =============================================================================
+// Pattern Mode Benchmark
+// =============================================================================
+
+fn run_pattern_test(config: GeneratorConfig, processing_mode: &str, iterations: usize, validate: bool) {
+    println!();
+    print_separator();
+    println!("Configuration (Synthetic):");
+    println!("  Elements:     {:>10}", config.element_count);
+    println!("  Max Depth:    {:>10}", config.max_depth);
+    println!("  Content Size: {:>10}", format_bytes(config.content_size));
+    println!("  Attributes:   {:>10}/element", config.attribute_count);
+    println!("  Namespaces:   {:>10}", config.with_namespaces);
+    println!("  Est. Size:    {:>10}", format_bytes(config.estimated_size()));
+    print_separator();
+
+    // Generate XML once for DOM tests
+    let xml_bytes = if processing_mode == "streaming" {
+        Vec::new()
+    } else {
+        println!("\nGenerating XML...");
+        let start = Instant::now();
+        let mut xml_gen = XmlStreamGenerator::new(config.clone());
+        let mut bytes = Vec::new();
+        xml_gen.read_to_end(&mut bytes).unwrap();
+        println!("  Generated {} in {}", format_bytes(bytes.len()), format_duration(start.elapsed()));
+        bytes
     };
 
-    run_test(config, mode, iterations);
+    let schema = if validate {
+        Some(Arc::new(create_builtin_schema()))
+    } else {
+        None
+    };
 
-    println!("\n{}", "=".repeat(60));
+    // DOM parsing test
+    if processing_mode == "dom" || processing_mode == "both" {
+        run_dom_benchmark(&xml_bytes, iterations, schema.as_ref());
+
+        // XPath test
+        println!("\n--- XPath Evaluation ---");
+        let doc = parse(&xml_bytes).unwrap();
+
+        let start = Instant::now();
+        let result = evaluate(&doc, "//*").unwrap();
+        let count = result.into_nodes().len();
+        println!("  //*: {} elements in {}", count, format_duration(start.elapsed()));
+
+        if config.with_namespaces {
+            let start = Instant::now();
+            let result = evaluate(&doc, "//bldg:Building").unwrap();
+            let count = result.into_nodes().len();
+            println!("  //bldg:Building: {} elements in {}", count, format_duration(start.elapsed()));
+        }
+    }
+
+    // Streaming test
+    if processing_mode == "streaming" || processing_mode == "both" {
+        println!("\n--- Streaming Parse ---");
+        let mem_before = get_memory_usage();
+
+        let mut total_time = Duration::ZERO;
+        let mut total_bytes = 0usize;
+
+        for i in 0..iterations {
+            let xml_gen = XmlStreamGenerator::new(config.clone());
+            let reader = BufReader::with_capacity(64 * 1024, xml_gen);
+
+            let start = Instant::now();
+            let mut counting_reader = CountingReader::new(reader);
+            let mut parser = StreamingParser::new(&mut counting_reader);
+            let handler = StatsHandler::new();
+            parser.add_handler(Box::new(handler));
+            if let Some(ref s) = schema {
+                let validator = StreamingSchemaValidator::new(Arc::clone(s));
+                parser.add_handler(Box::new(validator));
+            }
+            let _ = parser.parse();
+
+            total_time += start.elapsed();
+            total_bytes = counting_reader.bytes_read;
+
+            if i == 0 {
+                println!("  Processed: {}", format_bytes(total_bytes));
+            }
+        }
+
+        let mem_after = get_memory_usage();
+        let avg_time = total_time / iterations as u32;
+        let throughput = total_bytes as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+        println!("  Avg Time:    {}", format_duration(avg_time));
+        println!("  Throughput:  {:.2} MB/s", throughput);
+
+        if let (Some(before), Some(after)) = (mem_before, mem_after) {
+            println!("  Memory:      {} -> {} (Δ {})",
+                format_bytes(before), format_bytes(after), format_bytes(after.saturating_sub(before)));
+        }
+    }
+}
+
+// =============================================================================
+// File Mode Benchmark
+// =============================================================================
+
+fn run_file_benchmark(
+    name: &str,
+    content: &[u8],
+    processing_mode: &str,
+    iterations: usize,
+    schema: Option<&Arc<CompiledSchema>>,
+) {
+    println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
+
+    // DOM
+    if processing_mode == "dom" || processing_mode == "both" {
+        run_dom_benchmark(content, iterations, schema);
+    }
+
+    // Streaming
+    if processing_mode == "streaming" || processing_mode == "both" {
+        run_streaming_benchmark(content, iterations, schema);
+    }
+}
+
+fn run_dom_benchmark(content: &[u8], iterations: usize, schema: Option<&Arc<CompiledSchema>>) {
+    println!("\n  [DOM]");
+    let mem_before = get_memory_usage();
+
+    let mut total_parse_time = Duration::ZERO;
+    let mut total_validate_time = Duration::ZERO;
+
+    for i in 0..iterations {
+        let start = Instant::now();
+        let doc = parse(content).unwrap();
+        total_parse_time += start.elapsed();
+
+        if i == 0 {
+            println!("    Nodes: {}", doc.node_count());
+        }
+
+        if schema.is_some() {
+            let start = Instant::now();
+            // Validation would go here if we had DOM validation
+            total_validate_time += start.elapsed();
+        }
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_parse = total_parse_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
+
+    println!("    Parse:      {} ({:.2} MB/s)", format_duration(avg_parse), throughput);
+
+    if let (Some(before), Some(after)) = (mem_before, mem_after) {
+        println!("    Memory:     Δ {}", format_bytes(after.saturating_sub(before)));
+    }
+}
+
+fn run_streaming_benchmark(content: &[u8], iterations: usize, schema: Option<&Arc<CompiledSchema>>) {
+    println!("\n  [Streaming]");
+    let mem_before = get_memory_usage();
+
+    // Parse only
+    let mut total_parse_time = Duration::ZERO;
+    for _ in 0..iterations {
+        let reader = BufReader::new(std::io::Cursor::new(content));
+        let start = Instant::now();
+        let mut parser = StreamingParser::new(reader);
+        let handler = StatsHandler::new();
+        parser.add_handler(Box::new(handler));
+        let _ = parser.parse();
+        total_parse_time += start.elapsed();
+    }
+
+    let avg_parse = total_parse_time / iterations as u32;
+    let parse_throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
+    println!("    Parse:      {} ({:.2} MB/s)", format_duration(avg_parse), parse_throughput);
+
+    // With validation
+    if let Some(s) = schema {
+        let mut total_validate_time = Duration::ZERO;
+        for _ in 0..iterations {
+            let reader = BufReader::new(std::io::Cursor::new(content));
+            let start = Instant::now();
+            let mut parser = StreamingParser::new(reader);
+            let handler = StatsHandler::new();
+            parser.add_handler(Box::new(handler));
+            let validator = StreamingSchemaValidator::new(Arc::clone(s));
+            parser.add_handler(Box::new(validator));
+            let _ = parser.parse();
+            total_validate_time += start.elapsed();
+        }
+
+        let avg_validate = total_validate_time / iterations as u32;
+        let validate_throughput = content.len() as f64 / avg_validate.as_secs_f64() / (1024.0 * 1024.0);
+        println!("    + Validate: {} ({:.2} MB/s)", format_duration(avg_validate), validate_throughput);
+
+        let overhead = (avg_validate.as_secs_f64() / avg_parse.as_secs_f64() - 1.0) * 100.0;
+        println!("    Overhead:   {:.1}%", overhead);
+    }
+
+    let mem_after = get_memory_usage();
+    if let (Some(before), Some(after)) = (mem_before, mem_after) {
+        println!("    Memory:     Δ {}", format_bytes(after.saturating_sub(before)));
+    }
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+
+fn main() {
+    let config = Config::from_args();
+
+    println!();
+    print_separator();
+    println!("  fastxml Load Test CLI");
+    print_separator();
+
+    match config.mode {
+        Mode::Pattern { pattern, size } => {
+            println!("Mode: Synthetic ({})", pattern);
+            println!("Processing: {}, Iterations: {}, Validate: {}",
+                config.processing_mode, config.iterations, config.validate);
+
+            let gen_config = match pattern.as_str() {
+                "many-elements" => GeneratorConfig::many_elements(size),
+                "deep-nesting" => GeneratorConfig::deep_nesting(size),
+                "large-content" => GeneratorConfig::large_content(size * 1024),
+                "citygml" => GeneratorConfig::citygml_style(size),
+                _ => {
+                    eprintln!("Unknown pattern: {}", pattern);
+                    std::process::exit(1);
+                }
+            };
+
+            run_pattern_test(gen_config, &config.processing_mode, config.iterations, config.validate);
+        }
+
+        Mode::Files { inputs } => {
+            println!("Mode: Real files ({} inputs)", inputs.len());
+            println!("Processing: {}, Iterations: {}, Validate: {}",
+                config.processing_mode, config.iterations, config.validate);
+
+            let schema = if config.validate {
+                Some(Arc::new(create_builtin_schema()))
+            } else {
+                None
+            };
+
+            // Load all files
+            println!("\n--- Loading Files ---");
+            let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+            let mut total_size = 0usize;
+
+            for input in &inputs {
+                match load_file(input, &config.cache_dir) {
+                    Ok(content) => {
+                        println!("  OK: {} ({})", get_display_name(input), format_bytes(content.len()));
+                        total_size += content.len();
+                        files.push((input.clone(), content));
+                    }
+                    Err(e) => {
+                        println!("  SKIP: {} ({})", get_display_name(input), e);
+                    }
+                }
+            }
+
+            if files.is_empty() {
+                eprintln!("\nNo files loaded!");
+                std::process::exit(1);
+            }
+
+            println!("\nTotal: {} files, {}", files.len(), format_bytes(total_size));
+
+            // Run benchmarks
+            for (input, content) in &files {
+                run_file_benchmark(
+                    get_display_name(input),
+                    content,
+                    &config.processing_mode,
+                    config.iterations,
+                    schema.as_ref(),
+                );
+            }
+
+            // Summary
+            if files.len() > 1 {
+                println!();
+                print_separator();
+                println!("  Summary");
+                print_separator();
+                println!("  Files:      {}", files.len());
+                println!("  Total size: {}", format_bytes(total_size));
+            }
+        }
+    }
+
+    println!();
+    print_separator();
     println!("Done!");
 }

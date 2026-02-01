@@ -1,5 +1,6 @@
 //! Schema fetching with redirect support.
 
+#[cfg(feature = "sync")]
 use std::io::Read;
 
 use crate::error::{Error, Result};

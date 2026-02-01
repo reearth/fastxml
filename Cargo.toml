@@ -72,11 +72,6 @@ harness = false
 name = "load_test"
 harness = false
 
-[[bench]]
-name = "xml_benchmark"
-harness = false
-required-features = ["sync"]
-
 [[example]]
 name = "profile_cli"
 required-features = ["profile"]

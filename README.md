@@ -309,10 +309,14 @@ cargo bench --bench load_test
 
 ### CLI Load Test Tool
 
+Supports both synthetic data generation and real file benchmarking.
+
+#### Synthetic Data (Pattern Mode)
+
 ```bash
 # Many elements pattern
 cargo run --release --example load_test_cli -- \
-    --pattern many-elements --size 100000 --mode both
+    --pattern many-elements --size 100000
 
 # CityGML pattern (simulates PLATEAU data)
 cargo run --release --example load_test_cli -- \
@@ -320,18 +324,40 @@ cargo run --release --example load_test_cli -- \
 
 # Deep nesting
 cargo run --release --example load_test_cli -- \
-    --pattern deep-nesting --size 500 --mode both
+    --pattern deep-nesting --size 500
 
 # Large content per element
 cargo run --release --example load_test_cli -- \
-    --pattern large-content --size 1000 --mode both
+    --pattern large-content --size 1000
 ```
 
-Options:
-- `--pattern`: `many-elements`, `deep-nesting`, `large-content`, `citygml`
-- `--size`: Element count, depth, KB per element, or building count
-- `--mode`: `dom`, `streaming`, or `both`
-- `--iterations`: Number of test iterations
+#### Real Files (Local or URL)
+
+```bash
+# Local files
+cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
+
+# URLs (requires sync feature)
+cargo run --release --features sync --example load_test_cli -- \
+    https://example.com/citygml/file.xml
+
+# From stdin (one URL/path per line)
+cat urls.txt | cargo run --release --features sync --example load_test_cli
+
+# With schema validation
+cargo run --release --example load_test_cli -- --validate ./document.xml
+```
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--pattern <PATTERN>` | Synthetic data: `many-elements`, `deep-nesting`, `large-content`, `citygml` |
+| `--size <SIZE>` | Size for pattern (element count, depth, KB, or building count) |
+| `--mode <MODE>` | Processing mode: `dom`, `streaming`, or `both` (default) |
+| `--iterations <N>` | Number of iterations (default: 3) |
+| `--validate` | Enable schema validation benchmark |
+| `--cache-dir <DIR>` | Cache directory for downloaded URLs (default: `benches/cache`) |
 
 ## Architecture
 
