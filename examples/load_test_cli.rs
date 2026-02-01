@@ -23,6 +23,12 @@
 //! cat urls.txt | cargo run --release --example load_test_cli --features sync
 //! ```
 //!
+//! ## Comparison with libxml
+//! ```bash
+//! # With libxml comparison
+//! cargo run --release --example load_test_cli --features compare-libxml -- ./file.xml
+//! ```
+//!
 //! ## Options
 //! ```bash
 //! --pattern <PATTERN>   Test pattern: many-elements, deep-nesting, large-content, citygml
@@ -330,6 +336,81 @@ fn print_separator() {
 }
 
 // =============================================================================
+// libxml Comparison
+// =============================================================================
+
+#[cfg(feature = "compare-libxml")]
+mod libxml_bench {
+    use std::time::{Duration, Instant};
+
+    /// Parse XML with libxml and return timing info
+    pub fn parse_with_libxml(
+        content: &[u8],
+        iterations: usize,
+        get_memory: fn() -> Option<usize>,
+    ) -> Option<LibxmlResult> {
+        let xml_str = std::str::from_utf8(content).ok()?;
+        let parser = libxml::parser::Parser::default();
+
+        let mut total_time = Duration::ZERO;
+        let mut node_count = 0usize;
+        let mut memory_delta = None;
+
+        for i in 0..iterations {
+            // Measure memory on first iteration
+            let mem_before = if i == 0 { get_memory() } else { None };
+
+            let start = Instant::now();
+            let doc = parser.parse_string(xml_str).ok()?;
+            total_time += start.elapsed();
+
+            if i == 0 {
+                let mem_after = get_memory();
+                if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                    memory_delta = Some(after.saturating_sub(before));
+                }
+                // Count nodes on first iteration
+                node_count = count_nodes(&doc);
+            }
+        }
+
+        Some(LibxmlResult {
+            avg_time: total_time / iterations as u32,
+            node_count,
+            size: content.len(),
+            memory_delta,
+        })
+    }
+
+    fn count_nodes(doc: &libxml::tree::Document) -> usize {
+        fn count_recursive(node: &libxml::tree::Node) -> usize {
+            let mut count = 1;
+            for child in node.get_child_nodes() {
+                count += count_recursive(&child);
+            }
+            count
+        }
+
+        doc.get_root_element()
+            .map(|root| count_recursive(&root))
+            .unwrap_or(0)
+    }
+
+    pub struct LibxmlResult {
+        pub avg_time: Duration,
+        pub node_count: usize,
+        pub size: usize,
+        pub memory_delta: Option<usize>,
+    }
+
+    impl LibxmlResult {
+        pub fn throughput_mb_s(&self) -> f64 {
+            self.size as f64 / self.avg_time.as_secs_f64() / (1024.0 * 1024.0)
+        }
+    }
+}
+
+// =============================================================================
 // File Loading
 // =============================================================================
 
@@ -440,7 +521,7 @@ fn run_pattern_test(
 
     // DOM parsing test
     if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(&xml_bytes, iterations, schema.as_ref());
+        run_dom_benchmark(&xml_bytes, iterations);
 
         // XPath test
         println!("\n--- XPath Evaluation ---");
@@ -531,7 +612,7 @@ fn run_file_benchmark(
 
     // DOM
     if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(content, iterations, schema);
+        run_dom_benchmark(content, iterations);
     }
 
     // Streaming
@@ -540,44 +621,87 @@ fn run_file_benchmark(
     }
 }
 
-fn run_dom_benchmark(content: &[u8], iterations: usize, schema: Option<&Arc<CompiledSchema>>) {
+fn run_dom_benchmark(content: &[u8], iterations: usize) {
     println!("\n  [DOM]");
-    let mem_before = get_memory_usage();
 
     let mut total_parse_time = Duration::ZERO;
-    let mut total_validate_time = Duration::ZERO;
+    let mut fastxml_mem_delta: Option<usize> = None;
 
     for i in 0..iterations {
-        let start = Instant::now();
-        let doc = parse(content).unwrap();
-        total_parse_time += start.elapsed();
-
+        // Measure memory on first iteration (keep doc alive for measurement)
         if i == 0 {
-            println!("    Nodes: {}", doc.node_count());
-        }
-
-        if schema.is_some() {
+            let mem_before = get_memory_usage();
             let start = Instant::now();
-            // Validation would go here if we had DOM validation
-            total_validate_time += start.elapsed();
+            let doc = parse(content).unwrap();
+            total_parse_time += start.elapsed();
+            let mem_after = get_memory_usage();
+
+            println!("    fastxml nodes: {}", doc.node_count());
+
+            if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                fastxml_mem_delta = Some(after.saturating_sub(before));
+            }
+            // doc drops here after memory measurement
+        } else {
+            let start = Instant::now();
+            let _doc = parse(content).unwrap();
+            total_parse_time += start.elapsed();
         }
     }
 
-    let mem_after = get_memory_usage();
     let avg_parse = total_parse_time / iterations as u32;
     let throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
 
     println!(
-        "    Parse:      {} ({:.2} MB/s)",
+        "    fastxml:    {} ({:.2} MB/s)",
         format_duration(avg_parse),
         throughput
     );
 
-    if let (Some(before), Some(after)) = (mem_before, mem_after) {
-        println!(
-            "    Memory:     Δ {}",
-            format_bytes(after.saturating_sub(before))
-        );
+    if let Some(mem) = fastxml_mem_delta {
+        println!("    fastxml mem: Δ {}", format_bytes(mem));
+    }
+
+    // libxml comparison
+    #[cfg(feature = "compare-libxml")]
+    {
+        if let Some(libxml_result) =
+            libxml_bench::parse_with_libxml(content, iterations, get_memory_usage)
+        {
+            println!(
+                "    libxml:     {} ({:.2} MB/s)",
+                format_duration(libxml_result.avg_time),
+                libxml_result.throughput_mb_s()
+            );
+            println!("    libxml nodes: {}", libxml_result.node_count);
+            if let Some(mem) = libxml_result.memory_delta {
+                println!("    libxml mem: Δ {}", format_bytes(mem));
+            }
+
+            // Comparison
+            println!();
+            println!("    [Comparison]");
+            let speedup = libxml_result.avg_time.as_secs_f64() / avg_parse.as_secs_f64();
+            if speedup >= 1.0 {
+                println!("    Speed:  fastxml is {:.2}x faster", speedup);
+            } else {
+                println!("    Speed:  libxml is {:.2}x faster", 1.0 / speedup);
+            }
+
+            // Memory comparison
+            if let (Some(fastxml_mem), Some(libxml_mem)) =
+                (fastxml_mem_delta, libxml_result.memory_delta)
+            {
+                if fastxml_mem > 0 && libxml_mem > 0 {
+                    let mem_ratio = libxml_mem as f64 / fastxml_mem as f64;
+                    if mem_ratio >= 1.0 {
+                        println!("    Memory: fastxml uses {:.2}x less", mem_ratio);
+                    } else {
+                        println!("    Memory: libxml uses {:.2}x less", 1.0 / mem_ratio);
+                    }
+                }
+            }
+        }
     }
 }
 
