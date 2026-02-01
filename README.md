@@ -10,7 +10,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 ## Features
 
 - **Pure Rust**: No C dependencies, no unsafe code
-- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, with **3,600x better memory efficiency** in streaming mode
+- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, with **50-3,600x better memory efficiency** in streaming mode
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
 - **DOM Modification**: Mutable node API and streaming XPath-based transformation
@@ -37,16 +37,24 @@ fastxml is designed as a drop-in replacement for libxml in Rust projects:
 
 **Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes):
 
+Parse only:
+
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 3.41s | 266 MB/s | **3.78 GB** |
+| libxml DOM | 3.41s | 266 MB/s | 3.78 GB |
 | fastxml DOM | 4.23s | 214 MB/s | 1.02 GB |
-| fastxml Streaming | 3.21s | 282 MB/s | **1.05 MB** |
+| fastxml Streaming | 3.21s | 282 MB/s | **1 MB** |
 
-- **DOM**: fastxml uses **3.7x less memory** than libxml (trades ~20% speed)
-- **Streaming**: fastxml uses **3,600x less memory** than libxml DOM, and is **faster**
+Parse + Schema Validation:
 
-fastxml's streaming mode is ideal for processing large XML files on memory-constrained systems.
+| Mode | Time | Throughput | Memory |
+|------|------|------------|--------|
+| libxml DOM | 3.81s | 238 MB/s | 3.66 GB |
+| fastxml DOM | 4.85s | 187 MB/s | 1.03 GB |
+| fastxml Streaming | 18.41s | 49 MB/s | **69 MB** |
+
+- **DOM**: fastxml uses **3.6x less memory** than libxml
+- **Streaming**: **50x less memory** than libxml DOM with validation, or **3,600x less** for parse-only
 
 **Compatibility Testing**: Parsing, XPath, and validation results are verified against libxml2. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
 
