@@ -376,8 +376,6 @@ fn test_xpath_namespace_axis() {
     assert!(ns_values.contains(&"http://www.opengis.net/citygml/building/2.0".to_string()));
     assert!(ns_values.contains(&"http://www.w3.org/XML/1998/namespace".to_string())); // xml namespace
 
-    // Note: libxml comparison for namespace axis may differ in node count
-    // due to implicit xml namespace handling
     compare_with_libxml!(xpath: xml, "/root/namespace::*", &doc);
 }
 

@@ -393,6 +393,26 @@ mod tests {
         matches!(analyze_xpath(&expr), XPathAnalysis::Streamable(_))
     }
 
+    fn get_streamable(xpath: &str) -> Option<StreamableXPath> {
+        let expr = parse_xpath(xpath).unwrap();
+        match analyze_xpath(&expr) {
+            XPathAnalysis::Streamable(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn get_not_streamable_reason(xpath: &str) -> Option<NotStreamableReason> {
+        let expr = parse_xpath(xpath).unwrap();
+        match analyze_xpath(&expr) {
+            XPathAnalysis::NotStreamable(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    // =============================================================================
+    // Basic Streamable Paths
+    // =============================================================================
+
     #[test]
     fn test_simple_paths_are_streamable() {
         assert!(is_streamable("/root/child"));
@@ -401,10 +421,64 @@ mod tests {
     }
 
     #[test]
+    fn test_absolute_vs_relative() {
+        let abs = get_streamable("/root/child").unwrap();
+        assert!(abs.absolute);
+
+        let rel = get_streamable("item").unwrap();
+        assert!(!rel.absolute);
+    }
+
+    #[test]
+    fn test_descendant_or_self() {
+        let result = get_streamable("//item").unwrap();
+        assert!(result.steps.iter().any(|s| s.descendant_or_self));
+    }
+
+    #[test]
+    fn test_double_slash_at_end() {
+        // Just // should be streamable
+        assert!(is_streamable("//"));
+    }
+
+    #[test]
+    fn test_wildcard() {
+        assert!(is_streamable("//*"));
+        assert!(is_streamable("/root/*"));
+    }
+
+    // =============================================================================
+    // Attribute Predicates
+    // =============================================================================
+
+    #[test]
     fn test_attribute_predicates_are_streamable() {
         assert!(is_streamable("//item[@id='2']"));
         assert!(is_streamable("/root/item[@name='test']"));
     }
+
+    #[test]
+    fn test_attribute_predicate_details() {
+        let result = get_streamable("//item[@id='123']").unwrap();
+        let step = result
+            .steps
+            .iter()
+            .find(|s| s.name.as_deref() == Some("item"))
+            .unwrap();
+        assert_eq!(step.attribute_predicates.len(), 1);
+        assert_eq!(step.attribute_predicates[0].name, "id");
+        assert_eq!(step.attribute_predicates[0].value, "123");
+    }
+
+    #[test]
+    fn test_attribute_existence_check() {
+        // @attr without value is existence check
+        assert!(is_streamable("//item[@id]"));
+    }
+
+    // =============================================================================
+    // Position Predicates
+    // =============================================================================
 
     #[test]
     fn test_position_predicates_are_streamable() {
@@ -413,14 +487,317 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_position() {
+        let result = get_streamable("//item[2]").unwrap();
+        let step = result
+            .steps
+            .iter()
+            .find(|s| s.name.as_deref() == Some("item"))
+            .unwrap();
+        assert!(matches!(
+            step.position_predicate,
+            Some(PositionPredicate::Exact(2))
+        ));
+    }
+
+    #[test]
+    fn test_position_less_or_equal() {
+        let result = get_streamable("//item[position()<=5]").unwrap();
+        assert_eq!(result.max_position, Some(5));
+    }
+
+    #[test]
+    fn test_position_less_than() {
+        let result = get_streamable("//item[position()<5]").unwrap();
+        // max_position for < should be n-1 = 4
+        assert_eq!(result.max_position, Some(4));
+    }
+
+    #[test]
+    fn test_position_greater_or_equal() {
+        let result = get_streamable("//item[position()>=3]").unwrap();
+        // >= doesn't have upper bound
+        assert_eq!(result.max_position, None);
+    }
+
+    #[test]
+    fn test_position_greater_than() {
+        let result = get_streamable("//item[position()>3]").unwrap();
+        // > doesn't have upper bound
+        assert_eq!(result.max_position, None);
+    }
+
+    #[test]
+    fn test_position_not_equal_ignored() {
+        // position() != n is ignored for optimization
+        assert!(is_streamable("//item[position()!=3]"));
+    }
+
+    // =============================================================================
+    // Has Position Predicates
+    // =============================================================================
+
+    #[test]
+    fn test_has_position_predicates_true() {
+        let result = get_streamable("//item[1]").unwrap();
+        assert!(result.has_position_predicates());
+    }
+
+    #[test]
+    fn test_has_position_predicates_false() {
+        let result = get_streamable("//item[@id='1']").unwrap();
+        assert!(!result.has_position_predicates());
+    }
+
+    // =============================================================================
+    // Not Streamable - last()
+    // =============================================================================
+
+    #[test]
     fn test_last_is_not_streamable() {
         assert!(!is_streamable("//item[last()]"));
         assert!(!is_streamable("//item[position()=last()]"));
     }
 
     #[test]
+    fn test_last_reason() {
+        let reason = get_not_streamable_reason("//item[last()]").unwrap();
+        assert!(matches!(reason, NotStreamableReason::UsesLast));
+    }
+
+    #[test]
+    fn test_last_in_predicate_comparison() {
+        // last() in comparison
+        assert!(!is_streamable("//item[position()=last()]"));
+    }
+
+    // =============================================================================
+    // Not Streamable - Backward Axes
+    // =============================================================================
+
+    #[test]
     fn test_backward_axes_not_streamable() {
         assert!(!is_streamable("//item/parent::*"));
         assert!(!is_streamable("//item/ancestor::root"));
+    }
+
+    #[test]
+    fn test_parent_axis_reason() {
+        let reason = get_not_streamable_reason("//item/parent::*").unwrap();
+        assert!(matches!(
+            reason,
+            NotStreamableReason::UsesBackwardAxis(Axis::Parent)
+        ));
+    }
+
+    #[test]
+    fn test_ancestor_axis_reason() {
+        let reason = get_not_streamable_reason("//item/ancestor::root").unwrap();
+        assert!(matches!(
+            reason,
+            NotStreamableReason::UsesBackwardAxis(Axis::Ancestor)
+        ));
+    }
+
+    #[test]
+    fn test_preceding_sibling_axis_reason() {
+        let reason = get_not_streamable_reason("//item/preceding-sibling::*").unwrap();
+        assert!(matches!(
+            reason,
+            NotStreamableReason::UsesBackwardAxis(Axis::PrecedingSibling)
+        ));
+    }
+
+    #[test]
+    fn test_preceding_axis_reason() {
+        let reason = get_not_streamable_reason("//item/preceding::*").unwrap();
+        assert!(matches!(
+            reason,
+            NotStreamableReason::UsesBackwardAxis(Axis::Preceding)
+        ));
+    }
+
+    #[test]
+    fn test_ancestor_or_self_axis_reason() {
+        let reason = get_not_streamable_reason("//item/ancestor-or-self::*").unwrap();
+        assert!(matches!(
+            reason,
+            NotStreamableReason::UsesBackwardAxis(Axis::AncestorOrSelf)
+        ));
+    }
+
+    // =============================================================================
+    // Not Streamable - Union
+    // =============================================================================
+
+    #[test]
+    fn test_union_not_streamable() {
+        assert!(!is_streamable("//a | //b"));
+    }
+
+    #[test]
+    fn test_union_reason() {
+        let reason = get_not_streamable_reason("//a | //b").unwrap();
+        assert!(matches!(reason, NotStreamableReason::IncompatibleUnion));
+    }
+
+    // =============================================================================
+    // Not Streamable - Complex Predicates
+    // =============================================================================
+
+    #[test]
+    fn test_and_predicate_not_streamable() {
+        // And/Or predicates are complex
+        assert!(!is_streamable("//item[@a='1' and @b='2']"));
+    }
+
+    #[test]
+    fn test_complex_predicate_reason() {
+        let reason = get_not_streamable_reason("//item[@a='1' and @b='2']").unwrap();
+        assert!(matches!(reason, NotStreamableReason::ComplexPredicate));
+    }
+
+    #[test]
+    fn test_not_predicate() {
+        // not() predicates are complex
+        let reason = get_not_streamable_reason("//item[not(@a)]").unwrap();
+        assert!(matches!(reason, NotStreamableReason::ComplexPredicate));
+    }
+
+    // =============================================================================
+    // Not Streamable - Non-Path Expressions
+    // =============================================================================
+
+    #[test]
+    fn test_number_literal_not_streamable() {
+        let expr = Expr::Number(42.0);
+        let result = analyze_xpath(&expr);
+        assert!(matches!(
+            result,
+            XPathAnalysis::NotStreamable(NotStreamableReason::NotPathExpr)
+        ));
+    }
+
+    #[test]
+    fn test_string_literal_not_streamable() {
+        let expr = Expr::String("test".to_string());
+        let result = analyze_xpath(&expr);
+        assert!(matches!(
+            result,
+            XPathAnalysis::NotStreamable(NotStreamableReason::NotPathExpr)
+        ));
+    }
+
+    // =============================================================================
+    // QName Support
+    // =============================================================================
+
+    #[test]
+    fn test_qname_streamable() {
+        assert!(is_streamable("//ns:item"));
+    }
+
+    #[test]
+    fn test_qname_prefix_captured() {
+        let result = get_streamable("//ns:item").unwrap();
+        let step = result
+            .steps
+            .iter()
+            .find(|s| s.name.as_deref() == Some("item"))
+            .unwrap();
+        assert_eq!(step.prefix.as_deref(), Some("ns"));
+    }
+
+    // =============================================================================
+    // Forward Axes
+    // =============================================================================
+
+    #[test]
+    fn test_child_axis_streamable() {
+        assert!(is_streamable("/root/child::item"));
+    }
+
+    #[test]
+    fn test_descendant_axis_streamable() {
+        assert!(is_streamable("/root/descendant::item"));
+    }
+
+    #[test]
+    fn test_following_sibling_axis_streamable() {
+        assert!(is_streamable("/root/item/following-sibling::*"));
+    }
+
+    #[test]
+    fn test_following_axis_streamable() {
+        assert!(is_streamable("/root/item/following::*"));
+    }
+
+    #[test]
+    fn test_self_axis_streamable() {
+        assert!(is_streamable("/root/self::*"));
+    }
+
+    // =============================================================================
+    // is_backward_axis helper
+    // =============================================================================
+
+    #[test]
+    fn test_is_backward_axis() {
+        assert!(is_backward_axis(Axis::Parent));
+        assert!(is_backward_axis(Axis::Ancestor));
+        assert!(is_backward_axis(Axis::AncestorOrSelf));
+        assert!(is_backward_axis(Axis::Preceding));
+        assert!(is_backward_axis(Axis::PrecedingSibling));
+
+        assert!(!is_backward_axis(Axis::Child));
+        assert!(!is_backward_axis(Axis::Descendant));
+        assert!(!is_backward_axis(Axis::DescendantOrSelf));
+        assert!(!is_backward_axis(Axis::Following));
+        assert!(!is_backward_axis(Axis::FollowingSibling));
+        assert!(!is_backward_axis(Axis::SelfNode));
+        assert!(!is_backward_axis(Axis::Attribute));
+        assert!(!is_backward_axis(Axis::Namespace));
+    }
+
+    // =============================================================================
+    // position_max helper
+    // =============================================================================
+
+    #[test]
+    fn test_position_max() {
+        assert_eq!(position_max(&PositionPredicate::Exact(5)), Some(5));
+        assert_eq!(position_max(&PositionPredicate::LessOrEqual(10)), Some(10));
+        assert_eq!(position_max(&PositionPredicate::LessThan(10)), Some(9));
+        assert_eq!(position_max(&PositionPredicate::LessThan(1)), Some(0));
+        assert_eq!(position_max(&PositionPredicate::GreaterOrEqual(3)), None);
+        assert_eq!(position_max(&PositionPredicate::GreaterThan(3)), None);
+    }
+
+    // =============================================================================
+    // Edge Cases
+    // =============================================================================
+
+    #[test]
+    fn test_text_node_test() {
+        assert!(is_streamable("//text()"));
+    }
+
+    #[test]
+    fn test_node_node_test() {
+        assert!(is_streamable("//node()"));
+    }
+
+    #[test]
+    fn test_multiple_predicates() {
+        // Multiple attribute predicates on same step
+        let result = get_streamable("//item[@id='1'][@type='foo']");
+        // Should be streamable if predicates are simple
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_backward_axis_after_descendant() {
+        // Even after //, backward axis is not streamable
+        assert!(!is_streamable("//item/parent::*"));
     }
 }

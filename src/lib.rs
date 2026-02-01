@@ -362,4 +362,148 @@ mod tests {
         assert!(serialized.contains("<root>"));
         assert!(serialized.contains("<child>text</child>"));
     }
+
+    #[test]
+    fn test_create_safe_context() {
+        let xml = r#"<root><a>1</a></root>"#;
+        let doc = parse(xml).unwrap();
+        let ctx = create_safe_context(&doc).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        let nodes = find_safe_readonly_nodes_by_xpath(&ctx, "//a", &root).unwrap();
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_find_nodes_by_xpath() {
+        let xml = r#"<root><a>1</a><b>2</b></root>"#;
+        let doc = parse(xml).unwrap();
+        let ctx = create_context(&doc).unwrap();
+        let root = get_root_node(&doc).unwrap();
+
+        let nodes = find_nodes_by_xpath(&ctx, "//a", &root).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].get_name(), "a");
+    }
+
+    #[test]
+    fn test_find_readonly_nodes_in_elements() {
+        let xml = r#"<root><a>1</a><b>2</b><c>3</c></root>"#;
+        let doc = parse(xml).unwrap();
+        let ctx = create_context(&doc).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        let nodes = find_readonly_nodes_in_elements(&ctx, &root, &["a", "c"]).unwrap();
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_text_value_single() {
+        let xml = r#"<root><a>hello</a></root>"#;
+        let doc = parse(xml).unwrap();
+
+        let result = evaluate(&doc, "/root/a").unwrap();
+        let text = collect_text_value(&result);
+        assert_eq!(text, "hello");
+    }
+
+    #[test]
+    fn test_collect_text_value_empty() {
+        let xml = r#"<root><a/></root>"#;
+        let doc = parse(xml).unwrap();
+
+        let result = evaluate(&doc, "/root/nonexistent").unwrap();
+        let text = collect_text_value(&result);
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_get_readonly_node_tag() {
+        let xml = r#"<ns:root xmlns:ns="http://example.com"/>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        assert_eq!(get_readonly_node_tag(&root), "ns:root");
+    }
+
+    #[test]
+    fn test_get_node_prefix() {
+        let xml = r#"<ns:root xmlns:ns="http://example.com"/>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_node(&doc).unwrap();
+
+        assert_eq!(get_node_prefix(&root), "ns");
+    }
+
+    #[test]
+    fn test_get_node_prefix_empty() {
+        let xml = r#"<root/>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_node(&doc).unwrap();
+
+        assert_eq!(get_node_prefix(&root), "");
+    }
+
+    #[test]
+    fn test_get_readonly_node_prefix() {
+        let xml = r#"<ns:root xmlns:ns="http://example.com"/>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        assert_eq!(get_readonly_node_prefix(&root), "ns");
+    }
+
+    #[test]
+    fn test_get_readonly_node_prefix_empty() {
+        let xml = r#"<root/>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        assert_eq!(get_readonly_node_prefix(&root), "");
+    }
+
+    #[test]
+    fn test_readonly_node_to_xml_string() {
+        let xml = r#"<root><child>text</child></root>"#;
+        let doc = parse(xml).unwrap();
+        let root = get_root_readonly_node(&doc).unwrap();
+
+        let serialized = readonly_node_to_xml_string(&doc, &root).unwrap();
+        assert!(serialized.contains("<root>"));
+        assert!(serialized.contains("<child>text</child>"));
+    }
+
+    #[test]
+    fn test_evaluate_with_string_ref() {
+        let xml = r#"<root><a>1</a></root>"#;
+        let doc = parse(xml).unwrap();
+        let xpath_str = String::from("//a");
+
+        let result = evaluate(&doc, &xpath_str).unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_xsd_basic() {
+        let xsd = br#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="root" type="xs:string"/>
+</xs:schema>"#;
+
+        let schema = parse_xsd(xsd).unwrap();
+        assert!(!schema.elements.is_empty() || !schema.types.is_empty());
+    }
+
+    #[test]
+    fn test_create_xml_schema_validation_context_from_buffer() {
+        let xsd = br#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="root" type="xs:string"/>
+</xs:schema>"#;
+
+        let ctx = create_xml_schema_validation_context_from_buffer(xsd).unwrap();
+        // Just verify it creates successfully
+        let _ = ctx;
+    }
 }

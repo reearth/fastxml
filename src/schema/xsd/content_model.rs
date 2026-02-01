@@ -561,9 +561,7 @@ impl ContentModelValidator {
                         .iter()
                         .enumerate()
                         .any(|(idx, item)| match item {
-                            ContentModelItem::Element(elem) => {
-                                self.state.get_count(&elem.name) > 0
-                            }
+                            ContentModelItem::Element(elem) => self.state.get_count(&elem.name) > 0,
                             ContentModelItem::Group(nested) => {
                                 self.validate_complete_group(nested).is_ok()
                             }

@@ -187,3 +187,53 @@ impl From<Expr> for XPathSource {
         XPathSource::Ast(expr)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xpath_source_from_str() {
+        let source: XPathSource = "//test".into();
+        assert!(matches!(source, XPathSource::String(_)));
+        assert_eq!(source.as_string(), Some("//test"));
+    }
+
+    #[test]
+    fn test_xpath_source_from_string() {
+        let source: XPathSource = String::from("//test").into();
+        assert!(matches!(source, XPathSource::String(_)));
+        assert_eq!(source.as_string(), Some("//test"));
+    }
+
+    #[test]
+    fn test_xpath_source_from_expr() {
+        let expr = parse_xpath("//test").unwrap();
+        let source: XPathSource = expr.clone().into();
+        assert!(matches!(source, XPathSource::Ast(_)));
+        assert_eq!(source.as_string(), None);
+    }
+
+    #[test]
+    fn test_xpath_source_parse_string() {
+        let source = XPathSource::String("//test".to_string());
+        let result = source.parse();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_xpath_source_parse_ast() {
+        let expr = parse_xpath("//test").unwrap();
+        let source = XPathSource::Ast(expr.clone());
+        let result = source.parse().unwrap();
+        // The parsed AST should match the original
+        assert!(matches!(result, Expr::Path(_)));
+    }
+
+    #[test]
+    fn test_xpath_source_parse_invalid_string() {
+        let source = XPathSource::String("[invalid xpath".to_string());
+        let result = source.parse();
+        assert!(result.is_err());
+    }
+}

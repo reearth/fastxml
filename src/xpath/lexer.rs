@@ -534,11 +534,6 @@ fn is_name_char_no_colon(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-' || c == '.'
 }
 
-#[allow(dead_code)]
-fn is_name_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':'
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

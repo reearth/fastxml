@@ -220,4 +220,149 @@ mod tests {
         let result = fetcher.fetch("http://example.com/schema.xsd");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_noop_fetcher_error_message() {
+        let fetcher = NoopFetcher;
+        let result = fetcher.fetch("http://example.com/test.xsd");
+        let err = result.unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("network"));
+        assert!(msg.contains("http://example.com/test.xsd"));
+    }
+
+    #[test]
+    fn test_fetch_result_struct() {
+        let result = FetchResult {
+            content: vec![1, 2, 3],
+            final_url: "http://example.com/final.xsd".to_string(),
+            redirected: true,
+        };
+        assert_eq!(result.content, vec![1, 2, 3]);
+        assert_eq!(result.final_url, "http://example.com/final.xsd");
+        assert!(result.redirected);
+    }
+
+    #[test]
+    fn test_fetch_result_no_redirect() {
+        let result = FetchResult {
+            content: b"<schema/>".to_vec(),
+            final_url: "http://example.com/schema.xsd".to_string(),
+            redirected: false,
+        };
+        assert_eq!(result.content, b"<schema/>");
+        assert!(!result.redirected);
+    }
+
+    #[test]
+    fn test_fetch_result_clone() {
+        let result = FetchResult {
+            content: vec![42],
+            final_url: "http://example.com".to_string(),
+            redirected: false,
+        };
+        let cloned = result.clone();
+        assert_eq!(cloned.content, result.content);
+        assert_eq!(cloned.final_url, result.final_url);
+        assert_eq!(cloned.redirected, result.redirected);
+    }
+
+    #[test]
+    fn test_fetch_result_debug() {
+        let result = FetchResult {
+            content: vec![],
+            final_url: "http://test.com".to_string(),
+            redirected: true,
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("FetchResult"));
+        assert!(debug.contains("http://test.com"));
+        assert!(debug.contains("true"));
+    }
+
+    #[cfg(feature = "ureq")]
+    mod ureq_tests {
+        use super::*;
+
+        #[test]
+        fn test_ureq_fetcher_new() {
+            let fetcher = UreqFetcher::new();
+            assert_eq!(fetcher.max_redirects, 10);
+            assert!(fetcher.user_agent.contains("fastxml"));
+            assert_eq!(fetcher.timeout_secs, 30);
+        }
+
+        #[test]
+        fn test_ureq_fetcher_default() {
+            let fetcher = UreqFetcher::default();
+            assert_eq!(fetcher.max_redirects, 10);
+            assert!(fetcher.user_agent.contains("fastxml"));
+            assert_eq!(fetcher.timeout_secs, 30);
+        }
+
+        #[test]
+        fn test_ureq_fetcher_builder_max_redirects() {
+            let fetcher = UreqFetcher::new().max_redirects(5);
+            assert_eq!(fetcher.max_redirects, 5);
+        }
+
+        #[test]
+        fn test_ureq_fetcher_builder_user_agent() {
+            let fetcher = UreqFetcher::new().user_agent("custom-agent/1.0");
+            assert_eq!(fetcher.user_agent, "custom-agent/1.0");
+        }
+
+        #[test]
+        fn test_ureq_fetcher_builder_timeout() {
+            let fetcher = UreqFetcher::new().timeout(60);
+            assert_eq!(fetcher.timeout_secs, 60);
+        }
+
+        #[test]
+        fn test_ureq_fetcher_builder_chain() {
+            let fetcher = UreqFetcher::new()
+                .max_redirects(3)
+                .user_agent("test-agent")
+                .timeout(15);
+            assert_eq!(fetcher.max_redirects, 3);
+            assert_eq!(fetcher.user_agent, "test-agent");
+            assert_eq!(fetcher.timeout_secs, 15);
+        }
+
+        #[test]
+        fn test_ureq_fetcher_build_agent() {
+            let fetcher = UreqFetcher::new();
+            // Just verify build_agent doesn't panic
+            let _agent = fetcher.build_agent();
+        }
+
+        #[test]
+        fn test_ureq_fetcher_fetch_invalid_url() {
+            let fetcher = UreqFetcher::new();
+            let result = fetcher.fetch("not-a-valid-url");
+            assert!(result.is_err());
+        }
+    }
+
+    #[cfg(feature = "reqwest")]
+    mod reqwest_tests {
+        use super::*;
+
+        #[test]
+        fn test_reqwest_fetcher_new() {
+            let fetcher = ReqwestFetcher::new();
+            assert!(fetcher.is_ok());
+        }
+
+        #[test]
+        fn test_reqwest_fetcher_default() {
+            let _fetcher = ReqwestFetcher::default();
+        }
+
+        #[test]
+        fn test_reqwest_fetcher_with_client() {
+            let client = reqwest::Client::new();
+            let _fetcher = ReqwestFetcher::with_client(client);
+        }
+    }
 }

@@ -37,10 +37,7 @@ fn validate_with_libxml(xml: &str, xsd: &str) -> (bool, Vec<String>) {
     let is_valid = result.is_ok();
 
     let messages: Vec<String> = if let Err(errors) = result {
-        errors
-            .iter()
-            .filter_map(|e| e.message.clone())
-            .collect()
+        errors.iter().filter_map(|e| e.message.clone()).collect()
     } else {
         vec![]
     };

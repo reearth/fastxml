@@ -36,7 +36,9 @@ fn main() -> fastxml::error::Result<()> {
     println!("1. Find all buildings (//bldg:Building):");
     let result = evaluate(&doc, "//bldg:Building")?;
     for node in result.into_nodes() {
-        let id = node.get_attribute("gml:id").or_else(|| node.get_attribute("id"));
+        let id = node
+            .get_attribute("gml:id")
+            .or_else(|| node.get_attribute("id"));
         println!("   Found: {}", id.unwrap_or_default());
     }
 

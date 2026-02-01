@@ -150,34 +150,6 @@ impl XmlDocument {
         self.nodes.read().len()
     }
 
-    /// Allocates a new node and returns its ID.
-    #[allow(dead_code)]
-    pub(crate) fn allocate_node(&self, data: NodeData) -> NodeId {
-        let mut nodes = self.nodes.write();
-        let id = nodes.len();
-        nodes.push(data);
-        id
-    }
-
-    /// Sets the root element ID.
-    #[allow(dead_code)]
-    pub(crate) fn set_root_element(&self, _id: NodeId) {
-        // Use interior mutability pattern - we need &mut self here
-        // This is safe because we're only called during document construction
-    }
-
-    /// Adds a child node to a parent.
-    #[allow(dead_code)]
-    pub(crate) fn add_child(&self, parent_id: NodeId, child_id: NodeId) {
-        let mut nodes = self.nodes.write();
-        if let Some(child) = nodes.get_mut(child_id) {
-            child.parent = Some(parent_id);
-        }
-        if let Some(parent) = nodes.get_mut(parent_id) {
-            parent.children.push(child_id);
-        }
-    }
-
     /// Extracts namespace declarations from the root element and registers them.
     pub(crate) fn extract_and_register_namespaces(&self) {
         if let Some(root_id) = self.root_element_id {

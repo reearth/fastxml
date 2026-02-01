@@ -436,7 +436,12 @@ impl<'a> FacetValidator<'a> {
                 if !regex.is_match(value) {
                     return Err(FacetError::PatternMismatch {
                         value: value.to_string(),
-                        pattern: self.constraints.patterns.get(i).cloned().unwrap_or_default(),
+                        pattern: self
+                            .constraints
+                            .patterns
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_default(),
                     });
                 }
             }

@@ -5,9 +5,9 @@
 //! Run with: cargo run --example schema_validation
 
 use fastxml::error::{ErrorLevel, StructuredError, ValidationErrorType};
+use fastxml::parse;
 use fastxml::schema::validator::XmlSchemaValidationContext;
 use fastxml::schema::xsd::create_builtin_schema;
-use fastxml::parse;
 
 fn main() -> fastxml::error::Result<()> {
     // Example 1: Validate with built-in types
@@ -113,5 +113,9 @@ fn demonstrate_error_handling() {
         .filter(|e| e.level == ErrorLevel::Error)
         .collect();
 
-    println!("\nSummary: {} warnings, {} errors", warnings.len(), errors_only.len());
+    println!(
+        "\nSummary: {} warnings, {} errors",
+        warnings.len(),
+        errors_only.len()
+    );
 }

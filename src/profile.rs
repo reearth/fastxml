@@ -333,4 +333,295 @@ mod tests {
         assert!(bench.min() >= Duration::from_millis(1));
         assert!(bench.avg() >= Duration::from_millis(1));
     }
+
+    // ProfileResult tests
+    #[test]
+    fn test_profile_result_nodes_per_second() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: None,
+            node_count: 1000,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.nodes_per_second(), 1000.0);
+    }
+
+    #[test]
+    fn test_profile_result_nodes_per_second_zero_time() {
+        let result = ProfileResult {
+            parse_time: Duration::ZERO,
+            memory_peak: None,
+            memory_current: None,
+            node_count: 1000,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.nodes_per_second(), 0.0);
+    }
+
+    #[test]
+    fn test_profile_result_bytes_per_second() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: None,
+            node_count: 1000,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.bytes_per_second(), 5000.0);
+    }
+
+    #[test]
+    fn test_profile_result_bytes_per_second_zero_time() {
+        let result = ProfileResult {
+            parse_time: Duration::ZERO,
+            memory_peak: None,
+            memory_current: None,
+            node_count: 1000,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.bytes_per_second(), 0.0);
+    }
+
+    #[test]
+    fn test_profile_result_memory_per_node() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: Some(10000),
+            node_count: 100,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.memory_per_node(), Some(100.0));
+    }
+
+    #[test]
+    fn test_profile_result_memory_per_node_none() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: None,
+            node_count: 100,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.memory_per_node(), None);
+    }
+
+    #[test]
+    fn test_profile_result_memory_per_node_zero_nodes() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: Some(10000),
+            node_count: 0,
+            file_size: 5000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        assert_eq!(result.memory_per_node(), Some(0.0));
+    }
+
+    #[test]
+    fn test_profile_result_display() {
+        let result = ProfileResult {
+            parse_time: Duration::from_millis(100),
+            memory_peak: None,
+            memory_current: Some(1000000),
+            node_count: 500,
+            file_size: 50000,
+            xpath_eval_time: Some(Duration::from_millis(10)),
+            metrics: ProfileMetrics::default(),
+        };
+        let display = format!("{}", result);
+        assert!(display.contains("Profile Results:"));
+        assert!(display.contains("File size:"));
+        assert!(display.contains("Parse time:"));
+        assert!(display.contains("Node count:"));
+        assert!(display.contains("Memory used:"));
+        assert!(display.contains("Memory/node:"));
+        assert!(display.contains("XPath eval:"));
+    }
+
+    #[test]
+    fn test_profile_result_display_no_memory() {
+        let result = ProfileResult {
+            parse_time: Duration::from_millis(100),
+            memory_peak: None,
+            memory_current: None,
+            node_count: 500,
+            file_size: 50000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        let display = format!("{}", result);
+        assert!(display.contains("Profile Results:"));
+        assert!(!display.contains("Memory used:"));
+        assert!(!display.contains("XPath eval:"));
+    }
+
+    #[test]
+    fn test_profile_result_clone() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: Some(100),
+            memory_current: Some(200),
+            node_count: 50,
+            file_size: 1000,
+            xpath_eval_time: Some(Duration::from_millis(5)),
+            metrics: ProfileMetrics::default(),
+        };
+        let cloned = result.clone();
+        assert_eq!(cloned.node_count, result.node_count);
+        assert_eq!(cloned.file_size, result.file_size);
+    }
+
+    #[test]
+    fn test_profile_result_debug() {
+        let result = ProfileResult {
+            parse_time: Duration::from_secs(1),
+            memory_peak: None,
+            memory_current: None,
+            node_count: 50,
+            file_size: 1000,
+            xpath_eval_time: None,
+            metrics: ProfileMetrics::default(),
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("ProfileResult"));
+    }
+
+    // ProfileMetrics tests
+    #[test]
+    fn test_profile_metrics_default() {
+        let metrics = ProfileMetrics::default();
+        assert_eq!(metrics.element_count, 0);
+        assert_eq!(metrics.text_count, 0);
+        assert_eq!(metrics.attribute_count, 0);
+        assert_eq!(metrics.max_depth, 0);
+        assert_eq!(metrics.distinct_elements, 0);
+        assert_eq!(metrics.namespace_count, 0);
+    }
+
+    #[test]
+    fn test_profile_metrics_clone() {
+        let metrics = ProfileMetrics {
+            element_count: 10,
+            text_count: 5,
+            attribute_count: 3,
+            max_depth: 4,
+            distinct_elements: 2,
+            namespace_count: 1,
+        };
+        let cloned = metrics.clone();
+        assert_eq!(cloned.element_count, 10);
+        assert_eq!(cloned.text_count, 5);
+    }
+
+    #[test]
+    fn test_profile_metrics_debug() {
+        let metrics = ProfileMetrics::default();
+        let debug = format!("{:?}", metrics);
+        assert!(debug.contains("ProfileMetrics"));
+    }
+
+    // Benchmark tests
+    #[test]
+    fn test_benchmark_new() {
+        let bench = Benchmark::new(5);
+        assert_eq!(bench.iterations, 5);
+        assert!(bench.results.is_empty());
+    }
+
+    #[test]
+    fn test_benchmark_max() {
+        let mut bench = Benchmark::new(3);
+        bench.run(|| {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        });
+        assert!(bench.max() >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_benchmark_median() {
+        let mut bench = Benchmark::new(3);
+        bench.run(|| {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        });
+        assert!(bench.median() >= Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_benchmark_empty_results() {
+        let bench = Benchmark::new(3);
+        assert_eq!(bench.min(), Duration::default());
+        assert_eq!(bench.max(), Duration::default());
+        assert_eq!(bench.avg(), Duration::default());
+        assert_eq!(bench.median(), Duration::default());
+    }
+
+    #[test]
+    fn test_benchmark_run_clears_results() {
+        let mut bench = Benchmark::new(2);
+        bench.run(|| {});
+        assert_eq!(bench.results.len(), 2);
+        bench.run(|| {});
+        assert_eq!(bench.results.len(), 2);
+    }
+
+    // get_memory_usage test
+    #[test]
+    fn test_get_memory_usage() {
+        // Just verify it doesn't panic
+        let _ = get_memory_usage();
+    }
+
+    // profile_content additional tests
+    #[test]
+    fn test_profile_content_with_namespaces() {
+        let xml = r#"<root xmlns:ns="http://example.com"><ns:child/></root>"#;
+        let result = profile_content(xml.as_bytes()).unwrap();
+        assert!(result.metrics.namespace_count >= 1);
+    }
+
+    #[test]
+    fn test_profile_content_nested() {
+        let xml = r#"<root><a><b><c><d/></c></b></a></root>"#;
+        let result = profile_content(xml.as_bytes()).unwrap();
+        assert!(result.metrics.max_depth >= 4);
+        assert_eq!(result.metrics.element_count, 5);
+    }
+
+    #[test]
+    fn test_profile_content_text_nodes() {
+        let xml = r#"<root>text1<child>text2</child>text3</root>"#;
+        let result = profile_content(xml.as_bytes()).unwrap();
+        assert!(result.metrics.text_count >= 2);
+    }
+
+    #[test]
+    fn test_profile_content_distinct_elements() {
+        let xml = r#"<root><a/><b/><a/><c/></root>"#;
+        let result = profile_content(xml.as_bytes()).unwrap();
+        // root, a, b, c = 4 distinct elements
+        assert_eq!(result.metrics.distinct_elements, 4);
+    }
+
+    #[test]
+    fn test_profile_content_xpath_eval_time() {
+        let xml = r#"<root><child/></root>"#;
+        let result = profile_content(xml.as_bytes()).unwrap();
+        assert!(result.xpath_eval_time.is_some());
+    }
 }

@@ -7,8 +7,8 @@
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use std::io::BufReader;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Custom handler that prints events and collects statistics.
 struct EventPrinter {
@@ -32,7 +32,9 @@ impl EventPrinter {
 impl XmlEventHandler for EventPrinter {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         match event {
-            XmlEvent::StartElement { name, attributes, .. } => {
+            XmlEvent::StartElement {
+                name, attributes, ..
+            } => {
                 self.element_count.fetch_add(1, Ordering::SeqCst);
                 self.current_depth += 1;
 

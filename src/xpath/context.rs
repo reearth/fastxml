@@ -113,7 +113,6 @@ impl XmlSafeContext {
     }
 }
 
-
 /// Creates an XPath context for a document.
 pub fn create_context(doc: &XmlDocument) -> Result<XmlContext> {
     Ok(XmlContext::new(doc))

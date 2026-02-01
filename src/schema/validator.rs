@@ -12,8 +12,11 @@ use crate::namespace::Namespace;
 use crate::node::{NodeType, XmlNode};
 
 use super::types::{CompiledSchema, ContentModel, ElementDef, SimpleType, TypeDef};
-use super::xsd::facets::{FacetConstraints, FacetValidator};
 use super::xsd::constraints::ConstraintValidator;
+use super::xsd::facets::{FacetConstraints, FacetValidator};
+
+/// Type alias for child element occurrence constraints (min_occurs, max_occurs).
+type ChildConstraints = HashMap<String, (u32, Option<u32>)>;
 
 /// Validation mode controlling strictness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,7 +56,7 @@ struct ElementContext {
     /// Type reference for this element (if known from schema)
     type_ref: Option<String>,
     /// Expected child elements with their occurrence constraints (name -> (min, max))
-    expected_children: HashMap<String, (u32, Option<u32>)>,
+    expected_children: ChildConstraints,
 }
 
 impl ElementContext {
@@ -264,7 +267,7 @@ impl StreamingSchemaValidator {
     }
 
     /// Extracts child element occurrence constraints from an element definition.
-    fn get_child_constraints_for_element(&self, elem: &ElementDef) -> HashMap<String, (u32, Option<u32>)> {
+    fn get_child_constraints_for_element(&self, elem: &ElementDef) -> ChildConstraints {
         // Try to get the type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
             self.schema.get_type(type_ref)
@@ -400,7 +403,7 @@ impl StreamingSchemaValidator {
     }
 
     /// Gets type information for an inline element from the parent's content model.
-    fn get_inline_element_info(&self, name: &str) -> (Option<String>, HashMap<String, (u32, Option<u32>)>) {
+    fn get_inline_element_info(&self, name: &str) -> (Option<String>, ChildConstraints) {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
             return (None, HashMap::new());
@@ -469,7 +472,10 @@ impl StreamingSchemaValidator {
     }
 
     /// Extracts child element constraints from a complex type definition.
-    fn extract_child_constraints_from_complex(&self, complex: &super::types::ComplexType) -> HashMap<String, (u32, Option<u32>)> {
+    fn extract_child_constraints_from_complex(
+        &self,
+        complex: &super::types::ComplexType,
+    ) -> ChildConstraints {
         let mut constraints = HashMap::new();
 
         let elements = match &complex.content {
@@ -698,8 +704,8 @@ impl StreamingSchemaValidator {
                             ),
                         )
                         .with_node_name(&ctx.name)
-                        .with_expected(&format!("at least {} occurrence(s) of '{}'", min_occurs, child_name))
-                        .with_found(&format!("{} occurrence(s)", actual_count))
+                        .with_expected(format!("at least {} occurrence(s) of '{}'", min_occurs, child_name))
+                        .with_found(format!("{} occurrence(s)", actual_count))
                         .with_level(ErrorLevel::Error);
                     self.add_error(error);
                 }
@@ -874,7 +880,6 @@ impl XmlSchemaValidationContext {
     }
 }
 
-
 /// Creates a schema validation context from a schema location.
 ///
 /// If the location is a URL, this will attempt to fetch and parse the XSD.
@@ -938,6 +943,207 @@ pub fn validate_document_by_schema_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::types::ComplexType;
+
+    // =============================================
+    // ValidationMode Tests
+    // =============================================
+
+    #[test]
+    fn test_validation_mode_default() {
+        let mode = ValidationMode::default();
+        assert_eq!(mode, ValidationMode::Strict);
+    }
+
+    #[test]
+    fn test_validation_mode_eq() {
+        assert_eq!(ValidationMode::Strict, ValidationMode::Strict);
+        assert_eq!(ValidationMode::Lenient, ValidationMode::Lenient);
+        assert_ne!(ValidationMode::Strict, ValidationMode::Lenient);
+    }
+
+    #[test]
+    #[allow(clippy::clone_on_copy)]
+    fn test_validation_mode_clone() {
+        let mode = ValidationMode::Lenient;
+        let cloned = mode.clone();
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn test_validation_mode_debug() {
+        let mode = ValidationMode::Strict;
+        let debug_str = format!("{:?}", mode);
+        assert!(debug_str.contains("Strict"));
+    }
+
+    // =============================================
+    // ElementContext Tests
+    // =============================================
+
+    #[test]
+    fn test_element_context_new() {
+        let ctx = ElementContext::new("test", Some("http://example.com"));
+        assert_eq!(ctx.name, "test");
+        assert_eq!(ctx.namespace, Some("http://example.com".to_string()));
+        assert!(ctx.child_counts.is_empty());
+        assert!(ctx.text_content.is_empty());
+        assert!(!ctx.schema_validated);
+        assert!(ctx.type_ref.is_none());
+        assert!(ctx.expected_children.is_empty());
+    }
+
+    #[test]
+    fn test_element_context_new_without_namespace() {
+        let ctx = ElementContext::new("test", None);
+        assert_eq!(ctx.name, "test");
+        assert!(ctx.namespace.is_none());
+    }
+
+    #[test]
+    fn test_element_context_increment_child() {
+        let mut ctx = ElementContext::new("parent", None);
+        assert_eq!(ctx.increment_child("child"), 1);
+        assert_eq!(ctx.increment_child("child"), 2);
+        assert_eq!(ctx.increment_child("other"), 1);
+        assert_eq!(ctx.increment_child("child"), 3);
+    }
+
+    #[test]
+    fn test_element_context_get_child_count() {
+        let mut ctx = ElementContext::new("parent", None);
+        assert_eq!(ctx.get_child_count("child"), 0);
+        ctx.increment_child("child");
+        assert_eq!(ctx.get_child_count("child"), 1);
+        ctx.increment_child("child");
+        assert_eq!(ctx.get_child_count("child"), 2);
+        assert_eq!(ctx.get_child_count("other"), 0);
+    }
+
+    // =============================================
+    // ValidationState Tests
+    // =============================================
+
+    #[test]
+    fn test_validation_state_new() {
+        let state = ValidationState::new();
+        assert!(state.element_stack.is_empty());
+        assert_eq!(state.depth, 0);
+        assert_eq!(state.namespace_stack.len(), 1);
+    }
+
+    #[test]
+    fn test_validation_state_push_pop_element() {
+        let mut state = ValidationState::new();
+        state.push_element("root", None);
+        assert_eq!(state.depth, 1);
+        assert_eq!(state.element_stack.len(), 1);
+
+        state.push_element("child", Some("http://ns"));
+        assert_eq!(state.depth, 2);
+        assert_eq!(state.element_stack.len(), 2);
+
+        let popped = state.pop_element();
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().name, "child");
+        assert_eq!(state.depth, 1);
+
+        let popped = state.pop_element();
+        assert!(popped.is_some());
+        assert_eq!(popped.unwrap().name, "root");
+        assert_eq!(state.depth, 0);
+    }
+
+    #[test]
+    fn test_validation_state_child_count_increment() {
+        let mut state = ValidationState::new();
+        state.push_element("parent", None);
+        state.push_element("child1", None);
+        state.pop_element();
+        state.push_element("child1", None);
+        state.pop_element();
+        state.push_element("child2", None);
+        state.pop_element();
+
+        // Parent should have counts: child1=2, child2=1
+        let parent = state.pop_element().unwrap();
+        assert_eq!(parent.get_child_count("child1"), 2);
+        assert_eq!(parent.get_child_count("child2"), 1);
+    }
+
+    #[test]
+    fn test_validation_state_current_element() {
+        let mut state = ValidationState::new();
+        assert!(state.current_element().is_none());
+
+        state.push_element("root", None);
+        assert!(state.current_element().is_some());
+        assert_eq!(state.current_element().unwrap().name, "root");
+    }
+
+    #[test]
+    fn test_validation_state_current_element_mut() {
+        let mut state = ValidationState::new();
+        state.push_element("root", None);
+        if let Some(ctx) = state.current_element_mut() {
+            ctx.text_content.push_str("hello");
+        }
+        assert_eq!(state.current_element().unwrap().text_content, "hello");
+    }
+
+    #[test]
+    fn test_validation_state_push_pop_namespaces() {
+        let mut state = ValidationState::new();
+        assert_eq!(state.namespace_stack.len(), 1);
+
+        let decls = vec![Namespace::new(
+            "ns".to_string(),
+            "http://example.com".to_string(),
+        )];
+        state.push_namespaces(&decls);
+        assert_eq!(state.namespace_stack.len(), 2);
+        assert_eq!(state.resolve_prefix("ns"), Some("http://example.com"));
+
+        state.pop_namespaces();
+        assert_eq!(state.namespace_stack.len(), 1);
+    }
+
+    #[test]
+    fn test_validation_state_resolve_prefix() {
+        let mut state = ValidationState::new();
+        assert!(state.resolve_prefix("ns").is_none());
+
+        let decls = vec![Namespace::new(
+            "ns".to_string(),
+            "http://example.com".to_string(),
+        )];
+        state.push_namespaces(&decls);
+        assert_eq!(state.resolve_prefix("ns"), Some("http://example.com"));
+        assert!(state.resolve_prefix("other").is_none());
+    }
+
+    #[test]
+    fn test_validation_state_element_path_empty() {
+        let state = ValidationState::new();
+        assert_eq!(state.element_path(), "/");
+    }
+
+    #[test]
+    fn test_validation_state_element_path() {
+        let mut state = ValidationState::new();
+        state.push_element("root", None);
+        assert_eq!(state.element_path(), "/root");
+
+        state.push_element("child", None);
+        assert_eq!(state.element_path(), "/root/child");
+
+        state.push_element("grandchild", None);
+        assert_eq!(state.element_path(), "/root/child/grandchild");
+    }
+
+    // =============================================
+    // StreamingSchemaValidator Tests
+    // =============================================
 
     #[test]
     fn test_streaming_validator() {
@@ -969,8 +1175,1282 @@ mod tests {
     }
 
     #[test]
+    fn test_streaming_validator_with_mode() {
+        let schema = CompiledSchema::new();
+        let validator =
+            StreamingSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+        assert!(validator.is_valid());
+        assert!(validator.is_clean());
+    }
+
+    #[test]
+    fn test_streaming_validator_set_max_errors() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        validator.set_max_errors(5);
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_errors_methods() {
+        let schema = CompiledSchema::new();
+        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        assert!(validator.errors().is_empty());
+        assert!(validator.errors_only().is_empty());
+        assert!(validator.warnings().is_empty());
+        assert_eq!(validator.error_count(), 0);
+        assert_eq!(validator.warning_count(), 0);
+    }
+
+    #[test]
+    fn test_streaming_validator_into_errors() {
+        let schema = CompiledSchema::new();
+        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let errors = validator.into_errors();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_streaming_validator_is_clean() {
+        let schema = CompiledSchema::new();
+        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        assert!(validator.is_clean());
+    }
+
+    #[test]
+    fn test_streaming_validator_text_content() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::Text("hello world".to_string()))
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_cdata() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::CData("<script>test</script>".to_string()))
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_with_prefix() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: Some("ns".into()),
+                namespace: Some("http://example.com".to_string()),
+                attributes: vec![],
+                namespace_decls: vec![Namespace::new(
+                    "ns".to_string(),
+                    "http://example.com".to_string(),
+                )],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: Some("ns".into()),
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_with_attributes() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![
+                    ("id".into(), "1".into()),
+                    ("xmlns:ns".into(), "http://example.com".into()),
+                    (
+                        "xsi:schemaLocation".into(),
+                        "http://example.com schema.xsd".into(),
+                    ),
+                ],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_unclosed_element() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        // Don't close the element
+        validator.finish().unwrap();
+
+        assert!(!validator.is_valid());
+        assert_eq!(validator.error_count(), 1);
+        let errors = validator.errors();
+        assert!(errors[0].message.contains("not closed"));
+    }
+
+    #[test]
+    fn test_streaming_validator_unknown_element_strict_mode() {
+        let mut schema = CompiledSchema::new();
+        // Add a known element so the schema "has elements"
+        schema.elements.insert(
+            "known".to_string(),
+            ElementDef {
+                name: "known".to_string(),
+                type_ref: None,
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "unknown".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(5),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "unknown".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        assert!(!validator.is_valid());
+        assert!(
+            validator
+                .errors()
+                .iter()
+                .any(|e| e.message.contains("not declared in schema"))
+        );
+    }
+
+    #[test]
+    fn test_streaming_validator_unknown_element_lenient_mode() {
+        let mut schema = CompiledSchema::new();
+        schema.elements.insert(
+            "known".to_string(),
+            ElementDef {
+                name: "known".to_string(),
+                type_ref: None,
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let mut validator =
+            StreamingSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "unknown".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "unknown".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // In lenient mode, unknown elements don't cause errors
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_streaming_validator_max_errors_limit() {
+        let mut schema = CompiledSchema::new();
+        schema.elements.insert(
+            "known".to_string(),
+            ElementDef {
+                name: "known".to_string(),
+                type_ref: None,
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        validator.set_max_errors(2);
+
+        // Add more than 2 unknown elements
+        for i in 0..5 {
+            let name = format!("unknown{}", i);
+            validator
+                .handle(&XmlEvent::StartElement {
+                    name: name.clone().into(),
+                    prefix: None,
+                    namespace: None,
+                    attributes: vec![],
+                    namespace_decls: vec![],
+                    line: None,
+                })
+                .unwrap();
+            validator
+                .handle(&XmlEvent::EndElement {
+                    name: name.into(),
+                    prefix: None,
+                })
+                .unwrap();
+        }
+
+        validator.finish().unwrap();
+
+        // Should only collect max_errors (2) errors
+        assert_eq!(validator.errors().len(), 2);
+    }
+
+    #[test]
+    fn test_streaming_validator_nested_elements() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "child".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "grandchild".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::Text("content".to_string()))
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "grandchild".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "child".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    // =============================================
+    // XmlSchemaValidationContext Tests
+    // =============================================
+
+    #[test]
     fn test_validation_context() {
         let ctx = create_xml_schema_validation_context("http://example.com/schema.xsd").unwrap();
         assert!(ctx.schema().elements.is_empty());
+    }
+
+    #[test]
+    fn test_validation_context_new() {
+        let schema = CompiledSchema::new();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        assert!(ctx.schema().elements.is_empty());
+    }
+
+    #[test]
+    fn test_validation_context_from_arc() {
+        let schema = Arc::new(CompiledSchema::new());
+        let ctx = XmlSchemaValidationContext::from_arc(schema);
+        assert!(ctx.schema().elements.is_empty());
+    }
+
+    #[test]
+    fn test_validation_context_create_validator() {
+        let schema = CompiledSchema::new();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        let validator = ctx.create_validator();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_validation_context_schema() {
+        let mut schema = CompiledSchema::new();
+        schema.elements.insert(
+            "test".to_string(),
+            ElementDef {
+                name: "test".to_string(),
+                type_ref: None,
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+        let ctx = XmlSchemaValidationContext::new(schema);
+        assert!(ctx.schema().elements.contains_key("test"));
+    }
+
+    #[test]
+    fn test_validation_context_validate_simple_document() {
+        let schema = CompiledSchema::new();
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<root><child/></root>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validation_context_validate_document_with_text() {
+        let schema = CompiledSchema::new();
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<root>Hello World</root>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    // =============================================
+    // create_xml_schema_validation_context Tests
+    // =============================================
+
+    #[test]
+    fn test_create_xml_schema_validation_context_url() {
+        let ctx = create_xml_schema_validation_context("https://example.com/schema.xsd").unwrap();
+        assert!(ctx.schema().elements.is_empty());
+    }
+
+    #[test]
+    fn test_create_xml_schema_validation_context_nonexistent_file() {
+        // Should fall back to built-in schema when file doesn't exist
+        let ctx = create_xml_schema_validation_context("/nonexistent/path/to/schema.xsd").unwrap();
+        assert!(ctx.schema().elements.is_empty());
+    }
+
+    #[test]
+    fn test_create_xml_schema_validation_context_from_buffer() {
+        let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="root" type="xs:string"/>
+</xs:schema>"#;
+
+        let ctx = create_xml_schema_validation_context_from_buffer(xsd.as_bytes()).unwrap();
+        assert!(ctx.schema().elements.contains_key("root"));
+    }
+
+    // =============================================
+    // validate_document_by_schema Tests
+    // =============================================
+
+    #[test]
+    fn test_validate_document_by_schema() {
+        let doc = crate::parse("<root/>").unwrap();
+        let errors = validate_document_by_schema(&doc, "http://example.com/schema.xsd").unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_document_by_schema_context() {
+        let schema = CompiledSchema::new();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        let doc = crate::parse("<root/>").unwrap();
+        let errors = validate_document_by_schema_context(&doc, &ctx).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    // =============================================
+    // Schema Validation with Type Checking Tests
+    // =============================================
+
+    #[test]
+    fn test_validate_element_with_simple_type() {
+        let mut schema = CompiledSchema::new();
+
+        // Add a simple type with length constraint
+        schema.types.insert(
+            "limitedString".to_string(),
+            TypeDef::Simple(SimpleType {
+                name: "limitedString".to_string(),
+                base_type: Some("xs:string".to_string()),
+                enumeration: vec![],
+                pattern: None,
+                min_length: Some(1),
+                max_length: Some(10),
+                min_inclusive: None,
+                max_inclusive: None,
+            }),
+        );
+
+        // Add element using that type
+        schema.elements.insert(
+            "value".to_string(),
+            ElementDef {
+                name: "value".to_string(),
+                type_ref: Some("limitedString".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+        let doc = crate::parse("<value>hello</value>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_element_with_enumeration() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "colorType".to_string(),
+            TypeDef::Simple(SimpleType {
+                name: "colorType".to_string(),
+                base_type: Some("xs:string".to_string()),
+                enumeration: vec!["red".to_string(), "green".to_string(), "blue".to_string()],
+                pattern: None,
+                min_length: None,
+                max_length: None,
+                min_inclusive: None,
+                max_inclusive: None,
+            }),
+        );
+
+        schema.elements.insert(
+            "color".to_string(),
+            ElementDef {
+                name: "color".to_string(),
+                type_ref: Some("colorType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Valid color
+        let doc = crate::parse("<color>red</color>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+
+        // Invalid color
+        let doc = crate::parse("<color>yellow</color>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_element_with_complex_type_sequence() {
+        let mut schema = CompiledSchema::new();
+
+        // Create a complex type with a sequence of child elements
+        schema.types.insert(
+            "personType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "personType".to_string(),
+                base_type: None,
+                content: ContentModel::Sequence(vec![
+                    ElementDef {
+                        name: "name".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 1,
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                    ElementDef {
+                        name: "age".to_string(),
+                        type_ref: Some("xs:integer".to_string()),
+                        inline_type: None,
+                        min_occurs: 0,
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                ]),
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "person".to_string(),
+            ElementDef {
+                name: "person".to_string(),
+                type_ref: Some("personType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Valid document
+        let doc = crate::parse("<person><name>John</name><age>30</age></person>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_element_missing_required_child() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "containerType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "containerType".to_string(),
+                base_type: None,
+                content: ContentModel::Sequence(vec![ElementDef {
+                    name: "required".to_string(),
+                    type_ref: Some("xs:string".to_string()),
+                    inline_type: None,
+                    min_occurs: 1, // Required!
+                    max_occurs: Some(1),
+                    nillable: false,
+                    substitution_group: None,
+                    is_abstract: false,
+                    constraints: vec![],
+                }]),
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "container".to_string(),
+            ElementDef {
+                name: "container".to_string(),
+                type_ref: Some("containerType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Missing required child
+        let doc = crate::parse("<container></container>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("requires child") || e.message.contains("at least"))
+        );
+    }
+
+    #[test]
+    fn test_validate_element_too_many_occurrences() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "containerType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "containerType".to_string(),
+                base_type: None,
+                content: ContentModel::Sequence(vec![ElementDef {
+                    name: "item".to_string(),
+                    type_ref: Some("xs:string".to_string()),
+                    inline_type: None,
+                    min_occurs: 0,
+                    max_occurs: Some(2), // Max 2
+                    nillable: false,
+                    substitution_group: None,
+                    is_abstract: false,
+                    constraints: vec![],
+                }]),
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "container".to_string(),
+            ElementDef {
+                name: "container".to_string(),
+                type_ref: Some("containerType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Too many items (3 > max 2)
+        let doc = crate::parse("<container><item>1</item><item>2</item><item>3</item></container>")
+            .unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("occurs") && e.message.contains("maximum"))
+        );
+    }
+
+    #[test]
+    fn test_validate_mixed_content() {
+        let mut schema = CompiledSchema::new();
+
+        // Mixed content type - allows text mixed with elements
+        schema.types.insert(
+            "mixedType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "mixedType".to_string(),
+                base_type: None,
+                content: ContentModel::Sequence(vec![]),
+                attributes: vec![],
+                mixed: true, // Mixed content allowed
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "mixed".to_string(),
+            ElementDef {
+                name: "mixed".to_string(),
+                type_ref: Some("mixedType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<mixed>Some text content</mixed>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_non_mixed_content_with_text_error() {
+        let mut schema = CompiledSchema::new();
+
+        // Non-mixed content type - text should cause error
+        schema.types.insert(
+            "elementOnlyType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "elementOnlyType".to_string(),
+                base_type: None,
+                content: ContentModel::Sequence(vec![]),
+                attributes: vec![],
+                mixed: false, // Not mixed - element-only content
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "container".to_string(),
+            ElementDef {
+                name: "container".to_string(),
+                type_ref: Some("elementOnlyType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<container>Invalid text content</container>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("element-only content"))
+        );
+    }
+
+    #[test]
+    fn test_validate_simple_content() {
+        let mut schema = CompiledSchema::new();
+
+        // Simple content type - complex type with simple content model
+        schema.types.insert(
+            "xs:string".to_string(),
+            TypeDef::Simple(SimpleType {
+                name: "xs:string".to_string(),
+                base_type: None,
+                enumeration: vec![],
+                pattern: None,
+                min_length: None,
+                max_length: None,
+                min_inclusive: None,
+                max_inclusive: None,
+            }),
+        );
+
+        schema.types.insert(
+            "simpleContentType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "simpleContentType".to_string(),
+                base_type: None,
+                content: ContentModel::SimpleContent {
+                    base_type: "xs:string".to_string(),
+                },
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "value".to_string(),
+            ElementDef {
+                name: "value".to_string(),
+                type_ref: Some("simpleContentType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<value>Simple text</value>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_complex_extension() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "extendedType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "extendedType".to_string(),
+                base_type: None,
+                content: ContentModel::ComplexExtension {
+                    base_type: "baseType".to_string(),
+                    elements: vec![ElementDef {
+                        name: "extra".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 0,
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    }],
+                },
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "extended".to_string(),
+            ElementDef {
+                name: "extended".to_string(),
+                type_ref: Some("extendedType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<extended><extra>value</extra></extended>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_choice_content_model() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "choiceType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "choiceType".to_string(),
+                base_type: None,
+                content: ContentModel::Choice(vec![
+                    ElementDef {
+                        name: "optionA".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 0, // Choice: at least one must appear, but each is optional
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                    ElementDef {
+                        name: "optionB".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 0, // Choice: at least one must appear, but each is optional
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                ]),
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "choice".to_string(),
+            ElementDef {
+                name: "choice".to_string(),
+                type_ref: Some("choiceType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<choice><optionA>value</optionA></choice>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_all_content_model() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "allType".to_string(),
+            TypeDef::Complex(ComplexType {
+                name: "allType".to_string(),
+                base_type: None,
+                content: ContentModel::All(vec![
+                    ElementDef {
+                        name: "first".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 0,
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                    ElementDef {
+                        name: "second".to_string(),
+                        type_ref: Some("xs:string".to_string()),
+                        inline_type: None,
+                        min_occurs: 0,
+                        max_occurs: Some(1),
+                        nillable: false,
+                        substitution_group: None,
+                        is_abstract: false,
+                        constraints: vec![],
+                    },
+                ]),
+                attributes: vec![],
+                mixed: false,
+                is_abstract: false,
+            }),
+        );
+
+        schema.elements.insert(
+            "allContainer".to_string(),
+            ElementDef {
+                name: "allContainer".to_string(),
+                type_ref: Some("allType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        let doc = crate::parse("<allContainer><second>2</second><first>1</first></allContainer>")
+            .unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_with_inline_type() {
+        let mut schema = CompiledSchema::new();
+
+        // Element with inline type definition
+        schema.elements.insert(
+            "inlined".to_string(),
+            ElementDef {
+                name: "inlined".to_string(),
+                type_ref: None,
+                inline_type: Some(TypeDef::Simple(SimpleType {
+                    name: String::new(),
+                    base_type: Some("xs:string".to_string()),
+                    enumeration: vec!["yes".to_string(), "no".to_string()],
+                    pattern: None,
+                    min_length: None,
+                    max_length: None,
+                    min_inclusive: None,
+                    max_inclusive: None,
+                })),
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Valid value
+        let doc = crate::parse("<inlined>yes</inlined>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+
+        // Invalid value
+        let doc = crate::parse("<inlined>maybe</inlined>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_pattern_constraint() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "zipCode".to_string(),
+            TypeDef::Simple(SimpleType {
+                name: "zipCode".to_string(),
+                base_type: Some("xs:string".to_string()),
+                enumeration: vec![],
+                pattern: Some(r"^\d{5}$".to_string()),
+                min_length: None,
+                max_length: None,
+                min_inclusive: None,
+                max_inclusive: None,
+            }),
+        );
+
+        schema.elements.insert(
+            "zip".to_string(),
+            ElementDef {
+                name: "zip".to_string(),
+                type_ref: Some("zipCode".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Valid zip code
+        let doc = crate::parse("<zip>12345</zip>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+
+        // Invalid zip code
+        let doc = crate::parse("<zip>1234</zip>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_numeric_constraints() {
+        let mut schema = CompiledSchema::new();
+
+        schema.types.insert(
+            "ageType".to_string(),
+            TypeDef::Simple(SimpleType {
+                name: "ageType".to_string(),
+                base_type: Some("xs:integer".to_string()),
+                enumeration: vec![],
+                pattern: None,
+                min_length: None,
+                max_length: None,
+                min_inclusive: Some("0".to_string()),
+                max_inclusive: Some("150".to_string()),
+            }),
+        );
+
+        schema.elements.insert(
+            "age".to_string(),
+            ElementDef {
+                name: "age".to_string(),
+                type_ref: Some("ageType".to_string()),
+                inline_type: None,
+                min_occurs: 1,
+                max_occurs: Some(1),
+                nillable: false,
+                substitution_group: None,
+                is_abstract: false,
+                constraints: vec![],
+            },
+        );
+
+        let ctx = XmlSchemaValidationContext::new(schema);
+
+        // Valid age
+        let doc = crate::parse("<age>30</age>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(errors.is_empty());
+
+        // Age too high
+        let doc = crate::parse("<age>200</age>").unwrap();
+        let errors = ctx.validate(&doc).unwrap();
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn test_streaming_validator_other_events() {
+        let schema = CompiledSchema::new();
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Test various event types that should be handled gracefully
+        validator
+            .handle(&XmlEvent::Declaration {
+                version: Some("1.0".to_string()),
+                encoding: Some("UTF-8".to_string()),
+                standalone: None,
+            })
+            .unwrap();
+        validator
+            .handle(&XmlEvent::Comment("test comment".to_string()))
+            .unwrap();
+        validator
+            .handle(&XmlEvent::ProcessingInstruction {
+                target: "xml".to_string(),
+                content: Some("version".to_string()),
+            })
+            .unwrap();
+        validator.handle(&XmlEvent::Eof).unwrap();
+
+        validator.finish().unwrap();
+        assert!(validator.is_valid());
+    }
+
+    #[test]
+    fn test_validation_state_pop_empty() {
+        let mut state = ValidationState::new();
+        // Pop from empty stack should return None and not panic
+        assert!(state.pop_element().is_none());
+        assert_eq!(state.depth, 0);
+    }
+
+    #[test]
+    fn test_namespace_stack_pop_minimum() {
+        let mut state = ValidationState::new();
+        // Should maintain at least one namespace context
+        state.pop_namespaces();
+        state.pop_namespaces();
+        state.pop_namespaces();
+        assert_eq!(state.namespace_stack.len(), 1);
     }
 }

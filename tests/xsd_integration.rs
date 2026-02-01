@@ -344,4 +344,3 @@ fn test_streaming_parse_with_validator() {
     let root = doc.get_root_element().unwrap();
     assert_eq!(root.get_name(), "Envelope");
 }
-

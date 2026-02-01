@@ -10,8 +10,8 @@ use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 use std::io::BufReader;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Custom handler that counts elements while validation happens
 struct CountingHandler {
@@ -33,7 +33,7 @@ impl XmlEventHandler for CountingHandler {
 
             // Progress indicator for large files
             let count = self.element_count.load(Ordering::SeqCst);
-            if count % 1000 == 0 {
+            if count.is_multiple_of(1000) {
                 println!("Processed {} elements...", count);
             }
         }
@@ -96,7 +96,10 @@ fn main() -> Result<()> {
     parser.parse()?;
 
     println!("\n=== Results ===\n");
-    println!("Total elements processed: {}", element_count.load(Ordering::SeqCst));
+    println!(
+        "Total elements processed: {}",
+        element_count.load(Ordering::SeqCst)
+    );
     println!("Validation: PASSED (using built-in schema)");
 
     println!("\nStreaming validation complete!");

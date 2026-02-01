@@ -379,4 +379,253 @@ mod tests {
         assert!(!is_reverse_axis(&Axis::Child));
         assert!(!is_reverse_axis(&Axis::Following));
     }
+
+    // Additional tests for select_axis
+    #[test]
+    fn test_select_axis_child() {
+        let doc = parse("<root><a/><b/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::Child, &root);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_descendant() {
+        let doc = parse("<root><a><b/></a></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::Descendant, &root);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_descendant_or_self() {
+        let doc = parse("<root><a><b/></a></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::DescendantOrSelf, &root);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_select_axis_parent() {
+        let doc = parse("<root><a/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let result = select_axis(&Axis::Parent, &a);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].get_name(), "root");
+    }
+
+    #[test]
+    fn test_select_axis_ancestor() {
+        let doc = parse("<root><a><b/></a></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let b = a.get_child_nodes().into_iter().next().unwrap();
+        let result = select_axis(&Axis::Ancestor, &b);
+        // a, root, document
+        assert!(result.len() >= 2);
+    }
+
+    #[test]
+    fn test_select_axis_ancestor_or_self() {
+        let doc = parse("<root><a/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let result = select_axis(&Axis::AncestorOrSelf, &a);
+        // a, root, document
+        assert!(result.len() >= 2);
+    }
+
+    #[test]
+    fn test_select_axis_following_sibling() {
+        let doc = parse("<root><a/><b/><c/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let result = select_axis(&Axis::FollowingSibling, &a);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_preceding_sibling() {
+        let doc = parse("<root><a/><b/><c/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let children: Vec<_> = root.get_child_nodes();
+        let c = &children[2];
+        let result = select_axis(&Axis::PrecedingSibling, c);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_following() {
+        let doc = parse("<root><a/><b><c/></b></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let result = select_axis(&Axis::Following, &a);
+        // b and c
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_preceding() {
+        let doc = parse("<root><a><x/></a><b/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let children: Vec<_> = root.get_child_nodes();
+        let b = &children[1];
+        let result = select_axis(&Axis::Preceding, b);
+        // a and x
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_axis_self() {
+        let doc = parse("<root/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::SelfNode, &root);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id(), root.id());
+    }
+
+    #[test]
+    fn test_select_axis_attribute() {
+        let doc = parse("<root attr='value'/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::Attribute, &root);
+        // Current implementation returns empty vec
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_axis_namespace() {
+        let doc = parse("<root xmlns:ns='http://example.com'/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_axis(&Axis::Namespace, &root);
+        // Current implementation returns empty vec
+        assert!(result.is_empty());
+    }
+
+    // Edge case tests
+    #[test]
+    fn test_select_parent_no_parent() {
+        let doc = parse("<root/>").unwrap();
+        // Document node has no parent
+        let doc_node = doc.get_node(0).unwrap();
+        let result = select_parent(&doc_node);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_following_sibling_no_parent() {
+        let doc = parse("<root/>").unwrap();
+        let doc_node = doc.get_node(0).unwrap();
+        let result = select_following_sibling(&doc_node);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_preceding_sibling_no_parent() {
+        let doc = parse("<root/>").unwrap();
+        let doc_node = doc.get_node(0).unwrap();
+        let result = select_preceding_sibling(&doc_node);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_following_sibling_last_child() {
+        let doc = parse("<root><a/><b/><c/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let children: Vec<_> = root.get_child_nodes();
+        let c = &children[2];
+        let result = select_following_sibling(c);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_preceding_sibling_first_child() {
+        let doc = parse("<root><a/><b/><c/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let a = root.get_child_nodes().into_iter().next().unwrap();
+        let result = select_preceding_sibling(&a);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_following_complex() {
+        let doc = parse("<root><a><a1/></a><b><b1/><b2/></b><c/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let children: Vec<_> = root.get_child_nodes();
+        let a = &children[0];
+        let a1 = a.get_child_nodes().into_iter().next().unwrap();
+
+        let result = select_following(&a1);
+        // Should get b, b1, b2, c
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn test_select_preceding_complex() {
+        let doc = parse("<root><a><a1/></a><b><b1/></b></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let children: Vec<_> = root.get_child_nodes();
+        let b = &children[1];
+        let b1 = b.get_child_nodes().into_iter().next().unwrap();
+
+        let result = select_preceding(&b1);
+        // Should get a, a1 (not b which is an ancestor)
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_select_descendant_empty() {
+        let doc = parse("<root/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_descendant(&root, false);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_child_empty() {
+        let doc = parse("<root/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_child(&root);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_is_forward_axis_all() {
+        assert!(is_forward_axis(&Axis::Child));
+        assert!(is_forward_axis(&Axis::Descendant));
+        assert!(is_forward_axis(&Axis::DescendantOrSelf));
+        assert!(is_forward_axis(&Axis::FollowingSibling));
+        assert!(is_forward_axis(&Axis::Following));
+        assert!(is_forward_axis(&Axis::Attribute));
+        assert!(is_forward_axis(&Axis::Namespace));
+        assert!(is_forward_axis(&Axis::SelfNode));
+    }
+
+    #[test]
+    fn test_is_reverse_axis_all() {
+        assert!(is_reverse_axis(&Axis::Parent));
+        assert!(is_reverse_axis(&Axis::Ancestor));
+        assert!(is_reverse_axis(&Axis::AncestorOrSelf));
+        assert!(is_reverse_axis(&Axis::PrecedingSibling));
+        assert!(is_reverse_axis(&Axis::Preceding));
+    }
+
+    #[test]
+    fn test_select_attribute() {
+        let doc = parse("<root attr='value'/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_attribute(&root);
+        // Current implementation returns empty
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_select_namespace() {
+        let doc = parse("<root xmlns:ns='http://example.com'/>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let result = select_namespace(&root);
+        // Current implementation returns empty
+        assert!(result.is_empty());
+    }
 }

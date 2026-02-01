@@ -723,6 +723,1215 @@ fn get_first_node_or_context(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::document::XmlDocument;
+    use crate::namespace::NamespaceResolver;
+
+    fn create_test_document() -> XmlDocument {
+        crate::parse(
+            "<root><item id=\"1\">10</item><item id=\"2\">20</item><item id=\"3\">30</item></root>",
+        )
+        .unwrap()
+    }
+
+    fn create_context<'a>(doc: &'a XmlDocument, node: &XmlNode) -> EvaluationContext<'a> {
+        EvaluationContext::new(node.clone(), doc, NamespaceResolver::new())
+    }
+
+    // =============================================================================
+    // Node Set Functions Tests
+    // =============================================================================
+
+    #[test]
+    fn test_fn_last() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root).with_position(1, 5);
+
+        let result = evaluate_function("last", vec![], &ctx).unwrap();
+        assert_eq!(result.to_number(), 5.0);
+    }
+
+    #[test]
+    fn test_fn_last_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("last", vec![XPathValue::Number(1.0)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_position() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root).with_position(3, 5);
+
+        let result = evaluate_function("position", vec![], &ctx).unwrap();
+        assert_eq!(result.to_number(), 3.0);
+    }
+
+    #[test]
+    fn test_fn_position_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("position", vec![XPathValue::Number(1.0)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_count() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+        let children = root.get_child_nodes();
+
+        let result = evaluate_function("count", vec![XPathValue::NodeSet(children)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 3.0);
+    }
+
+    #[test]
+    fn test_fn_count_empty() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("count", vec![XPathValue::NodeSet(vec![])], &ctx).unwrap();
+        assert_eq!(result.to_number(), 0.0);
+    }
+
+    #[test]
+    fn test_fn_count_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        // No arguments
+        let result = evaluate_function("count", vec![], &ctx);
+        assert!(result.is_err());
+
+        // Wrong type
+        let result = evaluate_function("count", vec![XPathValue::String("test".to_string())], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_name() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("name", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "root");
+    }
+
+    #[test]
+    fn test_fn_name_with_nodeset() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+        let children = root.get_child_nodes();
+
+        let result = evaluate_function("name", vec![XPathValue::NodeSet(children)], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "item");
+    }
+
+    #[test]
+    fn test_fn_local_name() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("local-name", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "root");
+    }
+
+    #[test]
+    fn test_fn_namespace_uri() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("namespace-uri", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_id() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("id", vec![XPathValue::String("2".to_string())], &ctx).unwrap();
+        match result {
+            XPathValue::NodeSet(nodes) => {
+                assert_eq!(nodes.len(), 1);
+                assert_eq!(nodes[0].get_attribute("id").unwrap(), "2");
+            }
+            _ => panic!("Expected NodeSet"),
+        }
+    }
+
+    #[test]
+    fn test_fn_id_multiple() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("id", vec![XPathValue::String("1 3".to_string())], &ctx).unwrap();
+        match result {
+            XPathValue::NodeSet(nodes) => {
+                assert_eq!(nodes.len(), 2);
+            }
+            _ => panic!("Expected NodeSet"),
+        }
+    }
+
+    #[test]
+    fn test_fn_id_not_found() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("id", vec![XPathValue::String("999".to_string())], &ctx).unwrap();
+        match result {
+            XPathValue::NodeSet(nodes) => {
+                assert_eq!(nodes.len(), 0);
+            }
+            _ => panic!("Expected NodeSet"),
+        }
+    }
+
+    #[test]
+    fn test_fn_id_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("id", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_id_with_nodeset() {
+        let doc = crate::parse(
+            "<root><ids>1 2</ids><item id=\"1\">A</item><item id=\"2\">B</item></root>",
+        )
+        .unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ids_node = root.get_child_nodes().into_iter().next().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("id", vec![XPathValue::NodeSet(vec![ids_node])], &ctx).unwrap();
+        match result {
+            XPathValue::NodeSet(nodes) => {
+                assert_eq!(nodes.len(), 2);
+            }
+            _ => panic!("Expected NodeSet"),
+        }
+    }
+
+    // =============================================================================
+    // String Functions Tests
+    // =============================================================================
+
+    #[test]
+    fn test_fn_string_with_arg() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("string", vec![XPathValue::Number(42.0)], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "42");
+    }
+
+    #[test]
+    fn test_fn_string_no_arg() {
+        let doc = crate::parse("<root>hello</root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("string", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "hello");
+    }
+
+    #[test]
+    fn test_fn_string_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "string",
+            vec![XPathValue::Number(1.0), XPathValue::Number(2.0)],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_concat() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "concat",
+            vec![
+                XPathValue::String("Hello".to_string()),
+                XPathValue::String(" ".to_string()),
+                XPathValue::String("World".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "Hello World");
+    }
+
+    #[test]
+    fn test_fn_concat_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "concat",
+            vec![XPathValue::String("only one".to_string())],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_starts_with_true() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "starts-with",
+            vec![
+                XPathValue::String("Hello World".to_string()),
+                XPathValue::String("Hello".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_starts_with_false() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "starts-with",
+            vec![
+                XPathValue::String("Hello World".to_string()),
+                XPathValue::String("World".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_starts_with_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "starts-with",
+            vec![XPathValue::String("test".to_string())],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_contains_true() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "contains",
+            vec![
+                XPathValue::String("Hello World".to_string()),
+                XPathValue::String("o W".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_contains_false() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "contains",
+            vec![
+                XPathValue::String("Hello World".to_string()),
+                XPathValue::String("xyz".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_contains_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("contains", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_substring_two_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring",
+            vec![
+                XPathValue::String("12345".to_string()),
+                XPathValue::Number(2.0),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "2345");
+    }
+
+    #[test]
+    fn test_fn_substring_three_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring",
+            vec![
+                XPathValue::String("12345".to_string()),
+                XPathValue::Number(2.0),
+                XPathValue::Number(3.0),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "234");
+    }
+
+    #[test]
+    fn test_fn_substring_nan_start() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring",
+            vec![
+                XPathValue::String("12345".to_string()),
+                XPathValue::Number(f64::NAN),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_substring_nan_length() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring",
+            vec![
+                XPathValue::String("12345".to_string()),
+                XPathValue::Number(1.0),
+                XPathValue::Number(f64::NAN),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_substring_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring",
+            vec![XPathValue::String("test".to_string())],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_substring_before() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-before",
+            vec![
+                XPathValue::String("1999/04/01".to_string()),
+                XPathValue::String("/".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "1999");
+    }
+
+    #[test]
+    fn test_fn_substring_before_not_found() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-before",
+            vec![
+                XPathValue::String("hello".to_string()),
+                XPathValue::String("xyz".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_substring_before_empty_search() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-before",
+            vec![
+                XPathValue::String("hello".to_string()),
+                XPathValue::String("".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_substring_before_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("substring-before", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_substring_after() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-after",
+            vec![
+                XPathValue::String("1999/04/01".to_string()),
+                XPathValue::String("/".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "04/01");
+    }
+
+    #[test]
+    fn test_fn_substring_after_not_found() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-after",
+            vec![
+                XPathValue::String("hello".to_string()),
+                XPathValue::String("xyz".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "");
+    }
+
+    #[test]
+    fn test_fn_substring_after_empty_search() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "substring-after",
+            vec![
+                XPathValue::String("hello".to_string()),
+                XPathValue::String("".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "hello");
+    }
+
+    #[test]
+    fn test_fn_substring_after_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("substring-after", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_string_length_with_arg() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "string-length",
+            vec![XPathValue::String("hello".to_string())],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_number(), 5.0);
+    }
+
+    #[test]
+    fn test_fn_string_length_no_arg() {
+        let doc = crate::parse("<root>hello</root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("string-length", vec![], &ctx).unwrap();
+        assert_eq!(result.to_number(), 5.0);
+    }
+
+    #[test]
+    fn test_fn_string_length_unicode() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "string-length",
+            vec![XPathValue::String("日本語".to_string())],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_number(), 3.0);
+    }
+
+    #[test]
+    fn test_fn_string_length_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "string-length",
+            vec![
+                XPathValue::String("a".to_string()),
+                XPathValue::String("b".to_string()),
+            ],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_normalize_space_with_arg() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "normalize-space",
+            vec![XPathValue::String("  hello   world  ".to_string())],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "hello world");
+    }
+
+    #[test]
+    fn test_fn_normalize_space_no_arg() {
+        let doc = crate::parse("<root>  hello   world  </root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("normalize-space", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "hello world");
+    }
+
+    #[test]
+    fn test_fn_normalize_space_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "normalize-space",
+            vec![
+                XPathValue::String("a".to_string()),
+                XPathValue::String("b".to_string()),
+            ],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_translate_basic() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "translate",
+            vec![
+                XPathValue::String("bar".to_string()),
+                XPathValue::String("abc".to_string()),
+                XPathValue::String("ABC".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "BAr");
+    }
+
+    #[test]
+    fn test_fn_translate_remove_chars() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "translate",
+            vec![
+                XPathValue::String("--aaa--".to_string()),
+                XPathValue::String("abc-".to_string()),
+                XPathValue::String("ABC".to_string()),
+            ],
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(result.to_string_value(), "AAA");
+    }
+
+    #[test]
+    fn test_fn_translate_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "translate",
+            vec![
+                XPathValue::String("test".to_string()),
+                XPathValue::String("abc".to_string()),
+            ],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // Boolean Functions Tests
+    // =============================================================================
+
+    #[test]
+    fn test_fn_boolean_true_string() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "boolean",
+            vec![XPathValue::String("hello".to_string())],
+            &ctx,
+        )
+        .unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_boolean_false_empty_string() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("boolean", vec![XPathValue::String("".to_string())], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_boolean_number() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("boolean", vec![XPathValue::Number(1.0)], &ctx).unwrap();
+        assert!(result.to_boolean());
+
+        let result = evaluate_function("boolean", vec![XPathValue::Number(0.0)], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_boolean_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("boolean", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_not_true() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("not", vec![XPathValue::Boolean(false)], &ctx).unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_not_false() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("not", vec![XPathValue::Boolean(true)], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_not_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("not", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_true() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("true", vec![], &ctx).unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_true_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("true", vec![XPathValue::Boolean(false)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_false() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("false", vec![], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_false_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("false", vec![XPathValue::Boolean(true)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_lang_match() {
+        let doc = crate::parse("<root xml:lang=\"en\"><child/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let child = root.get_child_nodes().into_iter().next().unwrap();
+        let ctx = create_context(&doc, &child);
+
+        let result =
+            evaluate_function("lang", vec![XPathValue::String("en".to_string())], &ctx).unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_lang_sublanguage() {
+        let doc = crate::parse("<root xml:lang=\"en-US\"><child/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let child = root.get_child_nodes().into_iter().next().unwrap();
+        let ctx = create_context(&doc, &child);
+
+        let result =
+            evaluate_function("lang", vec![XPathValue::String("en".to_string())], &ctx).unwrap();
+        assert!(result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_lang_no_match() {
+        let doc = crate::parse("<root xml:lang=\"fr\"><child/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let child = root.get_child_nodes().into_iter().next().unwrap();
+        let ctx = create_context(&doc, &child);
+
+        let result =
+            evaluate_function("lang", vec![XPathValue::String("en".to_string())], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_lang_no_attribute() {
+        let doc = crate::parse("<root><child/></root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("lang", vec![XPathValue::String("en".to_string())], &ctx).unwrap();
+        assert!(!result.to_boolean());
+    }
+
+    #[test]
+    fn test_fn_lang_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("lang", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // Number Functions Tests
+    // =============================================================================
+
+    #[test]
+    fn test_fn_number_with_arg() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result =
+            evaluate_function("number", vec![XPathValue::String("42.5".to_string())], &ctx)
+                .unwrap();
+        assert_eq!(result.to_number(), 42.5);
+    }
+
+    #[test]
+    fn test_fn_number_no_arg() {
+        let doc = crate::parse("<root>123</root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("number", vec![], &ctx).unwrap();
+        assert_eq!(result.to_number(), 123.0);
+    }
+
+    #[test]
+    fn test_fn_number_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function(
+            "number",
+            vec![XPathValue::Number(1.0), XPathValue::Number(2.0)],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_sum() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+        let children = root.get_child_nodes();
+
+        let result = evaluate_function("sum", vec![XPathValue::NodeSet(children)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 60.0); // 10 + 20 + 30
+    }
+
+    #[test]
+    fn test_fn_sum_empty() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("sum", vec![XPathValue::NodeSet(vec![])], &ctx).unwrap();
+        assert_eq!(result.to_number(), 0.0);
+    }
+
+    #[test]
+    fn test_fn_sum_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        // No arguments
+        let result = evaluate_function("sum", vec![], &ctx);
+        assert!(result.is_err());
+
+        // Wrong type
+        let result = evaluate_function("sum", vec![XPathValue::Number(42.0)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_floor() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("floor", vec![XPathValue::Number(2.9)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 2.0);
+
+        let result = evaluate_function("floor", vec![XPathValue::Number(-2.1)], &ctx).unwrap();
+        assert_eq!(result.to_number(), -3.0);
+    }
+
+    #[test]
+    fn test_fn_floor_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("floor", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_ceiling() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("ceiling", vec![XPathValue::Number(2.1)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 3.0);
+
+        let result = evaluate_function("ceiling", vec![XPathValue::Number(-2.9)], &ctx).unwrap();
+        assert_eq!(result.to_number(), -2.0);
+    }
+
+    #[test]
+    fn test_fn_ceiling_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("ceiling", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_round_basic() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("round", vec![XPathValue::Number(1.5)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 2.0);
+
+        let result = evaluate_function("round", vec![XPathValue::Number(2.5)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 3.0);
+    }
+
+    #[test]
+    fn test_fn_round_negative() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("round", vec![XPathValue::Number(-0.5)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 0.0);
+
+        let result = evaluate_function("round", vec![XPathValue::Number(-1.5)], &ctx).unwrap();
+        assert_eq!(result.to_number(), -1.0);
+    }
+
+    #[test]
+    fn test_fn_round_special_values() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("round", vec![XPathValue::Number(f64::NAN)], &ctx).unwrap();
+        assert!(result.to_number().is_nan());
+
+        let result =
+            evaluate_function("round", vec![XPathValue::Number(f64::INFINITY)], &ctx).unwrap();
+        assert!(result.to_number().is_infinite());
+
+        let result = evaluate_function("round", vec![XPathValue::Number(0.0)], &ctx).unwrap();
+        assert_eq!(result.to_number(), 0.0);
+    }
+
+    #[test]
+    fn test_fn_round_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("round", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // Other Functions Tests
+    // =============================================================================
+
+    #[test]
+    fn test_fn_text() {
+        let doc = crate::parse("<root>hello world</root>").unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("text", vec![], &ctx).unwrap();
+        assert_eq!(result.to_string_value(), "hello world");
+    }
+
+    #[test]
+    fn test_fn_text_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("text", vec![XPathValue::Number(1.0)], &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_function() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = evaluate_function("unknown-function", vec![], &ctx);
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // Helper Function Tests
+    // =============================================================================
+
+    #[test]
+    fn test_get_first_node_or_context_empty() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let node = get_first_node_or_context(vec![], &ctx).unwrap();
+        assert_eq!(node.get_name(), "root");
+    }
+
+    #[test]
+    fn test_get_first_node_or_context_nodeset() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+        let children = root.get_child_nodes();
+
+        let node = get_first_node_or_context(vec![XPathValue::NodeSet(children)], &ctx).unwrap();
+        assert_eq!(node.get_name(), "item");
+    }
+
+    #[test]
+    fn test_get_first_node_or_context_empty_nodeset() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let node = get_first_node_or_context(vec![XPathValue::NodeSet(vec![])], &ctx).unwrap();
+        // Returns context node when empty
+        assert_eq!(node.get_name(), "root");
+    }
+
+    #[test]
+    fn test_get_first_node_or_context_non_nodeset() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let node =
+            get_first_node_or_context(vec![XPathValue::String("test".to_string())], &ctx).unwrap();
+        // Returns context node for non-nodeset
+        assert_eq!(node.get_name(), "root");
+    }
+
+    #[test]
+    fn test_get_first_node_or_context_wrong_args() {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+
+        let result = get_first_node_or_context(
+            vec![
+                XPathValue::String("a".to_string()),
+                XPathValue::String("b".to_string()),
+            ],
+            &ctx,
+        );
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // Original Helper Tests (kept for reference)
+    // =============================================================================
+
     #[test]
     fn test_substring() {
         // Test basic substring
@@ -750,7 +1959,7 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_space() {
+    fn test_normalize_space_helper() {
         let normalize = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
 
         assert_eq!(normalize("  hello   world  "), "hello world");
@@ -759,7 +1968,7 @@ mod tests {
     }
 
     #[test]
-    fn test_translate() {
+    fn test_translate_helper() {
         let translate = |s: &str, from: &str, to: &str| -> String {
             let from_chars: Vec<char> = from.chars().collect();
             let to_chars: Vec<char> = to.chars().collect();
@@ -784,7 +1993,7 @@ mod tests {
     }
 
     #[test]
-    fn test_round() {
+    fn test_round_helper() {
         // XPath rounding (0.5 rounds up)
         let xpath_round = |n: f64| -> f64 {
             if n.is_nan() || n.is_infinite() || n == 0.0 {
