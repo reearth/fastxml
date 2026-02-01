@@ -333,14 +333,31 @@ impl StreamingSchemaValidator {
             _ => name.to_string(),
         };
 
-        // Look up element in schema
+        // Check if this element is expected by the parent (inline element definition)
+        let is_expected_by_parent = self.is_element_expected_by_parent(name);
+
+        // Look up element in schema (global element definition)
         let elem_def = self.lookup_element(name, &qname);
         let schema_has_elements = !self.schema.elements.is_empty();
 
         if let Some(elem) = elem_def {
-            // Get type information for this element
+            // Global element found - get type information
             let type_ref = elem.type_ref.clone();
             let expected_children = self.get_child_constraints_for_element(elem);
+
+            // Check max_occurs against parent's expected constraints
+            self.validate_max_occurs(name);
+
+            // Update current element context with type info
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.type_ref = type_ref;
+                ctx.expected_children = expected_children;
+            }
+        } else if is_expected_by_parent {
+            // Inline element - declared in parent's type definition
+            // Get type info from parent's content model if available
+            let (type_ref, expected_children) = self.get_inline_element_info(name);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -367,6 +384,107 @@ impl StreamingSchemaValidator {
 
         // Validate attributes
         self.validate_attributes(name, attributes);
+    }
+
+    /// Checks if an element is expected by its parent (defined in parent's content model).
+    fn is_element_expected_by_parent(&self, name: &str) -> bool {
+        if self.state.element_stack.len() < 2 {
+            return false;
+        }
+        let parent_idx = self.state.element_stack.len() - 2;
+        if let Some(parent) = self.state.element_stack.get(parent_idx) {
+            parent.expected_children.contains_key(name)
+        } else {
+            false
+        }
+    }
+
+    /// Gets type information for an inline element from the parent's content model.
+    fn get_inline_element_info(&self, name: &str) -> (Option<String>, HashMap<String, (u32, Option<u32>)>) {
+        // For inline elements, we need to look up the parent's type and find the child element definition
+        if self.state.element_stack.len() < 2 {
+            return (None, HashMap::new());
+        }
+
+        let parent_idx = self.state.element_stack.len() - 2;
+        let parent_name = match self.state.element_stack.get(parent_idx) {
+            Some(p) => p.name.clone(),
+            None => return (None, HashMap::new()),
+        };
+
+        // Look up parent element to get its type
+        let parent_elem = self.schema.get_element(&parent_name);
+        if parent_elem.is_none() {
+            return (None, HashMap::new());
+        }
+        let parent_elem = parent_elem.unwrap();
+
+        // Get parent's type definition
+        let type_def = if let Some(ref type_ref) = parent_elem.type_ref {
+            self.schema.get_type(type_ref)
+        } else {
+            parent_elem.inline_type.as_ref()
+        };
+
+        let Some(TypeDef::Complex(complex)) = type_def else {
+            return (None, HashMap::new());
+        };
+
+        // Find the child element in the content model
+        let elements = match &complex.content {
+            ContentModel::Sequence(elems)
+            | ContentModel::Choice(elems)
+            | ContentModel::All(elems) => elems,
+            ContentModel::ComplexExtension { elements, .. } => elements,
+            _ => return (None, HashMap::new()),
+        };
+
+        for elem in elements {
+            if elem.name == name {
+                // Found the inline element - get its type info
+                let type_ref = elem.type_ref.clone();
+
+                // Get expected children for this inline element
+                let expected_children = if let Some(ref tr) = type_ref {
+                    if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
+                        self.extract_child_constraints_from_complex(child_complex)
+                    } else {
+                        HashMap::new()
+                    }
+                } else if let Some(ref inline) = elem.inline_type {
+                    if let TypeDef::Complex(child_complex) = inline {
+                        self.extract_child_constraints_from_complex(child_complex)
+                    } else {
+                        HashMap::new()
+                    }
+                } else {
+                    HashMap::new()
+                };
+
+                return (type_ref, expected_children);
+            }
+        }
+
+        (None, HashMap::new())
+    }
+
+    /// Extracts child element constraints from a complex type definition.
+    fn extract_child_constraints_from_complex(&self, complex: &super::types::ComplexType) -> HashMap<String, (u32, Option<u32>)> {
+        let mut constraints = HashMap::new();
+
+        let elements = match &complex.content {
+            ContentModel::Sequence(elems)
+            | ContentModel::Choice(elems)
+            | ContentModel::All(elems) => elems,
+            ContentModel::ComplexExtension { elements, .. } => elements,
+            _ => return constraints,
+        };
+
+        for elem in elements {
+            constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+        }
+
+        constraints
     }
 
     /// Validates that an element doesn't exceed its max_occurs constraint.
@@ -440,10 +558,89 @@ impl StreamingSchemaValidator {
 
     /// Validates text content against the element's type definition.
     fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
+        // Try to get type definition from type_ref first
         if let Some(ref type_ref) = ctx.type_ref {
-            if let Some(type_def) = self.schema.get_type(type_ref) {
-                match type_def {
-                    TypeDef::Simple(simple) => {
+            if let Some(type_def) = self.schema.get_type(type_ref).cloned() {
+                self.validate_text_against_type_def(ctx, &type_def);
+                return;
+            }
+        }
+
+        // If no type_ref, try to get inline type from element definition
+        if let Some(inline_type) = self.get_element_inline_type(&ctx.name) {
+            self.validate_text_against_type_def(ctx, &inline_type);
+        }
+    }
+
+    /// Gets inline type definition for an element (either global or from parent's content model).
+    fn get_element_inline_type(&self, name: &str) -> Option<TypeDef> {
+        // First try global element
+        if let Some(elem) = self.schema.get_element(name) {
+            if let Some(ref inline) = elem.inline_type {
+                return Some(inline.clone());
+            }
+        }
+
+        // Try to find inline type from parent's content model
+        if self.state.element_stack.len() < 2 {
+            return None;
+        }
+
+        let parent_idx = self.state.element_stack.len() - 2;
+        let parent_name = self.state.element_stack.get(parent_idx)?.name.clone();
+
+        let parent_elem = self.schema.get_element(&parent_name)?;
+        let type_def = if let Some(ref type_ref) = parent_elem.type_ref {
+            self.schema.get_type(type_ref)?
+        } else {
+            parent_elem.inline_type.as_ref()?
+        };
+
+        let TypeDef::Complex(complex) = type_def else {
+            return None;
+        };
+
+        let elements = match &complex.content {
+            ContentModel::Sequence(elems)
+            | ContentModel::Choice(elems)
+            | ContentModel::All(elems) => elems,
+            ContentModel::ComplexExtension { elements, .. } => elements,
+            _ => return None,
+        };
+
+        for elem in elements {
+            if elem.name == name {
+                return elem.inline_type.clone();
+            }
+        }
+
+        None
+    }
+
+    /// Validates text content against a specific type definition.
+    fn validate_text_against_type_def(&mut self, ctx: &ElementContext, type_def: &TypeDef) {
+        match type_def {
+            TypeDef::Simple(simple) => {
+                let constraints = self.create_facet_constraints(simple);
+                let validator = FacetValidator::new(&constraints);
+                if let Err(facet_error) = validator.validate(&ctx.text_content) {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "invalid content for element '{}': {}",
+                                ctx.name, facet_error
+                            ),
+                        )
+                        .with_node_name(&ctx.name)
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+            TypeDef::Complex(complex) => {
+                // For complex types with simple content, validate the base type
+                if let ContentModel::SimpleContent { base_type } = &complex.content {
+                    if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
                         let constraints = self.create_facet_constraints(simple);
                         let validator = FacetValidator::new(&constraints);
                         if let Err(facet_error) = validator.validate(&ctx.text_content) {
@@ -460,43 +657,21 @@ impl StreamingSchemaValidator {
                             self.add_error(error);
                         }
                     }
-                    TypeDef::Complex(complex) => {
-                        // For complex types with simple content, validate the base type
-                        if let ContentModel::SimpleContent { base_type } = &complex.content {
-                            if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
-                                let constraints = self.create_facet_constraints(simple);
-                                let validator = FacetValidator::new(&constraints);
-                                if let Err(facet_error) = validator.validate(&ctx.text_content) {
-                                    let error = self
-                                        .make_error(
-                                            ValidationErrorType::InvalidContent,
-                                            format!(
-                                                "invalid content for element '{}': {}",
-                                                ctx.name, facet_error
-                                            ),
-                                        )
-                                        .with_node_name(&ctx.name)
-                                        .with_level(ErrorLevel::Error);
-                                    self.add_error(error);
-                                }
-                            }
-                        } else if !complex.mixed {
-                            // Non-mixed complex types shouldn't have text content
-                            let trimmed = ctx.text_content.trim();
-                            if !trimmed.is_empty() {
-                                let error = self
-                                    .make_error(
-                                        ValidationErrorType::InvalidContent,
-                                        format!(
-                                            "element '{}' has element-only content but contains text",
-                                            ctx.name
-                                        ),
-                                    )
-                                    .with_node_name(&ctx.name)
-                                    .with_level(ErrorLevel::Error);
-                                self.add_error(error);
-                            }
-                        }
+                } else if !complex.mixed {
+                    // Non-mixed complex types shouldn't have text content
+                    let trimmed = ctx.text_content.trim();
+                    if !trimmed.is_empty() {
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::InvalidContent,
+                                format!(
+                                    "element '{}' has element-only content but contains text",
+                                    ctx.name
+                                ),
+                            )
+                            .with_node_name(&ctx.name)
+                            .with_level(ErrorLevel::Error);
+                        self.add_error(error);
                     }
                 }
             }
