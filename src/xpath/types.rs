@@ -284,7 +284,7 @@ mod tests {
             "hello"
         );
         assert_eq!(XPathValue::Number(42.0).to_string_value(), "42");
-        assert_eq!(XPathValue::Number(3.14).to_string_value(), "3.14");
+        assert_eq!(XPathValue::Number(2.75).to_string_value(), "2.75");
         assert_eq!(XPathValue::Number(f64::NAN).to_string_value(), "NaN");
         assert_eq!(
             XPathValue::Number(f64::INFINITY).to_string_value(),
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_xpath_value_to_number() {
         assert_eq!(XPathValue::Number(42.0).to_number(), 42.0);
-        assert_eq!(XPathValue::String("3.14".into()).to_number(), 3.14);
+        assert_eq!(XPathValue::String("2.75".into()).to_number(), 2.75);
         assert!(
             XPathValue::String("not a number".into())
                 .to_number()
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn test_parse_xpath_number() {
         assert_eq!(parse_xpath_number("42"), Some(42.0));
-        assert_eq!(parse_xpath_number("  3.14  "), Some(3.14));
+        assert_eq!(parse_xpath_number("  2.75  "), Some(2.75));
         assert_eq!(parse_xpath_number("-1.5"), Some(-1.5));
         assert!(parse_xpath_number("").unwrap().is_nan());
         assert!(parse_xpath_number("abc").is_none());

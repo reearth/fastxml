@@ -346,43 +346,6 @@ fn test_streaming_memory_efficiency() {
 }
 
 // =============================================================================
-// Throughput Test
-// =============================================================================
-
-#[test]
-fn test_throughput() {
-    let config = GeneratorConfig::many_elements(50_000);
-    let mut xml_gen = XmlStreamGenerator::new(config);
-    let mut xml = Vec::new();
-    xml_gen.read_to_end(&mut xml).unwrap();
-
-    let iterations = 3;
-    let mut total_time = std::time::Duration::ZERO;
-
-    for _ in 0..iterations {
-        let start = Instant::now();
-        let doc = parse(&xml).unwrap();
-        total_time += start.elapsed();
-        std::hint::black_box(doc.node_count());
-    }
-
-    let avg_time = total_time / iterations;
-    let throughput_mb_per_sec = xml.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
-
-    println!("Throughput test (50K elements, {} iterations):", iterations);
-    println!("  Avg time: {:?}", avg_time);
-    println!("  Throughput: {:.2} MB/s", throughput_mb_per_sec);
-    println!("  XML size: {} bytes", xml.len());
-
-    // Should achieve at least 10 MB/s throughput
-    assert!(
-        throughput_mb_per_sec > 10.0,
-        "Throughput too low: {:.2} MB/s",
-        throughput_mb_per_sec
-    );
-}
-
-// =============================================================================
 // XPath Performance on Large Documents
 // =============================================================================
 

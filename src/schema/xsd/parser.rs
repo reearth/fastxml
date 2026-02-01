@@ -129,6 +129,35 @@ impl XsdParser {
         attrs.iter().cloned().collect()
     }
 
+    /// Parses and validates minOccurs/maxOccurs from attributes.
+    /// Returns (minOccurs, maxOccurs) or an error if invalid.
+    fn parse_occurs(attrs: &HashMap<String, String>) -> Result<(Occurs, Occurs)> {
+        let min = if let Some(min_str) = attrs.get("minOccurs") {
+            Occurs::parse(min_str).map_err(|e| Error::Schema(e))?
+        } else {
+            Occurs::default()
+        };
+
+        let max = if let Some(max_str) = attrs.get("maxOccurs") {
+            Occurs::parse(max_str).map_err(|e| Error::Schema(e))?
+        } else {
+            Occurs::default()
+        };
+
+        // Validate minOccurs <= maxOccurs
+        match (&min, &max) {
+            (Occurs::Count(min_val), Occurs::Count(max_val)) if min_val > max_val => {
+                return Err(Error::Schema(format!(
+                    "minOccurs ({}) cannot be greater than maxOccurs ({})",
+                    min_val, max_val
+                )));
+            }
+            _ => {}
+        }
+
+        Ok((min, max))
+    }
+
     /// Handles a start element event.
     fn handle_start(
         &mut self,
@@ -310,12 +339,11 @@ impl XsdParser {
         if let Some(type_attr) = attrs.get("type") {
             elem.type_ref = Some(QName::parse(type_attr));
         }
-        if let Some(min) = attrs.get("minOccurs") {
-            elem.min_occurs = Occurs::parse(min);
-        }
-        if let Some(max) = attrs.get("maxOccurs") {
-            elem.max_occurs = Occurs::parse(max);
-        }
+
+        // Parse and validate minOccurs/maxOccurs
+        let (min, max) = Self::parse_occurs(attrs)?;
+        elem.min_occurs = min;
+        elem.max_occurs = max;
         if attrs.get("abstract").is_some_and(|v| v == "true") {
             elem.is_abstract = true;
         }
@@ -373,34 +401,28 @@ impl XsdParser {
 
     fn handle_sequence(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut seq = XsdSequence::default();
-        if let Some(min) = attrs.get("minOccurs") {
-            seq.min_occurs = Occurs::parse(min);
-        }
-        if let Some(max) = attrs.get("maxOccurs") {
-            seq.max_occurs = Occurs::parse(max);
-        }
+        let (min, max) = Self::parse_occurs(attrs)?;
+        seq.min_occurs = min;
+        seq.max_occurs = max;
         self.stack.push(StackFrame::Sequence(seq));
         Ok(())
     }
 
     fn handle_choice(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut choice = XsdChoice::default();
-        if let Some(min) = attrs.get("minOccurs") {
-            choice.min_occurs = Occurs::parse(min);
-        }
-        if let Some(max) = attrs.get("maxOccurs") {
-            choice.max_occurs = Occurs::parse(max);
-        }
+        let (min, max) = Self::parse_occurs(attrs)?;
+        choice.min_occurs = min;
+        choice.max_occurs = max;
         self.stack.push(StackFrame::Choice(choice));
         Ok(())
     }
 
     fn handle_all(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut all = XsdAll::default();
-        if let Some(min) = attrs.get("minOccurs") {
-            all.min_occurs = Occurs::parse(min);
+        // Parse minOccurs (maxOccurs for all is always 1 per XSD spec)
+        if let Some(min_str) = attrs.get("minOccurs") {
+            all.min_occurs = Occurs::parse(min_str).map_err(|e| Error::Schema(e))?;
         }
-        // maxOccurs for all is always 1
         all.max_occurs = Occurs::Count(1);
         self.stack.push(StackFrame::All(all));
         Ok(())
@@ -457,12 +479,9 @@ impl XsdParser {
             XsdGroup::new(attrs.get("name").cloned().unwrap_or_default())
         };
 
-        if let Some(min) = attrs.get("minOccurs") {
-            grp.min_occurs = Occurs::parse(min);
-        }
-        if let Some(max) = attrs.get("maxOccurs") {
-            grp.max_occurs = Occurs::parse(max);
-        }
+        let (min, max) = Self::parse_occurs(attrs)?;
+        grp.min_occurs = min;
+        grp.max_occurs = max;
 
         self.stack.push(StackFrame::Group(grp));
         Ok(())
@@ -670,12 +689,9 @@ impl XsdParser {
     fn handle_any(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut any = XsdAny::default();
 
-        if let Some(min) = attrs.get("minOccurs") {
-            any.min_occurs = Occurs::parse(min);
-        }
-        if let Some(max) = attrs.get("maxOccurs") {
-            any.max_occurs = Occurs::parse(max);
-        }
+        let (min, max) = Self::parse_occurs(attrs)?;
+        any.min_occurs = min;
+        any.max_occurs = max;
         if let Some(ns) = attrs.get("namespace") {
             any.namespace = match ns.as_str() {
                 "##any" => NamespaceConstraint::Any,
@@ -697,21 +713,98 @@ impl XsdParser {
         Ok(())
     }
 
+    /// Parses a non-negative integer facet value with validation.
+    fn parse_facet_length(name: &str, value: &str) -> Result<u32> {
+        // Check for negative values
+        if value.starts_with('-') {
+            return Err(Error::Schema(format!(
+                "invalid {} value '{}': must be non-negative",
+                name, value
+            )));
+        }
+        value.parse::<u32>().map_err(|_| {
+            Error::Schema(format!(
+                "invalid {} value '{}': must be a non-negative integer",
+                name, value
+            ))
+        })
+    }
+
+    /// Validates that existing facets in a restriction are consistent with a new facet.
+    fn validate_facet_consistency(facets: &[XsdFacet], new_facet: &XsdFacet) -> Result<()> {
+        match new_facet {
+            XsdFacet::MinLength(min_len) => {
+                // Check if maxLength exists and is less than minLength
+                for f in facets {
+                    if let XsdFacet::MaxLength(max_len) = f {
+                        if min_len > max_len {
+                            return Err(Error::Schema(format!(
+                                "minLength ({}) cannot be greater than maxLength ({})",
+                                min_len, max_len
+                            )));
+                        }
+                    }
+                }
+            }
+            XsdFacet::MaxLength(max_len) => {
+                // Check if minLength exists and is greater than maxLength
+                for f in facets {
+                    if let XsdFacet::MinLength(min_len) = f {
+                        if min_len > max_len {
+                            return Err(Error::Schema(format!(
+                                "minLength ({}) cannot be greater than maxLength ({})",
+                                min_len, max_len
+                            )));
+                        }
+                    }
+                }
+            }
+            XsdFacet::FractionDigits(frac) => {
+                // fractionDigits must be <= totalDigits
+                for f in facets {
+                    if let XsdFacet::TotalDigits(total) = f {
+                        if frac > total {
+                            return Err(Error::Schema(format!(
+                                "fractionDigits ({}) cannot be greater than totalDigits ({})",
+                                frac, total
+                            )));
+                        }
+                    }
+                }
+            }
+            XsdFacet::TotalDigits(total) => {
+                // totalDigits must be >= fractionDigits
+                for f in facets {
+                    if let XsdFacet::FractionDigits(frac) = f {
+                        if frac > total {
+                            return Err(Error::Schema(format!(
+                                "fractionDigits ({}) cannot be greater than totalDigits ({})",
+                                frac, total
+                            )));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn handle_facet(&mut self, name: &str, attrs: &HashMap<String, String>) -> Result<()> {
         let value = attrs.get("value").cloned().unwrap_or_default();
 
         let facet = match name {
             "enumeration" => XsdFacet::Enumeration(value),
             "pattern" => XsdFacet::Pattern(value),
-            "minLength" => XsdFacet::MinLength(value.parse().unwrap_or(0)),
-            "maxLength" => XsdFacet::MaxLength(value.parse().unwrap_or(0)),
-            "length" => XsdFacet::Length(value.parse().unwrap_or(0)),
+            "minLength" => XsdFacet::MinLength(Self::parse_facet_length("minLength", &value)?),
+            "maxLength" => XsdFacet::MaxLength(Self::parse_facet_length("maxLength", &value)?),
+            "length" => XsdFacet::Length(Self::parse_facet_length("length", &value)?),
             "minInclusive" => XsdFacet::MinInclusive(value),
             "maxInclusive" => XsdFacet::MaxInclusive(value),
             "minExclusive" => XsdFacet::MinExclusive(value),
             "maxExclusive" => XsdFacet::MaxExclusive(value),
-            "totalDigits" => XsdFacet::TotalDigits(value.parse().unwrap_or(0)),
-            "fractionDigits" => XsdFacet::FractionDigits(value.parse().unwrap_or(0)),
+            "totalDigits" => XsdFacet::TotalDigits(Self::parse_facet_length("totalDigits", &value)?),
+            "fractionDigits" => XsdFacet::FractionDigits(Self::parse_facet_length("fractionDigits", &value)?),
             "whiteSpace" => XsdFacet::WhiteSpace(match value.as_str() {
                 "preserve" => WhiteSpaceValue::Preserve,
                 "replace" => WhiteSpaceValue::Replace,
@@ -720,14 +813,16 @@ impl XsdParser {
             _ => return Ok(()),
         };
 
-        // Add facet to the appropriate restriction
+        // Add facet to the appropriate restriction with consistency validation
         for frame in self.stack.iter_mut().rev() {
             match frame {
                 StackFrame::SimpleRestriction(r) => {
+                    Self::validate_facet_consistency(&r.facets, &facet)?;
                     r.facets.push(facet);
                     break;
                 }
                 StackFrame::SimpleContentRestriction(r) => {
+                    Self::validate_facet_consistency(&r.facets, &facet)?;
                     r.facets.push(facet);
                     break;
                 }

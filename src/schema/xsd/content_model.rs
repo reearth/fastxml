@@ -372,11 +372,21 @@ impl ContentModelValidator {
                             });
                         }
 
-                        // Check sequence order
+                        // Check strict sequence order
                         if idx < self.state.sequence_position {
-                            // Element appears before current position
-                            // This is only an error if the previous element was different
-                            // (repeated elements are OK)
+                            // Element appears before current position - not allowed
+                            // Find the name of the element at the current position
+                            let after = elements
+                                .get(self.state.sequence_position)
+                                .and_then(|item| match item {
+                                    ContentModelItem::Element(e) => Some(e.name.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| "previous element".to_string());
+                            return Err(ContentModelError::OutOfOrder {
+                                element: name.to_string(),
+                                after,
+                            });
                         }
 
                         self.state.increment(name);

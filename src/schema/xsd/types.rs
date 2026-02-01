@@ -88,13 +88,18 @@ impl Occurs {
     }
 
     /// Parses from a string, handling "unbounded".
-    pub fn parse(s: &str) -> Self {
+    /// Returns an error for invalid values (non-numeric, negative in string form).
+    pub fn parse(s: &str) -> Result<Self, String> {
         if s == "unbounded" {
-            Occurs::Unbounded
+            Ok(Occurs::Unbounded)
         } else {
+            // Check for negative values (string starts with '-')
+            if s.starts_with('-') {
+                return Err(format!("invalid occurs value '{}': negative values not allowed", s));
+            }
             s.parse::<u32>()
                 .map(Occurs::Count)
-                .unwrap_or(Occurs::Count(1))
+                .map_err(|_| format!("invalid occurs value '{}': must be a non-negative integer or 'unbounded'", s))
         }
     }
 }
@@ -915,9 +920,13 @@ mod tests {
 
     #[test]
     fn test_occurs_parse() {
-        assert_eq!(Occurs::parse("0"), Occurs::Count(0));
-        assert_eq!(Occurs::parse("1"), Occurs::Count(1));
-        assert_eq!(Occurs::parse("unbounded"), Occurs::Unbounded);
+        assert_eq!(Occurs::parse("0"), Ok(Occurs::Count(0)));
+        assert_eq!(Occurs::parse("1"), Ok(Occurs::Count(1)));
+        assert_eq!(Occurs::parse("unbounded"), Ok(Occurs::Unbounded));
+
+        // Test error cases
+        assert!(Occurs::parse("-1").is_err());
+        assert!(Occurs::parse("invalid").is_err());
     }
 
     #[test]

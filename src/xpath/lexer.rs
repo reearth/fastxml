@@ -501,6 +501,16 @@ impl<'a> Lexer<'a> {
             "attribute" if is_axis => Token::AttributeAxis,
             "namespace" if is_axis => Token::NamespaceAxis,
 
+            // Unknown axis (name followed by :: but not a valid axis name)
+            _ if is_axis => {
+                return Err(Error::XPathSyntax(format!(
+                    "unknown axis '{}'. Valid axes: child, descendant, parent, self, \
+                     descendant-or-self, ancestor, ancestor-or-self, following-sibling, \
+                     preceding-sibling, following, preceding, attribute, namespace",
+                    name
+                )));
+            }
+
             _ => Token::Name(name.to_string()),
         };
 

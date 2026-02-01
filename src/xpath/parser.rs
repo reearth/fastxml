@@ -205,6 +205,10 @@ impl Parser {
         self.tokens.get(self.pos).unwrap_or(&Token::Eof)
     }
 
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos + 1)
+    }
+
     fn advance(&mut self) {
         if self.pos < self.tokens.len() {
             self.pos += 1;
@@ -512,7 +516,32 @@ impl Parser {
                 self.expect(&Token::RightParen)?;
                 Ok(inner)
             }
-            Token::Name(_) | Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
+            Token::Name(name) => {
+                // Check if this is a function call (name followed by '(')
+                if self.peek() == Some(&Token::LeftParen) {
+                    // This is an unknown function call
+                    let fn_name = name.clone();
+                    self.advance(); // consume name
+                    self.advance(); // consume '('
+
+                    let mut args = Vec::new();
+                    if !matches!(self.current(), Token::RightParen) {
+                        args.push(self.parse_expr_value()?);
+                        while matches!(self.current(), Token::Comma) {
+                            self.advance();
+                            args.push(self.parse_expr_value()?);
+                        }
+                    }
+
+                    self.expect(&Token::RightParen)?;
+
+                    Ok(Expr::Function { name: fn_name, args })
+                } else {
+                    let path = self.parse_path_expr()?;
+                    Ok(Expr::Path(path))
+                }
+            }
+            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
             Token::Asterisk => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
@@ -631,9 +660,33 @@ impl Parser {
             | Token::FloorFn
             | Token::CeilingFn
             | Token::RoundFn => self.parse_function_call(),
-            // Path expressions
-            Token::Name(_)
-            | Token::Slash
+            // Path expressions or unknown function calls
+            Token::Name(name) => {
+                // Check if this is a function call (name followed by '(')
+                if self.peek() == Some(&Token::LeftParen) {
+                    // This is an unknown function call
+                    let fn_name = name.clone();
+                    self.advance(); // consume name
+                    self.advance(); // consume '('
+
+                    let mut args = Vec::new();
+                    if !matches!(self.current(), Token::RightParen) {
+                        args.push(self.parse_expr_value()?);
+                        while matches!(self.current(), Token::Comma) {
+                            self.advance();
+                            args.push(self.parse_expr_value()?);
+                        }
+                    }
+
+                    self.expect(&Token::RightParen)?;
+
+                    Ok(Expr::Function { name: fn_name, args })
+                } else {
+                    let path = self.parse_path_expr()?;
+                    Ok(Expr::Path(path))
+                }
+            }
+            Token::Slash
             | Token::DoubleSlash
             | Token::Dot
             | Token::At

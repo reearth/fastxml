@@ -203,6 +203,8 @@ fn test_api_parse_with_options() {
 /// Test: memory limit enforcement
 #[test]
 fn test_api_memory_limit() {
+    use fastxml::error::Error;
+
     let options = ParserOptions {
         max_memory: Some(50), // Very small limit
         ..Default::default()
@@ -211,7 +213,11 @@ fn test_api_memory_limit() {
     // Large content should fail
     let large_xml = format!("<root>{}</root>", "x".repeat(1000));
     let result = parse_with_options(&large_xml, &options);
-    assert!(result.is_err());
+    assert!(
+        matches!(&result, Err(Error::Parse(msg)) if msg.contains("memory")),
+        "Expected memory limit error, got: {:?}",
+        result
+    );
 }
 
 /// Test: evaluate(document, xpath) -> Result<XPathResult>
@@ -617,13 +623,16 @@ fn test_complex_predicates() {
 /// We test that certain operations fail gracefully.
 #[test]
 fn test_error_handling_invalid_xml() {
+    use fastxml::error::Error;
+
     // Empty input should result in no root element
     let result = parse("");
     // Might succeed but have no root - either is acceptable
     if let Ok(doc) = result {
         assert!(
-            doc.get_root_element().is_err(),
-            "Empty doc should have no root"
+            matches!(doc.get_root_element(), Err(Error::NodeNotFound(_))),
+            "Empty doc should return NodeNotFound, got: {:?}",
+            doc.get_root_element()
         );
     }
 
@@ -634,19 +643,33 @@ fn test_error_handling_invalid_xml() {
     };
     let large_xml = format!("<root>{}</root>", "x".repeat(100));
     let result = parse_with_options(&large_xml, &options);
-    assert!(result.is_err(), "Memory limit should be enforced");
+    assert!(
+        matches!(&result, Err(Error::Parse(msg)) if msg.contains("memory")),
+        "Expected memory limit error, got: {:?}",
+        result
+    );
 }
 
 /// Test: XPath error handling
 #[test]
 fn test_error_handling_invalid_xpath() {
+    use fastxml::error::Error;
+
     let doc = parse("<root/>").unwrap();
 
     // Invalid XPath syntax
     let result = evaluate(&doc, "/root[[[");
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(Error::XPathSyntax(_))),
+        "Expected XPathSyntax error for invalid syntax, got: {:?}",
+        result
+    );
 
     // Unknown function
     let result = evaluate(&doc, "/root[unknownfn()]");
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(Error::XPathEval(ref msg)) if msg.contains("unknown function")),
+        "Expected XPathEval error for unknown function, got: {:?}",
+        result
+    );
 }
