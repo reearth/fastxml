@@ -1,0 +1,74 @@
+[package]
+name = "fastxml"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, memory-efficient XML library with XPath and XSD validation support"
+license = "MIT OR Apache-2.0"
+keywords = ["xml", "xpath", "xsd", "streaming", "parser"]
+categories = ["parser-implementations", "encoding"]
+
+[dependencies]
+# XML parsing
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+# Error handling
+thiserror = "2"
+
+# Thread safety
+parking_lot = "0.12"
+
+# Temporary files for schema store
+tempfile = "3"
+
+# Concurrent collections
+dashmap = "6"
+
+# Ordered map for schema
+indexmap = "2"
+
+# Stack-based small vectors
+smallvec = "1"
+
+# Hashing
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
+# URL parsing
+url = "2"
+
+# Sync HTTP client (optional)
+ureq = { version = "2", optional = true }
+
+# Async support (optional)
+tokio = { version = "1", features = ["fs", "io-util"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+async-trait = { version = "0.1", optional = true }
+
+# Logging/tracing
+tracing = "0.1"
+
+# Memory profiling (optional)
+memory-stats = { version = "1", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio-test = "0.4"
+tempfile = "3"
+
+[features]
+default = ["sync"]
+sync = ["ureq"]
+async = ["tokio", "reqwest", "async-trait"]
+profile = ["memory-stats"]
+
+[[bench]]
+name = "profile"
+harness = false
+
+[[bench]]
+name = "load_test"
+harness = false
+
+[[example]]
+name = "profile_cli"
+required-features = ["profile"]

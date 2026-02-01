@@ -1,0 +1,365 @@
+//! XSD schema type definitions.
+
+use std::collections::HashMap;
+
+use indexmap::IndexMap;
+
+/// A compiled XSD schema.
+#[derive(Debug, Clone)]
+pub struct CompiledSchema {
+    /// Target namespace
+    pub target_namespace: Option<String>,
+    /// Element definitions
+    pub elements: IndexMap<String, ElementDef>,
+    /// Type definitions
+    pub types: IndexMap<String, TypeDef>,
+    /// Attribute definitions
+    pub attributes: IndexMap<String, AttributeDef>,
+    /// Imported schemas (namespace -> schema)
+    pub imports: HashMap<String, CompiledSchema>,
+}
+
+impl CompiledSchema {
+    /// Creates a new empty schema.
+    pub fn new() -> Self {
+        Self {
+            target_namespace: None,
+            elements: IndexMap::new(),
+            types: IndexMap::new(),
+            attributes: IndexMap::new(),
+            imports: HashMap::new(),
+        }
+    }
+
+    /// Creates a schema with a target namespace.
+    pub fn with_namespace(namespace: impl Into<String>) -> Self {
+        Self {
+            target_namespace: Some(namespace.into()),
+            ..Self::new()
+        }
+    }
+
+    /// Looks up an element definition by qualified name.
+    pub fn get_element(&self, qname: &str) -> Option<&ElementDef> {
+        // Try local elements first
+        if let Some(elem) = self.elements.get(qname) {
+            return Some(elem);
+        }
+
+        // Try imported schemas
+        if let Some((_prefix, local)) = qname.split_once(':') {
+            for schema in self.imports.values() {
+                if let Some(elem) = schema.elements.get(local) {
+                    return Some(elem);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Looks up a type definition by qualified name.
+    pub fn get_type(&self, qname: &str) -> Option<&TypeDef> {
+        if let Some(typ) = self.types.get(qname) {
+            return Some(typ);
+        }
+
+        if let Some((_prefix, local)) = qname.split_once(':') {
+            for schema in self.imports.values() {
+                if let Some(typ) = schema.types.get(local) {
+                    return Some(typ);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl Default for CompiledSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// An element definition.
+#[derive(Debug, Clone)]
+pub struct ElementDef {
+    /// Element name
+    pub name: String,
+    /// Type reference (name of a type definition)
+    pub type_ref: Option<String>,
+    /// Inline type definition
+    pub inline_type: Option<TypeDef>,
+    /// Minimum occurrences
+    pub min_occurs: u32,
+    /// Maximum occurrences (None = unbounded)
+    pub max_occurs: Option<u32>,
+    /// Whether this element is abstract
+    pub is_abstract: bool,
+    /// Substitution group head
+    pub substitution_group: Option<String>,
+    /// Whether the element is nillable
+    pub nillable: bool,
+}
+
+impl ElementDef {
+    /// Creates a new element definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            type_ref: None,
+            inline_type: None,
+            min_occurs: 1,
+            max_occurs: Some(1),
+            is_abstract: false,
+            substitution_group: None,
+            nillable: false,
+        }
+    }
+
+    /// Sets the type reference.
+    pub fn with_type(mut self, type_ref: impl Into<String>) -> Self {
+        self.type_ref = Some(type_ref.into());
+        self
+    }
+
+    /// Sets the occurrence bounds.
+    pub fn with_occurs(mut self, min: u32, max: Option<u32>) -> Self {
+        self.min_occurs = min;
+        self.max_occurs = max;
+        self
+    }
+
+    /// Makes this element optional (minOccurs=0).
+    pub fn optional(mut self) -> Self {
+        self.min_occurs = 0;
+        self
+    }
+
+    /// Makes this element repeatable (maxOccurs=unbounded).
+    pub fn unbounded(mut self) -> Self {
+        self.max_occurs = None;
+        self
+    }
+}
+
+/// A type definition.
+#[derive(Debug, Clone)]
+pub enum TypeDef {
+    /// Simple type (string, integer, etc.)
+    Simple(SimpleType),
+    /// Complex type (elements, attributes)
+    Complex(ComplexType),
+}
+
+/// A simple type definition.
+#[derive(Debug, Clone)]
+pub struct SimpleType {
+    /// Type name
+    pub name: String,
+    /// Base type (restriction or extension)
+    pub base_type: Option<String>,
+    /// Enumeration values
+    pub enumeration: Vec<String>,
+    /// Pattern restriction
+    pub pattern: Option<String>,
+    /// Min length restriction
+    pub min_length: Option<u32>,
+    /// Max length restriction
+    pub max_length: Option<u32>,
+    /// Minimum value (inclusive)
+    pub min_inclusive: Option<String>,
+    /// Maximum value (inclusive)
+    pub max_inclusive: Option<String>,
+}
+
+impl SimpleType {
+    /// Creates a new simple type.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            base_type: None,
+            enumeration: Vec::new(),
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            min_inclusive: None,
+            max_inclusive: None,
+        }
+    }
+
+    /// Creates a string type.
+    pub fn string() -> Self {
+        Self::new("string").with_base("xs:string")
+    }
+
+    /// Creates an integer type.
+    pub fn integer() -> Self {
+        Self::new("integer").with_base("xs:integer")
+    }
+
+    /// Sets the base type.
+    pub fn with_base(mut self, base: impl Into<String>) -> Self {
+        self.base_type = Some(base.into());
+        self
+    }
+}
+
+/// A complex type definition.
+#[derive(Debug, Clone)]
+pub struct ComplexType {
+    /// Type name
+    pub name: String,
+    /// Base type (for extension or restriction)
+    pub base_type: Option<String>,
+    /// Content model
+    pub content: ContentModel,
+    /// Attribute definitions
+    pub attributes: Vec<AttributeDef>,
+    /// Whether this type is abstract
+    pub is_abstract: bool,
+    /// Whether content is mixed (text + elements)
+    pub mixed: bool,
+}
+
+impl ComplexType {
+    /// Creates a new complex type.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            base_type: None,
+            content: ContentModel::Empty,
+            attributes: Vec::new(),
+            is_abstract: false,
+            mixed: false,
+        }
+    }
+
+    /// Creates a complex type with sequence content.
+    pub fn sequence(name: impl Into<String>, elements: Vec<ElementDef>) -> Self {
+        Self {
+            name: name.into(),
+            base_type: None,
+            content: ContentModel::Sequence(elements),
+            attributes: Vec::new(),
+            is_abstract: false,
+            mixed: false,
+        }
+    }
+}
+
+/// Content model for complex types.
+#[derive(Debug, Clone)]
+pub enum ContentModel {
+    /// Empty content
+    Empty,
+    /// Sequence of elements (in order)
+    Sequence(Vec<ElementDef>),
+    /// Choice of elements (one of)
+    Choice(Vec<ElementDef>),
+    /// All (unordered)
+    All(Vec<ElementDef>),
+    /// Simple content (text with optional extension)
+    SimpleContent {
+        /// Base type for the content
+        base_type: String,
+    },
+    /// Complex content extension
+    ComplexExtension {
+        /// Base type being extended
+        base_type: String,
+        /// Additional child elements
+        elements: Vec<ElementDef>,
+    },
+    /// Any content (wildcard)
+    Any {
+        /// Target namespace for wildcard
+        namespace: Option<String>,
+        /// How to process the content
+        process_contents: ProcessContents,
+    },
+}
+
+/// How to process wildcard content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessContents {
+    /// Strict - must validate
+    Strict,
+    /// Lax - validate if schema available
+    Lax,
+    /// Skip - don't validate
+    Skip,
+}
+
+/// An attribute definition.
+#[derive(Debug, Clone)]
+pub struct AttributeDef {
+    /// Attribute name
+    pub name: String,
+    /// Type reference
+    pub type_ref: Option<String>,
+    /// Whether the attribute is required
+    pub required: bool,
+    /// Default value
+    pub default: Option<String>,
+    /// Fixed value
+    pub fixed: Option<String>,
+}
+
+impl AttributeDef {
+    /// Creates a new attribute definition.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            type_ref: None,
+            required: false,
+            default: None,
+            fixed: None,
+        }
+    }
+
+    /// Creates a required attribute.
+    pub fn required(name: impl Into<String>) -> Self {
+        Self {
+            required: true,
+            ..Self::new(name)
+        }
+    }
+
+    /// Sets the type reference.
+    pub fn with_type(mut self, type_ref: impl Into<String>) -> Self {
+        self.type_ref = Some(type_ref.into());
+        self
+    }
+
+    /// Sets a default value.
+    pub fn with_default(mut self, default: impl Into<String>) -> Self {
+        self.default = Some(default.into());
+        self
+    }
+}
+
+/// Built-in XSD types.
+pub mod builtin {
+    /// Built-in string type name.
+    pub const STRING: &str = "xs:string";
+    /// Built-in integer type name.
+    pub const INTEGER: &str = "xs:integer";
+    /// Built-in decimal type name.
+    pub const DECIMAL: &str = "xs:decimal";
+    /// Built-in boolean type name.
+    pub const BOOLEAN: &str = "xs:boolean";
+    /// Built-in date type name.
+    pub const DATE: &str = "xs:date";
+    /// Built-in dateTime type name.
+    pub const DATE_TIME: &str = "xs:dateTime";
+    /// Built-in double type name.
+    pub const DOUBLE: &str = "xs:double";
+    /// Built-in float type name.
+    pub const FLOAT: &str = "xs:float";
+    /// Built-in anyURI type name.
+    pub const ANY_URI: &str = "xs:anyURI";
+    /// Built-in ID type name.
+    pub const ID: &str = "xs:ID";
+}
