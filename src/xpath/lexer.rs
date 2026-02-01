@@ -49,11 +49,20 @@ pub enum Token {
     And,
     /// `or` keyword
     Or,
-    /// `not` keyword (function)
+    /// `div` keyword (division operator)
+    Div,
+    /// `mod` keyword (modulo operator)
+    Mod,
+
+    // =========================================================================
+    // Functions
+    // =========================================================================
+
+    /// `not` function
     Not,
     /// `name` function
     NameFn,
-    /// `text` function
+    /// `text` function/node test
     TextFn,
     /// `local-name` function
     LocalNameFn,
@@ -63,6 +72,63 @@ pub enum Token {
     ContainsFn,
     /// `starts-with` function
     StartsWithFn,
+    /// `node` function/node test
+    NodeFn,
+
+    // New string functions
+    /// `string` function
+    StringFn,
+    /// `concat` function
+    ConcatFn,
+    /// `substring` function
+    SubstringFn,
+    /// `substring-before` function
+    SubstringBeforeFn,
+    /// `substring-after` function
+    SubstringAfterFn,
+    /// `string-length` function
+    StringLengthFn,
+    /// `normalize-space` function
+    NormalizeSpaceFn,
+    /// `translate` function
+    TranslateFn,
+
+    // Node set functions
+    /// `position` function
+    PositionFn,
+    /// `last` function
+    LastFn,
+    /// `count` function
+    CountFn,
+    /// `id` function
+    IdFn,
+
+    // Boolean functions
+    /// `true` function
+    TrueFn,
+    /// `false` function
+    FalseFn,
+    /// `boolean` function
+    BooleanFn,
+    /// `lang` function
+    LangFn,
+
+    // Number functions
+    /// `number` function
+    NumberFn,
+    /// `sum` function
+    SumFn,
+    /// `floor` function
+    FloorFn,
+    /// `ceiling` function
+    CeilingFn,
+    /// `round` function
+    RoundFn,
+
+    // =========================================================================
+    // Axes
+    // =========================================================================
+
     /// `child` axis
     ChildAxis,
     /// `descendant` axis
@@ -75,10 +141,21 @@ pub enum Token {
     DescendantOrSelfAxis,
     /// `ancestor` axis
     AncestorAxis,
+    /// `ancestor-or-self` axis
+    AncestorOrSelfAxis,
     /// `following-sibling` axis
     FollowingSiblingAxis,
     /// `preceding-sibling` axis
     PrecedingSiblingAxis,
+    /// `following` axis
+    FollowingAxis,
+    /// `preceding` axis
+    PrecedingAxis,
+    /// `attribute` axis
+    AttributeAxis,
+    /// `namespace` axis
+    NamespaceAxis,
+
     /// Double colon `::`
     DoubleColon,
     /// Name (element name, possibly with prefix)
@@ -353,24 +430,66 @@ impl<'a> Lexer<'a> {
 
         // Check for keywords and functions
         let token = match name {
+            // Keywords / Operators
             "and" => Token::And,
             "or" => Token::Or,
+            "div" => Token::Div,
+            "mod" => Token::Mod,
+
+            // Boolean functions
             "not" => Token::Not,
+            "true" => Token::TrueFn,
+            "false" => Token::FalseFn,
+            "boolean" => Token::BooleanFn,
+            "lang" => Token::LangFn,
+
+            // Node set functions
             "name" => Token::NameFn,
-            "text" => Token::TextFn,
             "local-name" => Token::LocalNameFn,
             "namespace-uri" => Token::NamespaceUriFn,
+            "position" => Token::PositionFn,
+            "last" => Token::LastFn,
+            "count" => Token::CountFn,
+            "id" => Token::IdFn,
+
+            // String functions
+            "string" => Token::StringFn,
+            "concat" => Token::ConcatFn,
             "contains" => Token::ContainsFn,
             "starts-with" => Token::StartsWithFn,
-            // Only return axis tokens if followed by ::
+            "substring" => Token::SubstringFn,
+            "substring-before" => Token::SubstringBeforeFn,
+            "substring-after" => Token::SubstringAfterFn,
+            "string-length" => Token::StringLengthFn,
+            "normalize-space" => Token::NormalizeSpaceFn,
+            "translate" => Token::TranslateFn,
+
+            // Number functions
+            "number" => Token::NumberFn,
+            "sum" => Token::SumFn,
+            "floor" => Token::FloorFn,
+            "ceiling" => Token::CeilingFn,
+            "round" => Token::RoundFn,
+
+            // Node tests (used as functions)
+            "text" => Token::TextFn,
+            "node" => Token::NodeFn,
+
+            // Axes (only when followed by ::)
             "child" if is_axis => Token::ChildAxis,
             "descendant" if is_axis => Token::DescendantAxis,
             "parent" if is_axis => Token::ParentAxis,
             "self" if is_axis => Token::SelfAxis,
             "descendant-or-self" if is_axis => Token::DescendantOrSelfAxis,
             "ancestor" if is_axis => Token::AncestorAxis,
+            "ancestor-or-self" if is_axis => Token::AncestorOrSelfAxis,
             "following-sibling" if is_axis => Token::FollowingSiblingAxis,
             "preceding-sibling" if is_axis => Token::PrecedingSiblingAxis,
+            "following" if is_axis => Token::FollowingAxis,
+            "preceding" if is_axis => Token::PrecedingAxis,
+            "attribute" if is_axis => Token::AttributeAxis,
+            "namespace" if is_axis => Token::NamespaceAxis,
+
             _ => Token::Name(name.to_string()),
         };
 

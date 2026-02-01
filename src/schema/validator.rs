@@ -11,6 +11,7 @@ use crate::namespace::Namespace;
 use crate::node::{NodeType, XmlNode};
 
 use super::types::CompiledSchema;
+use super::xsd::constraints::ConstraintValidator;
 
 /// Validation state during streaming.
 #[derive(Debug, Default)]
@@ -71,6 +72,8 @@ pub struct StreamingSchemaValidator {
     state: ValidationState,
     errors: Vec<StructuredError>,
     current_line: Option<usize>,
+    /// Constraint validator for identity constraints (unique, key, keyref)
+    constraint_validator: ConstraintValidator,
 }
 
 impl StreamingSchemaValidator {
@@ -81,6 +84,7 @@ impl StreamingSchemaValidator {
             state: ValidationState::new(),
             errors: Vec::new(),
             current_line: None,
+            constraint_validator: ConstraintValidator::new(),
         }
     }
 
@@ -182,6 +186,17 @@ impl XmlEventHandler for StreamingSchemaValidator {
                 format!("unclosed elements: {:?}", self.state.element_stack),
             );
         }
+
+        // Validate keyref constraints
+        if let Err(constraint_errors) = self.constraint_validator.validate_keyrefs() {
+            for err in constraint_errors {
+                self.add_error(
+                    ValidationErrorType::IdentityConstraint,
+                    err.to_string(),
+                );
+            }
+        }
+
         Ok(())
     }
 }

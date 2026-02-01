@@ -20,12 +20,20 @@ pub enum Axis {
     DescendantOrSelf,
     /// `ancestor::` - all ancestors
     Ancestor,
+    /// `ancestor-or-self::` - self and all ancestors
+    AncestorOrSelf,
     /// `following-sibling::` - following siblings
     FollowingSibling,
     /// `preceding-sibling::` - preceding siblings
     PrecedingSibling,
+    /// `following::` - all following nodes in document order
+    Following,
+    /// `preceding::` - all preceding nodes in document order
+    Preceding,
     /// `attribute::` - attributes
     Attribute,
+    /// `namespace::` - namespace nodes
+    Namespace,
 }
 
 /// Node test in a step.
@@ -107,6 +115,18 @@ pub enum Expr {
     },
     /// Union of paths (path1 | path2)
     Union(Vec<PathExpr>),
+    /// Addition (left + right)
+    Add(Box<Expr>, Box<Expr>),
+    /// Subtraction (left - right)
+    Subtract(Box<Expr>, Box<Expr>),
+    /// Multiplication (left * right)
+    Multiply(Box<Expr>, Box<Expr>),
+    /// Division (left div right)
+    Divide(Box<Expr>, Box<Expr>),
+    /// Modulo (left mod right)
+    Modulo(Box<Expr>, Box<Expr>),
+    /// Unary negation (-expr)
+    Negate(Box<Expr>),
 }
 
 /// A location path (absolute or relative).
@@ -205,18 +225,9 @@ impl Parser {
     }
 
     fn parse_union_expr(&mut self) -> Result<Expr> {
-        let first = self.parse_path_expr()?;
-
-        if matches!(self.current(), Token::Pipe) {
-            let mut paths = vec![first];
-            while matches!(self.current(), Token::Pipe) {
-                self.advance();
-                paths.push(self.parse_path_expr()?);
-            }
-            Ok(Expr::Union(paths))
-        } else {
-            Ok(Expr::Path(first))
-        }
+        // Use the additive expression chain which properly handles
+        // function calls, paths, and arithmetic expressions
+        self.parse_additive_expr()
     }
 
     fn parse_path_expr(&mut self) -> Result<PathExpr> {
@@ -311,8 +322,13 @@ impl Parser {
             Token::SelfAxis => Some(Axis::SelfNode),
             Token::DescendantOrSelfAxis => Some(Axis::DescendantOrSelf),
             Token::AncestorAxis => Some(Axis::Ancestor),
+            Token::AncestorOrSelfAxis => Some(Axis::AncestorOrSelf),
             Token::FollowingSiblingAxis => Some(Axis::FollowingSibling),
             Token::PrecedingSiblingAxis => Some(Axis::PrecedingSibling),
+            Token::FollowingAxis => Some(Axis::Following),
+            Token::PrecedingAxis => Some(Axis::Preceding),
+            Token::AttributeAxis => Some(Axis::Attribute),
+            Token::NamespaceAxis => Some(Axis::Namespace),
             _ => None,
         };
 
@@ -349,6 +365,12 @@ impl Parser {
                 self.expect(&Token::LeftParen)?;
                 self.expect(&Token::RightParen)?;
                 Ok(NodeTest::Text)
+            }
+            Token::NodeFn => {
+                self.advance();
+                self.expect(&Token::LeftParen)?;
+                self.expect(&Token::RightParen)?;
+                Ok(NodeTest::Node)
             }
             _ => Err(Error::XPathSyntax(format!(
                 "expected node test, found {:?}",
@@ -448,6 +470,13 @@ impl Parser {
     }
 
     fn parse_expr_value(&mut self) -> Result<Expr> {
+        // Handle unary minus
+        if matches!(self.current(), Token::Minus) {
+            self.advance();
+            let inner = self.parse_expr_value()?;
+            return Ok(Expr::Negate(Box::new(inner)));
+        }
+
         match self.current() {
             Token::String(s) => {
                 let s = s.clone();
@@ -459,11 +488,26 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Number(n))
             }
-            Token::NameFn | Token::TextFn | Token::LocalNameFn |
-            Token::NamespaceUriFn | Token::ContainsFn | Token::StartsWithFn => {
+            // All function tokens
+            Token::NameFn | Token::TextFn | Token::LocalNameFn | Token::NamespaceUriFn |
+            Token::ContainsFn | Token::StartsWithFn | Token::Not |
+            // New functions
+            Token::StringFn | Token::ConcatFn | Token::SubstringFn |
+            Token::SubstringBeforeFn | Token::SubstringAfterFn |
+            Token::StringLengthFn | Token::NormalizeSpaceFn | Token::TranslateFn |
+            Token::PositionFn | Token::LastFn | Token::CountFn | Token::IdFn |
+            Token::TrueFn | Token::FalseFn | Token::BooleanFn | Token::LangFn |
+            Token::NumberFn | Token::SumFn | Token::FloorFn | Token::CeilingFn | Token::RoundFn => {
                 self.parse_function_call()
             }
-            Token::Name(_) | Token::Slash | Token::DoubleSlash | Token::Dot | Token::At => {
+            Token::LeftParen => {
+                self.advance();
+                let inner = self.parse_additive_expr()?;
+                self.expect(&Token::RightParen)?;
+                Ok(inner)
+            }
+            Token::Name(_) | Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
+            Token::Asterisk => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
@@ -474,14 +518,146 @@ impl Parser {
         }
     }
 
+    /// Parses an additive expression: expr ('+' | '-') expr
+    fn parse_additive_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_multiplicative_expr()?;
+
+        loop {
+            match self.current() {
+                Token::Plus => {
+                    self.advance();
+                    let right = self.parse_multiplicative_expr()?;
+                    left = Expr::Add(Box::new(left), Box::new(right));
+                }
+                Token::Minus => {
+                    self.advance();
+                    let right = self.parse_multiplicative_expr()?;
+                    left = Expr::Subtract(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(left)
+    }
+
+    /// Parses a multiplicative expression: expr ('*' | 'div' | 'mod') expr
+    fn parse_multiplicative_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_unary_expr()?;
+
+        loop {
+            match self.current() {
+                // Note: Asterisk is tricky - could be multiply or node test
+                // In expression context after a value, it's multiply
+                Token::Div => {
+                    self.advance();
+                    let right = self.parse_unary_expr()?;
+                    left = Expr::Divide(Box::new(left), Box::new(right));
+                }
+                Token::Mod => {
+                    self.advance();
+                    let right = self.parse_unary_expr()?;
+                    left = Expr::Modulo(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(left)
+    }
+
+    /// Parses a unary expression: '-' expr | primary
+    fn parse_unary_expr(&mut self) -> Result<Expr> {
+        if matches!(self.current(), Token::Minus) {
+            self.advance();
+            let inner = self.parse_unary_expr()?;
+            Ok(Expr::Negate(Box::new(inner)))
+        } else {
+            self.parse_primary_expr()
+        }
+    }
+
+    /// Parses a primary expression (path, literal, function, or parenthesized)
+    fn parse_primary_expr(&mut self) -> Result<Expr> {
+        match self.current() {
+            Token::String(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Expr::String(s))
+            }
+            Token::Number(n) => {
+                let n = *n;
+                self.advance();
+                Ok(Expr::Number(n))
+            }
+            Token::LeftParen => {
+                self.advance();
+                let inner = self.parse_additive_expr()?;
+                self.expect(&Token::RightParen)?;
+                Ok(inner)
+            }
+            // Function calls
+            Token::NameFn | Token::TextFn | Token::LocalNameFn | Token::NamespaceUriFn |
+            Token::ContainsFn | Token::StartsWithFn | Token::Not |
+            Token::StringFn | Token::ConcatFn | Token::SubstringFn |
+            Token::SubstringBeforeFn | Token::SubstringAfterFn |
+            Token::StringLengthFn | Token::NormalizeSpaceFn | Token::TranslateFn |
+            Token::PositionFn | Token::LastFn | Token::CountFn | Token::IdFn |
+            Token::TrueFn | Token::FalseFn | Token::BooleanFn | Token::LangFn |
+            Token::NumberFn | Token::SumFn | Token::FloorFn | Token::CeilingFn | Token::RoundFn => {
+                self.parse_function_call()
+            }
+            // Path expressions
+            Token::Name(_) | Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
+            Token::Asterisk => {
+                let path = self.parse_path_expr()?;
+                Ok(Expr::Path(path))
+            }
+            _ => Err(Error::XPathSyntax(format!(
+                "expected primary expression, found {:?}",
+                self.current()
+            ))),
+        }
+    }
+
     fn parse_function_call(&mut self) -> Result<Expr> {
         let name = match self.current() {
+            // Node set functions
             Token::NameFn => "name",
-            Token::TextFn => "text",
             Token::LocalNameFn => "local-name",
             Token::NamespaceUriFn => "namespace-uri",
+            Token::PositionFn => "position",
+            Token::LastFn => "last",
+            Token::CountFn => "count",
+            Token::IdFn => "id",
+
+            // String functions
+            Token::TextFn => "text",
+            Token::StringFn => "string",
+            Token::ConcatFn => "concat",
             Token::ContainsFn => "contains",
             Token::StartsWithFn => "starts-with",
+            Token::SubstringFn => "substring",
+            Token::SubstringBeforeFn => "substring-before",
+            Token::SubstringAfterFn => "substring-after",
+            Token::StringLengthFn => "string-length",
+            Token::NormalizeSpaceFn => "normalize-space",
+            Token::TranslateFn => "translate",
+
+            // Boolean functions
+            Token::Not => "not",
+            Token::TrueFn => "true",
+            Token::FalseFn => "false",
+            Token::BooleanFn => "boolean",
+            Token::LangFn => "lang",
+
+            // Number functions
+            Token::NumberFn => "number",
+            Token::SumFn => "sum",
+            Token::FloorFn => "floor",
+            Token::CeilingFn => "ceiling",
+            Token::RoundFn => "round",
+
             _ => return Err(Error::XPathSyntax("expected function".into())),
         };
         let name = name.to_string();

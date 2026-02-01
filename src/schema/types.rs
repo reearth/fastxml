@@ -101,6 +101,8 @@ pub struct ElementDef {
     pub substitution_group: Option<String>,
     /// Whether the element is nillable
     pub nillable: bool,
+    /// Identity constraints (unique, key, keyref)
+    pub constraints: Vec<CompiledConstraint>,
 }
 
 impl ElementDef {
@@ -115,6 +117,7 @@ impl ElementDef {
             is_abstract: false,
             substitution_group: None,
             nillable: false,
+            constraints: Vec::new(),
         }
     }
 
@@ -336,6 +339,83 @@ impl AttributeDef {
     /// Sets a default value.
     pub fn with_default(mut self, default: impl Into<String>) -> Self {
         self.default = Some(default.into());
+        self
+    }
+}
+
+/// Type of compiled identity constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompiledConstraintType {
+    /// Values must be unique (null allowed)
+    Unique,
+    /// Values must be unique and non-null
+    Key,
+    /// Values must reference an existing key
+    KeyRef,
+}
+
+/// A compiled identity constraint ready for validation.
+#[derive(Debug, Clone)]
+pub struct CompiledConstraint {
+    /// Constraint name
+    pub name: String,
+    /// Type of constraint
+    pub constraint_type: CompiledConstraintType,
+    /// XPath selector expression (for selecting scope)
+    pub selector_xpath: String,
+    /// XPath field expressions (for selecting key values)
+    pub field_xpaths: Vec<String>,
+    /// For keyref: the key being referenced
+    pub refer: Option<String>,
+}
+
+impl CompiledConstraint {
+    /// Creates a new compiled unique constraint.
+    pub fn unique(name: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: CompiledConstraintType::Unique,
+            selector_xpath: selector.into(),
+            field_xpaths: Vec::new(),
+            refer: None,
+        }
+    }
+
+    /// Creates a new compiled key constraint.
+    pub fn key(name: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: CompiledConstraintType::Key,
+            selector_xpath: selector.into(),
+            field_xpaths: Vec::new(),
+            refer: None,
+        }
+    }
+
+    /// Creates a new compiled keyref constraint.
+    pub fn keyref(
+        name: impl Into<String>,
+        selector: impl Into<String>,
+        refer: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: CompiledConstraintType::KeyRef,
+            selector_xpath: selector.into(),
+            field_xpaths: Vec::new(),
+            refer: Some(refer.into()),
+        }
+    }
+
+    /// Adds a field XPath expression.
+    pub fn with_field(mut self, field: impl Into<String>) -> Self {
+        self.field_xpaths.push(field.into());
+        self
+    }
+
+    /// Adds multiple field XPath expressions.
+    pub fn with_fields(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.field_xpaths.extend(fields.into_iter().map(Into::into));
         self
     }
 }

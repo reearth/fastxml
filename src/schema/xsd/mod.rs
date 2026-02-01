@@ -45,6 +45,9 @@
 
 pub mod builtin;
 pub mod compiler;
+pub mod constraints;
+pub mod content_model;
+pub mod facets;
 pub mod parser;
 pub mod resolver;
 pub mod types;

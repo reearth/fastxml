@@ -63,6 +63,14 @@ enum StackFrame {
     Documentation,
     /// Parsing appinfo (skipped)
     AppInfo,
+    /// Parsing xs:unique identity constraint
+    Unique(XsdIdentityConstraint),
+    /// Parsing xs:key identity constraint
+    Key(XsdIdentityConstraint),
+    /// Parsing xs:keyref identity constraint
+    KeyRef(XsdIdentityConstraint),
+    /// Parsing xs:redefine
+    Redefine(XsdRedefine),
 }
 
 /// XSD Parser that implements XmlEventHandler.
@@ -213,6 +221,24 @@ impl XsdParser {
             }
             "include" => {
                 self.handle_include(&attr_map)?;
+            }
+            "redefine" => {
+                self.handle_redefine(&attr_map)?;
+            }
+            "unique" => {
+                self.handle_unique(&attr_map)?;
+            }
+            "key" => {
+                self.handle_key(&attr_map)?;
+            }
+            "keyref" => {
+                self.handle_keyref(&attr_map)?;
+            }
+            "selector" => {
+                self.handle_selector(&attr_map)?;
+            }
+            "field" => {
+                self.handle_field(&attr_map)?;
             }
             "list" => {
                 self.handle_list(&attr_map)?;
@@ -553,6 +579,68 @@ impl XsdParser {
         Ok(())
     }
 
+    fn handle_redefine(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let schema_location = attrs.get("schemaLocation").cloned().unwrap_or_default();
+        let redefine = XsdRedefine::new(schema_location);
+        self.stack.push(StackFrame::Redefine(redefine));
+        Ok(())
+    }
+
+    fn handle_unique(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let name = attrs.get("name").cloned().unwrap_or_default();
+        // Selector will be set when we encounter the selector element
+        let constraint = XsdIdentityConstraint::unique(name, "");
+        self.stack.push(StackFrame::Unique(constraint));
+        Ok(())
+    }
+
+    fn handle_key(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let name = attrs.get("name").cloned().unwrap_or_default();
+        let constraint = XsdIdentityConstraint::key(name, "");
+        self.stack.push(StackFrame::Key(constraint));
+        Ok(())
+    }
+
+    fn handle_keyref(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let name = attrs.get("name").cloned().unwrap_or_default();
+        let refer = attrs.get("refer").map(|s| QName::parse(s)).unwrap_or_else(|| QName::new(""));
+        let constraint = XsdIdentityConstraint::keyref(name, "", refer);
+        self.stack.push(StackFrame::KeyRef(constraint));
+        Ok(())
+    }
+
+    fn handle_selector(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+
+        // Set the selector on the parent constraint
+        for frame in self.stack.iter_mut().rev() {
+            match frame {
+                StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
+                    c.selector = xpath;
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_field(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+
+        // Add the field to the parent constraint
+        for frame in self.stack.iter_mut().rev() {
+            match frame {
+                StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
+                    c.fields.push(xpath);
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        Ok(())
+    }
+
     fn handle_list(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let list = XsdSimpleList {
             item_type: attrs.get("itemType").map(|s| QName::parse(s)),
@@ -689,8 +777,8 @@ impl XsdParser {
             return Ok(());
         }
 
-        // Also skip import/include as they don't push frames
-        if matches!(local, "import" | "include") {
+        // Also skip import/include/selector/field as they don't push frames
+        if matches!(local, "import" | "include" | "selector" | "field") {
             return Ok(());
         }
 
@@ -765,6 +853,18 @@ impl XsdParser {
             }
             StackFrame::Annotation | StackFrame::Documentation | StackFrame::AppInfo => {
                 // Skip
+            }
+            StackFrame::Unique(constraint) => {
+                self.finish_identity_constraint(constraint)?;
+            }
+            StackFrame::Key(constraint) => {
+                self.finish_identity_constraint(constraint)?;
+            }
+            StackFrame::KeyRef(constraint) => {
+                self.finish_identity_constraint(constraint)?;
+            }
+            StackFrame::Redefine(redefine) => {
+                self.finish_redefine(redefine)?;
             }
         }
 
@@ -1190,6 +1290,23 @@ impl XsdParser {
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn finish_identity_constraint(&mut self, constraint: XsdIdentityConstraint) -> Result<()> {
+        // Identity constraints are always children of element declarations
+        for frame in self.stack.iter_mut().rev() {
+            if let StackFrame::Element(elem) = frame {
+                elem.identity_constraints.push(constraint);
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_redefine(&mut self, redefine: XsdRedefine) -> Result<()> {
+        // Redefine is a top-level schema component
+        self.schema.redefines.push(redefine);
         Ok(())
     }
 }

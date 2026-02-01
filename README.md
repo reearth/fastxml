@@ -14,6 +14,15 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 
 ## Performance
 
+### PLATEAU CityGML Benchmark (10.5 GB, 23 files)
+
+| Metric | DOM | Streaming | Improvement |
+|--------|-----|-----------|-------------|
+| Parse + Validate | 1,008s | 548s | **1.84x faster** |
+| Parse Throughput | 25.51 MB/s | 25.63 MB/s | - |
+| Validate Throughput | 10.38 MB/s | 19.10 MB/s | **1.84x faster** |
+| Peak Memory | 2,635 MB | 231 MB | **11.4x less** |
+
 ### Throughput
 
 | Pattern | DOM Parse | Streaming | XPath |
@@ -33,7 +42,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 | 1.23 GB | - | +1.1 MB |
 | **2.06 GB** | - | **+1.4 MB** |
 
-Streaming uses **~2,600x less memory** than DOM for large files.
+Streaming uses **~11x less memory** than DOM for large files with schema validation.
 
 ## Installation
 
@@ -205,6 +214,13 @@ assert!(schema.types.contains_key("BuildingType"));
 | Namespace | `//bldg:Building` | Namespaced elements |
 | Child axis | `./child::*` | Direct children |
 | Parent axis | `../parent` | Parent element |
+| Ancestor axis | `ancestor::div` | All ancestors |
+| Following/Preceding | `following-sibling::*` | Sibling navigation |
+| Arithmetic | `@value + 10` | `+`, `-`, `*`, `div`, `mod` |
+| Comparison | `@count > 5` | `=`, `!=`, `<`, `>`, `<=`, `>=` |
+| Functions | `count(//item)` | `count`, `sum`, `position`, `last` |
+| String functions | `contains(@name, 'test')` | `contains`, `starts-with`, `substring` |
+| Math functions | `floor(@value)` | `floor`, `ceiling`, `round`, `sum` |
 
 ## Load Testing
 
@@ -346,24 +362,6 @@ let schema = parse_xsd_with_imports(
 
 ## Limitations & Roadmap
 
-### XPath - Not Yet Supported
-
-| Feature | Example | Status |
-|---------|---------|--------|
-| Arithmetic | `//item[position() + 1]` | ❌ Not implemented |
-| Comparison operators | `//item[@value > 10]` | ❌ Not implemented |
-| String functions | `contains()`, `starts-with()`, `substring()` | ❌ Not implemented |
-| Position functions | `position()`, `last()` | ❌ Not implemented |
-| Count function | `count(//item)` | ❌ Not implemented |
-| Sum/math functions | `sum()`, `floor()`, `ceiling()` | ❌ Not implemented |
-| Boolean functions | `true()`, `false()`, `boolean()` | ❌ Not implemented |
-| Union operator | `//a \| //b` | ❌ Not implemented |
-| Attribute axis | `//item/@id` | ⚠️ Partial |
-| Following/preceding | `following-sibling::*` | ❌ Not implemented |
-| Ancestor axis | `ancestor::*` | ❌ Not implemented |
-| Namespace axis | `namespace::*` | ❌ Not implemented |
-| Variables | `$var` | ❌ Not implemented |
-
 ### XPath - Supported
 
 | Feature | Example | Status |
@@ -379,6 +377,27 @@ let schema = parse_xsd_with_imports(
 | Child axis | `child::*`, `./*` | ✅ |
 | Parent axis | `parent::*`, `..` | ✅ |
 | Self axis | `self::*`, `.` | ✅ |
+| Ancestor axis | `ancestor::*`, `ancestor-or-self::*` | ✅ |
+| Following/preceding | `following-sibling::*`, `preceding-sibling::*` | ✅ |
+| Following/preceding | `following::*`, `preceding::*` | ✅ |
+| Attribute axis | `//item/@id`, `attribute::*` | ✅ |
+| Arithmetic | `1 + 2`, `3 * 4`, `10 div 3`, `10 mod 3` | ✅ |
+| Comparison operators | `//item[@value > 10]`, `=`, `!=`, `<`, `>` | ✅ |
+| Position functions | `position()`, `last()` | ✅ |
+| Count function | `count(//item)` | ✅ |
+| String functions | `contains()`, `starts-with()`, `substring()` | ✅ |
+| String functions | `concat()`, `string-length()`, `normalize-space()` | ✅ |
+| Math functions | `sum()`, `floor()`, `ceiling()`, `round()` | ✅ |
+| Boolean functions | `true()`, `false()`, `boolean()`, `not()` | ✅ |
+| Type conversion | `number()`, `string()` | ✅ |
+
+### XPath - Not Yet Supported
+
+| Feature | Example | Status |
+|---------|---------|--------|
+| Union operator | `//a \| //b` | ❌ Not implemented |
+| Namespace axis | `namespace::*` | ❌ Not implemented |
+| Variables | `$var` | ❌ Not implemented |
 
 ### XSD Schema - Supported
 
@@ -405,15 +424,14 @@ let schema = parse_xsd_with_imports(
 | Error collection | ✅ |
 | Cycle detection in imports | ✅ |
 
-### XSD Schema - Not Yet Supported
+### XSD Schema - Newly Implemented
 
 | Feature | Status |
 |---------|--------|
-| Unique constraints | ❌ Not implemented |
-| Key/keyref constraints | ❌ Not implemented |
-| Redefine | ❌ Not implemented |
-| Full content model validation | ⚠️ Partial (structure parsed, runtime validation basic) |
-| Identity constraints | ❌ Not implemented |
+| Identity constraints (unique/key/keyref) | ✅ |
+| Redefine | ✅ Parsing supported |
+| Content model validation (sequence/choice/all) | ✅ |
+| Facet validation (length/pattern/enumeration/range) | ✅ |
 
 ### XQuery
 

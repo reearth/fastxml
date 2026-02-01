@@ -112,6 +112,8 @@ pub struct XsdSchema {
     pub imports: Vec<XsdImport>,
     /// Include declarations
     pub includes: Vec<XsdInclude>,
+    /// Redefine declarations
+    pub redefines: Vec<XsdRedefine>,
     /// Top-level element declarations
     pub elements: Vec<XsdElement>,
     /// Type definitions (simple and complex)
@@ -165,6 +167,113 @@ pub struct XsdInclude {
     pub schema_location: String,
 }
 
+/// Redefine declaration.
+///
+/// Allows modification of schema components from an included schema.
+#[derive(Debug, Clone)]
+pub struct XsdRedefine {
+    /// Schema location URL
+    pub schema_location: String,
+    /// Redefined simple types
+    pub simple_types: Vec<XsdSimpleType>,
+    /// Redefined complex types
+    pub complex_types: Vec<XsdComplexType>,
+    /// Redefined model groups
+    pub groups: Vec<XsdGroup>,
+    /// Redefined attribute groups
+    pub attribute_groups: Vec<XsdAttributeGroup>,
+}
+
+impl XsdRedefine {
+    /// Creates a new redefine declaration.
+    pub fn new(schema_location: impl Into<String>) -> Self {
+        Self {
+            schema_location: schema_location.into(),
+            simple_types: Vec::new(),
+            complex_types: Vec::new(),
+            groups: Vec::new(),
+            attribute_groups: Vec::new(),
+        }
+    }
+}
+
+/// Type of identity constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XsdConstraintType {
+    /// Values must be unique (null allowed)
+    Unique,
+    /// Values must be unique and non-null
+    Key,
+    /// Values must reference an existing key
+    KeyRef,
+}
+
+/// Identity constraint definition (unique, key, keyref).
+#[derive(Debug, Clone)]
+pub struct XsdIdentityConstraint {
+    /// Constraint name
+    pub name: String,
+    /// Type of constraint
+    pub constraint_type: XsdConstraintType,
+    /// XPath selector expression
+    pub selector: String,
+    /// XPath field expressions (one or more for composite keys)
+    pub fields: Vec<String>,
+    /// For keyref: the key being referenced
+    pub refer: Option<QName>,
+}
+
+impl XsdIdentityConstraint {
+    /// Creates a new unique constraint.
+    pub fn unique(name: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: XsdConstraintType::Unique,
+            selector: selector.into(),
+            fields: Vec::new(),
+            refer: None,
+        }
+    }
+
+    /// Creates a new key constraint.
+    pub fn key(name: impl Into<String>, selector: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: XsdConstraintType::Key,
+            selector: selector.into(),
+            fields: Vec::new(),
+            refer: None,
+        }
+    }
+
+    /// Creates a new keyref constraint.
+    pub fn keyref(
+        name: impl Into<String>,
+        selector: impl Into<String>,
+        refer: QName,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            constraint_type: XsdConstraintType::KeyRef,
+            selector: selector.into(),
+            fields: Vec::new(),
+            refer: Some(refer),
+        }
+    }
+
+    /// Adds a field expression.
+    pub fn with_field(mut self, field: impl Into<String>) -> Self {
+        self.fields.push(field.into());
+        self
+    }
+
+    /// Adds multiple field expressions.
+    pub fn with_fields(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.fields.extend(fields.into_iter().map(Into::into));
+        self
+    }
+}
+
 /// Element declaration.
 #[derive(Debug, Clone)]
 pub struct XsdElement {
@@ -192,6 +301,8 @@ pub struct XsdElement {
     pub fixed: Option<String>,
     /// Form (qualified/unqualified)
     pub form: Option<FormDefault>,
+    /// Identity constraints (unique, key, keyref)
+    pub identity_constraints: Vec<XsdIdentityConstraint>,
 }
 
 impl XsdElement {
@@ -210,6 +321,7 @@ impl XsdElement {
             default: None,
             fixed: None,
             form: None,
+            identity_constraints: Vec::new(),
         }
     }
 
@@ -228,6 +340,7 @@ impl XsdElement {
             default: None,
             fixed: None,
             form: None,
+            identity_constraints: Vec::new(),
         }
     }
 }

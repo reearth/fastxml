@@ -1,26 +1,31 @@
 //! XPath expression support.
 //!
 //! This module provides XPath 1.0 expression parsing and evaluation
-//! with support for a subset of the specification used by CityGML processing.
+//! with support for a comprehensive subset of the specification.
 //!
 //! # Supported Features
 //!
 //! ## Axes
-//! - `child::` (default)
+//! - `child::` (default axis)
 //! - `descendant::`
 //! - `descendant-or-self::` (also via `//`)
 //! - `parent::`
 //! - `self::`
 //! - `ancestor::`
+//! - `ancestor-or-self::`
 //! - `following-sibling::`
 //! - `preceding-sibling::`
-//! - `@` (attribute axis shorthand)
+//! - `following::`
+//! - `preceding::`
+//! - `attribute::` (also via `@`)
+//! - `namespace::`
 //!
 //! ## Node Tests
 //! - `*` (any element)
 //! - `name` (element by name)
 //! - `prefix:name` (element by qualified name)
 //! - `text()` (text nodes)
+//! - `node()` (any node)
 //!
 //! ## Predicates
 //! - `[expr]` (filter expression)
@@ -28,13 +33,58 @@
 //! - Comparison operators: `=`, `!=`, `<`, `<=`, `>`, `>=`
 //! - Logical operators: `and`, `or`, `not()`
 //!
+//! ## Operators
+//! - Arithmetic: `+`, `-`, `*`, `div`, `mod`
+//! - Comparison: `=`, `!=`, `<`, `<=`, `>`, `>=`
+//! - Union: `|`
+//!
 //! ## Functions
-//! - `name()` - qualified name of context node
-//! - `local-name()` - local name without prefix
-//! - `namespace-uri()` - namespace URI
-//! - `text()` - text content
+//!
+//! ### Node Set Functions
+//! - `name([node-set])` - qualified name
+//! - `local-name([node-set])` - local name without prefix
+//! - `namespace-uri([node-set])` - namespace URI
+//! - `position()` - context position
+//! - `last()` - context size
+//! - `count(node-set)` - number of nodes
+//! - `id(object)` - select by ID
+//!
+//! ### String Functions
+//! - `string([object])` - convert to string
+//! - `concat(string, string, ...)` - concatenate strings
 //! - `contains(haystack, needle)` - string contains
 //! - `starts-with(string, prefix)` - string starts with
+//! - `substring(string, start, [length])` - extract substring
+//! - `substring-before(string, string)` - substring before match
+//! - `substring-after(string, string)` - substring after match
+//! - `string-length([string])` - string length
+//! - `normalize-space([string])` - normalize whitespace
+//! - `translate(string, from, to)` - character translation
+//!
+//! ### Boolean Functions
+//! - `boolean(object)` - convert to boolean
+//! - `not(boolean)` - logical negation
+//! - `true()` - returns true
+//! - `false()` - returns false
+//! - `lang(string)` - check language
+//!
+//! ### Number Functions
+//! - `number([object])` - convert to number
+//! - `sum(node-set)` - sum of numeric values
+//! - `floor(number)` - round down
+//! - `ceiling(number)` - round up
+//! - `round(number)` - round to nearest
+//!
+//! # Module Structure
+//!
+//! - `types` - Core XPath value types and evaluation context
+//! - `lexer` - XPath expression tokenizer
+//! - `parser` - XPath expression parser (AST construction)
+//! - `evaluator` - XPath expression evaluation engine
+//! - `functions` - XPath function library
+//! - `axes` - Axis navigation implementations
+//! - `operators` - Comparison, arithmetic, and union operators
+//! - `context` - XML document context for evaluation
 //!
 //! # Examples
 //!
@@ -54,12 +104,25 @@
 //!
 //! // Logical OR
 //! let result = xpath::evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
+//!
+//! // Position functions
+//! let result = xpath::evaluate(&doc, "/root/*[position()=1]").unwrap();
+//!
+//! // String functions
+//! let result = xpath::evaluate(&doc, "count(/root/*)").unwrap();
 //! ```
 
-pub mod context;
-pub mod evaluator;
+// Core modules
+pub mod types;
 pub mod lexer;
 pub mod parser;
+pub mod evaluator;
+pub mod context;
+
+// New modular implementation
+pub mod functions;
+pub mod axes;
+pub mod operators;
 
 // Re-export main types and functions
 pub use context::{
@@ -76,3 +139,5 @@ pub use parser::{
     Axis, NodeTest, Predicate, ComparisonOp, Expr, PathExpr, Step,
     parse_xpath,
 };
+pub use types::{XPathValue, EvaluationContext};
+pub use operators::ArithmeticOp;

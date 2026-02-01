@@ -128,6 +128,8 @@ pub enum ValidationErrorType {
     NamespaceMismatch,
     /// Schema not found
     SchemaNotFound,
+    /// Identity constraint violation (unique, key, keyref)
+    IdentityConstraint,
     /// Generic validation error
     Other,
 }
