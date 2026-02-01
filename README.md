@@ -9,15 +9,11 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 
 ## Features
 
-- **Pure Rust**: No C dependencies, no unsafe code
-- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results, with **50-3,600x better memory efficiency** in streaming mode
-- **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
-- **DOM Parser**: Full document tree for random access and XPath queries
-- **DOM Modification**: Mutable node API and streaming XPath-based transformation
-- **XPath Evaluation**: Support for common XPath expressions including namespaces
-- **XSD Parser**: Full XSD schema parsing with import/include resolution
-- **Schema Validation**: Streaming XSD validation with SAX event sharing
-- **Built-in Types**: Pre-defined XSD primitives and GML types (CodeType, MeasureType, geometries)
+- 🦀 **Pure Rust** — No C dependencies, no unsafe code
+- ✅ **libxml Compatible** — Consistent parsing/XPath results, **50-3,600x better memory efficiency**
+- ⚡ **Streaming** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
+- 🔄 **Zero-Copy Transform** — Stream-based XPath transformation with minimal allocations
+- 📋 **Full XPath & XSD** — Complete XPath 1.0, schema parsing with import resolution, built-in GML types
 
 ## Performance
 
