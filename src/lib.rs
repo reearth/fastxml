@@ -103,6 +103,7 @@ pub mod error;
 pub mod event;
 pub mod generator;
 pub mod namespace;
+pub mod namespace_error;
 pub mod node;
 pub mod node_error;
 pub mod parse_error;

@@ -2,6 +2,7 @@
 
 use std::io;
 
+use crate::namespace_error::NamespaceError;
 use crate::node_error::NodeError;
 use crate::parse_error::ParseError;
 use crate::schema::error::SchemaError;
@@ -45,7 +46,7 @@ pub enum Error {
 
     /// Namespace error
     #[error("namespace error: {0}")]
-    Namespace(String),
+    Namespace(#[from] NamespaceError),
 
     /// Node-related error
     #[error("node error: {0}")]

@@ -105,7 +105,7 @@ impl NamespaceResolver {
     }
 }
 
-/// Common XML namespace URIs used in CityGML and related schemas.
+/// Common XML namespace URIs.
 pub mod common {
     /// XML namespace for XML attributes like xml:lang
     pub const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
@@ -115,21 +115,6 @@ pub mod common {
 
     /// XML Schema namespace
     pub const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema";
-
-    /// GML 3.1 namespace
-    pub const GML_31_NS: &str = "http://www.opengis.net/gml";
-
-    /// GML 3.2 namespace
-    pub const GML_32_NS: &str = "http://www.opengis.net/gml/3.2";
-
-    /// CityGML 2.0 core namespace
-    pub const CITYGML_20_NS: &str = "http://www.opengis.net/citygml/2.0";
-
-    /// CityGML 2.0 building namespace
-    pub const BLDG_20_NS: &str = "http://www.opengis.net/citygml/building/2.0";
-
-    /// PLATEAU URO 3.0 namespace
-    pub const URO_30_NS: &str = "https://www.geospatial.jp/iur/uro/3.0";
 }
 
 /// Splits a qualified name into prefix and local name.

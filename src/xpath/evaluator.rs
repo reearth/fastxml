@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use crate::document::XmlDocument;
 use crate::error::Result;
 use crate::namespace::NamespaceResolver;
+use crate::namespace_error::NamespaceError;
 use crate::node::XmlNode;
 
 use super::axes;
@@ -269,10 +270,12 @@ impl<'a> XPathEvaluator<'a> {
         let candidates = axes::select_axis(&step.axis, context);
 
         // Filter by node test
-        let mut filtered: Vec<XmlNode> = candidates
-            .into_iter()
-            .filter(|node| self.matches_node_test(&step.node_test, node))
-            .collect();
+        let mut filtered: Vec<XmlNode> = Vec::new();
+        for node in candidates {
+            if self.matches_node_test(&step.node_test, &node)? {
+                filtered.push(node);
+            }
+        }
 
         // Apply predicates with position tracking
         for predicate in &step.predicates {
@@ -282,37 +285,41 @@ impl<'a> XPathEvaluator<'a> {
         Ok(filtered)
     }
 
-    fn matches_node_test(&self, test: &NodeTest, node: &XmlNode) -> bool {
+    fn matches_node_test(&self, test: &NodeTest, node: &XmlNode) -> Result<bool> {
         match test {
-            NodeTest::Any => node.is_element(),
-            NodeTest::Node => true,
-            NodeTest::Text => node.is_text(),
+            NodeTest::Any => Ok(node.is_element()),
+            NodeTest::Node => Ok(true),
+            NodeTest::Text => Ok(node.is_text()),
             NodeTest::Name(name) => {
                 if !node.is_element() {
-                    return false;
+                    return Ok(false);
                 }
-                node.get_name() == *name || node.qname() == *name
+                Ok(node.get_name() == *name || node.qname() == *name)
             }
             NodeTest::QName { prefix, local } => {
                 if !node.is_element() {
-                    return false;
+                    return Ok(false);
                 }
                 let node_name = node.get_name();
                 let node_prefix = node.get_prefix().unwrap_or_default();
 
                 // Match by prefix and local name
                 if node_prefix == *prefix && node_name == *local {
-                    return true;
+                    return Ok(true);
                 }
 
                 // Try namespace resolution
-                if let Some(expected_uri) = self.resolver.resolve_prefix(prefix)
-                    && let Some(node_uri) = node.get_namespace_uri()
-                {
-                    return node_uri == expected_uri && node_name == *local;
+                let expected_uri = self.resolver.resolve_prefix(prefix).ok_or_else(|| {
+                    NamespaceError::UnknownPrefix {
+                        prefix: prefix.clone(),
+                    }
+                })?;
+
+                if let Some(node_uri) = node.get_namespace_uri() {
+                    return Ok(node_uri == expected_uri && node_name == *local);
                 }
 
-                false
+                Ok(false)
             }
         }
     }
@@ -631,8 +638,49 @@ mod tests {
 
         // Note: Arithmetic expressions in predicates or as standalone might need
         // parentheses due to parsing limitations
-        let result = evaluate(&doc, "1 + 2").unwrap_or(XPathResult::Number(f64::NAN));
+        let _result = evaluate(&doc, "1 + 2").unwrap_or(XPathResult::Number(f64::NAN));
         // This test may fail if parsing isn't set up for standalone arithmetic
         // In that case, we'd need to use it in a predicate context
+    }
+
+    #[test]
+    fn test_unknown_namespace_prefix_error() {
+        // Test that unknown namespace prefix returns an error
+        let doc = parse(r#"<root><child/></root>"#).unwrap();
+
+        // Using an unregistered prefix should fail
+        let result = evaluate(&doc, "/unknown:root");
+        assert!(result.is_err());
+
+        // Verify it's a namespace error
+        let err = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("unknown namespace prefix"),
+            "Expected namespace error, got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_registered_namespace_prefix_works() {
+        // Test that registered namespace prefixes work
+        let doc = parse(
+            r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
+                <gml:name>test</gml:name>
+            </gml:root>"#,
+        )
+        .unwrap();
+
+        // Using a prefix that's declared in the document should work
+        let result = evaluate(&doc, "/gml:root/gml:name");
+        assert!(result.is_ok());
+
+        if let XPathResult::Nodes(nodes) = result.unwrap() {
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].get_name(), "name");
+        } else {
+            panic!("expected nodes");
+        }
     }
 }
