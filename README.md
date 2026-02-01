@@ -58,7 +58,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fastxml = "0.1"
+fastxml = "0.2"
 ```
 
 ### Features
@@ -75,13 +75,13 @@ By default, no HTTP client is included. Choose the features you need:
 
 ```toml
 # For sync schema fetching
-fastxml = { version = "0.1", features = ["ureq"] }
+fastxml = { version = "0.2", features = ["ureq"] }
 
 # For async schema fetching
-fastxml = { version = "0.1", features = ["reqwest"] }
+fastxml = { version = "0.2", features = ["reqwest"] }
 
 # For custom async implementations (without built-in HTTP client)
-fastxml = { version = "0.1", features = ["async-trait"] }
+fastxml = { version = "0.2", features = ["async-trait"] }
 ```
 
 ## Quick Start
@@ -275,7 +275,7 @@ let errors = validate_with_schema_location(&doc)?;
 This requires the `ureq` feature:
 
 ```toml
-fastxml = { version = "0.1", features = ["ureq"] }
+fastxml = { version = "0.2", features = ["ureq"] }
 ```
 
 ### Streaming Validation
