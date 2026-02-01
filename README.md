@@ -37,19 +37,19 @@ Parse only:
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM | 3.41s | 266 MB/s | 3.78 GB |
-| fastxml DOM | 4.23s | 214 MB/s | 1.02 GB |
-| fastxml Streaming | 3.21s | 282 MB/s | **1 MB** |
+| fastxml DOM | 3.80s | 239 MB/s | 666 MB |
+| fastxml Streaming | 3.10s | 293 MB/s | **~1 MB** |
 
-Parse + Schema Validation:
+Parse + Schema Validation (via xsi:schemaLocation):
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM | 3.81s | 238 MB/s | 3.66 GB |
-| fastxml DOM | 4.85s | 187 MB/s | 1.03 GB |
-| fastxml Streaming | 18.41s | 49 MB/s | **69 MB** |
+| fastxml DOM | 3.73s | 243 MB/s | 666 MB |
+| fastxml Streaming | 22.43s | 40 MB/s | **~1 MB** |
 
-- **DOM**: fastxml uses **3.6x less memory** than libxml
-- **Streaming**: **50x less memory** than libxml DOM with validation, or **3,600x less** for parse-only
+- **DOM**: fastxml uses **5.7x less memory** than libxml
+- **Streaming**: Constant memory regardless of file size (only parser buffers)
 
 **Compatibility Testing**: Parsing, XPath, and validation results are verified against libxml2. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
 
