@@ -71,15 +71,15 @@ pub struct AttributePredicate {
 /// A position predicate for streaming matching.
 #[derive(Debug, Clone)]
 pub enum PositionPredicate {
-    /// Exact position: [n]
+    /// Exact position: `[n]`
     Exact(usize),
-    /// Position range: [position() <= n]
+    /// Position range: `[position() <= n]`
     LessOrEqual(usize),
-    /// Position range: [position() >= n]
+    /// Position range: `[position() >= n]`
     GreaterOrEqual(usize),
-    /// Position range: [position() > n]
+    /// Position range: `[position() > n]`
     GreaterThan(usize),
-    /// Position range: [position() < n]
+    /// Position range: `[position() < n]`
     LessThan(usize),
 }
 

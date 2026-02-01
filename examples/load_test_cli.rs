@@ -691,14 +691,14 @@ fn run_dom_benchmark(content: &[u8], iterations: usize) {
             // Memory comparison
             if let (Some(fastxml_mem), Some(libxml_mem)) =
                 (fastxml_mem_delta, libxml_result.memory_delta)
+                && fastxml_mem > 0
+                && libxml_mem > 0
             {
-                if fastxml_mem > 0 && libxml_mem > 0 {
-                    let mem_ratio = libxml_mem as f64 / fastxml_mem as f64;
-                    if mem_ratio >= 1.0 {
-                        println!("    Memory: fastxml uses {:.2}x less", mem_ratio);
-                    } else {
-                        println!("    Memory: libxml uses {:.2}x less", 1.0 / mem_ratio);
-                    }
+                let mem_ratio = libxml_mem as f64 / fastxml_mem as f64;
+                if mem_ratio >= 1.0 {
+                    println!("    Memory: fastxml uses {:.2}x less", mem_ratio);
+                } else {
+                    println!("    Memory: libxml uses {:.2}x less", 1.0 / mem_ratio);
                 }
             }
         }
