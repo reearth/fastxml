@@ -18,7 +18,6 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 - **XSD Parser**: Full XSD schema parsing with import/include resolution
 - **Schema Validation**: Streaming XSD validation with SAX event sharing
 - **Built-in Types**: Pre-defined XSD primitives and GML types (CodeType, MeasureType, geometries)
-- **CityGML Ready**: Optimized for PLATEAU/CityGML document processing
 
 ## Performance
 
@@ -29,13 +28,13 @@ fastxml is designed as a drop-in replacement for libxml in Rust projects:
 | Feature | libxml | fastxml |
 |---------|--------|---------|
 | DOM parsing | ✅ | ✅ |
-| XPath | ✅ (full) | ✅ (subset) |
-| Schema validation | ✅ | ✅ (streaming) |
+| XPath | ✅ | ✅ |
+| Schema validation | ✅ (DOM only) | ✅ (DOM + Streaming) |
 | Streaming | ❌ | ✅ |
 | Memory efficiency | Low | High |
 | Pure Rust | ❌ | ✅ |
 
-**Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes):
+**Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes) — [benchmark code](examples/load_test_cli.rs):
 
 Parse only:
 
