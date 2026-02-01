@@ -70,7 +70,7 @@ pub use types::{
     ContentModel, ProcessContents, AttributeDef,
 };
 pub use validator::{
-    StreamingSchemaValidator, XmlSchemaValidationContext,
+    StreamingSchemaValidator, XmlSchemaValidationContext, ValidationMode,
     create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
     validate_document_by_schema, validate_document_by_schema_context,
 };

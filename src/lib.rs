@@ -106,7 +106,7 @@ pub mod serialize;
 pub mod xpath;
 
 // Re-export error types
-pub use error::{Error, Result, StructuredError, ValidationErrorType};
+pub use error::{Error, ErrorLevel, Result, StructuredError, ValidationErrorType};
 
 // Re-export document types
 pub use document::{DocumentBuilder, XmlDocument};
