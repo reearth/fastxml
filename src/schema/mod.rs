@@ -77,13 +77,13 @@ pub use validator::{
     validate_document_by_schema, validate_document_by_schema_context,
 };
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 pub use fetcher::UreqFetcher;
 
-#[cfg(feature = "async")]
+#[cfg(feature = "reqwest")]
 pub use fetcher::ReqwestFetcher;
 
-#[cfg(feature = "async")]
+#[cfg(feature = "async-trait")]
 pub use store::AsyncSchemaStore;
 
 // Re-export XSD parsing functions

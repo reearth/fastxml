@@ -1,6 +1,6 @@
 //! Schema fetching with redirect support.
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 use std::io::Read;
 
 use crate::error::Result;
@@ -26,7 +26,7 @@ pub trait SchemaFetcher: Send + Sync {
 }
 
 /// Sync schema fetcher using ureq.
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 pub struct UreqFetcher {
     /// Maximum number of redirects to follow.
     max_redirects: u32,
@@ -36,7 +36,7 @@ pub struct UreqFetcher {
     timeout_secs: u64,
 }
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 impl UreqFetcher {
     /// Creates a new fetcher with default settings.
     pub fn new() -> Self {
@@ -73,14 +73,14 @@ impl UreqFetcher {
     }
 }
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 impl Default for UreqFetcher {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 impl SchemaFetcher for UreqFetcher {
     fn fetch(&self, url: &str) -> Result<FetchResult> {
         let agent = self.build_agent();
@@ -124,12 +124,12 @@ impl SchemaFetcher for UreqFetcher {
 }
 
 /// Async schema fetcher using reqwest.
-#[cfg(feature = "async")]
+#[cfg(feature = "reqwest")]
 pub struct ReqwestFetcher {
     client: reqwest::Client,
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "reqwest")]
 impl ReqwestFetcher {
     /// Creates a new fetcher with default settings.
     pub fn new() -> Result<Self> {
@@ -189,7 +189,7 @@ impl ReqwestFetcher {
     }
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "reqwest")]
 impl Default for ReqwestFetcher {
     fn default() -> Self {
         Self::new().expect("failed to create HTTP client")

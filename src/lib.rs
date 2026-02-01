@@ -280,7 +280,7 @@ pub fn parse_xsd(content: &[u8]) -> Result<schema::types::CompiledSchema> {
 }
 
 /// Parses XSD content with import resolution.
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 pub fn parse_xsd_with_imports(
     content: &[u8],
     base_uri: &str,

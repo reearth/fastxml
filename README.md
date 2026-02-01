@@ -63,14 +63,30 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fastxml = { version = "0.1", features = ["sync"] }
+fastxml = "0.1"
 ```
 
 ### Features
 
-- `sync` (default): Synchronous HTTP client for schema fetching
-- `async`: Async support with tokio/reqwest
-- `profile`: Memory profiling utilities
+By default, no HTTP client is included. Choose the features you need:
+
+| Feature | Description |
+|---------|-------------|
+| `ureq` | Sync HTTP client (`UreqFetcher`) for schema fetching |
+| `reqwest` | Async HTTP client (`ReqwestFetcher`) for schema fetching |
+| `async-trait` | Async trait support for custom `AsyncSchemaStore` implementations |
+| `profile` | Memory profiling utilities |
+
+```toml
+# For sync schema fetching
+fastxml = { version = "0.1", features = ["ureq"] }
+
+# For async schema fetching
+fastxml = { version = "0.1", features = ["reqwest"] }
+
+# For custom async implementations (without built-in HTTP client)
+fastxml = { version = "0.1", features = ["async-trait"] }
+```
 
 ## Quick Start
 
@@ -338,11 +354,11 @@ cargo run --release --example load_test_cli -- \
 cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
 
 # URLs (requires sync feature)
-cargo run --release --features sync --example load_test_cli -- \
+cargo run --release --features ureq --example load_test_cli -- \
     https://example.com/citygml/file.xml
 
 # From stdin (one URL/path per line)
-cat urls.txt | cargo run --release --features sync --example load_test_cli
+cat urls.txt | cargo run --release --features ureq --example load_test_cli
 
 # With schema validation
 cargo run --release --example load_test_cli -- --validate ./document.xml

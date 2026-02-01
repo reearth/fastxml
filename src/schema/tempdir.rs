@@ -149,7 +149,7 @@ impl SchemaStore for TempDirStore {
     }
 }
 
-#[cfg(feature = "async")]
+#[cfg(feature = "async-trait")]
 mod async_impl {
     use super::*;
     use crate::schema::store::AsyncSchemaStore;

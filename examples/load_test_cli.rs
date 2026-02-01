@@ -35,7 +35,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read};
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -345,7 +345,7 @@ fn get_display_name(input: &str) -> &str {
     }
 }
 
-#[cfg(feature = "sync")]
+#[cfg(feature = "ureq")]
 fn load_file(input: &str, cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
     if is_url(input) {
         let file_name = input.split('/').next_back().unwrap_or("unknown.xml");
@@ -373,7 +373,7 @@ fn load_file(input: &str, cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<
     }
 }
 
-#[cfg(not(feature = "sync"))]
+#[cfg(not(feature = "ureq"))]
 fn load_file(input: &str, _cache_dir: &Path) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
     if is_url(input) {
         Err("URL loading requires 'sync' feature. Use: cargo run --features sync --example load_test_cli".into())

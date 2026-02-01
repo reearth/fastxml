@@ -36,7 +36,7 @@ pub trait SchemaStore: Send + Sync {
 }
 
 /// Async version of SchemaStore.
-#[cfg(feature = "async")]
+#[cfg(feature = "async-trait")]
 #[async_trait::async_trait]
 pub trait AsyncSchemaStore: Send + Sync {
     /// Gets schema content by URI.

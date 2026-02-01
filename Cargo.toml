@@ -35,12 +35,11 @@ xxhash-rust = { version = "0.8", features = ["xxh64"] }
 # URL parsing
 url = "2"
 
-# Sync HTTP client (optional)
+# HTTP clients (optional)
 ureq = { version = "2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 
 # Async support (optional)
-tokio = { version = "1", features = ["fs", "io-util"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 async-trait = { version = "0.1", optional = true }
 
 # Logging/tracing
@@ -59,9 +58,16 @@ ureq = "2"
 flate2 = "1"
 
 [features]
-default = ["sync"]
-sync = ["ureq"]
-async = ["tokio", "reqwest", "async-trait"]
+default = []
+
+# Async trait support (for custom async fetcher implementations)
+async-trait = ["dep:async-trait"]
+
+# HTTP clients
+ureq = ["dep:ureq"]                         # Sync HTTP client (UreqFetcher)
+reqwest = ["async-trait", "dep:reqwest"]    # Async HTTP client (ReqwestFetcher)
+
+# Profiling
 profile = ["memory-stats"]
 
 [[bench]]
