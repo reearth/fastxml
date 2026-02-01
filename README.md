@@ -12,6 +12,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 - **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
+- **DOM Modification**: Mutable node API and streaming XPath-based transformation
 - **XPath Evaluation**: Support for common XPath expressions including namespaces
 - **XSD Parser**: Full XSD schema parsing with import/include resolution
 - **Schema Validation**: Streaming XSD validation with SAX event sharing
@@ -153,6 +154,96 @@ parser.add_handler(Box::new(MyHandler { element_count: 0 }));
 parser.parse()?;
 ```
 
+### Streaming Transform
+
+Transform XML documents efficiently with XPath-based element selection. Only matched elements are converted to DOM, providing significant memory savings for large files.
+
+```rust
+use fastxml::transform::StreamTransformer;
+
+let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+
+// Modify specific elements
+let result = StreamTransformer::new(xml)
+    .xpath("//item[@id='2']")
+    .transform(|node| {
+        node.set_attribute("modified", "true");
+    })
+    .to_string()
+    .unwrap();
+// Result: <root><item id="1">A</item><item id="2" modified="true">B</item></root>
+
+// Remove elements
+let result = StreamTransformer::new(xml)
+    .xpath("//item[@id='1']")
+    .transform(|node| {
+        node.remove();
+    })
+    .to_string()
+    .unwrap();
+// Result: <root><item id="2">B</item></root>
+
+// Extract data without transformation
+let ids: Vec<String> = StreamTransformer::new(xml)
+    .xpath("//item")
+    .collect(|node| node.get_attribute("id").unwrap_or_default())
+    .unwrap();
+// ids: ["1", "2"]
+
+// Iterate over matched elements
+let mut count = 0;
+StreamTransformer::new(xml)
+    .xpath("//item")
+    .for_each(|node| {
+        println!("Found: {:?}", node.get_content());
+        count += 1;
+    })
+    .unwrap();
+```
+
+With namespace support:
+
+```rust
+use fastxml::{parse, transform::StreamTransformer};
+
+let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+    <gml:Point><gml:pos>1 2</gml:pos></gml:Point>
+</root>"#;
+
+// Option 1: Register namespaces manually
+let result = StreamTransformer::new(xml)
+    .namespaces([
+        ("gml", "http://www.opengis.net/gml"),
+        ("bldg", "http://www.opengis.net/citygml/building/2.0"),
+    ])
+    .xpath("//gml:Point")
+    .transform(|node| {
+        node.set_attribute("srsName", "EPSG:4326");
+    })
+    .to_string()
+    .unwrap();
+
+// Option 2: Import namespaces from parsed document
+let doc = parse(xml).unwrap();
+let result = StreamTransformer::new(xml)
+    .with_document_namespaces(&doc)
+    .xpath("//gml:Point")
+    .transform(|node| {
+        node.set_attribute("srsName", "EPSG:4326");
+    })
+    .to_string()
+    .unwrap();
+```
+
+**Performance** (100K elements, 11 MB XML):
+
+| Approach | Time | Memory |
+|----------|------|--------|
+| Streaming Transform | 47ms | ~11 MB |
+| DOM Parse + XPath | 141ms | ~135 MB |
+
+Streaming is **3x faster** and uses **12x less memory**.
+
 ### Schema Validation
 
 Validate XML documents against XSD schemas:
@@ -265,40 +356,6 @@ println!("Found {} buildings", buildings.into_nodes().len());
 
 // Query with name() function
 let heights = evaluate(&doc, "//*[name()='measuredHeight']/text()")?;
-```
-
-### PLATEAU/CityGML Support
-
-Built-in support for GML and CityGML types used in PLATEAU:
-
-```rust
-use fastxml::schema::xsd::{parse_xsd, create_builtin_schema};
-
-// Create schema with pre-registered GML types
-let schema = create_builtin_schema();
-
-// Available built-in types include:
-// - XSD primitives: xs:string, xs:integer, xs:double, xs:dateTime, etc.
-// - GML types: gml:CodeType, gml:MeasureType, gml:LengthType
-// - GML geometry: gml:PointType, gml:PolygonType, gml:MultiSurfaceType, gml:SolidType
-// - GML features: gml:AbstractFeatureType, gml:AbstractGMLType
-
-// Parse PLATEAU building schema
-let building_xsd = r#"
-<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
-           xmlns:gml="http://www.opengis.net/gml/3.2">
-    <xs:complexType name="BuildingType">
-        <xs:sequence>
-            <xs:element name="class" type="gml:CodeType" minOccurs="0"/>
-            <xs:element name="measuredHeight" type="gml:LengthType" minOccurs="0"/>
-            <xs:element name="storeysAboveGround" type="xs:nonNegativeInteger" minOccurs="0"/>
-        </xs:sequence>
-    </xs:complexType>
-</xs:schema>
-"#;
-
-let schema = parse_xsd(building_xsd.as_bytes())?;
-assert!(schema.types.contains_key("BuildingType"));
 ```
 
 ## Load Testing
@@ -490,7 +547,6 @@ cargo bench
 
 - XQuery, DTD validation, XSLT, XInclude, XML Signature/Encryption
 - Catalog support
-- DOM modification (read-only)
 - Entity expansion (basic only)
 
 ## License

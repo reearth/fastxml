@@ -111,8 +111,7 @@ pub mod parser;
 pub mod profile;
 pub mod schema;
 pub mod serialize;
-// TODO: transform module has issues, disabled for now
-// pub mod transform;
+pub mod transform;
 pub mod xpath;
 
 // Re-export error types

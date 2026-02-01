@@ -71,6 +71,62 @@ impl XmlDocument {
         resolver.register(prefix, uri);
     }
 
+    /// Registers multiple namespace bindings at once.
+    ///
+    /// # Example
+    /// ```
+    /// use fastxml::parse;
+    ///
+    /// let xml = "<root><child/></root>";
+    /// let doc = parse(xml).unwrap();
+    /// doc.register_namespaces([
+    ///     ("gml", "http://www.opengis.net/gml"),
+    ///     ("bldg", "http://www.opengis.net/citygml/building/2.0"),
+    /// ]);
+    ///
+    /// let ns = doc.namespaces();
+    /// assert!(ns.contains_key("gml"));
+    /// assert!(ns.contains_key("bldg"));
+    /// ```
+    pub fn register_namespaces<I, S1, S2>(&self, iter: I)
+    where
+        I: IntoIterator<Item = (S1, S2)>,
+        S1: AsRef<str>,
+        S2: AsRef<str>,
+    {
+        let mut resolver = self.namespace_resolver.write();
+        for (prefix, uri) in iter {
+            resolver.register(prefix.as_ref(), uri.as_ref());
+        }
+    }
+
+    /// Returns all namespace bindings as a map of prefix -> URI.
+    ///
+    /// This includes namespaces declared in the document and any
+    /// manually registered namespaces.
+    ///
+    /// # Example
+    /// ```
+    /// use fastxml::parse;
+    ///
+    /// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"
+    ///                    xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
+    ///     <gml:name>Test</gml:name>
+    /// </root>"#;
+    /// let doc = parse(xml).unwrap();
+    ///
+    /// let namespaces = doc.namespaces();
+    /// assert_eq!(namespaces.get("gml"), Some(&"http://www.opengis.net/gml".to_string()));
+    /// assert_eq!(namespaces.get("bldg"), Some(&"http://www.opengis.net/citygml/building/2.0".to_string()));
+    /// ```
+    pub fn namespaces(&self) -> std::collections::HashMap<String, String> {
+        let resolver = self.namespace_resolver.read();
+        resolver
+            .bindings()
+            .map(|(prefix, uri)| (prefix.to_string(), uri.to_string()))
+            .collect()
+    }
+
     /// Gets a node by ID.
     pub fn get_node(&self, id: NodeId) -> Option<XmlNode> {
         let nodes = self.nodes.read();
@@ -132,6 +188,20 @@ impl XmlDocument {
                     resolver.register(ns.prefix(), ns.uri());
                 }
             }
+        }
+    }
+
+    /// Creates a pseudo-attribute node for XPath evaluation.
+    ///
+    /// These nodes are added to the document's node list and can be used
+    /// in XPath results. They store the attribute name and value.
+    pub fn create_attribute_node(&self, name: &str, value: &str) -> XmlNode {
+        let mut nodes = self.nodes.write();
+        let id = nodes.len();
+        nodes.push(NodeData::attribute(id, name.to_string(), value.to_string()));
+        XmlNode {
+            id,
+            nodes: Arc::clone(&self.nodes),
         }
     }
 }

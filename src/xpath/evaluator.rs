@@ -11,7 +11,7 @@ use crate::node::XmlNode;
 use super::axes;
 use super::functions;
 use super::operators::{self, ArithmeticOp};
-use super::parser::{Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
+use super::parser::{Axis, Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
 use super::types::{EvaluationContext, XPathValue};
 
 /// Result of XPath evaluation.
@@ -276,6 +276,11 @@ impl<'a> XPathEvaluator<'a> {
         context: &XmlNode,
         ctx: &EvaluationContext<'_>,
     ) -> Result<Vec<XmlNode>> {
+        // Handle attribute axis specially
+        if matches!(step.axis, Axis::Attribute) {
+            return self.eval_attribute_step(step, context);
+        }
+
         // Select nodes based on axis using the axes module
         let candidates = axes::select_axis(&step.axis, context);
 
@@ -293,6 +298,50 @@ impl<'a> XPathEvaluator<'a> {
         }
 
         Ok(filtered)
+    }
+
+    /// Evaluates an attribute step, returning pseudo-nodes for attributes.
+    fn eval_attribute_step(&self, step: &Step, context: &XmlNode) -> Result<Vec<XmlNode>> {
+        if !context.is_element() {
+            return Ok(Vec::new());
+        }
+
+        let attributes = context.get_attributes();
+
+        match &step.node_test {
+            NodeTest::Any => {
+                // @* - return all attributes as pseudo-nodes
+                let mut result = Vec::new();
+                for (name, value) in attributes {
+                    let attr_node = self.doc.create_attribute_node(&name, &value);
+                    result.push(attr_node);
+                }
+                Ok(result)
+            }
+            NodeTest::Name(name) => {
+                // @name - return specific attribute
+                if let Some(value) = attributes.get(name) {
+                    let attr_node = self.doc.create_attribute_node(name, value);
+                    Ok(vec![attr_node])
+                } else {
+                    Ok(Vec::new())
+                }
+            }
+            NodeTest::QName { prefix, local } => {
+                // @prefix:name - return namespaced attribute
+                let qname = format!("{}:{}", prefix, local);
+                if let Some(value) = attributes.get(&qname) {
+                    let attr_node = self.doc.create_attribute_node(&qname, value);
+                    Ok(vec![attr_node])
+                } else if let Some(value) = attributes.get(local) {
+                    let attr_node = self.doc.create_attribute_node(local, value);
+                    Ok(vec![attr_node])
+                } else {
+                    Ok(Vec::new())
+                }
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     fn matches_node_test(&self, test: &NodeTest, node: &XmlNode) -> Result<bool> {
@@ -691,6 +740,41 @@ mod tests {
             assert_eq!(nodes[0].get_name(), "name");
         } else {
             panic!("expected nodes");
+        }
+    }
+
+    #[test]
+    fn test_attribute_predicate() {
+        let doc = parse(
+            r#"<root><item id="1">A</item><item id="2">B</item><item id="3">C</item></root>"#,
+        )
+        .unwrap();
+
+        // Test attribute predicate: //item[@id='2']
+        let result = evaluate(&doc, "//item[@id='2']").unwrap();
+        if let XPathResult::Nodes(nodes) = &result {
+            assert_eq!(nodes.len(), 1, "Expected 1 node matching //item[@id='2']");
+            assert_eq!(nodes[0].get_name(), "item");
+            assert_eq!(nodes[0].get_attribute("id"), Some("2".to_string()));
+        } else {
+            panic!("expected nodes");
+        }
+    }
+
+    #[test]
+    fn test_attribute_axis() {
+        let doc = parse(r#"<root><item id="1" name="test">A</item></root>"#).unwrap();
+
+        // Test attribute axis: //item/@id
+        let result = evaluate(&doc, "//item/@id").unwrap();
+        if let XPathResult::Nodes(nodes) = &result {
+            assert_eq!(nodes.len(), 1, "Expected 1 attribute node");
+            // Attribute node should have the value as content
+            assert_eq!(nodes[0].get_content(), Some("1".to_string()));
+        } else if let XPathResult::String(s) = &result {
+            assert_eq!(s, "1");
+        } else {
+            panic!("expected nodes or string, got {:?}", result);
         }
     }
 }

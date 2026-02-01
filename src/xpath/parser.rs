@@ -383,6 +383,116 @@ impl Parser {
                 self.expect(&Token::RightParen)?;
                 Ok(NodeTest::Node)
             }
+            // Function tokens can also be used as names in node test context
+            // e.g., @id, @name, @count, etc. should be treated as attribute names
+            Token::IdFn => {
+                self.advance();
+                Ok(NodeTest::Name("id".to_string()))
+            }
+            Token::NameFn => {
+                self.advance();
+                Ok(NodeTest::Name("name".to_string()))
+            }
+            Token::CountFn => {
+                self.advance();
+                Ok(NodeTest::Name("count".to_string()))
+            }
+            Token::LastFn => {
+                self.advance();
+                Ok(NodeTest::Name("last".to_string()))
+            }
+            Token::PositionFn => {
+                self.advance();
+                Ok(NodeTest::Name("position".to_string()))
+            }
+            Token::StringFn => {
+                self.advance();
+                Ok(NodeTest::Name("string".to_string()))
+            }
+            Token::NumberFn => {
+                self.advance();
+                Ok(NodeTest::Name("number".to_string()))
+            }
+            Token::BooleanFn => {
+                self.advance();
+                Ok(NodeTest::Name("boolean".to_string()))
+            }
+            Token::SumFn => {
+                self.advance();
+                Ok(NodeTest::Name("sum".to_string()))
+            }
+            Token::TrueFn => {
+                self.advance();
+                Ok(NodeTest::Name("true".to_string()))
+            }
+            Token::FalseFn => {
+                self.advance();
+                Ok(NodeTest::Name("false".to_string()))
+            }
+            Token::FloorFn => {
+                self.advance();
+                Ok(NodeTest::Name("floor".to_string()))
+            }
+            Token::CeilingFn => {
+                self.advance();
+                Ok(NodeTest::Name("ceiling".to_string()))
+            }
+            Token::RoundFn => {
+                self.advance();
+                Ok(NodeTest::Name("round".to_string()))
+            }
+            Token::Not => {
+                self.advance();
+                Ok(NodeTest::Name("not".to_string()))
+            }
+            Token::LangFn => {
+                self.advance();
+                Ok(NodeTest::Name("lang".to_string()))
+            }
+            Token::ContainsFn => {
+                self.advance();
+                Ok(NodeTest::Name("contains".to_string()))
+            }
+            Token::StartsWithFn => {
+                self.advance();
+                Ok(NodeTest::Name("starts-with".to_string()))
+            }
+            Token::ConcatFn => {
+                self.advance();
+                Ok(NodeTest::Name("concat".to_string()))
+            }
+            Token::SubstringFn => {
+                self.advance();
+                Ok(NodeTest::Name("substring".to_string()))
+            }
+            Token::SubstringBeforeFn => {
+                self.advance();
+                Ok(NodeTest::Name("substring-before".to_string()))
+            }
+            Token::SubstringAfterFn => {
+                self.advance();
+                Ok(NodeTest::Name("substring-after".to_string()))
+            }
+            Token::StringLengthFn => {
+                self.advance();
+                Ok(NodeTest::Name("string-length".to_string()))
+            }
+            Token::NormalizeSpaceFn => {
+                self.advance();
+                Ok(NodeTest::Name("normalize-space".to_string()))
+            }
+            Token::TranslateFn => {
+                self.advance();
+                Ok(NodeTest::Name("translate".to_string()))
+            }
+            Token::LocalNameFn => {
+                self.advance();
+                Ok(NodeTest::Name("local-name".to_string()))
+            }
+            Token::NamespaceUriFn => {
+                self.advance();
+                Ok(NodeTest::Name("namespace-uri".to_string()))
+            }
             _ => Err(XPathSyntaxError::UnexpectedToken {
                 found: Some(self.current().clone()),
                 expected: "node test".to_string(),
