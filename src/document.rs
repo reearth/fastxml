@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::node_error::NodeError;
 use crate::namespace::{Namespace, NamespaceResolver};
 use crate::node::{NodeData, NodeId, XmlNode, XmlRoNode};
 
@@ -51,7 +52,7 @@ impl XmlDocument {
                 id,
                 nodes: Arc::clone(&self.nodes),
             })
-            .ok_or_else(|| Error::NodeNotFound("no root element".into()))
+            .ok_or_else(|| NodeError::NoRootElement.into())
     }
 
     /// Returns the root element as a read-only node.

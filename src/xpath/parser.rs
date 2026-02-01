@@ -3,7 +3,8 @@
 //! Parses tokenized XPath expressions into an abstract syntax tree (AST).
 
 use super::lexer::{Lexer, Token};
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::xpath::error::XPathSyntaxError;
 
 /// XPath axis specifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,11 +221,10 @@ impl Parser {
             self.advance();
             Ok(())
         } else {
-            Err(Error::XPathSyntax(format!(
-                "expected {:?}, found {:?}",
-                expected,
-                self.current()
-            )))
+            Err(XPathSyntaxError::UnexpectedToken {
+                found: Some(self.current().clone()),
+                expected: format!("{:?}", expected),
+            }.into())
         }
     }
 
@@ -382,10 +382,10 @@ impl Parser {
                 self.expect(&Token::RightParen)?;
                 Ok(NodeTest::Node)
             }
-            _ => Err(Error::XPathSyntax(format!(
-                "expected node test, found {:?}",
-                self.current()
-            ))),
+            _ => Err(XPathSyntaxError::UnexpectedToken {
+                found: Some(self.current().clone()),
+                expected: "node test".to_string(),
+            }.into()),
         }
     }
 
@@ -546,10 +546,10 @@ impl Parser {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
-            _ => Err(Error::XPathSyntax(format!(
-                "expected expression value, found {:?}",
-                self.current()
-            ))),
+            _ => Err(XPathSyntaxError::UnexpectedToken {
+                found: Some(self.current().clone()),
+                expected: "expression value".to_string(),
+            }.into()),
         }
     }
 
@@ -694,10 +694,10 @@ impl Parser {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
-            _ => Err(Error::XPathSyntax(format!(
-                "expected primary expression, found {:?}",
-                self.current()
-            ))),
+            _ => Err(XPathSyntaxError::UnexpectedToken {
+                found: Some(self.current().clone()),
+                expected: "primary expression".to_string(),
+            }.into()),
         }
     }
 
@@ -739,7 +739,10 @@ impl Parser {
             Token::CeilingFn => "ceiling",
             Token::RoundFn => "round",
 
-            _ => return Err(Error::XPathSyntax("expected function".into())),
+            _ => return Err(XPathSyntaxError::UnexpectedToken {
+                found: Some(self.current().clone()),
+                expected: "function".to_string(),
+            }.into()),
         };
         let name = name.to_string();
         self.advance();

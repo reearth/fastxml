@@ -3,7 +3,8 @@
 #[cfg(feature = "sync")]
 use std::io::Read;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::schema::fetch_error::FetchError;
 
 /// Result of a schema fetch operation.
 #[derive(Debug, Clone)]
@@ -88,14 +89,21 @@ impl SchemaFetcher for UreqFetcher {
             .get(url)
             .set("User-Agent", &self.user_agent)
             .call()
-            .map_err(|e| Error::Fetch(format!("failed to fetch {}: {}", url, e)))?;
+            .map_err(|e| FetchError::RequestFailed {
+                url: url.to_string(),
+                message: e.to_string(),
+            })?;
 
         let status = response.status();
         let final_url = response.get_url().to_string();
         let redirected = final_url != url;
 
         if status != 200 {
-            return Err(Error::Fetch(format!("HTTP error {}: {}", status, url)));
+            return Err(FetchError::HttpError {
+                status,
+                url: url.to_string(),
+            }
+            .into());
         }
 
         // Read content
@@ -103,7 +111,9 @@ impl SchemaFetcher for UreqFetcher {
         response
             .into_reader()
             .read_to_end(&mut content)
-            .map_err(|e| Error::Fetch(format!("failed to read response: {}", e)))?;
+            .map_err(|e| FetchError::ReadResponseFailed {
+                message: e.to_string(),
+            })?;
 
         Ok(FetchResult {
             content,
@@ -128,7 +138,9 @@ impl ReqwestFetcher {
             .user_agent(format!("fastxml/{}", env!("CARGO_PKG_VERSION")))
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| Error::Fetch(format!("failed to create HTTP client: {}", e)))?;
+            .map_err(|e| FetchError::ClientCreationFailed {
+                message: e.to_string(),
+            })?;
 
         Ok(Self { client })
     }
@@ -145,23 +157,28 @@ impl ReqwestFetcher {
             .get(url)
             .send()
             .await
-            .map_err(|e| Error::Fetch(format!("failed to fetch {}: {}", url, e)))?;
+            .map_err(|e| FetchError::RequestFailed {
+                url: url.to_string(),
+                message: e.to_string(),
+            })?;
 
         let final_url = response.url().to_string();
         let redirected = final_url != url;
 
         if !response.status().is_success() {
-            return Err(Error::Fetch(format!(
-                "HTTP error {}: {}",
-                response.status(),
-                url
-            )));
+            return Err(FetchError::HttpError {
+                status: response.status().as_u16(),
+                url: url.to_string(),
+            }
+            .into());
         }
 
         let content = response
             .bytes()
             .await
-            .map_err(|e| Error::Fetch(format!("failed to read response: {}", e)))?
+            .map_err(|e| FetchError::ReadResponseFailed {
+                message: e.to_string(),
+            })?
             .to_vec();
 
         Ok(FetchResult {
@@ -186,10 +203,10 @@ pub struct NoopFetcher;
 
 impl SchemaFetcher for NoopFetcher {
     fn fetch(&self, url: &str) -> Result<FetchResult> {
-        Err(Error::Fetch(format!(
-            "network access disabled, cannot fetch: {}",
-            url
-        )))
+        Err(FetchError::NetworkDisabled {
+            url: url.to_string(),
+        }
+        .into())
     }
 }
 

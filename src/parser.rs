@@ -6,7 +6,7 @@ use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
 use crate::document::{DocumentBuilder, XmlDocument};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::namespace::{Namespace, split_qname};
 
 /// Parser options for controlling XML parsing behavior.
@@ -114,9 +114,11 @@ fn parse_from_reader<R: BufRead>(
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
-                let text = e
-                    .unescape()
-                    .map_err(|e| Error::Parse(format!("text decode error: {}", e)))?;
+                let text = e.unescape().map_err(|e| {
+                    crate::parse_error::ParseError::TextDecodeError {
+                        message: e.to_string(),
+                    }
+                })?;
                 if !text.is_empty() {
                     check_memory(options, &mut memory_used, text.len())?;
                     builder.text(&text);
@@ -147,11 +149,11 @@ fn parse_from_reader<R: BufRead>(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(Error::Parse(format!(
-                    "parse error at position {}: {}",
-                    reader.buffer_position(),
-                    e
-                )));
+                return Err(crate::parse_error::ParseError::AtPosition {
+                    position: reader.buffer_position(),
+                    message: e.to_string(),
+                }
+                .into());
             }
         }
         buf.clear();
@@ -165,10 +167,11 @@ fn check_memory(options: &ParserOptions, used: &mut usize, additional: usize) ->
     if let Some(max) = options.max_memory
         && *used > max
     {
-        return Err(Error::Parse(format!(
-            "memory limit exceeded: {} > {}",
-            used, max
-        )));
+        return Err(crate::parse_error::ParseError::MemoryLimitExceeded {
+            used: *used,
+            max,
+        }
+        .into());
     }
     Ok(())
 }
@@ -188,9 +191,11 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr
-            .unescape_value()
-            .map_err(|e| Error::Parse(format!("attribute value decode error: {}", e)))?;
+        let value = attr.unescape_value().map_err(|e| {
+            crate::parse_error::ParseError::AttributeDecodeError {
+                message: e.to_string(),
+            }
+        })?;
 
         if key == "xmlns" {
             // Default namespace declaration

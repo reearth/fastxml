@@ -8,7 +8,7 @@ use std::io::BufRead;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::namespace::Namespace;
 
 /// An XML event for streaming processing.
@@ -147,9 +147,11 @@ impl<R: BufRead> StreamingParser<R> {
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e
-                        .unescape()
-                        .map_err(|e| Error::Parse(format!("text decode error: {}", e)))?;
+                    let text = e.unescape().map_err(|e| {
+                        crate::parse_error::ParseError::TextDecodeError {
+                            message: e.to_string(),
+                        }
+                    })?;
                     if !text.is_empty() {
                         let event = XmlEvent::Text(text.into_owned());
                         self.dispatch_event(&event)?;
@@ -205,10 +207,11 @@ impl<R: BufRead> StreamingParser<R> {
                     break;
                 }
                 Err(e) => {
-                    return Err(Error::Parse(format!(
-                        "parse error at position {}: {}",
-                        position, e
-                    )));
+                    return Err(crate::parse_error::ParseError::AtPosition {
+                        position,
+                        message: e.to_string(),
+                    }
+                    .into());
                 }
             }
             buffer.clear();
@@ -241,9 +244,11 @@ fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> 
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr
-            .unescape_value()
-            .map_err(|e| Error::Parse(format!("attribute value decode error: {}", e)))?;
+        let value = attr.unescape_value().map_err(|e| {
+            crate::parse_error::ParseError::AttributeDecodeError {
+                message: e.to_string(),
+            }
+        })?;
 
         if key == "xmlns" {
             namespace_decls.push(Namespace::default_ns(value.as_ref()));

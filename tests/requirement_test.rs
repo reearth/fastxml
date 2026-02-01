@@ -2,10 +2,13 @@
 //!
 //! This file tests all functional requirements from the implementation plan.
 
+use fastxml::node_error::NodeError;
+use fastxml::parse_error::ParseError;
 use fastxml::schema::{
     InMemoryStore, SchemaStore, TempDirStore, create_xml_schema_validation_context,
     validate_document_by_schema,
 };
+use fastxml::xpath::error::XPathEvalError;
 use fastxml::xpath::collect_text_values;
 use fastxml::{
     ParserOptions, create_context, evaluate, find_nodes_by_xpath, find_readonly_nodes_by_xpath,
@@ -214,7 +217,7 @@ fn test_api_memory_limit() {
     let large_xml = format!("<root>{}</root>", "x".repeat(1000));
     let result = parse_with_options(&large_xml, &options);
     assert!(
-        matches!(&result, Err(Error::Parse(msg)) if msg.contains("memory")),
+        matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
         "Expected memory limit error, got: {:?}",
         result
     );
@@ -630,8 +633,8 @@ fn test_error_handling_invalid_xml() {
     // Might succeed but have no root - either is acceptable
     if let Ok(doc) = result {
         assert!(
-            matches!(doc.get_root_element(), Err(Error::NodeNotFound(_))),
-            "Empty doc should return NodeNotFound, got: {:?}",
+            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
+            "Empty doc should return Node error, got: {:?}",
             doc.get_root_element()
         );
     }
@@ -644,7 +647,7 @@ fn test_error_handling_invalid_xml() {
     let large_xml = format!("<root>{}</root>", "x".repeat(100));
     let result = parse_with_options(&large_xml, &options);
     assert!(
-        matches!(&result, Err(Error::Parse(msg)) if msg.contains("memory")),
+        matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
         "Expected memory limit error, got: {:?}",
         result
     );
@@ -668,7 +671,7 @@ fn test_error_handling_invalid_xpath() {
     // Unknown function
     let result = evaluate(&doc, "/root[unknownfn()]");
     assert!(
-        matches!(result, Err(Error::XPathEval(ref msg)) if msg.contains("unknown function")),
+        matches!(&result, Err(Error::XPathEval(XPathEvalError::UnknownFunction { name })) if name == "unknownfn"),
         "Expected XPathEval error for unknown function, got: {:?}",
         result
     );

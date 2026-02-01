@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::event::{XmlEvent, XmlEventHandler};
 
 use super::types::*;
@@ -132,14 +132,16 @@ impl XsdParser {
     /// Parses and validates minOccurs/maxOccurs from attributes.
     /// Returns (minOccurs, maxOccurs) or an error if invalid.
     fn parse_occurs(attrs: &HashMap<String, String>) -> Result<(Occurs, Occurs)> {
+        use crate::schema::error::SchemaError;
+
         let min = if let Some(min_str) = attrs.get("minOccurs") {
-            Occurs::parse(min_str).map_err(|e| Error::Schema(e))?
+            Occurs::parse(min_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?
         } else {
             Occurs::default()
         };
 
         let max = if let Some(max_str) = attrs.get("maxOccurs") {
-            Occurs::parse(max_str).map_err(|e| Error::Schema(e))?
+            Occurs::parse(max_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?
         } else {
             Occurs::default()
         };
@@ -147,10 +149,11 @@ impl XsdParser {
         // Validate minOccurs <= maxOccurs
         match (&min, &max) {
             (Occurs::Count(min_val), Occurs::Count(max_val)) if min_val > max_val => {
-                return Err(Error::Schema(format!(
-                    "minOccurs ({}) cannot be greater than maxOccurs ({})",
-                    min_val, max_val
-                )));
+                return Err(SchemaError::MinOccursGreaterThanMaxOccurs {
+                    min: *min_val,
+                    max: *max_val,
+                }
+                .into());
             }
             _ => {}
         }
@@ -418,10 +421,13 @@ impl XsdParser {
     }
 
     fn handle_all(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        use crate::schema::error::SchemaError;
+
         let mut all = XsdAll::default();
         // Parse minOccurs (maxOccurs for all is always 1 per XSD spec)
         if let Some(min_str) = attrs.get("minOccurs") {
-            all.min_occurs = Occurs::parse(min_str).map_err(|e| Error::Schema(e))?;
+            all.min_occurs =
+                Occurs::parse(min_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?;
         }
         all.max_occurs = Occurs::Count(1);
         self.stack.push(StackFrame::All(all));
@@ -715,33 +721,42 @@ impl XsdParser {
 
     /// Parses a non-negative integer facet value with validation.
     fn parse_facet_length(name: &str, value: &str) -> Result<u32> {
+        use crate::schema::error::SchemaError;
+
         // Check for negative values
         if value.starts_with('-') {
-            return Err(Error::Schema(format!(
-                "invalid {} value '{}': must be non-negative",
-                name, value
-            )));
+            return Err(SchemaError::InvalidFacetValue {
+                facet: name.to_string(),
+                value: value.to_string(),
+                reason: "must be non-negative".to_string(),
+            }
+            .into());
         }
         value.parse::<u32>().map_err(|_| {
-            Error::Schema(format!(
-                "invalid {} value '{}': must be a non-negative integer",
-                name, value
-            ))
+            SchemaError::InvalidFacetValue {
+                facet: name.to_string(),
+                value: value.to_string(),
+                reason: "must be a non-negative integer".to_string(),
+            }
+            .into()
         })
     }
 
     /// Validates that existing facets in a restriction are consistent with a new facet.
     fn validate_facet_consistency(facets: &[XsdFacet], new_facet: &XsdFacet) -> Result<()> {
+        use crate::schema::error::SchemaError;
+
         match new_facet {
             XsdFacet::MinLength(min_len) => {
                 // Check if maxLength exists and is less than minLength
                 for f in facets {
                     if let XsdFacet::MaxLength(max_len) = f {
                         if min_len > max_len {
-                            return Err(Error::Schema(format!(
-                                "minLength ({}) cannot be greater than maxLength ({})",
-                                min_len, max_len
-                            )));
+                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
+                                min_length: *min_len as u64,
+                                max_length: *max_len as u64,
+                            }
+                            .into());
                         }
                     }
                 }
@@ -751,10 +766,11 @@ impl XsdParser {
                 for f in facets {
                     if let XsdFacet::MinLength(min_len) = f {
                         if min_len > max_len {
-                            return Err(Error::Schema(format!(
-                                "minLength ({}) cannot be greater than maxLength ({})",
-                                min_len, max_len
-                            )));
+                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
+                                min_length: *min_len as u64,
+                                max_length: *max_len as u64,
+                            }
+                            .into());
                         }
                     }
                 }
@@ -764,10 +780,11 @@ impl XsdParser {
                 for f in facets {
                     if let XsdFacet::TotalDigits(total) = f {
                         if frac > total {
-                            return Err(Error::Schema(format!(
-                                "fractionDigits ({}) cannot be greater than totalDigits ({})",
-                                frac, total
-                            )));
+                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
+                                fraction_digits: *frac as u64,
+                                total_digits: *total as u64,
+                            }
+                            .into());
                         }
                     }
                 }
@@ -777,10 +794,11 @@ impl XsdParser {
                 for f in facets {
                     if let XsdFacet::FractionDigits(frac) = f {
                         if frac > total {
-                            return Err(Error::Schema(format!(
-                                "fractionDigits ({}) cannot be greater than totalDigits ({})",
-                                frac, total
-                            )));
+                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
+                                fraction_digits: *frac as u64,
+                                total_digits: *total as u64,
+                            }
+                            .into());
                         }
                     }
                 }
@@ -1441,10 +1459,10 @@ impl XmlEventHandler for XsdParser {
 
     fn finish(&mut self) -> Result<()> {
         if !self.stack.is_empty() {
-            return Err(Error::XsdParse(format!(
-                "Unexpected end of schema, stack not empty: {} frames remaining",
-                self.stack.len()
-            )));
+            return Err(crate::schema::xsd::error::XsdParseError::UnexpectedEndOfSchema {
+                remaining_frames: self.stack.len(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -1493,9 +1511,11 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
                 xsd_parser.handle(&event)?;
             }
             Ok(Event::Text(ref e)) => {
-                let text = e
-                    .unescape()
-                    .map_err(|e| Error::Parse(format!("text decode error: {}", e)))?;
+                let text = e.unescape().map_err(|e| {
+                    crate::parse_error::ParseError::TextDecodeError {
+                        message: e.to_string(),
+                    }
+                })?;
                 if !text.is_empty() {
                     let event = XmlEvent::Text(text.into_owned());
                     xsd_parser.handle(&event)?;
@@ -1507,10 +1527,11 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
             }
             Ok(_) => {}
             Err(e) => {
-                return Err(Error::XsdParse(format!(
-                    "parse error at position {}: {}",
-                    position, e
-                )));
+                return Err(crate::schema::xsd::error::XsdParseError::ParseError {
+                    position: position as usize,
+                    message: e.to_string(),
+                }
+                .into());
             }
         }
         buf.clear();
@@ -1531,9 +1552,11 @@ fn convert_start_event(e: &quick_xml::events::BytesStart<'_>, position: u64) -> 
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr
-            .unescape_value()
-            .map_err(|e| Error::Parse(format!("attribute value decode error: {}", e)))?;
+        let value = attr.unescape_value().map_err(|e| {
+            crate::parse_error::ParseError::AttributeDecodeError {
+                message: e.to_string(),
+            }
+        })?;
 
         if key == "xmlns" {
             namespace_decls.push(crate::namespace::Namespace::default_ns(value.as_ref()));

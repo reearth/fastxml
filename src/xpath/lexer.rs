@@ -1,6 +1,7 @@
 //! XPath expression tokenizer.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::xpath::error::XPathSyntaxError;
 
 /// XPath token types.
 #[derive(Debug, Clone, PartialEq)]
@@ -278,10 +279,10 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Ok(Token::NotEquals)
                 } else {
-                    Err(Error::XPathSyntax(format!(
-                        "unexpected character '!' at position {}",
-                        pos
-                    )))
+                    Err(XPathSyntaxError::UnexpectedCharacter {
+                        char: '!',
+                        position: pos,
+                    }.into())
                 }
             }
             '<' => {
@@ -308,19 +309,19 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     Ok(Token::DoubleColon)
                 } else {
-                    Err(Error::XPathSyntax(format!(
-                        "unexpected ':' at position {}",
-                        pos
-                    )))
+                    Err(XPathSyntaxError::UnexpectedCharacter {
+                        char: ':',
+                        position: pos,
+                    }.into())
                 }
             }
             '\'' | '"' => self.read_string(),
             c if c.is_ascii_digit() => self.read_number(),
             c if is_name_start_char(c) => self.read_name_or_keyword(),
-            _ => Err(Error::XPathSyntax(format!(
-                "unexpected character '{}' at position {}",
-                ch, pos
-            ))),
+            _ => Err(XPathSyntaxError::UnexpectedCharacter {
+                char: ch,
+                position: pos,
+            }.into()),
         }
     }
 
@@ -398,7 +399,7 @@ impl<'a> Lexer<'a> {
         let s = &self.input[start..end];
         let num: f64 = s
             .parse()
-            .map_err(|_| Error::XPathSyntax(format!("invalid number '{}'", s)))?;
+            .map_err(|_| XPathSyntaxError::InvalidNumber { value: s.to_string() })?;
 
         Ok(Token::Number(num))
     }
@@ -503,12 +504,9 @@ impl<'a> Lexer<'a> {
 
             // Unknown axis (name followed by :: but not a valid axis name)
             _ if is_axis => {
-                return Err(Error::XPathSyntax(format!(
-                    "unknown axis '{}'. Valid axes: child, descendant, parent, self, \
-                     descendant-or-self, ancestor, ancestor-or-self, following-sibling, \
-                     preceding-sibling, following, preceding, attribute, namespace",
-                    name
-                )));
+                return Err(XPathSyntaxError::UnknownAxis {
+                    name: name.to_string(),
+                }.into());
             }
 
             _ => Token::Name(name.to_string()),

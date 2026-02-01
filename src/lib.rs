@@ -104,6 +104,8 @@ pub mod event;
 pub mod generator;
 pub mod namespace;
 pub mod node;
+pub mod node_error;
+pub mod parse_error;
 pub mod parser;
 pub mod profile;
 pub mod schema;

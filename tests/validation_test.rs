@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
+use fastxml::error::Error;
 use fastxml::event::{XmlEvent, XmlEventHandler};
+use fastxml::schema::error::SchemaError;
 use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::{create_builtin_schema, parse_xsd};
@@ -122,7 +124,7 @@ mod schema_parsing {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser rejects minOccurs > maxOccurs
         assert!(
-            matches!(&result, Err(e) if format!("{:?}", e).contains("minOccurs") && format!("{:?}", e).contains("maxOccurs")),
+            matches!(&result, Err(Error::Schema(SchemaError::MinOccursGreaterThanMaxOccurs { min: 5, max: 3 }))),
             "Expected error about minOccurs > maxOccurs, got: {:?}",
             result
         );
@@ -197,7 +199,7 @@ mod schema_parsing {
         let result = parse_xsd(xsd.as_bytes());
         // XSD parser rejects conflicting facets (minLength > maxLength)
         assert!(
-            matches!(&result, Err(e) if format!("{:?}", e).contains("minLength") && format!("{:?}", e).contains("maxLength")),
+            matches!(&result, Err(Error::Schema(SchemaError::MinLengthGreaterThanMaxLength { min_length: 10, max_length: 5 }))),
             "Expected error about conflicting facets, got: {:?}",
             result
         );

@@ -7,7 +7,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use url::Url;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::schema::error::SchemaError;
 use crate::schema::fetcher::{FetchResult, SchemaFetcher};
 use crate::schema::store::SchemaStore;
 
@@ -51,16 +52,17 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
 
         while let Some(current_uri) = queue.pop_front() {
             if self.resolving.contains(&current_uri) {
-                return Err(Error::CircularDependency(current_uri));
+                return Err(SchemaError::CircularDependency { uri: current_uri }.into());
             }
             self.resolving.insert(current_uri.clone());
 
             // Get imports and includes from the current schema
             let (imports, includes) = {
-                let schema = self
-                    .schemas
-                    .get(&current_uri)
-                    .ok_or_else(|| Error::Schema(format!("Schema not found: {}", current_uri)))?;
+                let schema = self.schemas.get(&current_uri).ok_or_else(|| {
+                    crate::schema::error::SchemaError::SchemaNotFound {
+                        uri: current_uri.clone(),
+                    }
+                })?;
                 (schema.imports.clone(), schema.includes.clone())
             };
 
@@ -150,15 +152,20 @@ pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
     }
 
     // Parse base URL
-    let base_url = Url::parse(base)
-        .map_err(|e| Error::Schema(format!("Invalid base URI '{}': {}", base, e)))?;
+    let base_url = Url::parse(base).map_err(|e| {
+        crate::schema::error::SchemaError::InvalidBaseUri {
+            uri: base.to_string(),
+            message: e.to_string(),
+        }
+    })?;
 
     // Resolve relative URL
     let resolved = base_url.join(relative).map_err(|e| {
-        Error::Schema(format!(
-            "Failed to resolve '{}' against '{}': {}",
-            relative, base, e
-        ))
+        crate::schema::error::SchemaError::UrlResolutionFailed {
+            relative: relative.to_string(),
+            base: base.to_string(),
+            message: e.to_string(),
+        }
     })?;
 
     Ok(resolved.to_string())
@@ -251,7 +258,10 @@ impl DependencyTracker {
         }
 
         if in_progress.contains(uri) {
-            return Err(Error::CircularDependency(uri.to_string()));
+            return Err(SchemaError::CircularDependency {
+                uri: uri.to_string(),
+            }
+            .into());
         }
 
         in_progress.insert(uri.to_string());

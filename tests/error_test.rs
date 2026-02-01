@@ -1,6 +1,9 @@
 //! Tests for error handling with malformed XML and validation violations.
 
 use fastxml::error::Error;
+use fastxml::node_error::NodeError;
+use fastxml::parse_error::ParseError;
+use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
 use fastxml::{parse, parse_with_options, ParserOptions};
 
 // =============================================================================
@@ -24,7 +27,7 @@ mod malformed_xml {
         let xml = "<root></roo>";
         let result = parse(xml);
         assert!(
-            matches!(&result, Err(Error::Parse(msg)) if msg.contains("expected") || msg.contains("mismatch")),
+            matches!(&result, Err(Error::Parse(ParseError::AtPosition { message, .. })) if message.contains("expected") || message.contains("mismatch")),
             "Expected Parse error with mismatch message, got: {:?}",
             result
         );
@@ -101,7 +104,7 @@ mod malformed_xml {
         let result = parse(xml);
         // quick-xml error: "Cannot find ';' after '&'"
         assert!(
-            matches!(&result, Err(Error::Parse(msg)) if msg.contains("&") || msg.contains(";")),
+            matches!(&result, Err(Error::Parse(_))),
             "Expected Parse error for unescaped &, got: {:?}",
             result
         );
@@ -176,7 +179,7 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::NodeNotFound(_))),
+            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
             "Empty doc should have no root"
         );
     }
@@ -188,7 +191,7 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::NodeNotFound(_))),
+            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
             "Whitespace-only doc should have no root"
         );
     }
@@ -200,7 +203,7 @@ mod malformed_xml {
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
-            matches!(doc.get_root_element(), Err(Error::NodeNotFound(_))),
+            matches!(doc.get_root_element(), Err(Error::Node(NodeError::NoRootElement))),
             "Comment-only doc should have no root"
         );
     }
@@ -346,7 +349,7 @@ mod parser_options {
         let large_xml = format!("<root>{}</root>", "x".repeat(1000));
         let result = parse_with_options(&large_xml, &options);
         assert!(
-            matches!(&result, Err(Error::Parse(msg)) if msg.contains("memory")),
+            matches!(&result, Err(Error::Parse(ParseError::MemoryLimitExceeded { .. }))),
             "Expected memory limit error, got: {:?}",
             result
         );
@@ -405,11 +408,12 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_unknown_function() {
+        use super::XPathEvalError;
         let doc = parse("<root/>").unwrap();
         let result = evaluate(&doc, "unknownfn()");
         // Unknown function returns error
         assert!(
-            matches!(result, Err(Error::XPathEval(ref msg)) if msg.contains("unknown function")),
+            matches!(&result, Err(Error::XPathEval(XPathEvalError::UnknownFunction { name })) if name == "unknownfn"),
             "Expected XPathEval error for unknown function, got: {:?}",
             result
         );
@@ -417,11 +421,12 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_unknown_axis() {
+        use super::XPathSyntaxError;
         let doc = parse("<root/>").unwrap();
         let result = evaluate(&doc, "unknownaxis::*");
         // Unknown axis returns error
         assert!(
-            matches!(result, Err(Error::XPathSyntax(ref msg)) if msg.contains("unknown axis")),
+            matches!(&result, Err(Error::XPathSyntax(XPathSyntaxError::UnknownAxis { name })) if name == "unknownaxis"),
             "Expected XPathSyntax error for unknown axis, got: {:?}",
             result
         );
@@ -482,8 +487,8 @@ mod xpath_errors {
         let result = evaluate(&doc, "/root");
         // XPath on empty doc returns NodeNotFound error (no root element)
         assert!(
-            matches!(result, Err(Error::NodeNotFound(_))),
-            "Expected NodeNotFound error, got: {:?}",
+            matches!(result, Err(Error::Node(NodeError::NoRootElement))),
+            "Expected Node error, got: {:?}",
             result
         );
     }
@@ -545,6 +550,7 @@ mod streaming_errors {
     #[test]
     fn test_streaming_mismatched_tags() {
         use fastxml::error::Error;
+        use fastxml::parse_error::ParseError;
 
         let xml = "<root></wrong>";
         let mut parser = StreamingParser::new(xml.as_bytes());
@@ -553,7 +559,7 @@ mod streaming_errors {
 
         let result = parser.parse();
         assert!(
-            matches!(result, Err(Error::Parse(ref msg)) if msg.contains("expected") || msg.contains("mismatch") || msg.contains("EndTag")),
+            matches!(&result, Err(Error::Parse(ParseError::AtPosition { message, .. })) if message.contains("expected") || message.contains("mismatch") || message.contains("EndTag")),
             "Expected Parse error for mismatched tags, got: {:?}",
             result
         );

@@ -35,8 +35,9 @@
 //! - `ceiling(number)` - rounds up
 //! - `round(number)` - rounds to nearest integer
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::node::XmlNode;
+use crate::xpath::error::XPathEvalError;
 
 use super::types::{EvaluationContext, XPathValue};
 
@@ -85,7 +86,10 @@ pub fn evaluate_function(
         // text() is handled as a node test, but if called as function
         "text" => fn_text(args, ctx),
 
-        _ => Err(Error::XPathEval(format!("unknown function: {}", name))),
+        _ => Err(XPathEvalError::UnknownFunction {
+            name: name.to_string(),
+        }
+        .into()),
     }
 }
 
@@ -96,7 +100,12 @@ pub fn evaluate_function(
 /// `last()` - returns the context size.
 fn fn_last(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if !args.is_empty() {
-        return Err(Error::XPathEval("last() takes no arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "last".to_string(),
+            expected: "0".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     Ok(XPathValue::Number(ctx.size() as f64))
 }
@@ -104,7 +113,12 @@ fn fn_last(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathVa
 /// `position()` - returns the context position.
 fn fn_position(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if !args.is_empty() {
-        return Err(Error::XPathEval("position() takes no arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "position".to_string(),
+            expected: "0".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     Ok(XPathValue::Number(ctx.position() as f64))
 }
@@ -112,14 +126,21 @@ fn fn_position(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPa
 /// `count(node-set)` - returns the number of nodes in the node-set.
 fn fn_count(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("count() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "count".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     let nodes = args.into_iter().next().unwrap();
     match nodes {
         XPathValue::NodeSet(ns) => Ok(XPathValue::Number(ns.len() as f64)),
-        _ => Err(Error::XPathEval(
-            "count() requires a node-set argument".into(),
-        )),
+        _ => Err(XPathEvalError::InvalidArgumentType {
+            function: "count".to_string(),
+            expected: "node-set".to_string(),
+        }
+        .into()),
     }
 }
 
@@ -145,7 +166,12 @@ fn fn_namespace_uri(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Resul
 /// `id(object)` - selects elements by their ID.
 fn fn_id(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("id() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "id".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let id_value = args.into_iter().next().unwrap();
@@ -201,7 +227,12 @@ fn fn_string(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPath
     } else if args.len() == 1 {
         args.into_iter().next().unwrap()
     } else {
-        return Err(Error::XPathEval("string() takes 0 or 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "string".to_string(),
+            expected: "0 or 1".to_string(),
+            found: args.len(),
+        }
+        .into());
     };
 
     Ok(XPathValue::String(value.to_string_value()))
@@ -210,9 +241,12 @@ fn fn_string(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPath
 /// `concat(string, string, ...)` - concatenates all arguments.
 fn fn_concat(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() < 2 {
-        return Err(Error::XPathEval(
-            "concat() requires at least 2 arguments".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "concat".to_string(),
+            expected: "at least 2".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let result: String = args.into_iter().map(|v| v.to_string_value()).collect();
@@ -223,9 +257,12 @@ fn fn_concat(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPat
 /// `starts-with(string, string)` - returns true if first string starts with second.
 fn fn_starts_with(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval(
-            "starts-with() requires 2 arguments".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "starts-with".to_string(),
+            expected: "2".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -238,7 +275,12 @@ fn fn_starts_with(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result
 /// `contains(haystack, needle)` - returns true if haystack contains needle.
 fn fn_contains(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval("contains() requires 2 arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "contains".to_string(),
+            expected: "2".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -253,9 +295,12 @@ fn fn_contains(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XP
 /// Note: XPath uses 1-based indexing and rounds to nearest integer.
 fn fn_substring(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() < 2 || args.len() > 3 {
-        return Err(Error::XPathEval(
-            "substring() requires 2 or 3 arguments".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "substring".to_string(),
+            expected: "2 or 3".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -294,9 +339,12 @@ fn fn_substring(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
 /// `substring-before(string, string)` - returns substring before first occurrence.
 fn fn_substring_before(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval(
-            "substring-before() requires 2 arguments".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "substring-before".to_string(),
+            expected: "2".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -317,9 +365,12 @@ fn fn_substring_before(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> R
 /// `substring-after(string, string)` - returns substring after first occurrence.
 fn fn_substring_after(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 2 {
-        return Err(Error::XPathEval(
-            "substring-after() requires 2 arguments".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "substring-after".to_string(),
+            expected: "2".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -345,9 +396,12 @@ fn fn_string_length(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Resul
     } else if args.len() == 1 {
         args.into_iter().next().unwrap().to_string_value()
     } else {
-        return Err(Error::XPathEval(
-            "string-length() takes 0 or 1 argument".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "string-length".to_string(),
+            expected: "0 or 1".to_string(),
+            found: args.len(),
+        }
+        .into());
     };
 
     Ok(XPathValue::Number(string.chars().count() as f64))
@@ -360,9 +414,12 @@ fn fn_normalize_space(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Res
     } else if args.len() == 1 {
         args.into_iter().next().unwrap().to_string_value()
     } else {
-        return Err(Error::XPathEval(
-            "normalize-space() takes 0 or 1 argument".into(),
-        ));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "normalize-space".to_string(),
+            expected: "0 or 1".to_string(),
+            found: args.len(),
+        }
+        .into());
     };
 
     // Split by whitespace and rejoin with single spaces
@@ -374,7 +431,12 @@ fn fn_normalize_space(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Res
 /// `translate(string, from, to)` - replaces characters.
 fn fn_translate(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 3 {
-        return Err(Error::XPathEval("translate() requires 3 arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "translate".to_string(),
+            expected: "3".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let mut iter = args.into_iter();
@@ -413,7 +475,12 @@ fn fn_translate(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
 /// `boolean(object)` - converts the argument to boolean.
 fn fn_boolean(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("boolean() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "boolean".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let value = args.into_iter().next().unwrap();
@@ -423,7 +490,12 @@ fn fn_boolean(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPa
 /// `not(boolean)` - negates the boolean value.
 fn fn_not(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("not() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "not".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let value = args.into_iter().next().unwrap();
@@ -433,7 +505,12 @@ fn fn_not(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathVa
 /// `true()` - returns true.
 fn fn_true(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if !args.is_empty() {
-        return Err(Error::XPathEval("true() takes no arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "true".to_string(),
+            expected: "0".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     Ok(XPathValue::Boolean(true))
 }
@@ -441,7 +518,12 @@ fn fn_true(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathV
 /// `false()` - returns false.
 fn fn_false(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if !args.is_empty() {
-        return Err(Error::XPathEval("false() takes no arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "false".to_string(),
+            expected: "0".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     Ok(XPathValue::Boolean(false))
 }
@@ -449,7 +531,12 @@ fn fn_false(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPath
 /// `lang(string)` - checks if the context node's language matches.
 fn fn_lang(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("lang() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "lang".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let lang_arg = args
@@ -489,7 +576,12 @@ fn fn_number(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPath
     } else if args.len() == 1 {
         args.into_iter().next().unwrap()
     } else {
-        return Err(Error::XPathEval("number() takes 0 or 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "number".to_string(),
+            expected: "0 or 1".to_string(),
+            found: args.len(),
+        }
+        .into());
     };
 
     Ok(XPathValue::Number(value.to_number()))
@@ -498,7 +590,12 @@ fn fn_number(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPath
 /// `sum(node-set)` - returns the sum of the numeric values of nodes.
 fn fn_sum(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("sum() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "sum".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let nodes = args.into_iter().next().unwrap();
@@ -514,16 +611,23 @@ fn fn_sum(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathVa
                 .fold(0.0, |acc, v| if v.is_nan() { f64::NAN } else { acc + v });
             Ok(XPathValue::Number(sum))
         }
-        _ => Err(Error::XPathEval(
-            "sum() requires a node-set argument".into(),
-        )),
+        _ => Err(XPathEvalError::InvalidArgumentType {
+            function: "sum".to_string(),
+            expected: "node-set".to_string(),
+        }
+        .into()),
     }
 }
 
 /// `floor(number)` - returns the largest integer not greater than the argument.
 fn fn_floor(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("floor() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "floor".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let value = args.into_iter().next().unwrap().to_number();
@@ -533,7 +637,12 @@ fn fn_floor(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPath
 /// `ceiling(number)` - returns the smallest integer not less than the argument.
 fn fn_ceiling(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("ceiling() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "ceiling".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let value = args.into_iter().next().unwrap().to_number();
@@ -545,7 +654,12 @@ fn fn_ceiling(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPa
 /// Note: XPath rounds .5 towards positive infinity (not banker's rounding).
 fn fn_round(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
-        return Err(Error::XPathEval("round() requires 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "round".to_string(),
+            expected: "1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let value = args.into_iter().next().unwrap().to_number();
@@ -569,7 +683,12 @@ fn fn_round(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPath
 /// (Usually handled as a node test, but can be called as function)
 fn fn_text(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if !args.is_empty() {
-        return Err(Error::XPathEval("text() takes no arguments".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "text".to_string(),
+            expected: "0".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
     let content = ctx.node.get_content().unwrap_or_default();
     Ok(XPathValue::String(content))
@@ -585,7 +704,12 @@ fn get_first_node_or_context(
     }
 
     if args.len() != 1 {
-        return Err(Error::XPathEval("function takes 0 or 1 argument".into()));
+        return Err(XPathEvalError::WrongArgumentCount {
+            function: "(node function)".to_string(),
+            expected: "0 or 1".to_string(),
+            found: args.len(),
+        }
+        .into());
     }
 
     let arg = args.into_iter().next().unwrap();

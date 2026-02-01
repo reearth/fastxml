@@ -2,12 +2,19 @@
 
 use std::io;
 
+use crate::node_error::NodeError;
+use crate::parse_error::ParseError;
+use crate::schema::error::SchemaError;
+use crate::schema::fetch_error::FetchError;
+use crate::schema::xsd::error::XsdParseError;
+use crate::xpath::error::{XPathEvalError, XPathSyntaxError};
+
 /// Main error type for fastxml operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// XML parsing error
     #[error("parse error: {0}")]
-    Parse(String),
+    Parse(#[from] ParseError),
 
     /// IO error
     #[error("io error: {0}")]
@@ -15,15 +22,15 @@ pub enum Error {
 
     /// XPath syntax error
     #[error("xpath syntax error: {0}")]
-    XPathSyntax(String),
+    XPathSyntax(#[from] XPathSyntaxError),
 
     /// XPath evaluation error
     #[error("xpath evaluation error: {0}")]
-    XPathEval(String),
+    XPathEval(#[from] XPathEvalError),
 
     /// Schema error
     #[error("schema error: {0}")]
-    Schema(String),
+    Schema(#[from] SchemaError),
 
     /// Validation error
     #[error("validation error: {message}")]
@@ -40,9 +47,9 @@ pub enum Error {
     #[error("namespace error: {0}")]
     Namespace(String),
 
-    /// Node not found
-    #[error("node not found: {0}")]
-    NodeNotFound(String),
+    /// Node-related error
+    #[error("node error: {0}")]
+    Node(#[from] NodeError),
 
     /// Invalid operation
     #[error("invalid operation: {0}")]
@@ -50,7 +57,7 @@ pub enum Error {
 
     /// Network/fetch error
     #[error("fetch error: {0}")]
-    Fetch(String),
+    Fetch(#[from] FetchError),
 
     /// UTF-8 encoding error
     #[error("utf8 error: {0}")]
@@ -62,26 +69,24 @@ pub enum Error {
 
     /// XSD parsing error
     #[error("xsd parse error: {0}")]
-    XsdParse(String),
-
-    /// Circular dependency in schema imports
-    #[error("circular dependency in schema imports: {0}")]
-    CircularDependency(String),
-
-    /// Unresolved type reference
-    #[error("unresolved type reference: {0}")]
-    UnresolvedType(String),
+    XsdParse(#[from] XsdParseError),
 }
 
 impl From<quick_xml::Error> for Error {
     fn from(err: quick_xml::Error) -> Self {
-        Error::Parse(err.to_string())
+        ParseError::Generic {
+            message: err.to_string(),
+        }
+        .into()
     }
 }
 
 impl From<quick_xml::events::attributes::AttrError> for Error {
     fn from(err: quick_xml::events::attributes::AttrError) -> Self {
-        Error::Parse(format!("attribute error: {}", err))
+        ParseError::AttributeError {
+            message: err.to_string(),
+        }
+        .into()
     }
 }
 

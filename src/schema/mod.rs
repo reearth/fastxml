@@ -52,6 +52,8 @@
 //! let errors = ctx.validate(&document)?;
 //! ```
 
+pub mod error;
+pub mod fetch_error;
 pub mod fetcher;
 pub mod memory;
 pub mod store;
