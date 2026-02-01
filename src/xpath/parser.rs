@@ -107,6 +107,8 @@ pub enum Expr {
     String(String),
     /// Number literal
     Number(f64),
+    /// Variable reference ($name)
+    Variable(String),
     /// Function call
     Function {
         /// Function name
@@ -229,9 +231,51 @@ impl Parser {
         }
     }
 
+    /// Extracts a variable name from the current token.
+    /// Accepts both Name tokens and function keyword tokens (e.g., name, text, position).
+    fn extract_variable_name(&mut self) -> Result<String> {
+        let name = match self.current() {
+            Token::Name(n) => n.clone(),
+            // Function keywords can also be used as variable names
+            Token::NameFn => "name".to_string(),
+            Token::TextFn => "text".to_string(),
+            Token::LocalNameFn => "local-name".to_string(),
+            Token::NamespaceUriFn => "namespace-uri".to_string(),
+            Token::ContainsFn => "contains".to_string(),
+            Token::StartsWithFn => "starts-with".to_string(),
+            Token::Not => "not".to_string(),
+            Token::StringFn => "string".to_string(),
+            Token::ConcatFn => "concat".to_string(),
+            Token::SubstringFn => "substring".to_string(),
+            Token::SubstringBeforeFn => "substring-before".to_string(),
+            Token::SubstringAfterFn => "substring-after".to_string(),
+            Token::StringLengthFn => "string-length".to_string(),
+            Token::NormalizeSpaceFn => "normalize-space".to_string(),
+            Token::TranslateFn => "translate".to_string(),
+            Token::BooleanFn => "boolean".to_string(),
+            Token::NumberFn => "number".to_string(),
+            Token::SumFn => "sum".to_string(),
+            Token::FloorFn => "floor".to_string(),
+            Token::CeilingFn => "ceiling".to_string(),
+            Token::RoundFn => "round".to_string(),
+            Token::CountFn => "count".to_string(),
+            Token::LastFn => "last".to_string(),
+            Token::PositionFn => "position".to_string(),
+            Token::TrueFn => "true".to_string(),
+            Token::FalseFn => "false".to_string(),
+            _ => {
+                return Err(XPathSyntaxError::UnexpectedToken {
+                    found: Some(self.current().clone()),
+                    expected: "variable name after $".to_string(),
+                }
+                .into());
+            }
+        };
+        self.advance();
+        Ok(name)
+    }
+
     fn parse_union_expr(&mut self) -> Result<Expr> {
-        // Use the additive expression chain which properly handles
-        // function calls, paths, and arithmetic expressions
         self.parse_additive_expr()
     }
 
@@ -628,6 +672,12 @@ impl Parser {
                 self.expect(&Token::RightParen)?;
                 Ok(inner)
             }
+            Token::Dollar => {
+                self.advance();
+                // Accept Name tokens and function name keywords as variable names
+                let var_name = self.extract_variable_name()?;
+                Ok(Expr::Variable(var_name))
+            }
             Token::Name(name) => {
                 // Check if this is a function call (name followed by '(')
                 if self.peek() == Some(&Token::LeftParen) {
@@ -713,15 +763,57 @@ impl Parser {
         Ok(left)
     }
 
-    /// Parses a unary expression: '-' expr | primary
+    /// Parses a unary expression: '-' expr | union
     fn parse_unary_expr(&mut self) -> Result<Expr> {
         if matches!(self.current(), Token::Minus) {
             self.advance();
             let inner = self.parse_unary_expr()?;
             Ok(Expr::Negate(Box::new(inner)))
         } else {
-            self.parse_primary_expr()
+            self.parse_path_union_expr()
         }
+    }
+
+    /// Parses a union expression: path ('|' path)*
+    fn parse_path_union_expr(&mut self) -> Result<Expr> {
+        let first = self.parse_primary_expr()?;
+
+        // Check if there's a union operator
+        if !matches!(self.current(), Token::Pipe) {
+            return Ok(first);
+        }
+
+        // Extract the path from first expression
+        let first_path = match first {
+            Expr::Path(p) => p,
+            _ => {
+                // Union operator requires path expressions
+                return Err(XPathSyntaxError::UnexpectedToken {
+                    found: Some(self.current().clone()),
+                    expected: "path expression for union".to_string(),
+                }
+                .into());
+            }
+        };
+
+        let mut paths = vec![first_path];
+
+        while matches!(self.current(), Token::Pipe) {
+            self.advance();
+            let next = self.parse_primary_expr()?;
+            match next {
+                Expr::Path(p) => paths.push(p),
+                _ => {
+                    return Err(XPathSyntaxError::UnexpectedToken {
+                        found: Some(self.current().clone()),
+                        expected: "path expression for union".to_string(),
+                    }
+                    .into());
+                }
+            }
+        }
+
+        Ok(Expr::Union(paths))
     }
 
     /// Parses a primary expression (path, literal, function, or parenthesized)
@@ -736,6 +828,12 @@ impl Parser {
                 let n = *n;
                 self.advance();
                 Ok(Expr::Number(n))
+            }
+            Token::Dollar => {
+                self.advance();
+                // Accept Name tokens and function name keywords as variable names
+                let var_name = self.extract_variable_name()?;
+                Ok(Expr::Variable(var_name))
             }
             Token::LeftParen => {
                 self.advance();

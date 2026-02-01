@@ -165,11 +165,46 @@ impl<'a> XPathEvaluator<'a> {
         self.eval_expr(&expr, &ctx)
     }
 
+    /// Evaluates an XPath expression with variable bindings.
+    ///
+    /// # Example
+    /// ```
+    /// use fastxml::{parse, xpath::{XPathEvaluator, XPathValue}};
+    /// use std::collections::HashMap;
+    ///
+    /// let xml = "<root><item>test</item></root>";
+    /// let doc = parse(xml).unwrap();
+    /// let evaluator = XPathEvaluator::new(&doc);
+    ///
+    /// let mut vars = HashMap::new();
+    /// vars.insert("name".to_string(), XPathValue::String("item".to_string()));
+    ///
+    /// let result = evaluator.evaluate_with_variables("//*[name()=$name]", vars).unwrap();
+    /// assert_eq!(result.into_nodes().len(), 1);
+    /// ```
+    pub fn evaluate_with_variables(
+        &self,
+        xpath: &str,
+        variables: std::collections::HashMap<String, super::types::XPathValue>,
+    ) -> Result<XPathResult> {
+        let expr = parse_xpath(xpath)?;
+        let root = self.doc.get_root_element()?;
+        let ctx =
+            EvaluationContext::new(root, self.doc, self.resolver.clone()).with_variables(variables);
+        self.eval_expr(&expr, &ctx)
+    }
+
     fn eval_expr(&self, expr: &Expr, ctx: &EvaluationContext<'_>) -> Result<XPathResult> {
         match expr {
             Expr::Path(path) => self.eval_path(path, ctx),
             Expr::String(s) => Ok(XPathResult::String(s.clone())),
             Expr::Number(n) => Ok(XPathResult::Number(*n)),
+            Expr::Variable(name) => ctx
+                .get_variable(name)
+                .map(|v| value_to_result(v.clone()))
+                .ok_or_else(|| {
+                    crate::xpath::error::XPathEvalError::UndefinedVariable(name.clone()).into()
+                }),
             Expr::Function { name, args } => self.eval_function(name, args, ctx),
             Expr::Union(paths) => {
                 let mut all_nodes = Vec::new();
@@ -281,6 +316,11 @@ impl<'a> XPathEvaluator<'a> {
             return self.eval_attribute_step(step, context);
         }
 
+        // Handle namespace axis specially
+        if matches!(step.axis, Axis::Namespace) {
+            return self.eval_namespace_step(step, context);
+        }
+
         // Select nodes based on axis using the axes module
         let candidates = axes::select_axis(&step.axis, context);
 
@@ -342,6 +382,67 @@ impl<'a> XPathEvaluator<'a> {
             }
             _ => Ok(Vec::new()),
         }
+    }
+
+    /// Evaluates a namespace step, returning pseudo-nodes for in-scope namespaces.
+    fn eval_namespace_step(&self, step: &Step, context: &XmlNode) -> Result<Vec<XmlNode>> {
+        if !context.is_element() {
+            return Ok(Vec::new());
+        }
+
+        // Collect all in-scope namespaces (including inherited ones)
+        let mut namespaces = std::collections::HashMap::new();
+
+        // Always include the xml namespace
+        namespaces.insert(
+            "xml".to_string(),
+            "http://www.w3.org/XML/1998/namespace".to_string(),
+        );
+
+        // Walk up the ancestor chain to collect all namespace declarations
+        let mut current = Some(context.clone());
+        while let Some(node) = current {
+            for ns in node.get_namespace_declarations() {
+                let prefix = ns.prefix().to_string();
+                // Don't override - earlier (closer) declarations take precedence
+                namespaces
+                    .entry(prefix)
+                    .or_insert_with(|| ns.uri().to_string());
+            }
+            current = node.get_parent();
+        }
+
+        // Filter and create namespace nodes based on node test
+        let mut result = Vec::new();
+        match &step.node_test {
+            NodeTest::Any => {
+                // namespace::* - return all in-scope namespaces
+                // Sort by prefix for consistent ordering (xml namespace first, then alphabetical)
+                let mut sorted: Vec<_> = namespaces.into_iter().collect();
+                sorted.sort_by(|(a, _), (b, _)| {
+                    // xml namespace always comes first
+                    match (a.as_str(), b.as_str()) {
+                        ("xml", _) => std::cmp::Ordering::Less,
+                        (_, "xml") => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
+                for (prefix, uri) in sorted {
+                    let ns_node = self.doc.create_namespace_node(&prefix, &uri);
+                    result.push(ns_node);
+                }
+            }
+            NodeTest::Name(name) => {
+                // namespace::prefix - return specific namespace
+                if let Some(uri) = namespaces.get(name) {
+                    let ns_node = self.doc.create_namespace_node(name, uri);
+                    result.push(ns_node);
+                }
+            }
+            _ => {}
+        }
+
+        Ok(result)
     }
 
     fn matches_node_test(&self, test: &NodeTest, node: &XmlNode) -> Result<bool> {

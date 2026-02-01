@@ -347,7 +347,7 @@ fn uses_last(expr: &Expr) -> bool {
             args.iter().any(uses_last)
         }
         Expr::Path(_) => false,
-        Expr::String(_) | Expr::Number(_) => false,
+        Expr::String(_) | Expr::Number(_) | Expr::Variable(_) => false,
         Expr::Union(paths) => paths.iter().any(|p| p.steps.iter().any(step_uses_last)),
         Expr::Add(l, r)
         | Expr::Subtract(l, r)

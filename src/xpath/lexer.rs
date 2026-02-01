@@ -30,6 +30,8 @@ pub enum Token {
     Comma,
     /// Pipe `|`
     Pipe,
+    /// Dollar sign `$` (variable reference)
+    Dollar,
     /// Plus `+`
     Plus,
     /// Minus `-`
@@ -260,6 +262,10 @@ impl<'a> Lexer<'a> {
             '|' => {
                 self.advance();
                 Ok(Token::Pipe)
+            }
+            '$' => {
+                self.advance();
+                Ok(Token::Dollar)
             }
             '+' => {
                 self.advance();

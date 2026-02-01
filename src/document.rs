@@ -204,6 +204,24 @@ impl XmlDocument {
             nodes: Arc::clone(&self.nodes),
         }
     }
+
+    /// Creates a pseudo-namespace node for XPath evaluation.
+    ///
+    /// These nodes are added to the document's node list and can be used
+    /// in XPath results. They store the namespace prefix and URI.
+    pub fn create_namespace_node(&self, prefix: &str, uri: &str) -> XmlNode {
+        let mut nodes = self.nodes.write();
+        let id = nodes.len();
+        nodes.push(NodeData::namespace_node(
+            id,
+            prefix.to_string(),
+            uri.to_string(),
+        ));
+        XmlNode {
+            id,
+            nodes: Arc::clone(&self.nodes),
+        }
+    }
 }
 
 impl Default for XmlDocument {

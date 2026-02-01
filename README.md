@@ -528,14 +528,9 @@ cargo bench
 | Arithmetic | `@value + 10` | `+`, `-`, `*`, `div`, `mod` |
 | Comparison | `@count > 5` | `=`, `!=`, `<`, `>`, `<=`, `>=` |
 | Functions | `count(//item)`, `contains(@name, 'test')` | Position, string, math functions |
-
-**Not supported:**
-
-| Feature | Status |
-|---------|--------|
-| Union operator (`\|`) | ❌ |
-| Namespace axis | ❌ |
-| Variables (`$var`) | ❌ |
+| Union | `//a \| //b` | Combine multiple paths |
+| Variables | `//item[@id=$target]` | Variable references |
+| Namespace axis | `namespace::*` | In-scope namespaces |
 
 ### XSD Schema
 

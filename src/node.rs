@@ -28,6 +28,8 @@ pub enum NodeType {
     ProcessingInstruction,
     /// Attribute node (virtual, for XPath)
     Attribute,
+    /// Namespace node (virtual, for XPath)
+    Namespace,
 }
 
 impl NodeType {
@@ -198,6 +200,28 @@ impl NodeData {
         }
     }
 
+    /// Creates a new namespace node (for XPath evaluation).
+    ///
+    /// In XPath, namespace nodes have:
+    /// - name: the namespace prefix (or empty string for default namespace)
+    /// - content: the namespace URI
+    pub fn namespace_node(id: NodeId, prefix: String, uri: String) -> Self {
+        Self {
+            id,
+            node_type: NodeType::Namespace,
+            name: prefix,
+            prefix: None,
+            namespace_uri: None,
+            content: Some(uri),
+            attributes: HashMap::new(),
+            namespace_decls: Vec::new(),
+            parent: None,
+            children: SmallVec::new(),
+            line: None,
+            column: None,
+        }
+    }
+
     /// Returns the qualified name (prefix:name or just name).
     pub fn qname(&self) -> String {
         match &self.prefix {
@@ -277,9 +301,11 @@ impl XmlNode {
         let node = nodes.get(self.id)?;
 
         match node.node_type {
-            NodeType::Text | NodeType::CData | NodeType::Comment | NodeType::Attribute => {
-                node.content.clone()
-            }
+            NodeType::Text
+            | NodeType::CData
+            | NodeType::Comment
+            | NodeType::Attribute
+            | NodeType::Namespace => node.content.clone(),
             NodeType::Element => {
                 // Collect text content from all descendant text nodes
                 let mut content = String::new();

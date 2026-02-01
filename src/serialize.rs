@@ -143,6 +143,9 @@ impl<W: Write> XmlSerializer<W> {
             NodeType::Attribute => {
                 // Attributes are handled in write_element
             }
+            NodeType::Namespace => {
+                // Namespace nodes are virtual (for XPath), not serialized
+            }
         }
         Ok(())
     }

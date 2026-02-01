@@ -81,6 +81,14 @@ pub mod libxml_compare {
         }
 
         pub fn xpath_string_results(&self, xpath: &str) -> Result<Vec<String>, String> {
+            self.xpath_string_results_with_variables(xpath, &HashMap::new())
+        }
+
+        pub fn xpath_string_results_with_variables(
+            &self,
+            xpath: &str,
+            variables: &HashMap<String, XPathVarValue>,
+        ) -> Result<Vec<String>, String> {
             let root = self.doc.get_root_element().ok_or("No root element")?;
             let ctx = libxml::xpath::Context::new(&self.doc)
                 .map_err(|_| "Failed to create xpath context")?;
@@ -94,9 +102,28 @@ pub mod libxml_compare {
                 }
             }
 
+            // Substitute variables in XPath expression
+            // libxml-rs doesn't expose variable registration, so we substitute directly
+            let mut substituted_xpath = xpath.to_string();
+            for (name, value) in variables {
+                let var_pattern = format!("${}", name);
+                let replacement = match value {
+                    XPathVarValue::String(s) => format!("'{}'", s.replace('\'', "''")),
+                    XPathVarValue::Number(n) => n.to_string(),
+                    XPathVarValue::Boolean(b) => {
+                        if *b {
+                            "true()".to_string()
+                        } else {
+                            "false()".to_string()
+                        }
+                    }
+                };
+                substituted_xpath = substituted_xpath.replace(&var_pattern, &replacement);
+            }
+
             let result = ctx
-                .evaluate(xpath)
-                .map_err(|_| format!("XPath evaluation failed: {}", xpath))?;
+                .evaluate(&substituted_xpath)
+                .map_err(|_| format!("XPath evaluation failed: {}", substituted_xpath))?;
 
             Ok(result
                 .get_nodes_as_vec()
@@ -104,6 +131,14 @@ pub mod libxml_compare {
                 .map(|n| n.get_content())
                 .collect())
         }
+    }
+
+    /// Variable value for comparison (simplified version of XPathValue)
+    #[derive(Debug, Clone)]
+    pub enum XPathVarValue {
+        String(String),
+        Number(f64),
+        Boolean(bool),
     }
 
     /// Compare fastxml parse result with libxml
@@ -242,6 +277,83 @@ pub mod libxml_compare {
         }
     }
 
+    /// Compare XPath results with variables between fastxml and libxml
+    pub fn compare_xpath_with_variables(
+        xml: &str,
+        xpath: &str,
+        fastxml_doc: &fastxml::XmlDocument,
+        fastxml_vars: std::collections::HashMap<String, fastxml::xpath::XPathValue>,
+        libxml_vars: HashMap<String, XPathVarValue>,
+    ) -> CompareResult {
+        let libxml_doc = match libxml_parse(xml) {
+            Ok(d) => d,
+            Err(e) => return CompareResult::diff(format!("libxml failed to parse: {}", e)),
+        };
+
+        // Get fastxml results with variables
+        let evaluator = fastxml::xpath::XPathEvaluator::new(fastxml_doc);
+        let (fastxml_count, fastxml_texts) =
+            match evaluator.evaluate_with_variables(xpath, fastxml_vars) {
+                Ok(r) => {
+                    let nodes = r.clone().into_nodes();
+                    let count = nodes.len();
+                    let texts = fastxml::xpath::collect_text_values(&r);
+                    (count, texts)
+                }
+                Err(e) => {
+                    // Check if libxml also fails
+                    if libxml_doc
+                        .xpath_string_results_with_variables(xpath, &libxml_vars)
+                        .is_err()
+                    {
+                        return CompareResult::ok(); // Both failed, that's consistent
+                    }
+                    return CompareResult::diff(format!(
+                        "fastxml XPath with variables failed but libxml succeeded: {}",
+                        e
+                    ));
+                }
+            };
+
+        // Get libxml results with variables
+        let libxml_result =
+            match libxml_doc.xpath_string_results_with_variables(xpath, &libxml_vars) {
+                Ok(r) => r,
+                Err(e) => {
+                    return CompareResult::diff(format!(
+                        "libxml XPath with variables failed but fastxml succeeded: {}",
+                        e
+                    ));
+                }
+            };
+
+        // Filter out empty strings from libxml results for fair comparison
+        let libxml_texts: Vec<String> = libxml_result
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect();
+        let libxml_count = libxml_result.len();
+
+        // First compare node counts
+        if fastxml_count != libxml_count {
+            return CompareResult::diff(format!(
+                "XPath '{}' with variables node count differs: fastxml={}, libxml={}",
+                xpath, fastxml_count, libxml_count
+            ));
+        }
+
+        // Compare non-empty text values
+        if fastxml_texts != libxml_texts {
+            CompareResult::diff(format!(
+                "XPath '{}' with variables text values differ:\n  fastxml: {:?}\n  libxml:  {:?}",
+                xpath, fastxml_texts, libxml_texts
+            ))
+        } else {
+            CompareResult::ok()
+        }
+    }
+
     /// Assert that both parsers either succeed or fail on the given XML
     pub fn assert_parse_consistency(xml: &str) {
         let fastxml_result = fastxml::parse(xml);
@@ -270,6 +382,16 @@ macro_rules! compare_with_libxml {
     (xpath: $xml:expr, $xpath:expr, $doc:expr) => {
         $crate::common::libxml_compare::compare_xpath($xml, $xpath, $doc).assert_match();
     };
+    (xpath_vars: $xml:expr, $xpath:expr, $doc:expr, $fastxml_vars:expr, $libxml_vars:expr) => {
+        $crate::common::libxml_compare::compare_xpath_with_variables(
+            $xml,
+            $xpath,
+            $doc,
+            $fastxml_vars,
+            $libxml_vars,
+        )
+        .assert_match();
+    };
     (consistency: $xml:expr) => {
         $crate::common::libxml_compare::assert_parse_consistency($xml);
     };
@@ -280,5 +402,6 @@ macro_rules! compare_with_libxml {
 macro_rules! compare_with_libxml {
     (parse: $xml:expr, $doc:expr) => {};
     (xpath: $xml:expr, $xpath:expr, $doc:expr) => {};
+    (xpath_vars: $xml:expr, $xpath:expr, $doc:expr, $fastxml_vars:expr, $libxml_vars:expr) => {};
     (consistency: $xml:expr) => {};
 }

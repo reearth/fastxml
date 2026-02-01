@@ -123,6 +123,8 @@ pub enum XPathEvalError {
         /// Expected type description (e.g., "node-set")
         expected: String,
     },
+    /// Undefined variable reference
+    UndefinedVariable(String),
 }
 
 impl std::fmt::Display for XPathEvalError {
@@ -144,6 +146,9 @@ impl std::fmt::Display for XPathEvalError {
             }
             XPathEvalError::InvalidArgumentType { function, expected } => {
                 write!(f, "{}() requires a {} argument", function, expected)
+            }
+            XPathEvalError::UndefinedVariable(name) => {
+                write!(f, "undefined variable: ${}", name)
             }
         }
     }

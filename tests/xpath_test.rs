@@ -237,3 +237,200 @@ fn test_xpath_citysgml_style() {
 
     compare_with_libxml!(xpath: xml, "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name", &doc);
 }
+
+#[test]
+fn test_xpath_union_operator() {
+    let xml = r#"<root><a>1</a><b>2</b><c>3</c></root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Union of two paths
+    let result = evaluate(&doc, "//a | //b").unwrap();
+    let nodes = result.into_nodes();
+    assert_eq!(nodes.len(), 2);
+
+    let names: Vec<_> = nodes.iter().map(|n| n.get_name()).collect();
+    assert!(names.contains(&"a".to_string()));
+    assert!(names.contains(&"b".to_string()));
+
+    compare_with_libxml!(xpath: xml, "//a | //b", &doc);
+}
+
+#[test]
+fn test_xpath_union_three_paths() {
+    let xml = r#"<root><a>1</a><b>2</b><c>3</c></root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Union of three paths
+    let result = evaluate(&doc, "//a | //b | //c").unwrap();
+    let nodes = result.into_nodes();
+    assert_eq!(nodes.len(), 3);
+
+    compare_with_libxml!(xpath: xml, "//a | //b | //c", &doc);
+}
+
+#[test]
+fn test_xpath_union_with_predicates() {
+    let xml = r#"<root><item id="1">A</item><item id="2">B</item><other>C</other></root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Union with predicates
+    let result = evaluate(&doc, "//item[@id='1'] | //other").unwrap();
+    let nodes = result.into_nodes();
+    assert_eq!(nodes.len(), 2);
+
+    compare_with_libxml!(xpath: xml, "//item[@id='1'] | //other", &doc);
+}
+
+#[test]
+fn test_xpath_variable_string() {
+    use fastxml::xpath::{XPathEvaluator, XPathValue};
+    use std::collections::HashMap;
+
+    let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+    let doc = parse(xml).unwrap();
+    let evaluator = XPathEvaluator::new(&doc);
+
+    let mut vars = HashMap::new();
+    vars.insert("target".to_string(), XPathValue::String("1".to_string()));
+
+    let result = evaluator
+        .evaluate_with_variables("//item[@id=$target]", vars.clone())
+        .unwrap();
+    let nodes = result.into_nodes();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].get_content(), Some("A".to_string()));
+
+    #[cfg(feature = "compare-libxml")]
+    {
+        use common::libxml_compare::XPathVarValue;
+        let mut libxml_vars = HashMap::new();
+        libxml_vars.insert("target".to_string(), XPathVarValue::String("1".to_string()));
+        compare_with_libxml!(xpath_vars: xml, "//item[@id=$target]", &doc, vars, libxml_vars);
+    }
+}
+
+#[test]
+fn test_xpath_variable_number() {
+    use fastxml::xpath::{XPathEvaluator, XPathValue};
+    use std::collections::HashMap;
+
+    let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
+    let doc = parse(xml).unwrap();
+    let evaluator = XPathEvaluator::new(&doc);
+
+    let mut vars = HashMap::new();
+    vars.insert("pos".to_string(), XPathValue::Number(2.0));
+
+    let result = evaluator
+        .evaluate_with_variables("//item[position()=$pos]", vars.clone())
+        .unwrap();
+    let nodes = result.into_nodes();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].get_content(), Some("2".to_string()));
+
+    #[cfg(feature = "compare-libxml")]
+    {
+        use common::libxml_compare::XPathVarValue;
+        let mut libxml_vars = HashMap::new();
+        libxml_vars.insert("pos".to_string(), XPathVarValue::Number(2.0));
+        compare_with_libxml!(xpath_vars: xml, "//item[position()=$pos]", &doc, vars, libxml_vars);
+    }
+}
+
+#[test]
+fn test_xpath_undefined_variable() {
+    use fastxml::xpath::XPathEvaluator;
+    use std::collections::HashMap;
+
+    let xml = r#"<root><item/></root>"#;
+    let doc = parse(xml).unwrap();
+    let evaluator = XPathEvaluator::new(&doc);
+
+    let result = evaluator.evaluate_with_variables("//item[@id=$missing]", HashMap::new());
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("undefined variable"));
+}
+
+#[test]
+fn test_xpath_namespace_axis() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
+        <gml:name>test</gml:name>
+    </root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Get all namespace nodes from root element
+    let result = evaluate(&doc, "/root/namespace::*").unwrap();
+    let nodes = result.into_nodes();
+
+    // Should have at least gml, bldg, and xml namespaces
+    assert!(
+        nodes.len() >= 3,
+        "Expected at least 3 namespace nodes, got {}",
+        nodes.len()
+    );
+
+    // Check that we got the expected namespaces
+    let ns_values: Vec<_> = nodes.iter().filter_map(|n| n.get_content()).collect();
+    assert!(ns_values.contains(&"http://www.opengis.net/gml".to_string()));
+    assert!(ns_values.contains(&"http://www.opengis.net/citygml/building/2.0".to_string()));
+    assert!(ns_values.contains(&"http://www.w3.org/XML/1998/namespace".to_string())); // xml namespace
+
+    // Note: libxml comparison for namespace axis may differ in node count
+    // due to implicit xml namespace handling
+    compare_with_libxml!(xpath: xml, "/root/namespace::*", &doc);
+}
+
+#[test]
+fn test_xpath_namespace_axis_with_name() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+        <child/>
+    </root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Get specific namespace by prefix
+    let result = evaluate(&doc, "/root/namespace::gml").unwrap();
+    let nodes = result.into_nodes();
+
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0].get_content(),
+        Some("http://www.opengis.net/gml".to_string())
+    );
+
+    compare_with_libxml!(xpath: xml, "/root/namespace::gml", &doc);
+}
+
+#[test]
+fn test_xpath_namespace_axis_inherited() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+        <child xmlns:bldg="http://www.opengis.net/citygml/building/2.0"/>
+    </root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Child should inherit gml namespace from parent
+    let result = evaluate(&doc, "/root/child/namespace::gml").unwrap();
+    let nodes = result.into_nodes();
+
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0].get_content(),
+        Some("http://www.opengis.net/gml".to_string())
+    );
+
+    compare_with_libxml!(xpath: xml, "/root/child/namespace::gml", &doc);
+}
+
+#[test]
+fn test_xpath_namespace_axis_on_non_element() {
+    let xml = r#"<root>text</root>"#;
+    let doc = parse(xml).unwrap();
+
+    // Namespace axis on text node should return empty
+    let result = evaluate(&doc, "/root/text()/namespace::*").unwrap();
+    let nodes = result.into_nodes();
+
+    assert!(nodes.is_empty());
+
+    compare_with_libxml!(xpath: xml, "/root/text()/namespace::*", &doc);
+}
