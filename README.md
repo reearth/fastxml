@@ -9,6 +9,7 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 
 ## Features
 
+- **libxml Compatible**: Tested against libxml2 to ensure consistent parsing and XPath results
 - **Streaming Parser**: Process gigabyte-scale XML with minimal memory footprint (~1-2 MB for multi-GB files)
 - **DOM Parser**: Full document tree for random access and XPath queries
 - **XPath Evaluation**: Support for common XPath expressions including namespaces
@@ -62,6 +63,8 @@ fastxml is designed as a drop-in replacement for libxml in Rust projects:
 | Memory efficiency | Low | High |
 | Pure Rust | ❌ | ✅ |
 
+**Compatibility Testing**: 38 parse/XPath tests are verified against libxml2 to ensure consistent results. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -81,6 +84,7 @@ By default, no HTTP client is included. Choose the features you need:
 | `reqwest` | Async HTTP client (`ReqwestFetcher`) for schema fetching |
 | `async-trait` | Async trait support for custom `AsyncSchemaStore` implementations |
 | `profile` | Memory profiling utilities |
+| `compare-libxml` | Enable libxml2 comparison tests (requires libxml2-dev) |
 
 ```toml
 # For sync schema fetching
@@ -422,6 +426,30 @@ let schema = parse_xsd_with_imports(
     &fetcher,
     &store,
 )?;
+```
+
+## Testing
+
+The library has comprehensive test coverage with **350+ tests** across all modules:
+
+| Test Suite | Tests | Description |
+|------------|-------|-------------|
+| Unit tests | 154 | Core parsing, XPath, schema compilation |
+| Error handling | 47 | Error types and messages |
+| Parse tests | 23 | DOM parsing (22 with libxml comparison) |
+| XPath tests | 16 | XPath evaluation (all with libxml comparison) |
+| Validation tests | 38 | XSD schema validation |
+| Integration tests | 70+ | CityGML patterns, streaming, benchmarks |
+
+```bash
+# Run all tests
+cargo test
+
+# Run with libxml comparison (requires libxml2-dev)
+cargo test --features compare-libxml
+
+# Run benchmarks
+cargo bench
 ```
 
 ## Limitations

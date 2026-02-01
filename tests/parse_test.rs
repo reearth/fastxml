@@ -1,5 +1,7 @@
 //! Integration tests for XML parsing.
 
+mod common;
+
 use fastxml::{NodeType, get_node_tag, get_root_node, parse};
 
 #[test]
@@ -14,6 +16,9 @@ fn test_parse_simple_xml() {
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].get_name(), "child");
     assert_eq!(children[0].get_content(), Some("text".to_string()));
+
+    // Compare with libxml
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -30,6 +35,9 @@ fn test_parse_with_attributes() {
         children[0].get_attribute("type"),
         Some("element".to_string())
     );
+
+    // Compare with libxml
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -51,6 +59,9 @@ fn test_parse_namespaced_xml() {
 
     let ns_decls = root.get_namespace_declarations();
     assert_eq!(ns_decls.len(), 2);
+
+    // Compare with libxml
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -63,6 +74,8 @@ fn test_parse_mixed_content() {
 
     // Should have: text, element, text
     assert!(children.len() >= 2);
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -74,6 +87,8 @@ fn test_parse_cdata() {
     let content = root.get_content().unwrap();
     assert!(content.contains("<not xml>"));
     assert!(content.contains("& special"));
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -95,6 +110,8 @@ fn test_parse_comments() {
         comment_nodes[0].get_content(),
         Some(" this is a comment ".to_string())
     );
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -105,6 +122,8 @@ fn test_parse_empty_elements() {
     let root = get_root_node(&doc).unwrap();
     let children = root.get_child_elements();
     assert_eq!(children.len(), 2);
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -126,6 +145,8 @@ fn test_parse_deeply_nested() {
     }
 
     assert_eq!(current.get_content(), Some("deep".to_string()));
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -136,6 +157,8 @@ fn test_parse_special_characters() {
     let root = get_root_node(&doc).unwrap();
     let attr = root.get_attribute("attr").unwrap();
     assert_eq!(attr, "<value>");
+
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -179,6 +202,8 @@ fn test_parse_xhtml_with_doctype() {
     let body = &children[1];
     assert_eq!(head.get_name(), "head");
     assert_eq!(body.get_name(), "body");
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML5 DOCTYPE
@@ -193,6 +218,8 @@ fn test_parse_html5_doctype() {
     let doc = parse(html).unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with comments
@@ -270,6 +297,8 @@ fn test_parse_html_with_comments() {
     let p = div.get_child_elements();
     assert_eq!(p.len(), 1);
     assert_eq!(p[0].get_name(), "p");
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with self-closing tags (XHTML style)
@@ -306,6 +335,8 @@ fn test_parse_html_self_closing_tags() {
     assert!(names.contains(&"br".to_string()));
     assert!(names.contains(&"hr".to_string()));
     assert!(names.contains(&"input".to_string()));
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with various attributes
@@ -337,6 +368,8 @@ fn test_parse_html_attributes() {
     assert_eq!(div.get_attribute("id"), Some("main".to_string()));
     assert_eq!(div.get_attribute("class"), Some("container".to_string()));
     assert_eq!(div.get_attribute("data-value"), Some("123".to_string()));
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with script and style tags containing special characters
@@ -363,6 +396,8 @@ fn test_parse_html_with_cdata_content() {
     let doc = parse(html).unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML table structure
@@ -396,6 +431,8 @@ fn test_parse_html_table() {
 
     let sections = table.get_child_elements();
     assert_eq!(sections.len(), 2); // thead, tbody
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML form elements
@@ -430,6 +467,8 @@ fn test_parse_html_form() {
     assert_eq!(form.get_name(), "form");
     assert_eq!(form.get_attribute("action"), Some("/submit".to_string()));
     assert_eq!(form.get_attribute("method"), Some("post".to_string()));
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test XHTML strict with namespaces
@@ -455,6 +494,8 @@ fn test_parse_xhtml_strict() {
     // Check namespace declaration
     let ns_decls = root.get_namespace_declarations();
     assert!(!ns_decls.is_empty());
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with entities
@@ -483,6 +524,8 @@ fn test_parse_html_entities() {
     let content = paragraphs[0].get_content().unwrap();
     assert!(content.contains('<'));
     assert!(content.contains('>'));
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with multiple comments in sequence
@@ -531,6 +574,8 @@ fn test_parse_html_multiple_comments() {
         .find(|e| e.get_name() == "p")
         .unwrap();
     assert_eq!(p.get_content(), Some("Between comments".to_string()));
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test minimal HTML document
@@ -541,6 +586,8 @@ fn test_parse_minimal_html() {
     let doc = parse(html).unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
+
+    compare_with_libxml!(parse: html, &doc);
 }
 
 /// Test HTML with deeply nested divs
@@ -585,4 +632,6 @@ fn test_parse_html_deeply_nested() {
     let span = current.get_child_elements()[0].clone();
     assert_eq!(span.get_name(), "span");
     assert_eq!(span.get_content(), Some("Deep content".to_string()));
+
+    compare_with_libxml!(parse: html, &doc);
 }

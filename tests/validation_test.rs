@@ -1,5 +1,7 @@
 //! Tests for XSD schema validation violations.
 
+mod common;
+
 use std::sync::Arc;
 
 use fastxml::error::Error;

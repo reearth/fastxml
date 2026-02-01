@@ -51,6 +51,9 @@ tracing = "0.1"
 # Memory profiling (optional)
 memory-stats = { version = "1", optional = true }
 
+# libxml for comparison testing (optional, requires libxml2 system library)
+libxml = { version = "0.3", optional = true }
+
 [dev-dependencies]
 criterion = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -72,6 +75,9 @@ reqwest = ["async-trait", "dep:reqwest"]    # Async HTTP client (ReqwestFetcher)
 
 # Profiling
 profile = ["memory-stats"]
+
+# Comparison testing with libxml (requires libxml2 system library)
+compare-libxml = ["dep:libxml"]
 
 [[bench]]
 name = "profile"

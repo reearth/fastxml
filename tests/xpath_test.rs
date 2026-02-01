@@ -1,5 +1,7 @@
 //! Integration tests for XPath evaluation.
 
+mod common;
+
 use fastxml::xpath::collect_text_values;
 use fastxml::{
     create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node, parse,
@@ -14,6 +16,8 @@ fn test_xpath_simple_path() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "child");
+
+    compare_with_libxml!(xpath: xml, "/root/child", &doc);
 }
 
 #[test]
@@ -25,6 +29,8 @@ fn test_xpath_descendant() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "target");
+
+    compare_with_libxml!(xpath: xml, "//target", &doc);
 }
 
 #[test]
@@ -35,6 +41,8 @@ fn test_xpath_wildcard() {
     let result = evaluate(&doc, "/root/*").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
+
+    compare_with_libxml!(xpath: xml, "/root/*", &doc);
 }
 
 #[test]
@@ -46,6 +54,8 @@ fn test_xpath_name_predicate() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "Building");
+
+    compare_with_libxml!(xpath: xml, "//*[name()='Building']", &doc);
 }
 
 #[test]
@@ -56,6 +66,8 @@ fn test_xpath_or_predicate() {
     let result = evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
+
+    compare_with_libxml!(xpath: xml, "//*[(name()='Building' or name()='Room')]", &doc);
 }
 
 #[test]
@@ -71,6 +83,8 @@ fn test_xpath_and_predicate() {
     let result = evaluate(&doc, "//item").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
+
+    compare_with_libxml!(xpath: xml, "//item", &doc);
 }
 
 #[test]
@@ -82,6 +96,8 @@ fn test_xpath_not_predicate() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
     assert!(nodes.iter().all(|n| n.get_name() == "Keep"));
+
+    compare_with_libxml!(xpath: xml, "/root/*[not(name()='Remove')]", &doc);
 }
 
 #[test]
@@ -92,6 +108,8 @@ fn test_xpath_text() {
     let result = evaluate(&doc, "/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts, vec!["first", "second"]);
+
+    compare_with_libxml!(xpath: xml, "/root/item/text()", &doc);
 }
 
 #[test]
@@ -106,6 +124,8 @@ fn test_xpath_namespaced() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "name");
+
+    compare_with_libxml!(xpath: xml, "/gml:root/gml:name", &doc);
 }
 
 #[test]
@@ -116,6 +136,8 @@ fn test_xpath_child_axis() {
     let result = evaluate(&doc, "/root/child::*").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
+
+    compare_with_libxml!(xpath: xml, "/root/child::*", &doc);
 }
 
 #[test]
@@ -128,6 +150,9 @@ fn test_xpath_relative_path() {
 
     let nodes = find_readonly_nodes_by_xpath(&ctx, ".//child", &root).unwrap();
     assert_eq!(nodes.len(), 1);
+
+    // Use parse comparison since this uses different API
+    compare_with_libxml!(parse: xml, &doc);
 }
 
 #[test]
@@ -139,6 +164,8 @@ fn test_xpath_self_axis() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "child");
+
+    compare_with_libxml!(xpath: xml, "/root/child/self::*", &doc);
 }
 
 #[test]
@@ -150,6 +177,8 @@ fn test_xpath_parent_axis() {
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "root");
+
+    compare_with_libxml!(xpath: xml, "/root/child/..", &doc);
 }
 
 #[test]
@@ -164,6 +193,8 @@ fn test_xpath_deep_descendant() {
     let result = evaluate(&doc, "//target").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
+
+    compare_with_libxml!(xpath: xml, "//target", &doc);
 }
 
 #[test]
@@ -174,6 +205,8 @@ fn test_xpath_no_match() {
     let result = evaluate(&doc, "//nonexistent").unwrap();
     let nodes = result.into_nodes();
     assert!(nodes.is_empty());
+
+    compare_with_libxml!(xpath: xml, "//nonexistent", &doc);
 }
 
 #[test]
@@ -201,4 +234,6 @@ fn test_xpath_citysgml_style() {
     assert_eq!(texts.len(), 2);
     assert!(texts.contains(&"Value1".to_string()));
     assert!(texts.contains(&"Value2".to_string()));
+
+    compare_with_libxml!(xpath: xml, "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name", &doc);
 }

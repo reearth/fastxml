@@ -5,6 +5,8 @@
 //! - Deep nesting
 //! - Large content per element
 //! - CityGML-style documents
+//!
+//! When built with `--features compare-libxml`, also compares performance with libxml.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::io::{BufRead, Read as _};
@@ -18,6 +20,29 @@ use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
 use fastxml::schema::types::{CompiledSchema, ElementDef};
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::{evaluate, parse};
+
+// =============================================================================
+// libxml comparison (when feature enabled)
+// =============================================================================
+
+#[cfg(feature = "compare-libxml")]
+mod libxml_bench {
+    use libxml::parser::Parser;
+
+    pub fn parse_with_libxml(xml: &[u8]) -> usize {
+        let parser = Parser::default();
+        let doc = parser.parse_string(xml).unwrap();
+        doc.get_root_element().map(|_| 1).unwrap_or(0)
+    }
+
+    pub fn xpath_with_libxml(xml: &[u8], xpath: &str) -> usize {
+        let parser = Parser::default();
+        let doc = parser.parse_string(xml).unwrap();
+        let ctx = libxml::xpath::Context::new(&doc).unwrap();
+        let result = ctx.evaluate(xpath).unwrap();
+        result.get_nodes_as_vec().len()
+    }
+}
 
 // =============================================================================
 // Streaming SAX Handler for Counting
@@ -173,21 +198,30 @@ fn bench_many_elements(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("dom_parse", count), &xml, |b, xml| {
+        group.bench_with_input(BenchmarkId::new("fastxml_dom", count), &xml, |b, xml| {
             b.iter(|| {
                 let doc = parse(black_box(xml)).unwrap();
                 black_box(doc.node_count())
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("streaming", count), &xml, |b, xml| {
-            b.iter(|| {
-                let reader = std::io::Cursor::new(black_box(xml));
-                let mut parser = StreamingParser::new(reader);
-                let handler = CountingHandler::new();
-                parser.add_handler(Box::new(handler));
-                parser.parse().unwrap()
-            })
+        group.bench_with_input(
+            BenchmarkId::new("fastxml_streaming", count),
+            &xml,
+            |b, xml| {
+                b.iter(|| {
+                    let reader = std::io::Cursor::new(black_box(xml));
+                    let mut parser = StreamingParser::new(reader);
+                    let handler = CountingHandler::new();
+                    parser.add_handler(Box::new(handler));
+                    parser.parse().unwrap()
+                })
+            },
+        );
+
+        #[cfg(feature = "compare-libxml")]
+        group.bench_with_input(BenchmarkId::new("libxml_dom", count), &xml, |b, xml| {
+            b.iter(|| black_box(libxml_bench::parse_with_libxml(black_box(xml))))
         });
     }
 
@@ -347,33 +381,53 @@ fn bench_xpath_evaluation(c: &mut Criterion) {
     let xml = generate_xml_bytes(config);
     let doc = parse(&xml).unwrap();
 
-    group.bench_function("descendant_all", |b| {
+    group.bench_function("fastxml_descendant_all", |b| {
         b.iter(|| {
             let result = evaluate(black_box(&doc), "//*").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
-    group.bench_function("by_name", |b| {
+    group.bench_function("fastxml_by_name", |b| {
         b.iter(|| {
             let result = evaluate(black_box(&doc), "//element").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
-    group.bench_function("with_predicate", |b| {
+    group.bench_function("fastxml_with_predicate", |b| {
         b.iter(|| {
             let result = evaluate(black_box(&doc), "//*[name()='item']").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
-    group.bench_function("direct_path", |b| {
+    group.bench_function("fastxml_direct_path", |b| {
         b.iter(|| {
             let result = evaluate(black_box(&doc), "/root/*").unwrap();
             black_box(result.into_nodes().len())
         })
     });
+
+    #[cfg(feature = "compare-libxml")]
+    {
+        group.bench_function("libxml_descendant_all", |b| {
+            b.iter(|| black_box(libxml_bench::xpath_with_libxml(black_box(&xml), "//*")))
+        });
+
+        group.bench_function("libxml_by_name", |b| {
+            b.iter(|| {
+                black_box(libxml_bench::xpath_with_libxml(
+                    black_box(&xml),
+                    "//element",
+                ))
+            })
+        });
+
+        group.bench_function("libxml_direct_path", |b| {
+            b.iter(|| black_box(libxml_bench::xpath_with_libxml(black_box(&xml), "/root/*")))
+        });
+    }
 
     group.finish();
 }
