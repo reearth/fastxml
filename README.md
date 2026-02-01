@@ -44,6 +44,19 @@ A fast, memory-efficient XML library for Rust with XPath and streaming schema va
 
 Streaming uses **~11x less memory** than DOM for large files with schema validation.
 
+### Comparison with libxml
+
+fastxml is designed as a drop-in replacement for libxml in Rust projects:
+
+| Feature | libxml | fastxml |
+|---------|--------|---------|
+| DOM parsing | ✅ | ✅ |
+| XPath | ✅ (full) | ✅ (subset) |
+| Schema validation | ✅ | ✅ (streaming) |
+| Streaming | ❌ | ✅ |
+| Memory efficiency | Low | High |
+| Pure Rust | ❌ | ✅ |
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -115,30 +128,94 @@ parser.add_handler(Box::new(MyHandler { element_count: 0 }));
 parser.parse()?;
 ```
 
-### Streaming with Schema Validation
+### Schema Validation
 
-Validate while parsing - single pass, minimal memory:
+Validate XML documents against XSD schemas:
+
+```rust
+use fastxml::{parse, validate_document_by_schema};
+
+// Parse the XML document
+let xml = std::fs::read("document.xml")?;
+let doc = parse(&xml)?;
+
+// Validate against XSD schema (fetches imports automatically)
+let errors = validate_document_by_schema(&doc, "schema.xsd".to_string())?;
+
+if errors.is_empty() {
+    println!("Document is valid!");
+} else {
+    for error in &errors {
+        println!("{}", error);
+    }
+}
+```
+
+### Streaming Validation
+
+For large files, validate while parsing in a single pass:
 
 ```rust
 use fastxml::event::StreamingParser;
-use fastxml::schema::types::{CompiledSchema, ElementDef};
 use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::parse_xsd;
 use std::sync::Arc;
+use std::io::BufReader;
+use std::fs::File;
 
-// Build schema
-let mut schema = CompiledSchema::new();
-schema.elements.insert("root".to_string(), ElementDef::new("root"));
-schema.elements.insert("item".to_string(), ElementDef::new("item"));
-let schema = Arc::new(schema);
+// Load and compile the schema
+let xsd_content = std::fs::read("schema.xsd")?;
+let schema = Arc::new(parse_xsd(&xsd_content)?);
 
-// Parse with validation
-let reader = std::io::Cursor::new(xml_bytes);
-let mut parser = StreamingParser::new(reader);
+// Create streaming parser with validation
+let file = File::open("large_document.xml")?;
+let mut parser = StreamingParser::new(BufReader::new(file));
 
 let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
 parser.add_handler(Box::new(validator));
 
+// Parse and validate in single pass
 parser.parse()?;
+```
+
+### Error Handling
+
+Validation errors include detailed location and context information:
+
+```rust
+use fastxml::{parse, validate_document_by_schema, ErrorLevel};
+
+let doc = parse(xml_bytes)?;
+let errors = validate_document_by_schema(&doc, schema_path)?;
+
+for error in &errors {
+    // Error severity: Warning, Error, or Fatal
+    match error.level {
+        ErrorLevel::Warning => print!("[WARN] "),
+        ErrorLevel::Error => print!("[ERROR] "),
+        ErrorLevel::Fatal => print!("[FATAL] "),
+    }
+
+    // Location information
+    if let Some(path) = &error.element_path {
+        print!("{}", path);
+    }
+    if let Some(line) = error.line {
+        print!(" (line {})", line);
+    }
+    print!(": ");
+
+    // Error message with expected/found values
+    println!("{}", error.message);
+    if let (Some(expected), Some(found)) = (&error.expected, &error.found) {
+        println!("  expected: {}, found: {}", expected, found);
+    }
+}
+
+// Filter by severity
+let fatal_errors: Vec<_> = errors.iter()
+    .filter(|e| e.level == ErrorLevel::Fatal)
+    .collect();
 ```
 
 ### XPath with Namespaces
@@ -362,113 +439,56 @@ let schema = parse_xsd_with_imports(
 
 ## Limitations & Roadmap
 
-### XPath - Supported
-
-| Feature | Example | Status |
-|---------|---------|--------|
-| Absolute path | `/root/child` | ✅ |
-| Descendant | `//element` | ✅ |
-| Wildcard | `//*`, `//ns:*` | ✅ |
-| Name predicate | `//*[name()='X']` | ✅ |
-| Logical AND/OR | `[name()='A' or name()='B']` | ✅ |
-| NOT | `[not(name()='X')]` | ✅ |
-| Text nodes | `//element/text()` | ✅ |
-| Namespace prefix | `//bldg:Building` | ✅ |
-| Child axis | `child::*`, `./*` | ✅ |
-| Parent axis | `parent::*`, `..` | ✅ |
-| Self axis | `self::*`, `.` | ✅ |
-| Ancestor axis | `ancestor::*`, `ancestor-or-self::*` | ✅ |
-| Following/preceding | `following-sibling::*`, `preceding-sibling::*` | ✅ |
-| Following/preceding | `following::*`, `preceding::*` | ✅ |
-| Attribute axis | `//item/@id`, `attribute::*` | ✅ |
-| Arithmetic | `1 + 2`, `3 * 4`, `10 div 3`, `10 mod 3` | ✅ |
-| Comparison operators | `//item[@value > 10]`, `=`, `!=`, `<`, `>` | ✅ |
-| Position functions | `position()`, `last()` | ✅ |
-| Count function | `count(//item)` | ✅ |
-| String functions | `contains()`, `starts-with()`, `substring()` | ✅ |
-| String functions | `concat()`, `string-length()`, `normalize-space()` | ✅ |
-| Math functions | `sum()`, `floor()`, `ceiling()`, `round()` | ✅ |
-| Boolean functions | `true()`, `false()`, `boolean()`, `not()` | ✅ |
-| Type conversion | `number()`, `string()` | ✅ |
-
-### XPath - Not Yet Supported
-
-| Feature | Example | Status |
-|---------|---------|--------|
-| Union operator | `//a \| //b` | ❌ Not implemented |
-| Namespace axis | `namespace::*` | ❌ Not implemented |
-| Variables | `$var` | ❌ Not implemented |
-
-### XSD Schema - Supported
+### XPath
 
 | Feature | Status |
 |---------|--------|
-| XSD file parsing | ✅ Full parser |
-| Element definition | ✅ |
+| Absolute/relative paths | ✅ |
+| Descendant (`//`) | ✅ |
+| Wildcard (`*`) | ✅ |
+| Predicates (`[...]`) | ✅ |
+| All axes (child, parent, ancestor, following, etc.) | ✅ |
+| Arithmetic operators (`+`, `-`, `*`, `div`, `mod`) | ✅ |
+| Comparison operators (`=`, `!=`, `<`, `>`, `<=`, `>=`) | ✅ |
+| Logical operators (`and`, `or`, `not`) | ✅ |
+| Position functions (`position()`, `last()`, `count()`) | ✅ |
+| String functions (`contains()`, `starts-with()`, `substring()`, etc.) | ✅ |
+| Math functions (`sum()`, `floor()`, `ceiling()`, `round()`) | ✅ |
+| Boolean/type functions (`boolean()`, `number()`, `string()`) | ✅ |
+| Union operator (`\|`) | ❌ |
+| Namespace axis | ❌ |
+| Variables (`$var`) | ❌ |
+
+### XSD Schema
+
+| Feature | Status |
+|---------|--------|
+| Element/attribute definitions | ✅ |
 | Complex types (sequence, choice, all) | ✅ |
 | Simple types (restriction, list, union) | ✅ |
 | Type inheritance (extension/restriction) | ✅ |
-| Facets (enumeration, pattern, length, etc.) | ✅ |
-| Attribute definition | ✅ |
-| Attribute groups | ✅ |
-| Model groups | ✅ |
-| Import/include resolution | ✅ |
-| Built-in XSD types (string, integer, etc.) | ✅ |
-| Built-in GML types (CodeType, MeasureType, etc.) | ✅ |
-| Substitution groups | ✅ Parsing (validation pending) |
-| Abstract types | ✅ |
-| Any/anyAttribute | ✅ |
-| Namespace validation | ✅ |
-| Streaming validation | ✅ |
-| Multiple handlers | ✅ |
-| Error collection | ✅ |
-| Cycle detection in imports | ✅ |
-
-### XSD Schema - Newly Implemented
-
-| Feature | Status |
-|---------|--------|
+| Facets (enumeration, pattern, length, min/max, etc.) | ✅ |
+| Attribute groups / Model groups | ✅ |
+| Import/include/redefine | ✅ |
+| Built-in XSD types | ✅ |
+| Built-in GML types | ✅ |
+| Substitution groups | ✅ (parsing) |
 | Identity constraints (unique/key/keyref) | ✅ |
-| Redefine | ✅ Parsing supported |
-| Content model validation (sequence/choice/all) | ✅ |
-| Facet validation (length/pattern/enumeration/range) | ✅ |
+| Streaming validation | ✅ |
+| Error collection with location info | ✅ |
 
-### XQuery
+### Not Supported
 
-| Feature | Status |
-|---------|--------|
-| XQuery 1.0+ | ❌ Not supported |
-| FLWOR expressions | ❌ Not supported |
-| XQuery functions | ❌ Not supported |
-| XQuery Update | ❌ Not supported |
-
-> **Note**: XQuery is not planned. Use XPath for queries.
-
-### Other Limitations
-
-| Feature | Status |
-|---------|--------|
-| DTD validation | ❌ Not supported |
-| XSLT transformation | ❌ Not supported |
-| XInclude | ❌ Not supported |
-| XML Signature | ❌ Not supported |
-| XML Encryption | ❌ Not supported |
-| Catalog support | ❌ Not supported |
-| Entity expansion | ⚠️ Basic only |
-| DOM modification | ❌ Read-only |
-
-## Comparison with libxml
-
-fastxml is designed as a drop-in replacement for libxml in Rust projects:
-
-| Feature | libxml | fastxml |
-|---------|--------|---------|
-| DOM parsing | ✅ | ✅ |
-| XPath | ✅ (full) | ✅ (subset) |
-| Schema validation | ✅ | ✅ (streaming) |
-| Streaming | ❌ | ✅ |
-| Memory efficiency | Low | High |
-| Pure Rust | ❌ | ✅ |
+| Feature | Notes |
+|---------|-------|
+| XQuery | Not planned (use XPath) |
+| DTD validation | Not planned |
+| XSLT transformation | Not planned |
+| XInclude | Not planned |
+| XML Signature/Encryption | Not planned |
+| Catalog support | Not planned |
+| DOM modification | Read-only |
+| Entity expansion | Basic only |
 
 ## License
 
