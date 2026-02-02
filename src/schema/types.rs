@@ -40,18 +40,29 @@ impl CompiledSchema {
     }
 
     /// Looks up an element definition by qualified name.
+    ///
+    /// This method tries multiple strategies:
+    /// 1. Direct lookup with the full qname (e.g., "dem:ReliefFeature")
+    /// 2. If qname has a prefix, extract local name and try:
+    ///    a. The local name in imported schemas
+    ///    b. The local name in the main elements map (for merged schemas)
     pub fn get_element(&self, qname: &str) -> Option<&ElementDef> {
-        // Try local elements first
+        // Try with full qname first
         if let Some(elem) = self.elements.get(qname) {
             return Some(elem);
         }
 
-        // Try imported schemas
+        // If qname has a prefix, try the local name
         if let Some((_prefix, local)) = qname.split_once(':') {
+            // Try imported schemas first
             for schema in self.imports.values() {
                 if let Some(elem) = schema.elements.get(local) {
                     return Some(elem);
                 }
+            }
+            // Also try local name in main map (for merged schemas)
+            if let Some(elem) = self.elements.get(local) {
+                return Some(elem);
             }
         }
 
@@ -59,16 +70,29 @@ impl CompiledSchema {
     }
 
     /// Looks up a type definition by qualified name.
+    ///
+    /// This method tries multiple strategies:
+    /// 1. Direct lookup with the full qname (e.g., "core:AbstractCityObjectType")
+    /// 2. If qname has a prefix, extract local name and try:
+    ///    a. The local name in imported schemas
+    ///    b. The local name in the main types map (for merged schemas)
     pub fn get_type(&self, qname: &str) -> Option<&TypeDef> {
+        // Try with full qname first
         if let Some(typ) = self.types.get(qname) {
             return Some(typ);
         }
 
+        // If qname has a prefix, try the local name
         if let Some((_prefix, local)) = qname.split_once(':') {
+            // Try imported schemas first
             for schema in self.imports.values() {
                 if let Some(typ) = schema.types.get(local) {
                     return Some(typ);
                 }
+            }
+            // Also try local name in main map (for merged schemas)
+            if let Some(typ) = self.types.get(local) {
+                return Some(typ);
             }
         }
 
@@ -442,4 +466,77 @@ pub mod builtin {
     pub const ANY_URI: &str = "xs:anyURI";
     /// Built-in ID type name.
     pub const ID: &str = "xs:ID";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_element_with_local_name() {
+        let mut schema = CompiledSchema::new();
+        schema.elements.insert(
+            "ReliefFeature".to_string(),
+            ElementDef::new("ReliefFeature"),
+        );
+
+        // Local name lookup should work
+        assert!(schema.get_element("ReliefFeature").is_some());
+    }
+
+    #[test]
+    fn test_get_element_with_qualified_name() {
+        let mut schema = CompiledSchema::new();
+        schema.elements.insert(
+            "ReliefFeature".to_string(),
+            ElementDef::new("ReliefFeature"),
+        );
+
+        // Qualified name lookup should fall back to local name
+        assert!(
+            schema.get_element("dem:ReliefFeature").is_some(),
+            "Should find 'ReliefFeature' when looking up 'dem:ReliefFeature'"
+        );
+    }
+
+    #[test]
+    fn test_get_type_with_local_name() {
+        let mut schema = CompiledSchema::new();
+        schema.types.insert(
+            "AbstractCityObjectType".to_string(),
+            TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
+        );
+
+        // Local name lookup should work
+        assert!(schema.get_type("AbstractCityObjectType").is_some());
+    }
+
+    #[test]
+    fn test_get_type_with_qualified_name() {
+        let mut schema = CompiledSchema::new();
+        schema.types.insert(
+            "AbstractCityObjectType".to_string(),
+            TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
+        );
+
+        // Qualified name lookup should fall back to local name
+        assert!(
+            schema.get_type("core:AbstractCityObjectType").is_some(),
+            "Should find 'AbstractCityObjectType' when looking up 'core:AbstractCityObjectType'"
+        );
+    }
+
+    #[test]
+    fn test_get_type_not_found() {
+        let schema = CompiledSchema::new();
+        assert!(schema.get_type("NonExistentType").is_none());
+        assert!(schema.get_type("prefix:NonExistentType").is_none());
+    }
+
+    #[test]
+    fn test_get_element_not_found() {
+        let schema = CompiledSchema::new();
+        assert!(schema.get_element("NonExistentElement").is_none());
+        assert!(schema.get_element("prefix:NonExistentElement").is_none());
+    }
 }
