@@ -182,23 +182,21 @@ impl XmlEventHandler for SkeletonBuilder {
 /// let file = File::open("document.xml")?;
 /// let reader = BufReader::new(file);
 ///
-/// let errors = TwoPassSchemaValidator::new(reader, schema)
+/// let errors = TwoPassSchemaValidator::new(schema)
 ///     .with_max_errors(100)
-///     .validate()?;
+///     .validate(reader)?;
 /// ```
-pub struct TwoPassSchemaValidator<R: BufRead + Seek> {
-    reader: R,
+pub struct TwoPassSchemaValidator {
     schema: Arc<CompiledSchema>,
     options: ValidationOptions,
     mode: ValidationMode,
     max_errors: usize,
 }
 
-impl<R: BufRead + Seek> TwoPassSchemaValidator<R> {
+impl TwoPassSchemaValidator {
     /// Creates a new two-pass validator.
-    pub fn new(reader: R, schema: Arc<CompiledSchema>) -> Self {
+    pub fn new(schema: Arc<CompiledSchema>) -> Self {
         Self {
-            reader,
             schema,
             options: ValidationOptions::default(),
             mode: ValidationMode::Strict,
@@ -225,20 +223,20 @@ impl<R: BufRead + Seek> TwoPassSchemaValidator<R> {
     }
 
     /// Performs two-pass validation and returns any errors found.
-    pub fn validate(mut self) -> Result<Vec<StructuredError>> {
+    pub fn validate<R: BufRead + Seek>(self, mut reader: R) -> Result<Vec<StructuredError>> {
         // Pass 1: Build skeleton
-        let skeleton = self.build_skeleton()?;
+        let skeleton = Self::build_skeleton(&mut reader)?;
 
         // Seek back to start for potential future use or debugging
-        let _ = self.reader.seek(SeekFrom::Start(0));
+        let _ = reader.seek(SeekFrom::Start(0));
 
         // Pass 2: Validate with skeleton
         self.validate_with_skeleton(&skeleton)
     }
 
     /// Pass 1: Builds the document skeleton.
-    fn build_skeleton(&mut self) -> Result<DocumentSkeleton> {
-        let mut parser = StreamingParser::new(&mut self.reader);
+    fn build_skeleton<R: BufRead>(reader: &mut R) -> Result<DocumentSkeleton> {
+        let mut parser = StreamingParser::new(reader);
         let builder = SkeletonBuilder::new();
         parser.add_handler(Box::new(builder));
         parser.parse()?;
@@ -787,9 +785,9 @@ mod tests {
         let reader = create_test_reader(xml);
 
         let schema = CompiledSchema::new();
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
         // Empty schema should not produce errors
         assert!(errors.is_empty());
     }
@@ -806,9 +804,9 @@ mod tests {
             .elements
             .insert("known".to_string(), ElementDef::new("known"));
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
         assert!(!errors.is_empty());
         assert!(errors[0].message.contains("unknown"));
     }
@@ -825,10 +823,10 @@ mod tests {
             .elements
             .insert("known".to_string(), ElementDef::new("known"));
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema))
-            .with_mode(ValidationMode::Lenient);
-
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .with_mode(ValidationMode::Lenient)
+            .validate(reader)
+            .unwrap();
         assert!(errors.is_empty());
     }
 
@@ -861,8 +859,9 @@ mod tests {
             .types
             .insert("ParentType".to_string(), TypeDef::Complex(complex_type));
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
 
         assert!(!errors.is_empty());
         assert!(errors[0].message.contains("required_child"));
@@ -900,8 +899,9 @@ mod tests {
             .elements
             .insert("child".to_string(), ElementDef::new("child"));
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
 
         assert!(!errors.is_empty());
         assert!(errors[0].message.contains("maximum"));
@@ -938,8 +938,9 @@ mod tests {
             .elements
             .insert("Null".to_string(), ElementDef::new("Null"));
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
 
         // Choice should accept one of the options
         assert!(errors.is_empty());
@@ -998,8 +999,9 @@ mod tests {
             Arc::new(vec!["ReliefFeature".to_string()]),
         );
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
 
         // ReliefFeature should count toward _CityObject requirement
         assert!(
@@ -1022,9 +1024,10 @@ mod tests {
             .insert("root".to_string(), ElementDef::new("root"));
         // Only root is known, all children are unknown
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema)).with_max_errors(2);
-
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .with_max_errors(2)
+            .validate(reader)
+            .unwrap();
         // Should stop at 2 errors
         assert_eq!(errors.len(), 2);
     }
@@ -1068,8 +1071,9 @@ mod tests {
             ElementDef::new("baseElement").with_type("xs:string"),
         );
 
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        let errors = validator.validate().unwrap();
+        let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
 
         // Should recognize inherited element
         assert!(

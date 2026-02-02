@@ -758,8 +758,7 @@ fn run_streaming_benchmark(
 
             let reader = std::io::Cursor::new(content.to_vec());
             let start = Instant::now();
-            let validator = TwoPassSchemaValidator::new(reader, Arc::clone(s));
-            let result = validator.validate();
+            let result = TwoPassSchemaValidator::new(Arc::clone(s)).validate(reader);
             total_two_pass_time += start.elapsed();
 
             if i == 0 {

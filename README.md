@@ -164,14 +164,15 @@ if errors.is_empty() {
 Validate during parsing with minimal memory:
 
 ```rust
-use fastxml::event::StreamingParser;
 use fastxml::schema::validator::OnePassSchemaValidator;
 use std::sync::Arc;
 
 let schema = Arc::new(fastxml::schema::parse_xsd(&std::fs::read("schema.xsd")?)?);
-let mut parser = StreamingParser::new(std::io::BufReader::new(file));
-parser.add_handler(Box::new(OnePassSchemaValidator::new(schema)));
-parser.parse()?;
+let reader = std::io::BufReader::new(file);
+
+let errors = OnePassSchemaValidator::new(schema)
+    .with_max_errors(100)
+    .validate(reader)?;
 ```
 
 ### Two-Pass Validation
@@ -181,9 +182,9 @@ Balance of speed and memory for seekable streams:
 ```rust
 use fastxml::schema::validator::TwoPassSchemaValidator;
 
-let errors = TwoPassSchemaValidator::new(reader, schema)
+let errors = TwoPassSchemaValidator::new(schema)
     .with_max_errors(100)
-    .validate()?;
+    .validate(reader)?;
 ```
 
 ### Validator Comparison

@@ -3,6 +3,21 @@
 //! Demonstrates validating large XML files while parsing in a single pass.
 //! This is memory-efficient as it doesn't build a full DOM tree.
 //!
+//! # Simple API
+//!
+//! For basic validation without custom handlers, use the simple API:
+//!
+//! ```ignore
+//! let errors = OnePassSchemaValidator::new(schema)
+//!     .with_max_errors(100)
+//!     .validate(reader)?;
+//! ```
+//!
+//! # Advanced: Multiple Handlers
+//!
+//! This example shows how to combine validation with custom handlers
+//! (e.g., counting elements while validating).
+//!
 //! Run with: cargo run --example streaming_validation
 //! Run with file: cargo run --example streaming_validation -- path/to/file.xml
 //! Run with schema fetching: cargo run --example streaming_validation --features ureq -- path/to/file.xml

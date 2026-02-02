@@ -1,9 +1,10 @@
 //! One-pass streaming schema validator implementation.
 
+use std::io::BufRead;
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
-use crate::event::{XmlEvent, XmlEventHandler};
+use crate::event::{StreamingParser, XmlEvent, XmlEventHandler};
 
 use crate::schema::types::{
     CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
@@ -71,6 +72,10 @@ impl OnePassSchemaValidator {
     }
 
     /// Creates a new streaming validator with specified mode.
+    #[deprecated(
+        since = "0.3.0",
+        note = "use OnePassSchemaValidator::new(schema).set_mode(mode) instead"
+    )]
     pub fn with_mode(schema: Arc<CompiledSchema>, mode: ValidationMode) -> Self {
         Self {
             mode,
@@ -79,11 +84,21 @@ impl OnePassSchemaValidator {
     }
 
     /// Creates a new streaming validator with specified options.
+    #[deprecated(
+        since = "0.3.0",
+        note = "use OnePassSchemaValidator::new(schema).set_options(options) instead"
+    )]
     pub fn with_options(schema: Arc<CompiledSchema>, options: ValidationOptions) -> Self {
         Self {
             options,
             ..Self::new(schema)
         }
+    }
+
+    /// Sets the validation mode (builder pattern).
+    pub fn set_mode(mut self, mode: ValidationMode) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// Sets validation options.
@@ -96,11 +111,56 @@ impl OnePassSchemaValidator {
         &self.options
     }
 
-    /// Sets the maximum number of errors to collect.
+    /// Sets the maximum number of errors to collect (builder pattern).
+    ///
+    /// Set to 0 for unlimited errors (default).
+    pub fn with_max_errors(mut self, max: usize) -> Self {
+        self.max_errors = max;
+        self
+    }
+
+    /// Sets the maximum number of errors to collect (setter pattern).
     ///
     /// Set to 0 for unlimited errors (default).
     pub fn set_max_errors(&mut self, max: usize) {
         self.max_errors = max;
+    }
+
+    /// Validates an XML document from a reader and returns validation errors.
+    ///
+    /// This is a convenience method that internally creates a `StreamingParser`,
+    /// runs validation, and returns the collected errors.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::fs::File;
+    /// use std::io::BufReader;
+    /// use std::sync::Arc;
+    /// use fastxml::schema::validator::OnePassSchemaValidator;
+    ///
+    /// let file = File::open("document.xml")?;
+    /// let reader = BufReader::new(file);
+    ///
+    /// let errors = OnePassSchemaValidator::new(schema)
+    ///     .with_max_errors(100)
+    ///     .validate(reader)?;
+    /// ```
+    pub fn validate<R: BufRead>(self, reader: R) -> Result<Vec<StructuredError>> {
+        let mut parser = StreamingParser::new(reader);
+        parser.add_handler(Box::new(self));
+        parser.parse()?;
+
+        // Extract the validator from the parser to get errors
+        let handlers = parser.into_handlers();
+        for handler in handlers {
+            if let Ok(validator) = handler.as_any().downcast::<OnePassSchemaValidator>() {
+                return Ok(validator.into_errors());
+            }
+        }
+
+        // Fallback: return empty errors (should not happen)
+        Ok(Vec::new())
     }
 
     /// Returns collected validation errors.
@@ -1041,7 +1101,7 @@ mod tests {
     fn test_streaming_validator_with_mode() {
         let schema = CompiledSchema::new();
         let validator =
-            OnePassSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+            OnePassSchemaValidator::new(Arc::new(schema)).set_mode(ValidationMode::Lenient);
         assert!(validator.is_valid());
     }
 
@@ -1173,7 +1233,7 @@ mod tests {
             .insert("known".to_string(), ElementDef::new("known"));
 
         let mut validator =
-            OnePassSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+            OnePassSchemaValidator::new(Arc::new(schema)).set_mode(ValidationMode::Lenient);
 
         let _ = validator.handle(&XmlEvent::StartElement {
             name: "unknown".into(),
@@ -2201,5 +2261,63 @@ mod tests {
             "Validation should pass when one choice element is present, but got errors: {:?}",
             validator.errors()
         );
+    }
+
+    // =============================================
+    // Simple API Tests (validate method)
+    // =============================================
+
+    /// Test the simple validate() API.
+    #[test]
+    fn test_validate_simple_api() {
+        let schema = CompiledSchema::new();
+        let xml = r#"<root><child>text</child></root>"#;
+        let reader = std::io::BufReader::new(xml.as_bytes());
+
+        let errors = OnePassSchemaValidator::new(Arc::new(schema))
+            .validate(reader)
+            .unwrap();
+
+        // Empty schema should validate any document
+        assert!(errors.is_empty());
+    }
+
+    /// Test the simple validate() API with max_errors.
+    #[test]
+    fn test_validate_simple_api_with_max_errors() {
+        use crate::schema::types::ElementDef;
+
+        let mut schema = CompiledSchema::new();
+        // Add an element so unknown elements trigger errors
+        schema
+            .elements
+            .insert("known".to_string(), ElementDef::new("known"));
+
+        let xml = r#"<unknown1><unknown2><unknown3/></unknown2></unknown1>"#;
+        let reader = std::io::BufReader::new(xml.as_bytes());
+
+        let errors = OnePassSchemaValidator::new(Arc::new(schema))
+            .with_max_errors(2)
+            .validate(reader)
+            .unwrap();
+
+        // Should have at most 2 errors due to max_errors limit
+        assert_eq!(errors.len(), 2);
+    }
+
+    /// Test the builder pattern methods.
+    #[test]
+    fn test_builder_pattern() {
+        let schema = Arc::new(CompiledSchema::new());
+        let xml = r#"<root/>"#;
+        let reader = std::io::BufReader::new(xml.as_bytes());
+
+        let errors = OnePassSchemaValidator::new(Arc::clone(&schema))
+            .set_mode(ValidationMode::Lenient)
+            .with_max_errors(10)
+            .validate(reader)
+            .unwrap();
+
+        assert!(errors.is_empty());
     }
 }

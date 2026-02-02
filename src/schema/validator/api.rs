@@ -426,8 +426,7 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
     if locations.is_empty() {
         // No schema locations found, use built-in schema
         let schema = crate::schema::xsd::create_builtin_schema();
-        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-        return validator.validate();
+        return TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader);
     }
 
     let store = crate::schema::memory::InMemoryStore::new();
@@ -445,8 +444,7 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
                     &store,
                 ) {
                     Ok(schema) => {
-                        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-                        return validator.validate();
+                        return TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader);
                     }
                     Err(_) => {
                         return Err(crate::error::Error::Schema(
@@ -469,8 +467,7 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
 
     // Fallback to builtin schema
     let schema = crate::schema::xsd::create_builtin_schema();
-    let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
-    validator.validate()
+    TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader)
 }
 
 #[cfg(test)]
