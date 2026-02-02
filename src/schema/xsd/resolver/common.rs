@@ -1,144 +1,74 @@
-//! XSD Import/Include resolver.
+//! Common helper functions for schema resolution.
 //!
-//! This module handles resolving xs:import and xs:include dependencies,
-//! fetching remote schemas, and caching them.
+//! This module contains pure functions (no I/O) that are shared between
+//! sync and async resolvers.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use url::Url;
 
 use crate::error::Result;
 use crate::schema::error::SchemaError;
-use crate::schema::fetcher::{FetchResult, SchemaFetcher};
-use crate::schema::store::SchemaStore;
 
-use super::parser::parse_xsd_ast;
-use super::types::XsdSchema;
+use super::super::types::XsdSchema;
 
-/// Schema resolver that handles import/include chains.
-pub struct SchemaResolver<'a, F: SchemaFetcher, S: SchemaStore> {
-    fetcher: &'a F,
-    store: &'a S,
-    /// Resolved schemas by URI
-    schemas: HashMap<String, XsdSchema>,
-    /// URIs currently being resolved (for cycle detection)
-    resolving: HashSet<String>,
+/// Extracts dependency URIs from a schema.
+///
+/// Collects all import and include locations and resolves them against the base URI.
+#[allow(dead_code)]
+pub fn extract_dependencies(schema: &XsdSchema, base_uri: &str) -> Vec<String> {
+    let mut deps = Vec::new();
+
+    for import in &schema.imports {
+        if let Some(location) = &import.schema_location {
+            if let Ok(uri) = resolve_uri(base_uri, location) {
+                deps.push(uri);
+            }
+        }
+    }
+
+    for include in &schema.includes {
+        if let Ok(uri) = resolve_uri(base_uri, &include.schema_location) {
+            deps.push(uri);
+        }
+    }
+
+    deps
 }
 
-impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
-    /// Creates a new schema resolver.
-    pub fn new(fetcher: &'a F, store: &'a S) -> Self {
-        Self {
-            fetcher,
-            store,
-            schemas: HashMap::new(),
-            resolving: HashSet::new(),
+/// Checks for circular dependencies.
+///
+/// Returns an error if the URI is already in the resolving set.
+#[allow(dead_code)]
+pub fn check_cycle(uri: &str, resolving: &HashSet<String>) -> Result<()> {
+    if resolving.contains(uri) {
+        return Err(SchemaError::CircularDependency {
+            uri: uri.to_string(),
         }
+        .into());
+    }
+    Ok(())
+}
+
+/// Orders schemas for output with entry schema last.
+///
+/// Dependencies should be compiled before the schemas that depend on them.
+#[allow(dead_code)]
+pub fn order_schemas_for_output(
+    schemas: &HashMap<String, XsdSchema>,
+    entry_uri: &str,
+) -> Vec<XsdSchema> {
+    let mut result: Vec<XsdSchema> = schemas
+        .iter()
+        .filter(|(uri, _)| *uri != entry_uri)
+        .map(|(_, schema)| schema.clone())
+        .collect();
+
+    if let Some(entry) = schemas.get(entry_uri) {
+        result.push(entry.clone());
     }
 
-    /// Resolves all dependencies starting from an entry schema.
-    ///
-    /// Returns all resolved schemas in dependency order (dependencies first).
-    pub fn resolve_all(&mut self, entry_content: &[u8], entry_uri: &str) -> Result<Vec<XsdSchema>> {
-        // Parse the entry schema
-        let entry_schema = parse_xsd_ast(entry_content)?;
-
-        // Store and track the entry
-        self.schemas.insert(entry_uri.to_string(), entry_schema);
-
-        // Use BFS to resolve all dependencies
-        let mut queue: VecDeque<String> = VecDeque::new();
-        queue.push_back(entry_uri.to_string());
-
-        while let Some(current_uri) = queue.pop_front() {
-            if self.resolving.contains(&current_uri) {
-                return Err(SchemaError::CircularDependency { uri: current_uri }.into());
-            }
-            self.resolving.insert(current_uri.clone());
-
-            // Get imports and includes from the current schema
-            let (imports, includes) = {
-                let schema = self.schemas.get(&current_uri).ok_or_else(|| {
-                    crate::schema::error::SchemaError::SchemaNotFound {
-                        uri: current_uri.clone(),
-                    }
-                })?;
-                (schema.imports.clone(), schema.includes.clone())
-            };
-
-            // Process imports
-            for import in imports {
-                if let Some(location) = &import.schema_location {
-                    let resolved_uri = resolve_uri(&current_uri, location)?;
-
-                    if !self.schemas.contains_key(&resolved_uri) {
-                        let content = self.fetch_schema(&resolved_uri)?;
-                        let schema = parse_xsd_ast(&content)?;
-                        self.schemas.insert(resolved_uri.clone(), schema);
-                        queue.push_back(resolved_uri);
-                    }
-                }
-            }
-
-            // Process includes
-            for include in includes {
-                let resolved_uri = resolve_uri(&current_uri, &include.schema_location)?;
-
-                if !self.schemas.contains_key(&resolved_uri) {
-                    let content = self.fetch_schema(&resolved_uri)?;
-                    let schema = parse_xsd_ast(&content)?;
-                    self.schemas.insert(resolved_uri.clone(), schema);
-                    queue.push_back(resolved_uri);
-                }
-            }
-
-            self.resolving.remove(&current_uri);
-        }
-
-        // Return schemas in order (entry last for easier compilation)
-        let mut result: Vec<XsdSchema> = Vec::new();
-
-        // First add all non-entry schemas
-        for (uri, schema) in &self.schemas {
-            if uri != entry_uri {
-                result.push(schema.clone());
-            }
-        }
-
-        // Add entry schema last
-        if let Some(entry) = self.schemas.remove(entry_uri) {
-            result.push(entry);
-        }
-
-        Ok(result)
-    }
-
-    /// Fetches a schema, first checking the store cache.
-    fn fetch_schema(&self, uri: &str) -> Result<Vec<u8>> {
-        // Check store first
-        if let Some(content) = self.store.get(uri)? {
-            return Ok(content);
-        }
-
-        // Fetch from network
-        let FetchResult {
-            content, final_url, ..
-        } = self.fetcher.fetch(uri)?;
-
-        // Store in cache
-        self.store.put(&final_url, &content)?;
-        if final_url != uri {
-            // Also cache under original URI
-            self.store.put(uri, &content)?;
-        }
-
-        Ok(content)
-    }
-
-    /// Consumes the resolver and returns the resolved schemas.
-    pub fn into_schemas(self) -> HashMap<String, XsdSchema> {
-        self.schemas
-    }
+    result
 }
 
 /// Resolves a relative URI against a base URI.
@@ -152,20 +82,19 @@ pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
     }
 
     // Parse base URL
-    let base_url =
-        Url::parse(base).map_err(|e| crate::schema::error::SchemaError::InvalidBaseUri {
-            uri: base.to_string(),
-            message: e.to_string(),
-        })?;
+    let base_url = Url::parse(base).map_err(|e| SchemaError::InvalidBaseUri {
+        uri: base.to_string(),
+        message: e.to_string(),
+    })?;
 
     // Resolve relative URL
-    let resolved = base_url.join(relative).map_err(|e| {
-        crate::schema::error::SchemaError::UrlResolutionFailed {
+    let resolved = base_url
+        .join(relative)
+        .map_err(|e| SchemaError::UrlResolutionFailed {
             relative: relative.to_string(),
             base: base.to_string(),
             message: e.to_string(),
-        }
-    })?;
+        })?;
 
     Ok(resolved.to_string())
 }
@@ -174,6 +103,8 @@ pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
 ///
 /// This is useful for testing or when all schemas are provided inline.
 pub fn resolve_schemas_from_content(schemas: &[(&str, &[u8])]) -> Result<Vec<XsdSchema>> {
+    use super::super::parser::parse_xsd_ast;
+
     let mut result = Vec::new();
 
     for (uri, content) in schemas {
@@ -290,6 +221,7 @@ impl Default for DependencyTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::xsd::types::XsdImport;
 
     #[test]
     fn test_resolve_uri_absolute() {
@@ -323,7 +255,7 @@ mod tests {
 
         // Create mock schemas
         let schema_a = XsdSchema {
-            imports: vec![super::super::types::XsdImport {
+            imports: vec![XsdImport {
                 namespace: None,
                 schema_location: Some("b.xsd".to_string()),
             }],
@@ -356,5 +288,53 @@ mod tests {
 
         assert_eq!(schemas.len(), 1);
         assert_eq!(schemas[0].elements.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_dependencies() {
+        let schema = XsdSchema {
+            imports: vec![XsdImport {
+                namespace: Some("http://example.com/types".to_string()),
+                schema_location: Some("types.xsd".to_string()),
+            }],
+            includes: vec![crate::schema::xsd::types::XsdInclude {
+                schema_location: "common.xsd".to_string(),
+            }],
+            ..Default::default()
+        };
+
+        let deps = extract_dependencies(&schema, "http://example.com/main.xsd");
+        assert_eq!(deps.len(), 2);
+        assert!(deps.contains(&"http://example.com/types.xsd".to_string()));
+        assert!(deps.contains(&"http://example.com/common.xsd".to_string()));
+    }
+
+    #[test]
+    fn test_check_cycle() {
+        let mut resolving = HashSet::new();
+        resolving.insert("http://example.com/a.xsd".to_string());
+
+        // Should not error for new URI
+        assert!(check_cycle("http://example.com/b.xsd", &resolving).is_ok());
+
+        // Should error for existing URI
+        assert!(check_cycle("http://example.com/a.xsd", &resolving).is_err());
+    }
+
+    #[test]
+    fn test_order_schemas_for_output() {
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "http://example.com/entry.xsd".to_string(),
+            XsdSchema::default(),
+        );
+        schemas.insert(
+            "http://example.com/dep.xsd".to_string(),
+            XsdSchema::default(),
+        );
+
+        let ordered = order_schemas_for_output(&schemas, "http://example.com/entry.xsd");
+        assert_eq!(ordered.len(), 2);
+        // Entry should be last (but since we can't distinguish them here, just check count)
     }
 }

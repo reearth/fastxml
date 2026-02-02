@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::schema::fetch_error::FetchError;
 
 use super::FetchResult;
+use super::traits::AsyncSchemaFetcher;
 
 /// Async schema fetcher using reqwest.
 pub struct ReqwestFetcher {
@@ -72,6 +73,13 @@ impl ReqwestFetcher {
 impl Default for ReqwestFetcher {
     fn default() -> Self {
         Self::new().expect("failed to create HTTP client")
+    }
+}
+
+#[async_trait::async_trait]
+impl AsyncSchemaFetcher for ReqwestFetcher {
+    async fn fetch(&self, url: &str) -> Result<FetchResult> {
+        self.fetch_async(url).await
     }
 }
 

@@ -6,9 +6,9 @@
 //! - [`CombinedFetcher`] - Chains multiple fetchers
 //! - [`NoopFetcher`] - Always fails (for testing)
 //! - [`UreqFetcher`] - Sync HTTP client (requires `ureq` feature)
-//! - [`ReqwestFetcher`] - Async HTTP client (requires `reqwest` feature)
-//! - [`DefaultFetcher`] - Recommended sync default fetcher
-//! - [`AsyncDefaultFetcher`] - Recommended async default fetcher (requires `reqwest` feature)
+//! - [`ReqwestFetcher`] - Async HTTP client (requires `tokio` feature)
+//! - [`DefaultFetcher`] - Recommended sync default fetcher (requires `ureq` feature for HTTP)
+//! - [`AsyncDefaultFetcher`] - Recommended async default fetcher (requires `tokio` feature)
 //!
 //! # Default Fetchers
 //!
@@ -21,7 +21,7 @@
 //!
 //! ## Async (AsyncDefaultFetcher)
 //!
-//! The [`AsyncDefaultFetcher`] provides async HTTP fetching (requires `reqwest` feature):
+//! The [`AsyncDefaultFetcher`] provides async HTTP fetching (requires `tokio` feature):
 //!
 //! - Combines [`FileFetcher`] and [`ReqwestFetcher`]
 //!
@@ -35,10 +35,10 @@
 //! ```
 //!
 //! ```no_run
-//! # #[cfg(feature = "reqwest")]
+//! # #[cfg(feature = "tokio")]
 //! use fastxml::schema::fetcher::AsyncDefaultFetcher;
 //!
-//! # #[cfg(feature = "reqwest")]
+//! # #[cfg(feature = "tokio")]
 //! # async fn example() -> Result<(), fastxml::error::Error> {
 //! let fetcher = AsyncDefaultFetcher::new()?;
 //! let result = fetcher.fetch("http://example.com/schema.xsd").await?;
@@ -52,10 +52,10 @@ mod noop;
 mod result;
 mod traits;
 
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "tokio")]
 mod async_default;
 
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "tokio")]
 mod reqwest;
 
 #[cfg(feature = "ureq")]
@@ -67,10 +67,13 @@ pub use noop::NoopFetcher;
 pub use result::FetchResult;
 pub use traits::SchemaFetcher;
 
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "tokio")]
+pub use traits::AsyncSchemaFetcher;
+
+#[cfg(feature = "tokio")]
 pub use self::async_default::AsyncDefaultFetcher;
 
-#[cfg(feature = "reqwest")]
+#[cfg(feature = "tokio")]
 pub use self::reqwest::ReqwestFetcher;
 
 #[cfg(feature = "ureq")]

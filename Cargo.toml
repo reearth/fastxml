@@ -77,8 +77,8 @@ default = []
 async-trait = ["dep:async-trait"]
 
 # HTTP clients
-ureq = ["dep:ureq"]                         # Sync HTTP client (UreqFetcher)
-reqwest = ["async-trait", "dep:reqwest"]    # Async HTTP client (ReqwestFetcher)
+ureq = ["dep:ureq"]                         # Sync HTTP client (DefaultFetcher, UreqFetcher)
+tokio = ["async-trait", "dep:reqwest"]      # Async HTTP client (AsyncDefaultFetcher, ReqwestFetcher)
 
 # Profiling
 profile = ["memory-stats"]
@@ -97,3 +97,7 @@ harness = false
 [[example]]
 name = "profile_cli"
 required-features = ["profile"]
+
+[[example]]
+name = "async_schema_resolution"
+required-features = ["tokio"]

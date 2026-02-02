@@ -9,12 +9,13 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ## Features
 
-- **Pure Rust** — No C dependencies, no unsafe code
-- **libxml Compatible** — Consistent parsing/XPath results
-- **Memory Efficient** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
-- **Multiple Validators** — DOM, Two-Pass, and One-Pass validation strategies
-- **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling
-- **XSD Support** — Schema parsing with import resolution, built-in GML types
+- 🦀 **Pure Rust** — No C dependencies, no unsafe code
+- 🔄 **libxml Compatible** — Consistent parsing/XPath results
+- 💾 **Memory Efficient** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
+- ✅ **Multiple Validators** — DOM, Two-Pass, and One-Pass validation strategies
+- 🔍 **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling
+- 📋 **XSD Support** — Schema parsing with import resolution, built-in GML types
+- ⚡ **Async Support** — Async schema fetching and resolution with tokio
 
 ## Performance
 
@@ -53,7 +54,7 @@ fastxml = "0.2"
 | Feature | Description |
 |---------|-------------|
 | `ureq` | Sync HTTP client for schema fetching (recommended) |
-| `reqwest` | Async HTTP client for schema fetching |
+| `tokio` | Async HTTP client for schema fetching (reqwest + tokio) |
 | `async-trait` | Async trait support for custom implementations |
 | `compare-libxml` | Enable libxml2 comparison tests |
 
@@ -62,7 +63,7 @@ fastxml = "0.2"
 fastxml = { version = "0.2", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.2", features = ["reqwest"] }
+fastxml = { version = "0.2", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
@@ -71,8 +72,16 @@ fastxml = { version = "0.2", features = ["reqwest"] }
 |---------|-------------|
 | `FileFetcher` | Local filesystem |
 | `UreqFetcher` | Sync HTTP (requires `ureq`) |
-| `ReqwestFetcher` | Async HTTP (requires `reqwest`) |
-| `DefaultFetcher` | File + HTTP combined (recommended) |
+| `ReqwestFetcher` | Async HTTP (requires `tokio`) |
+| `DefaultFetcher` | File + sync HTTP combined (requires `ureq` for HTTP) |
+| `AsyncDefaultFetcher` | File + async HTTP combined (requires `tokio`) |
+
+**Traits:**
+
+| Trait | Description |
+|-------|-------------|
+| `SchemaFetcher` | Sync fetcher trait |
+| `AsyncSchemaFetcher` | Async fetcher trait (requires `tokio`) |
 
 ```rust
 use fastxml::schema::{DefaultFetcher, SchemaFetcher};
@@ -144,6 +153,45 @@ let ids: Vec<String> = StreamTransformer::new(xml)
     .collect(|node| node.get_attribute("id").unwrap_or_default())?;
 ```
 
+## Async Schema Resolution
+
+Parse XSD schemas with async import/include resolution (requires `tokio` feature):
+
+```rust
+use fastxml::schema::{
+    AsyncDefaultFetcher, InMemoryStore,
+    parse_xsd_with_imports_async,
+};
+
+#[tokio::main]
+async fn main() -> fastxml::error::Result<()> {
+    let xsd_content = std::fs::read("schema.xsd")?;
+
+    // Create async fetcher and cache store
+    let fetcher = AsyncDefaultFetcher::new()?;
+    let store = InMemoryStore::new();
+
+    // Parse schema with async import resolution
+    let schema = parse_xsd_with_imports_async(
+        &xsd_content,
+        "http://example.com/schema.xsd",
+        &fetcher,
+        &store,
+    ).await?;
+
+    println!("Parsed {} types", schema.types.len());
+    Ok(())
+}
+```
+
+The async resolver:
+- Fetches imported schemas asynchronously via HTTP
+- Caches fetched schemas in the provided store
+- Resolves nested imports (A → B → C)
+- Detects circular dependencies
+
+See [examples/async_schema_resolution.rs](examples/async_schema_resolution.rs) for more examples.
+
 ## Schema Validation
 
 ### DOM Validation
@@ -197,7 +245,7 @@ let errors = TwoPassSchemaValidator::new(schema)
 
 ### Auto-detect Schema
 
-Fetch schemas from `xsi:schemaLocation` automatically (requires `ureq` or `reqwest` feature):
+Fetch schemas from `xsi:schemaLocation` automatically (requires `ureq` feature):
 
 ```rust
 use fastxml::{parse, validate_with_schema_location};
@@ -300,13 +348,21 @@ let buildings = evaluate(&doc, "//bldg:Building")?;
 
 ```bash
 cargo test                              # Run tests
+cargo test --features tokio             # With async tests
 cargo test --features compare-libxml    # With libxml comparison
 cargo bench                             # Benchmarks
 ```
 
-### Load Test CLI
+### Examples
 
 ```bash
+# Async schema resolution
+cargo run --example async_schema_resolution --features tokio
+
+# Schema validation
+cargo run --example schema_validation --features ureq
+
+# Load test CLI
 cargo run --release --example load_test_cli -- ./file.xml
 cargo run --release --features ureq --example load_test_cli -- ./file.xml --validate
 ```

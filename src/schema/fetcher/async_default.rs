@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 
+use super::traits::AsyncSchemaFetcher;
 use super::{FetchResult, FileFetcher, ReqwestFetcher, SchemaFetcher};
 
 /// Async default schema fetcher with sensible defaults.
@@ -72,6 +73,13 @@ impl AsyncDefaultFetcher {
 
         // Fall back to HTTP
         self.http_fetcher.fetch_async(url).await
+    }
+}
+
+#[async_trait::async_trait]
+impl AsyncSchemaFetcher for AsyncDefaultFetcher {
+    async fn fetch(&self, url: &str) -> Result<FetchResult> {
+        AsyncDefaultFetcher::fetch(self, url).await
     }
 }
 

@@ -93,14 +93,17 @@ pub use validator::{
 #[cfg(feature = "ureq")]
 pub use fetcher::UreqFetcher;
 
-#[cfg(feature = "reqwest")]
-pub use fetcher::{AsyncDefaultFetcher, ReqwestFetcher};
+#[cfg(feature = "tokio")]
+pub use fetcher::{AsyncDefaultFetcher, AsyncSchemaFetcher, ReqwestFetcher};
 
 #[cfg(feature = "async-trait")]
 pub use store::AsyncSchemaStore;
 
 // Re-export XSD parsing functions
 pub use xsd::{create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports};
+
+#[cfg(feature = "tokio")]
+pub use xsd::parse_xsd_with_imports_async;
 
 // Re-export schema resolution functions
 pub use resolve::{

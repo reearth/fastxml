@@ -58,10 +58,18 @@ use crate::schema::fetcher::SchemaFetcher;
 use crate::schema::store::SchemaStore;
 use crate::schema::types::CompiledSchema;
 
+#[cfg(feature = "tokio")]
+use crate::schema::fetcher::AsyncSchemaFetcher;
+#[cfg(feature = "tokio")]
+use crate::schema::store::AsyncSchemaStore;
+
 pub use builtin::{gml, register_builtin_types, xs};
 pub use compiler::{XsdCompiler, compile_schemas};
 pub use parser::{XSD_NAMESPACE, XsdParser, parse_xsd_ast};
 pub use resolver::{SchemaResolver, resolve_uri};
+
+#[cfg(feature = "tokio")]
+pub use resolver::AsyncSchemaResolver;
 pub use types::*;
 
 /// Parses XSD content and compiles it into a CompiledSchema.
@@ -141,6 +149,58 @@ pub fn parse_xsd_with_imports<F: SchemaFetcher, S: SchemaStore>(
     // Create resolver and resolve all dependencies
     let mut resolver = SchemaResolver::new(fetcher, store);
     let schemas = resolver.resolve_all(content, base_uri)?;
+
+    // Compile all schemas
+    let mut schema = compile_schemas(schemas)?;
+
+    // Register built-in types
+    register_builtin_types(&mut schema);
+
+    Ok(schema)
+}
+
+/// Parses XSD content with import/include resolution asynchronously.
+///
+/// This is the async version of [`parse_xsd_with_imports`]. It resolves all
+/// xs:import and xs:include dependencies, fetching remote schemas as needed
+/// and caching them in the store.
+///
+/// # Arguments
+///
+/// * `content` - The entry XSD file content as bytes
+/// * `base_uri` - Base URI for resolving relative imports
+/// * `fetcher` - Async schema fetcher for downloading remote schemas
+/// * `store` - Async schema store for caching downloaded schemas
+///
+/// # Returns
+///
+/// A compiled schema with all dependencies resolved
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore, parse_xsd_with_imports_async};
+///
+/// let fetcher = AsyncDefaultFetcher::new()?;
+/// let store = InMemoryStore::new();
+///
+/// let schema = parse_xsd_with_imports_async(
+///     xsd_content.as_bytes(),
+///     "http://example.com/schemas/main.xsd",
+///     &fetcher,
+///     &store,
+/// ).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn parse_xsd_with_imports_async<F: AsyncSchemaFetcher, S: AsyncSchemaStore>(
+    content: &[u8],
+    base_uri: &str,
+    fetcher: &F,
+    store: &S,
+) -> Result<CompiledSchema> {
+    // Create async resolver and resolve all dependencies
+    let mut resolver = AsyncSchemaResolver::new(fetcher, store);
+    let schemas = resolver.resolve_all(content, base_uri).await?;
 
     // Compile all schemas
     let mut schema = compile_schemas(schemas)?;
@@ -342,5 +402,202 @@ mod tests {
         assert!(schema.types.contains_key("gml:CodeType"));
         assert!(schema.types.contains_key("gml:LengthType"));
         assert!(schema.types.contains_key("gml:AbstractFeatureType"));
+    }
+}
+
+#[cfg(all(test, feature = "tokio"))]
+mod async_tests {
+    use super::*;
+    use crate::error::Result;
+    use crate::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
+    use crate::schema::memory::InMemoryStore;
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// Mock async fetcher for testing
+    struct MockAsyncFetcher {
+        responses: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+    }
+
+    impl MockAsyncFetcher {
+        fn new() -> Self {
+            Self {
+                responses: Arc::new(RwLock::new(HashMap::new())),
+            }
+        }
+
+        fn add_response(&self, url: &str, content: &[u8]) {
+            self.responses
+                .write()
+                .insert(url.to_string(), content.to_vec());
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncSchemaFetcher for MockAsyncFetcher {
+        async fn fetch(&self, url: &str) -> Result<FetchResult> {
+            let responses = self.responses.read();
+            if let Some(content) = responses.get(url) {
+                Ok(FetchResult {
+                    content: content.clone(),
+                    final_url: url.to_string(),
+                    redirected: false,
+                })
+            } else {
+                Err(crate::schema::fetch_error::FetchError::RequestFailed {
+                    url: url.to_string(),
+                    message: "Not found".to_string(),
+                }
+                .into())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parse_xsd_with_imports_async_simple() {
+        let xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   targetNamespace="http://example.com/test">
+            <xs:element name="root" type="xs:string"/>
+        </xs:schema>"#;
+
+        let fetcher = MockAsyncFetcher::new();
+        let store = InMemoryStore::new();
+
+        let schema = parse_xsd_with_imports_async(
+            xsd.as_bytes(),
+            "http://example.com/test.xsd",
+            &fetcher,
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert!(schema.elements.contains_key("root"));
+        assert_eq!(
+            schema.target_namespace,
+            Some("http://example.com/test".to_string())
+        );
+
+        // Built-in types should be registered
+        assert!(schema.types.contains_key("xs:string"));
+        assert!(schema.types.contains_key("gml:CodeType"));
+    }
+
+    #[tokio::test]
+    async fn test_parse_xsd_with_imports_async_with_import() {
+        let types_xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   targetNamespace="http://example.com/types">
+            <xs:simpleType name="EmailType">
+                <xs:restriction base="xs:string">
+                    <xs:pattern value="[^@]+@[^@]+\.[^@]+"/>
+                </xs:restriction>
+            </xs:simpleType>
+        </xs:schema>"#;
+
+        let main_xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://example.com/types"
+                   targetNamespace="http://example.com/main">
+            <xs:import namespace="http://example.com/types" schemaLocation="types.xsd"/>
+            <xs:element name="user">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="email" type="t:EmailType"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+        </xs:schema>"#;
+
+        let fetcher = MockAsyncFetcher::new();
+        fetcher.add_response("http://example.com/types.xsd", types_xsd.as_bytes());
+
+        let store = InMemoryStore::new();
+
+        let schema = parse_xsd_with_imports_async(
+            main_xsd.as_bytes(),
+            "http://example.com/main.xsd",
+            &fetcher,
+            &store,
+        )
+        .await
+        .unwrap();
+
+        // Main schema elements
+        assert!(schema.elements.contains_key("user"));
+
+        // Imported type should be available
+        assert!(schema.types.contains_key("EmailType"));
+
+        // Store should have cached the imported schema
+        assert!(crate::schema::store::SchemaStore::contains(
+            &store,
+            "http://example.com/types.xsd"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_parse_xsd_with_imports_async_nested_imports() {
+        let base_xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   targetNamespace="http://example.com/base">
+            <xs:simpleType name="IDType">
+                <xs:restriction base="xs:string">
+                    <xs:pattern value="[A-Z0-9]+"/>
+                </xs:restriction>
+            </xs:simpleType>
+        </xs:schema>"#;
+
+        let types_xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:b="http://example.com/base"
+                   targetNamespace="http://example.com/types">
+            <xs:import namespace="http://example.com/base" schemaLocation="base.xsd"/>
+            <xs:complexType name="EntityType">
+                <xs:sequence>
+                    <xs:element name="id" type="b:IDType"/>
+                </xs:sequence>
+            </xs:complexType>
+        </xs:schema>"#;
+
+        let main_xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:t="http://example.com/types"
+                   targetNamespace="http://example.com/main">
+            <xs:import namespace="http://example.com/types" schemaLocation="types.xsd"/>
+            <xs:element name="entity" type="t:EntityType"/>
+        </xs:schema>"#;
+
+        let fetcher = MockAsyncFetcher::new();
+        fetcher.add_response("http://example.com/base.xsd", base_xsd.as_bytes());
+        fetcher.add_response("http://example.com/types.xsd", types_xsd.as_bytes());
+
+        let store = InMemoryStore::new();
+
+        let schema = parse_xsd_with_imports_async(
+            main_xsd.as_bytes(),
+            "http://example.com/main.xsd",
+            &fetcher,
+            &store,
+        )
+        .await
+        .unwrap();
+
+        // All types should be available
+        assert!(schema.elements.contains_key("entity"));
+        assert!(schema.types.contains_key("EntityType"));
+        assert!(schema.types.contains_key("IDType"));
+
+        // Both imported schemas should be cached
+        assert!(crate::schema::store::SchemaStore::contains(
+            &store,
+            "http://example.com/base.xsd"
+        ));
+        assert!(crate::schema::store::SchemaStore::contains(
+            &store,
+            "http://example.com/types.xsd"
+        ));
     }
 }

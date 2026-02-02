@@ -10,11 +10,13 @@
 //! - **XSD Validation**: Stream-based schema validation
 //! - **Memory Efficient**: Streaming APIs to minimize memory usage
 //! - **Thread Safe**: Safe concurrent access through careful design
+//! - **Async Support**: Async schema fetching and resolution with tokio
 //!
 //! # Feature Flags
 //!
-//! - `sync` (default): Enables synchronous HTTP client for schema fetching
-//! - `async`: Enables async support with tokio and reqwest
+//! - `ureq`: Enables synchronous HTTP client for schema fetching (recommended)
+//! - `tokio`: Enables async HTTP client and schema resolution with reqwest
+//! - `async-trait`: Enables async trait support for custom implementations
 //! - `profile`: Enables memory profiling utilities
 //!
 //! # Quick Start
@@ -92,6 +94,33 @@
 //! let mut parser = StreamingParser::new(xml.as_bytes());
 //! parser.add_handler(Box::new(MyHandler));
 //! parser.parse().unwrap();
+//! ```
+//!
+//! # Async Schema Resolution
+//!
+//! Parse XSD schemas with async import/include resolution (requires `tokio` feature):
+//!
+//! ```ignore
+//! use fastxml::schema::{
+//!     AsyncDefaultFetcher, InMemoryStore,
+//!     parse_xsd_with_imports_async,
+//! };
+//!
+//! #[tokio::main]
+//! async fn main() -> fastxml::error::Result<()> {
+//!     let xsd_content = std::fs::read("schema.xsd")?;
+//!     let fetcher = AsyncDefaultFetcher::new()?;
+//!     let store = InMemoryStore::new();
+//!
+//!     let schema = parse_xsd_with_imports_async(
+//!         &xsd_content,
+//!         "http://example.com/schema.xsd",
+//!         &fetcher,
+//!         &store,
+//!     ).await?;
+//!
+//!     Ok(())
+//! }
 //! ```
 
 #![warn(missing_docs)]
@@ -297,6 +326,40 @@ pub fn parse_xsd_with_imports(
     store: &impl schema::store::SchemaStore,
 ) -> Result<schema::types::CompiledSchema> {
     schema::parse_xsd_with_imports(content, base_uri, fetcher, store)
+}
+
+/// Parses XSD content with async import resolution.
+///
+/// This is the async version of [`parse_xsd_with_imports`]. It resolves all
+/// `xs:import` and `xs:include` dependencies asynchronously.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+/// use fastxml::parse_xsd_with_imports_async;
+///
+/// let fetcher = AsyncDefaultFetcher::new()?;
+/// let store = InMemoryStore::new();
+///
+/// let schema = parse_xsd_with_imports_async(
+///     &xsd_content,
+///     "http://example.com/schema.xsd",
+///     &fetcher,
+///     &store,
+/// ).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn parse_xsd_with_imports_async<
+    F: schema::AsyncSchemaFetcher,
+    S: schema::AsyncSchemaStore,
+>(
+    content: &[u8],
+    base_uri: &str,
+    fetcher: &F,
+    store: &S,
+) -> Result<schema::types::CompiledSchema> {
+    schema::parse_xsd_with_imports_async(content, base_uri, fetcher, store).await
 }
 
 /// Validates a document using schemas referenced in xsi:schemaLocation.
