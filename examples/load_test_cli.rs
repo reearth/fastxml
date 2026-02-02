@@ -50,6 +50,7 @@ use std::time::{Duration, Instant};
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
+#[cfg(feature = "ureq")]
 use fastxml::parse_schema_locations;
 use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
@@ -407,7 +408,6 @@ mod libxml_bench {
         }
 
         let mut total_time = Duration::ZERO;
-        let mut node_count = 0usize;
         let mut memory_delta = None;
         let mut validation_errors = 0usize;
 
@@ -436,13 +436,11 @@ mod libxml_bench {
                 if let (Some(before), Some(after)) = (mem_before, mem_after) {
                     memory_delta = Some(after.saturating_sub(before));
                 }
-                node_count = count_nodes(&doc);
             }
         }
 
         Some(LibxmlValidationResult {
             avg_time: total_time / iterations as u32,
-            node_count,
             size: content.len(),
             memory_delta,
             validation_errors,
@@ -478,7 +476,6 @@ mod libxml_bench {
 
     pub struct LibxmlValidationResult {
         pub avg_time: Duration,
-        pub node_count: usize,
         pub size: usize,
         pub memory_delta: Option<usize>,
         pub validation_errors: usize,
@@ -907,12 +904,9 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         {
             println!();
             println!("    [Validation Comparison]");
-            if let Some(libxml_val_result) = libxml_bench::validate_with_libxml(
-                content,
-                xsd_bytes,
-                iterations,
-                get_memory_usage,
-            ) {
+            if let Some(libxml_val_result) =
+                libxml_bench::validate_with_libxml(content, xsd_bytes, iterations, get_memory_usage)
+            {
                 println!(
                     "    libxml + validate: {} ({:.2} MB/s)",
                     format_duration(libxml_val_result.avg_time),
