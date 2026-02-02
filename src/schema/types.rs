@@ -17,6 +17,8 @@ pub struct CompiledSchema {
     pub attributes: IndexMap<String, AttributeDef>,
     /// Imported schemas (namespace -> schema)
     pub imports: HashMap<String, CompiledSchema>,
+    /// Substitution groups (head element name -> list of substitute element names)
+    pub substitution_groups: HashMap<String, Vec<String>>,
 }
 
 impl CompiledSchema {
@@ -28,6 +30,7 @@ impl CompiledSchema {
             types: IndexMap::new(),
             attributes: IndexMap::new(),
             imports: HashMap::new(),
+            substitution_groups: HashMap::new(),
         }
     }
 

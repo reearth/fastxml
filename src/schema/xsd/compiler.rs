@@ -472,8 +472,7 @@ impl XsdCompiler {
         }
 
         // Store in schema for validation use
-        // (The CompiledSchema doesn't have a substitution_groups field yet,
-        // but we could add it if needed)
+        schema.substitution_groups = self.substitution_groups.clone();
     }
 
     /// Resolves a type reference to its definition.

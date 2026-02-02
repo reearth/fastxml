@@ -384,7 +384,11 @@ impl StreamingSchemaValidator {
         constraints
     }
 
-    /// Validates that an element doesn't exceed its max_occurs constraint.
+    /// Validates max_occurs constraint for a child element.
+    ///
+    /// This method also considers substitution groups. If the child element is a
+    /// substitution group member, the constraint from the head element is used,
+    /// and the total count includes all members of the substitution group.
     fn validate_max_occurs(&mut self, child_name: &str) {
         if self.state.element_stack.len() < 2 {
             return;
@@ -392,18 +396,30 @@ impl StreamingSchemaValidator {
 
         let parent_idx = self.state.element_stack.len() - 2;
         if let Some(parent) = self.state.element_stack.get(parent_idx) {
-            let count = parent.get_child_count(child_name);
+            // First, try to find which substitution group head this element belongs to
+            let head_name = self.find_substitution_group_head(child_name);
+
+            // Determine the constraint source (head or direct)
+            let constraint_name = head_name.as_deref().unwrap_or(child_name);
 
             // Check against parent's expected children constraints
-            if let Some(&(_, max_occurs)) = parent.expected_children.get(child_name) {
+            if let Some(&(_, max_occurs)) = parent.expected_children.get(constraint_name) {
                 if let Some(max) = max_occurs {
-                    if count > max {
+                    // Calculate total count including all substitution group members
+                    let mut total_count = parent.get_child_count(constraint_name);
+                    if let Some(members) = self.schema.substitution_groups.get(constraint_name) {
+                        for member in members {
+                            total_count += parent.get_child_count(member);
+                        }
+                    }
+
+                    if total_count > max {
                         let error = self
                             .make_error(
                                 ValidationErrorType::TooManyOccurrences,
                                 format!(
-                                    "element '{}' occurs {} times, but maximum is {}",
-                                    child_name, count, max
+                                    "element '{}' (or substitutes) occurs {} times, but maximum is {}",
+                                    constraint_name, total_count, max
                                 ),
                             )
                             .with_node_name(child_name)
@@ -413,6 +429,28 @@ impl StreamingSchemaValidator {
                 }
             }
         }
+    }
+
+    /// Finds the substitution group head for a given element name.
+    ///
+    /// Returns Some(head_name) if the element is a member of a substitution group,
+    /// or None if it's not a member of any substitution group.
+    fn find_substitution_group_head(&self, element_name: &str) -> Option<String> {
+        // Check if the element itself is defined and has a substitution_group
+        if let Some(elem) = self.schema.get_element(element_name) {
+            if let Some(ref sg) = elem.substitution_group {
+                return Some(sg.clone());
+            }
+        }
+
+        // Also check in substitution_groups map (reverse lookup)
+        for (head, members) in &self.schema.substitution_groups {
+            if members.contains(&element_name.to_string()) {
+                return Some(head.clone());
+            }
+        }
+
+        None
     }
 
     fn validate_attributes(&mut self, element_name: &str, attributes: &[(&str, &str)]) {
@@ -574,10 +612,24 @@ impl StreamingSchemaValidator {
     }
 
     /// Validates that all required child elements are present (minOccurs).
+    ///
+    /// This method also considers substitution group members when counting occurrences.
+    /// If the expected child is a substitution group head, occurrences of any member
+    /// element are counted toward the head's requirement.
     fn validate_min_occurs(&mut self, ctx: &ElementContext) {
         for (child_name, &(min_occurs, _)) in &ctx.expected_children {
             if min_occurs > 0 {
-                let actual_count = ctx.get_child_count(child_name);
+                // Calculate actual count including substitution group members
+                let mut actual_count = ctx.get_child_count(child_name);
+
+                // Add counts from substitution group members
+                // If child_name is a substitution group head, count all members
+                if let Some(members) = self.schema.substitution_groups.get(child_name) {
+                    for member in members {
+                        actual_count += ctx.get_child_count(member);
+                    }
+                }
+
                 if actual_count < min_occurs {
                     let error_type = if actual_count == 0 {
                         ValidationErrorType::MissingRequiredElement
@@ -1533,6 +1585,230 @@ mod tests {
         assert!(
             validator.is_valid(),
             "Multi-level inheritance should work, but got errors: {:?}",
+            validator.errors()
+        );
+    }
+
+    // =============================================
+    // Substitution Group Tests
+    // =============================================
+
+    /// Test that substitution group members can be used in place of the head element.
+    ///
+    /// This test reproduces the issue where elements like `dem:ReliefFeature` are not
+    /// recognized as valid substitutes for abstract elements like `_CityObject`.
+    #[test]
+    fn test_substitution_group_basic() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // Define a parent type that expects "_CityObject" (abstract head element) as REQUIRED
+        let mut parent_type = ComplexType::new("ParentType");
+        parent_type.content = ContentModel::Sequence(vec![
+            // Parent expects "_CityObject" as required child (min_occurs=1)
+            ElementDef::new("_CityObject").with_type("AbstractCityObjectType"),
+        ]);
+        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+
+        // Define the abstract type
+        let abstract_type = ComplexType::new("AbstractCityObjectType");
+        schema.types.insert("AbstractCityObjectType".to_string(), TypeDef::Complex(abstract_type));
+
+        // Define the concrete type
+        let concrete_type = ComplexType::new("ReliefFeatureType");
+        schema.types.insert("ReliefFeatureType".to_string(), TypeDef::Complex(concrete_type));
+
+        // Define the head element (abstract)
+        let mut head_elem = ElementDef::new("_CityObject");
+        head_elem.is_abstract = true;
+        head_elem.type_ref = Some("AbstractCityObjectType".to_string());
+        schema.elements.insert("_CityObject".to_string(), head_elem);
+
+        // Define the substitute element (concrete)
+        let mut substitute_elem = ElementDef::new("ReliefFeature");
+        substitute_elem.type_ref = Some("ReliefFeatureType".to_string());
+        substitute_elem.substitution_group = Some("_CityObject".to_string());
+        schema.elements.insert("ReliefFeature".to_string(), substitute_elem);
+
+        // Define parent element
+        let parent_elem = ElementDef::new("parent").with_type("ParentType");
+        schema.elements.insert("parent".to_string(), parent_elem);
+
+        // Build substitution groups (head -> members)
+        schema.substitution_groups.insert(
+            "_CityObject".to_string(),
+            vec!["ReliefFeature".to_string()],
+        );
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Start parent element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "parent".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
+
+        // Use substitute element (ReliefFeature instead of _CityObject)
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "ReliefFeature".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "ReliefFeature".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // End parent
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "parent".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Check: ReliefFeature should be accepted as a substitute for _CityObject
+        let errors: Vec<_> = validator.errors().iter()
+            .filter(|e| e.message.contains("ReliefFeature") && e.message.contains("not declared"))
+            .collect();
+
+        assert!(
+            errors.is_empty(),
+            "Substitution group member 'ReliefFeature' should be accepted in place of '_CityObject', but got errors: {:?}",
+            errors
+        );
+
+        assert!(
+            validator.is_valid(),
+            "Validation should pass for substitution group members, but got errors: {:?}",
+            validator.errors()
+        );
+    }
+
+    /// Test that max_occurs is correctly validated for substitution groups.
+    ///
+    /// When multiple substitution group members are used, their counts should be
+    /// summed when checking against the max_occurs constraint.
+    #[test]
+    fn test_substitution_group_max_occurs() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // Define a parent type that expects "_CityObject" with max_occurs=2
+        let mut parent_type = ComplexType::new("ParentType");
+        parent_type.content = ContentModel::Sequence(vec![
+            // Parent expects "_CityObject" at most 2 times
+            ElementDef::new("_CityObject")
+                .with_type("AbstractCityObjectType")
+                .with_occurs(0, Some(2)),
+        ]);
+        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+
+        // Define types
+        let abstract_type = ComplexType::new("AbstractCityObjectType");
+        schema.types.insert("AbstractCityObjectType".to_string(), TypeDef::Complex(abstract_type));
+
+        let relief_type = ComplexType::new("ReliefFeatureType");
+        schema.types.insert("ReliefFeatureType".to_string(), TypeDef::Complex(relief_type));
+
+        let building_type = ComplexType::new("BuildingType");
+        schema.types.insert("BuildingType".to_string(), TypeDef::Complex(building_type));
+
+        // Define elements
+        let mut head_elem = ElementDef::new("_CityObject");
+        head_elem.is_abstract = true;
+        head_elem.type_ref = Some("AbstractCityObjectType".to_string());
+        schema.elements.insert("_CityObject".to_string(), head_elem);
+
+        let mut relief_elem = ElementDef::new("ReliefFeature");
+        relief_elem.type_ref = Some("ReliefFeatureType".to_string());
+        relief_elem.substitution_group = Some("_CityObject".to_string());
+        schema.elements.insert("ReliefFeature".to_string(), relief_elem);
+
+        let mut building_elem = ElementDef::new("Building");
+        building_elem.type_ref = Some("BuildingType".to_string());
+        building_elem.substitution_group = Some("_CityObject".to_string());
+        schema.elements.insert("Building".to_string(), building_elem);
+
+        let parent_elem = ElementDef::new("parent").with_type("ParentType");
+        schema.elements.insert("parent".to_string(), parent_elem);
+
+        // Build substitution groups
+        schema.substitution_groups.insert(
+            "_CityObject".to_string(),
+            vec!["ReliefFeature".to_string(), "Building".to_string()],
+        );
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Start parent
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "parent".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
+
+        // Add 3 substitutes (exceeds max_occurs=2)
+        for (i, name) in ["ReliefFeature", "Building", "ReliefFeature"].iter().enumerate() {
+            validator
+                .handle(&XmlEvent::StartElement {
+                    name: (*name).into(),
+                    prefix: None,
+                    namespace: None,
+                    attributes: vec![],
+                    namespace_decls: vec![],
+                    line: Some(i + 2),
+                })
+                .unwrap();
+            validator
+                .handle(&XmlEvent::EndElement {
+                    name: (*name).into(),
+                    prefix: None,
+                })
+                .unwrap();
+        }
+
+        // End parent
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "parent".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Check: Should have a max_occurs error since we have 3 substitutes but max is 2
+        let errors: Vec<_> = validator.errors().iter()
+            .filter(|e| e.message.contains("occurs") && e.message.contains("maximum"))
+            .collect();
+
+        assert!(
+            !errors.is_empty(),
+            "Should have a max_occurs error when 3 substitutes are used but max is 2, errors: {:?}",
             validator.errors()
         );
     }
