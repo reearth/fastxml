@@ -63,7 +63,9 @@ pub mod validator;
 pub mod xsd;
 
 // Re-export main types
-pub use fetcher::{CombinedFetcher, FetchResult, FileFetcher, NoopFetcher, SchemaFetcher};
+pub use fetcher::{
+    CombinedFetcher, DefaultFetcher, FetchResult, FileFetcher, NoopFetcher, SchemaFetcher,
+};
 pub use memory::InMemoryStore;
 pub use store::SchemaStore;
 pub use tempdir::TempDirStore;
@@ -89,7 +91,7 @@ pub use validator::{
 pub use fetcher::UreqFetcher;
 
 #[cfg(feature = "reqwest")]
-pub use fetcher::ReqwestFetcher;
+pub use fetcher::{AsyncDefaultFetcher, ReqwestFetcher};
 
 #[cfg(feature = "async-trait")]
 pub use store::AsyncSchemaStore;

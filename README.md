@@ -67,14 +67,14 @@ By default, no HTTP client is included. Choose the features you need:
 
 | Feature | Description |
 |---------|-------------|
-| `ureq` | Sync HTTP client (`UreqFetcher`) for schema fetching |
-| `reqwest` | Async HTTP client (`ReqwestFetcher`) for schema fetching |
+| `ureq` | Sync HTTP client (`UreqFetcher`, `DefaultFetcher`) for schema fetching |
+| `reqwest` | Async HTTP client (`ReqwestFetcher`, `AsyncDefaultFetcher`) for schema fetching |
 | `async-trait` | Async trait support for custom `AsyncSchemaStore` implementations |
 | `profile` | Memory profiling utilities |
 | `compare-libxml` | Enable libxml2 comparison tests (requires libxml2-dev) |
 
 ```toml
-# For sync schema fetching
+# For sync schema fetching (recommended)
 fastxml = { version = "0.2", features = ["ureq"] }
 
 # For async schema fetching
@@ -82,6 +82,41 @@ fastxml = { version = "0.2", features = ["reqwest"] }
 
 # For custom async implementations (without built-in HTTP client)
 fastxml = { version = "0.2", features = ["async-trait"] }
+```
+
+### Schema Fetchers
+
+fastxml provides flexible schema fetching with support for both local files and HTTP:
+
+| Fetcher | Description |
+|---------|-------------|
+| `FileFetcher` | Local filesystem (`file://` URLs, absolute/relative paths) |
+| `UreqFetcher` | Sync HTTP client (requires `ureq` feature) |
+| `ReqwestFetcher` | Async HTTP client (requires `reqwest` feature) |
+| `CombinedFetcher` | Chain multiple fetchers (tries in order) |
+| `DefaultFetcher` | **Recommended sync** — combines `FileFetcher` + `UreqFetcher` |
+| `AsyncDefaultFetcher` | **Recommended async** — combines `FileFetcher` + `ReqwestFetcher` |
+
+```rust
+use fastxml::schema::{DefaultFetcher, SchemaFetcher};
+
+// DefaultFetcher tries local files first, then HTTP
+let fetcher = DefaultFetcher::new();
+
+// Or with a base directory for relative paths
+let fetcher = DefaultFetcher::with_base_dir("/path/to/schemas");
+
+let result = fetcher.fetch("schema.xsd")?;  // Local file
+let result = fetcher.fetch("http://example.com/schema.xsd")?;  // HTTP
+```
+
+For async contexts:
+
+```rust
+use fastxml::schema::AsyncDefaultFetcher;
+
+let fetcher = AsyncDefaultFetcher::new()?;
+let result = fetcher.fetch("http://example.com/schema.xsd").await?;
 ```
 
 ## Quick Start
@@ -428,9 +463,7 @@ let heights = evaluate(&doc, "//*[name()='measuredHeight']/text()")?;
 
 ### XSD Schema
 
-**Supported:** Element/attribute definitions, complex types (sequence/choice/all), simple types (restriction/list/union), type inheritance, facets, attribute/model groups, import/include/redefine, built-in XSD and GML types, identity constraints (unique/key/keyref), streaming validation with error location info.
-
-**Partial:** Substitution groups (parsing only).
+**Supported:** Element/attribute definitions, complex types (sequence/choice/all), simple types (restriction/list/union), type inheritance, facets, attribute/model groups, import/include/redefine, built-in XSD and GML types, identity constraints (unique/key/keyref), substitution groups, streaming validation with error location info.
 
 ### Not Supported
 
