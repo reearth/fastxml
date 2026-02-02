@@ -44,7 +44,8 @@ Parse + Schema Validation (via xsi:schemaLocation):
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| fastxml Streaming | 22.96s | 40 MB/s | **~1 MB** |
+| libxml DOM + validate | 8.07s | 112 MB/s | 4.22 GB |
+| fastxml Streaming | 18.14s | 50 MB/s | **~1 MB** |
 
 - **DOM**: fastxml uses **6.3x less memory** than libxml
 - **Streaming**: Constant memory regardless of file size (only parser buffers)
