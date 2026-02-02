@@ -48,6 +48,9 @@ url = "2"
 ureq = { version = "2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 
+# Async runtime (optional, for tokio::fs)
+tokio = { version = "1", features = ["fs"], optional = true }
+
 # Async support (optional)
 async-trait = { version = "0.1", optional = true }
 
@@ -77,8 +80,8 @@ default = []
 async-trait = ["dep:async-trait"]
 
 # HTTP clients
-ureq = ["dep:ureq"]                         # Sync HTTP client (DefaultFetcher, UreqFetcher)
-tokio = ["async-trait", "dep:reqwest"]      # Async HTTP client (AsyncDefaultFetcher, ReqwestFetcher)
+ureq = ["dep:ureq"]                                     # Sync HTTP client (DefaultFetcher, UreqFetcher)
+tokio = ["async-trait", "dep:reqwest", "dep:tokio"]     # Async HTTP/file client (AsyncDefaultFetcher, AsyncFileFetcher, ReqwestFetcher)
 
 # Profiling
 profile = ["memory-stats"]

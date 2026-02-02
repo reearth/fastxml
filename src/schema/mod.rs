@@ -64,6 +64,9 @@ pub mod types;
 pub mod validator;
 pub mod xsd;
 
+#[cfg(feature = "tokio")]
+pub mod async_tempdir;
+
 // Re-export main types
 pub use fetcher::{
     CombinedFetcher, DefaultFetcher, FetchResult, FileFetcher, NoopFetcher, SchemaFetcher,
@@ -100,7 +103,10 @@ pub use validator::{
 pub use fetcher::UreqFetcher;
 
 #[cfg(feature = "tokio")]
-pub use fetcher::{AsyncDefaultFetcher, AsyncSchemaFetcher, ReqwestFetcher};
+pub use fetcher::{AsyncDefaultFetcher, AsyncFileFetcher, AsyncSchemaFetcher, ReqwestFetcher};
+
+#[cfg(feature = "tokio")]
+pub use async_tempdir::AsyncTempDirStore;
 
 #[cfg(feature = "async-trait")]
 pub use store::AsyncSchemaStore;

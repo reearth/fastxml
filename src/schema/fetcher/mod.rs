@@ -9,6 +9,7 @@
 //! - [`ReqwestFetcher`] - Async HTTP client (requires `tokio` feature)
 //! - [`DefaultFetcher`] - Recommended sync default fetcher (requires `ureq` feature for HTTP)
 //! - [`AsyncDefaultFetcher`] - Recommended async default fetcher (requires `tokio` feature)
+//! - [`AsyncFileFetcher`] - Async local file fetcher (requires `tokio` feature)
 //!
 //! # Default Fetchers
 //!
@@ -21,9 +22,9 @@
 //!
 //! ## Async (AsyncDefaultFetcher)
 //!
-//! The [`AsyncDefaultFetcher`] provides async HTTP fetching (requires `tokio` feature):
+//! The [`AsyncDefaultFetcher`] provides fully async fetching (requires `tokio` feature):
 //!
-//! - Combines [`FileFetcher`] and [`ReqwestFetcher`]
+//! - Combines [`AsyncFileFetcher`] (tokio::fs) and [`ReqwestFetcher`]
 //!
 //! # Examples
 //!
@@ -56,6 +57,9 @@ mod traits;
 mod async_default;
 
 #[cfg(feature = "tokio")]
+mod async_file;
+
+#[cfg(feature = "tokio")]
 mod reqwest;
 
 #[cfg(feature = "ureq")]
@@ -72,6 +76,9 @@ pub use traits::AsyncSchemaFetcher;
 
 #[cfg(feature = "tokio")]
 pub use self::async_default::AsyncDefaultFetcher;
+
+#[cfg(feature = "tokio")]
+pub use self::async_file::AsyncFileFetcher;
 
 #[cfg(feature = "tokio")]
 pub use self::reqwest::ReqwestFetcher;

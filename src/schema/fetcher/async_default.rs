@@ -5,11 +5,12 @@ use std::path::{Path, PathBuf};
 use crate::error::Result;
 
 use super::traits::AsyncSchemaFetcher;
-use super::{FetchResult, FileFetcher, ReqwestFetcher, SchemaFetcher};
+use super::{AsyncFileFetcher, FetchResult, ReqwestFetcher};
 
 /// Async default schema fetcher with sensible defaults.
 ///
 /// This fetcher combines local file support with async HTTP fetching.
+/// All operations are fully asynchronous using tokio.
 ///
 /// # Examples
 ///
@@ -29,7 +30,7 @@ use super::{FetchResult, FileFetcher, ReqwestFetcher, SchemaFetcher};
 /// # }
 /// ```
 pub struct AsyncDefaultFetcher {
-    file_fetcher: FileFetcher,
+    file_fetcher: AsyncFileFetcher,
     http_fetcher: ReqwestFetcher,
 }
 
@@ -37,7 +38,7 @@ impl AsyncDefaultFetcher {
     /// Creates a new async default fetcher.
     ///
     /// Combines:
-    /// 1. [`FileFetcher`] - for local file:// URLs and paths
+    /// 1. [`AsyncFileFetcher`] - for local file:// URLs and paths (async with tokio::fs)
     /// 2. [`ReqwestFetcher`] - for HTTP/HTTPS URLs
     pub fn new() -> Result<Self> {
         Self::with_base_dir_option(None)
@@ -50,8 +51,8 @@ impl AsyncDefaultFetcher {
 
     fn with_base_dir_option(base_dir: Option<PathBuf>) -> Result<Self> {
         let file_fetcher = match base_dir {
-            Some(dir) => FileFetcher::with_base_dir(dir),
-            None => FileFetcher::new(),
+            Some(dir) => AsyncFileFetcher::with_base_dir(dir),
+            None => AsyncFileFetcher::new(),
         };
 
         let http_fetcher = ReqwestFetcher::new()?;
@@ -64,10 +65,10 @@ impl AsyncDefaultFetcher {
 
     /// Fetches a schema asynchronously.
     ///
-    /// Tries local file first, then falls back to HTTP.
+    /// Tries local file first (using tokio::fs), then falls back to HTTP.
     pub async fn fetch(&self, url: &str) -> Result<FetchResult> {
         // Try local file first
-        if let Ok(result) = self.file_fetcher.fetch(url) {
+        if let Ok(result) = self.file_fetcher.fetch(url).await {
             return Ok(result);
         }
 
@@ -97,5 +98,21 @@ mod tests {
     fn test_async_default_fetcher_with_base_dir() {
         let fetcher = AsyncDefaultFetcher::with_base_dir("/tmp");
         assert!(fetcher.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_async_default_fetcher_local_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "test schema content").unwrap();
+        let path = temp_file.path().to_str().unwrap();
+
+        let fetcher = AsyncDefaultFetcher::new().unwrap();
+        let result = fetcher.fetch(path).await.unwrap();
+
+        assert!(result.content.starts_with(b"test schema content"));
+        assert!(result.final_url.starts_with("file://"));
     }
 }
