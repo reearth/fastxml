@@ -3,12 +3,13 @@
 //! This module compiles parsed XSD schemas into the runtime validation
 //! representation (CompiledSchema).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::schema::types::{
-    AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
-    SimpleType, TypeDef,
+    AttributeDef, CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef,
+    FlattenedChildren, ProcessContents, SimpleType, TypeDef,
 };
 
 use super::types::*;
@@ -54,6 +55,10 @@ impl XsdCompiler {
 
         // Build substitution group index
         self.build_substitution_groups(&mut result);
+
+        // Build performance optimization caches
+        self.build_transitive_substitution_groups(&mut result);
+        self.build_type_children_cache(&mut result);
 
         Ok(result)
     }
@@ -473,6 +478,217 @@ impl XsdCompiler {
 
         // Store in schema for validation use
         schema.substitution_groups = self.substitution_groups.clone();
+    }
+
+    /// Builds the transitive substitution groups cache.
+    ///
+    /// This pre-computes all transitive members for each substitution group head,
+    /// so validation doesn't need to recurse at runtime.
+    fn build_transitive_substitution_groups(&self, schema: &mut CompiledSchema) {
+        // Build reverse lookup (member -> head)
+        for (head, members) in &schema.substitution_groups {
+            for member in members {
+                schema
+                    .substitution_group_heads
+                    .insert(member.clone(), head.clone());
+            }
+        }
+
+        // Build transitive closure for each head
+        for head in schema.substitution_groups.keys() {
+            let mut all_members = Vec::new();
+            let mut visited = HashSet::new();
+            self.collect_transitive_substitution_members(
+                head,
+                &schema.substitution_groups,
+                &mut all_members,
+                &mut visited,
+            );
+            schema
+                .transitive_substitution_groups
+                .insert(head.clone(), Arc::new(all_members));
+        }
+    }
+
+    /// Helper to recursively collect substitution group members.
+    fn collect_transitive_substitution_members(
+        &self,
+        head_name: &str,
+        groups: &HashMap<String, Vec<String>>,
+        members: &mut Vec<String>,
+        visited: &mut HashSet<String>,
+    ) {
+        if visited.contains(head_name) {
+            return;
+        }
+        visited.insert(head_name.to_string());
+
+        // Try multiple name variants for namespace prefix handling
+        let mut names_to_try = vec![head_name.to_string()];
+
+        if let Some((_prefix, local)) = head_name.split_once(':') {
+            names_to_try.push(local.to_string());
+        } else {
+            // No prefix -> try with common prefixes from schema
+            for key in groups.keys() {
+                if let Some((_prefix, local)) = key.split_once(':') {
+                    if local == head_name {
+                        names_to_try.push(key.clone());
+                    }
+                }
+            }
+        }
+
+        for name in names_to_try {
+            if let Some(direct_members) = groups.get(&name) {
+                for member in direct_members {
+                    if !members.contains(member) {
+                        members.push(member.clone());
+                    }
+                    // Recursively collect this member's members
+                    self.collect_transitive_substitution_members(member, groups, members, visited);
+                }
+            }
+        }
+    }
+
+    /// Builds the type children cache.
+    ///
+    /// This pre-computes the flattened child element constraints for each complex type,
+    /// including elements inherited through type extension.
+    ///
+    /// Types are stored with both their local name AND qualified names (with common prefixes)
+    /// to ensure fast cache hits regardless of how the type is referenced.
+    fn build_type_children_cache(&self, schema: &mut CompiledSchema) {
+        // Collect type names first to avoid borrowing issues
+        let type_names: Vec<String> = schema.types.keys().cloned().collect();
+
+        // Build cache for main schema types
+        for type_name in type_names {
+            if let Some(TypeDef::Complex(complex)) = schema.types.get(&type_name) {
+                let flattened = Arc::new(self.flatten_type_children(complex, schema));
+
+                // Insert with local name
+                schema
+                    .type_children_cache
+                    .insert(type_name.clone(), Arc::clone(&flattened));
+
+                // Also insert with common namespace prefixes to avoid split_once at runtime
+                for prefix in &[
+                    "gml", "core", "xs", "xsd", "bldg", "dem", "tran", "urf", "luse", "fld", "uro",
+                    "gen",
+                ] {
+                    let qualified = format!("{}:{}", prefix, type_name);
+                    schema
+                        .type_children_cache
+                        .insert(qualified, Arc::clone(&flattened));
+                }
+            }
+        }
+
+        // Build cache for imported schema types
+        // We need to collect these separately and then add them
+        let import_types: Vec<(String, FlattenedChildren)> = schema
+            .imports
+            .values()
+            .flat_map(|imported| {
+                imported.types.iter().filter_map(|(type_name, type_def)| {
+                    if let TypeDef::Complex(complex) = type_def {
+                        let flattened = self.flatten_type_children(complex, schema);
+                        Some((type_name.clone(), flattened))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        for (type_name, flattened) in import_types {
+            let flattened = Arc::new(flattened);
+            schema
+                .type_children_cache
+                .insert(type_name.clone(), Arc::clone(&flattened));
+
+            // Also insert with common namespace prefixes
+            for prefix in &[
+                "gml", "core", "xs", "xsd", "bldg", "dem", "tran", "urf", "luse", "fld", "uro",
+                "gen",
+            ] {
+                let qualified = format!("{}:{}", prefix, type_name);
+                schema
+                    .type_children_cache
+                    .insert(qualified, Arc::clone(&flattened));
+            }
+        }
+    }
+
+    /// Flattens the child element constraints for a complex type.
+    fn flatten_type_children(
+        &self,
+        complex: &ComplexType,
+        schema: &CompiledSchema,
+    ) -> FlattenedChildren {
+        let mut visited = HashSet::new();
+        let elements = self.collect_elements_with_inheritance(complex, schema, &mut visited);
+
+        // Determine content model type
+        let content_model_type = match &complex.content {
+            ContentModel::Sequence(_) => ContentModelType::Sequence,
+            ContentModel::Choice(_) => ContentModelType::Choice,
+            ContentModel::All(_) => ContentModelType::All,
+            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
+            ContentModel::Empty => ContentModelType::Empty,
+            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
+            ContentModel::Any { .. } => ContentModelType::Sequence,
+        };
+
+        let mut flattened = FlattenedChildren::with_content_model(content_model_type);
+        for elem in elements {
+            flattened
+                .constraints
+                .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+        }
+
+        flattened
+    }
+
+    /// Collects all child elements from a complex type, including inherited elements.
+    fn collect_elements_with_inheritance(
+        &self,
+        complex: &ComplexType,
+        schema: &CompiledSchema,
+        visited: &mut HashSet<String>,
+    ) -> Vec<ElementDef> {
+        let mut elements = Vec::new();
+
+        match &complex.content {
+            ContentModel::Sequence(elems)
+            | ContentModel::Choice(elems)
+            | ContentModel::All(elems) => {
+                elements.extend(elems.iter().cloned());
+            }
+            ContentModel::ComplexExtension {
+                base_type,
+                elements: ext_elements,
+            } => {
+                // First, get elements from the base type (inherited elements)
+                if !visited.contains(base_type.as_str()) {
+                    visited.insert(base_type.clone());
+                    if let Some(TypeDef::Complex(base_complex)) =
+                        schema.get_type(base_type.as_str())
+                    {
+                        let base_elements =
+                            self.collect_elements_with_inheritance(base_complex, schema, visited);
+                        elements.extend(base_elements);
+                    }
+                }
+                // Then add the extension's own elements
+                elements.extend(ext_elements.iter().cloned());
+            }
+            _ => {}
+        }
+
+        elements
     }
 
     /// Resolves a type reference to its definition.

@@ -1,8 +1,59 @@
 //! XSD schema type definitions.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use indexmap::IndexMap;
+
+/// Content model type for an element (used in caches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentModelType {
+    /// Sequence - all elements in order, each with their own min/max occurs
+    #[default]
+    Sequence,
+    /// Choice - exactly one of the elements must be present
+    Choice,
+    /// All - all elements must be present, but in any order
+    All,
+    /// Empty - no child elements allowed
+    Empty,
+}
+
+/// Pre-computed child element constraints for a type.
+///
+/// This struct caches the flattened inheritance chain for a complex type,
+/// eliminating the need to traverse the inheritance hierarchy at validation time.
+#[derive(Debug, Clone)]
+pub struct FlattenedChildren {
+    /// Child element constraints (name -> (min_occurs, max_occurs))
+    pub constraints: HashMap<String, (u32, Option<u32>)>,
+    /// Content model type
+    pub content_model_type: ContentModelType,
+}
+
+impl FlattenedChildren {
+    /// Creates a new empty FlattenedChildren.
+    pub fn new() -> Self {
+        Self {
+            constraints: HashMap::new(),
+            content_model_type: ContentModelType::Empty,
+        }
+    }
+
+    /// Creates a FlattenedChildren with the given content model type.
+    pub fn with_content_model(content_model_type: ContentModelType) -> Self {
+        Self {
+            constraints: HashMap::new(),
+            content_model_type,
+        }
+    }
+}
+
+impl Default for FlattenedChildren {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A compiled XSD schema.
 #[derive(Debug, Clone)]
@@ -19,6 +70,25 @@ pub struct CompiledSchema {
     pub imports: HashMap<String, CompiledSchema>,
     /// Substitution groups (head element name -> list of substitute element names)
     pub substitution_groups: HashMap<String, Vec<String>>,
+
+    // === Performance optimization caches ===
+    /// Pre-computed flattened child elements per type (type_name -> `Arc<FlattenedChildren>`).
+    ///
+    /// This cache stores the inheritance-flattened child element constraints for each type,
+    /// eliminating the need to traverse the type hierarchy at validation time.
+    pub type_children_cache: HashMap<String, Arc<FlattenedChildren>>,
+
+    /// Pre-computed transitive substitution groups (head -> all members).
+    ///
+    /// This cache stores all transitive members of each substitution group head,
+    /// including indirect members (e.g., if A has member B, and B has member C,
+    /// this stores [B, C] for A).
+    pub transitive_substitution_groups: HashMap<String, Arc<Vec<String>>>,
+
+    /// Reverse lookup: substitution group member -> head element.
+    ///
+    /// This allows O(1) lookup of which substitution group head an element belongs to.
+    pub substitution_group_heads: HashMap<String, String>,
 }
 
 impl CompiledSchema {
@@ -31,6 +101,10 @@ impl CompiledSchema {
             attributes: IndexMap::new(),
             imports: HashMap::new(),
             substitution_groups: HashMap::new(),
+            // Performance optimization caches
+            type_children_cache: HashMap::new(),
+            transitive_substitution_groups: HashMap::new(),
+            substitution_group_heads: HashMap::new(),
         }
     }
 

@@ -1,19 +1,19 @@
 //! Streaming schema validator implementation.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
 
 use crate::schema::types::{
-    CompiledSchema, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef,
+    CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
+    SimpleType, TypeDef,
 };
 use crate::schema::xsd::constraints::ConstraintValidator;
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
 use super::ValidationMode;
-use super::state::{ChildConstraints, ContentModelType, ElementContext, ValidationState};
+use super::state::{ElementContext, ValidationState};
 
 /// Streaming schema validator.
 ///
@@ -130,10 +130,74 @@ impl StreamingSchemaValidator {
             .or_else(|| self.schema.get_element(name))
     }
 
-    /// Collects all child elements from a complex type, including inherited elements.
+    /// Gets the pre-computed flattened children for an element from the schema cache.
     ///
-    /// This function follows the type inheritance chain (via ComplexExtension) to collect
-    /// all valid child elements, not just those defined directly on the type.
+    /// This uses the pre-computed type_children_cache to avoid traversing
+    /// the inheritance chain at validation time. Falls back to computing at runtime
+    /// if the cache is not populated (e.g., for manually-created schemas in tests).
+    fn get_flattened_children_for_element(
+        &self,
+        elem: &ElementDef,
+    ) -> Option<Arc<FlattenedChildren>> {
+        // Try to get from type reference first
+        if let Some(ref type_ref) = elem.type_ref {
+            // Try cache first - should hit since we pre-populate all common prefixes
+            if let Some(cached) = self.schema.type_children_cache.get(type_ref) {
+                return Some(Arc::clone(cached));
+            }
+
+            // Fall back: try without prefix (for manually-created schemas in tests)
+            if let Some((_prefix, local)) = type_ref.split_once(':') {
+                if let Some(cached) = self.schema.type_children_cache.get(local) {
+                    return Some(Arc::clone(cached));
+                }
+            }
+
+            // Fall back to computing at runtime if cache is not populated
+            if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
+                return Some(Arc::new(self.compute_flattened_children(complex)));
+            }
+        }
+
+        // Fall back to computing from inline type if present
+        if let Some(ref inline_type) = elem.inline_type {
+            if let TypeDef::Complex(complex) = inline_type {
+                return Some(Arc::new(self.compute_flattened_children(complex)));
+            }
+        }
+
+        None
+    }
+
+    /// Computes flattened children for inline types (fallback when not in cache).
+    fn compute_flattened_children(&self, complex: &ComplexType) -> FlattenedChildren {
+        let content_model_type = match &complex.content {
+            ContentModel::Sequence(_) => ContentModelType::Sequence,
+            ContentModel::Choice(_) => ContentModelType::Choice,
+            ContentModel::All(_) => ContentModelType::All,
+            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
+            ContentModel::Empty => ContentModelType::Empty,
+            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
+            ContentModel::Any { .. } => ContentModelType::Sequence,
+        };
+
+        let mut flattened = FlattenedChildren::with_content_model(content_model_type);
+
+        // Collect elements from content model
+        let mut visited = std::collections::HashSet::new();
+        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
+
+        for elem in &elements {
+            flattened
+                .constraints
+                .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+        }
+
+        flattened
+    }
+
+    /// Collects all child elements from a complex type, including inherited elements.
+    /// (Used only as fallback for inline types not in cache)
     fn collect_elements_with_inheritance(
         &self,
         complex: &ComplexType,
@@ -151,7 +215,6 @@ impl StreamingSchemaValidator {
                 base_type,
                 elements: ext_elements,
             } => {
-                // First, get elements from the base type (inherited elements)
                 if !visited.contains(base_type.as_str()) {
                     visited.insert(base_type.clone());
                     if let Some(TypeDef::Complex(base_complex)) =
@@ -162,58 +225,12 @@ impl StreamingSchemaValidator {
                         elements.extend(base_elements);
                     }
                 }
-                // Then add the extension's own elements
                 elements.extend(ext_elements.iter().cloned());
             }
             _ => {}
         }
 
         elements
-    }
-
-    /// Extracts child element occurrence constraints from an element definition.
-    ///
-    /// This includes inherited elements from base types when using ComplexExtension.
-    fn get_child_constraints_for_element(
-        &self,
-        elem: &ElementDef,
-    ) -> (ChildConstraints, ContentModelType) {
-        // Try to get the type definition
-        let type_def = if let Some(ref type_ref) = elem.type_ref {
-            self.schema.get_type(type_ref)
-        } else {
-            elem.inline_type.as_ref()
-        };
-
-        let Some(type_def) = type_def else {
-            return (HashMap::new(), ContentModelType::Empty);
-        };
-
-        let mut constraints = HashMap::new();
-        let mut content_model_type = ContentModelType::Empty;
-
-        if let TypeDef::Complex(complex) = type_def {
-            // Determine content model type
-            content_model_type = match &complex.content {
-                ContentModel::Sequence(_) => ContentModelType::Sequence,
-                ContentModel::Choice(_) => ContentModelType::Choice,
-                ContentModel::All(_) => ContentModelType::All,
-                ContentModel::ComplexExtension { .. } => ContentModelType::Sequence, // Extension acts like sequence
-                ContentModel::Empty => ContentModelType::Empty,
-                ContentModel::SimpleContent { .. } => ContentModelType::Empty,
-                ContentModel::Any { .. } => ContentModelType::Sequence, // Treat Any as permissive sequence
-            };
-
-            // Collect all elements including inherited ones
-            let mut visited = std::collections::HashSet::new();
-            let elements = self.collect_elements_with_inheritance(complex, &mut visited);
-
-            for elem in &elements {
-                constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
-            }
-        }
-
-        (constraints, content_model_type)
     }
 
     /// Creates FacetConstraints from a SimpleType definition.
@@ -262,10 +279,9 @@ impl StreamingSchemaValidator {
         let schema_has_elements = !self.schema.elements.is_empty();
 
         if let Some(elem) = elem_def {
-            // Global element found - get type information
+            // Global element found - get type information from cache
             let type_ref = elem.type_ref.clone();
-            let (expected_children, content_model_type) =
-                self.get_child_constraints_for_element(elem);
+            let flattened_children = self.get_flattened_children_for_element(elem);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -274,14 +290,12 @@ impl StreamingSchemaValidator {
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
-                ctx.expected_children = expected_children;
-                ctx.content_model_type = content_model_type;
+                ctx.flattened_children = flattened_children;
             }
         } else if is_expected_by_parent {
             // Inline element - declared in parent's type definition
             // Get type info from parent's content model if available
-            let (type_ref, expected_children, content_model_type) =
-                self.get_inline_element_info(name);
+            let (type_ref, flattened_children) = self.get_inline_element_info(name);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -290,8 +304,7 @@ impl StreamingSchemaValidator {
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
-                ctx.expected_children = expected_children;
-                ctx.content_model_type = content_model_type;
+                ctx.flattened_children = flattened_children;
             }
         } else {
             // Element not found in schema
@@ -318,7 +331,7 @@ impl StreamingSchemaValidator {
         }
         let parent_idx = self.state.element_stack.len() - 2;
         if let Some(parent) = self.state.element_stack.get(parent_idx) {
-            parent.expected_children.contains_key(name)
+            parent.expects_child(name)
         } else {
             false
         }
@@ -330,22 +343,22 @@ impl StreamingSchemaValidator {
     fn get_inline_element_info(
         &self,
         name: &str,
-    ) -> (Option<String>, ChildConstraints, ContentModelType) {
+    ) -> (Option<String>, Option<Arc<FlattenedChildren>>) {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
-            return (None, HashMap::new(), ContentModelType::Empty);
+            return (None, None);
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
         let parent_name = match self.state.element_stack.get(parent_idx) {
             Some(p) => p.name.clone(),
-            None => return (None, HashMap::new(), ContentModelType::Empty),
+            None => return (None, None),
         };
 
         // Look up parent element to get its type
         let parent_elem = self.schema.get_element(&parent_name);
         if parent_elem.is_none() {
-            return (None, HashMap::new(), ContentModelType::Empty);
+            return (None, None);
         }
         let parent_elem = parent_elem.unwrap();
 
@@ -357,7 +370,7 @@ impl StreamingSchemaValidator {
         };
 
         let Some(TypeDef::Complex(complex)) = type_def else {
-            return (None, HashMap::new(), ContentModelType::Empty);
+            return (None, None);
         };
 
         // Collect all elements including inherited ones
@@ -369,59 +382,31 @@ impl StreamingSchemaValidator {
                 // Found the inline element - get its type info
                 let type_ref = elem.type_ref.clone();
 
-                // Get expected children and content model type for this inline element
-                let (expected_children, content_model_type) = if let Some(ref tr) = type_ref {
-                    if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
-                        self.extract_child_constraints_from_complex(child_complex)
+                // Get flattened children for this inline element
+                let flattened_children = if let Some(ref tr) = type_ref {
+                    // Try cache first
+                    if let Some(cached) = self.schema.type_children_cache.get(tr) {
+                        Some(Arc::clone(cached))
+                    } else if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
+                        Some(Arc::new(self.compute_flattened_children(child_complex)))
                     } else {
-                        (HashMap::new(), ContentModelType::Empty)
+                        None
                     }
                 } else if let Some(ref inline) = elem.inline_type {
                     if let TypeDef::Complex(child_complex) = inline {
-                        self.extract_child_constraints_from_complex(child_complex)
+                        Some(Arc::new(self.compute_flattened_children(child_complex)))
                     } else {
-                        (HashMap::new(), ContentModelType::Empty)
+                        None
                     }
                 } else {
-                    (HashMap::new(), ContentModelType::Empty)
+                    None
                 };
 
-                return (type_ref, expected_children, content_model_type);
+                return (type_ref, flattened_children);
             }
         }
 
-        (None, HashMap::new(), ContentModelType::Empty)
-    }
-
-    /// Extracts child element constraints from a complex type definition.
-    ///
-    /// This includes inherited elements from base types when using ComplexExtension.
-    fn extract_child_constraints_from_complex(
-        &self,
-        complex: &ComplexType,
-    ) -> (ChildConstraints, ContentModelType) {
-        let mut constraints = HashMap::new();
-
-        // Determine content model type
-        let content_model_type = match &complex.content {
-            ContentModel::Sequence(_) => ContentModelType::Sequence,
-            ContentModel::Choice(_) => ContentModelType::Choice,
-            ContentModel::All(_) => ContentModelType::All,
-            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
-            ContentModel::Empty => ContentModelType::Empty,
-            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
-            ContentModel::Any { .. } => ContentModelType::Sequence,
-        };
-
-        // Use the inheritance-aware element collector
-        let mut visited = std::collections::HashSet::new();
-        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
-
-        for elem in &elements {
-            constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
-        }
-
-        (constraints, content_model_type)
+        (None, None)
     }
 
     /// Validates max_occurs constraint for a child element.
@@ -443,7 +428,7 @@ impl StreamingSchemaValidator {
             let constraint_name = head_name.as_deref().unwrap_or(child_name);
 
             // Check against parent's expected children constraints
-            if let Some(&(_, max_occurs)) = parent.expected_children.get(constraint_name) {
+            if let Some((_, max_occurs)) = parent.get_child_constraint(constraint_name) {
                 if let Some(max) = max_occurs {
                     // Calculate total count including all substitution group members (transitively)
                     let mut total_count = parent.get_child_count(constraint_name);
@@ -453,9 +438,9 @@ impl StreamingSchemaValidator {
                         total_count += parent.get_child_count(local);
                     }
 
-                    // Add counts from all transitive members
+                    // Add counts from all transitive members (using pre-computed cache)
                     let all_members = self.get_all_substitution_members(constraint_name);
-                    for member in &all_members {
+                    for member in all_members.iter() {
                         total_count += parent.get_child_count(member);
                     }
 
@@ -481,15 +466,22 @@ impl StreamingSchemaValidator {
     ///
     /// Returns Some(head_name) if the element is a member of a substitution group,
     /// or None if it's not a member of any substitution group.
+    /// Uses the pre-computed substitution_group_heads cache for O(1) lookup,
+    /// falling back to linear search if cache is not populated.
     fn find_substitution_group_head(&self, element_name: &str) -> Option<String> {
-        // Check if the element itself is defined and has a substitution_group
+        // Use the pre-computed reverse lookup cache
+        if let Some(head) = self.schema.substitution_group_heads.get(element_name) {
+            return Some(head.clone());
+        }
+
+        // Also check if the element itself declares a substitution_group
         if let Some(elem) = self.schema.get_element(element_name) {
             if let Some(ref sg) = elem.substitution_group {
                 return Some(sg.clone());
             }
         }
 
-        // Also check in substitution_groups map (reverse lookup)
+        // Fall back to linear search if cache is not populated
         for (head, members) in &self.schema.substitution_groups {
             if members.contains(&element_name.to_string()) {
                 return Some(head.clone());
@@ -501,19 +493,42 @@ impl StreamingSchemaValidator {
 
     /// Gets all substitution group members for a head element, including transitive members.
     ///
-    /// For example, if `_Feature` has member `_CityObject`, and `_CityObject` has member
-    /// `ReliefFeature`, then this returns both `_CityObject` and `ReliefFeature` for `_Feature`.
-    ///
-    /// Also handles namespace prefix normalization (e.g., `gml:_Feature` matches `_Feature`).
-    fn get_all_substitution_members(&self, head_name: &str) -> Vec<String> {
+    /// Uses the pre-computed transitive_substitution_groups cache for O(1) lookup,
+    /// falling back to computing transitively if cache is not populated.
+    fn get_all_substitution_members(&self, head_name: &str) -> Arc<Vec<String>> {
+        // Try direct lookup first in the cache
+        if let Some(members) = self.schema.transitive_substitution_groups.get(head_name) {
+            return Arc::clone(members);
+        }
+
+        // Try with local name if head_name has a prefix
+        if let Some((_prefix, local)) = head_name.split_once(':') {
+            if let Some(members) = self.schema.transitive_substitution_groups.get(local) {
+                return Arc::clone(members);
+            }
+        }
+
+        // Try finding a prefixed version if head_name has no prefix
+        for key in self.schema.transitive_substitution_groups.keys() {
+            if let Some((_prefix, local)) = key.split_once(':') {
+                if local == head_name {
+                    if let Some(members) = self.schema.transitive_substitution_groups.get(key) {
+                        return Arc::clone(members);
+                    }
+                }
+            }
+        }
+
+        // Fall back to computing transitively if cache is not populated
+        // This is for backward compatibility with manually-created schemas
         let mut all_members = Vec::new();
         let mut visited = std::collections::HashSet::new();
-        self.collect_transitive_members(head_name, &mut all_members, &mut visited);
-        all_members
+        self.collect_transitive_members_fallback(head_name, &mut all_members, &mut visited);
+        Arc::new(all_members)
     }
 
-    /// Helper function to recursively collect substitution group members.
-    fn collect_transitive_members(
+    /// Helper function to recursively collect substitution group members (fallback).
+    fn collect_transitive_members_fallback(
         &self,
         head_name: &str,
         members: &mut Vec<String>,
@@ -524,18 +539,13 @@ impl StreamingSchemaValidator {
         }
         visited.insert(head_name.to_string());
 
-        // Try multiple name variants:
-        // 1. The full name as-is
-        // 2. If it has a prefix, also try the local name
-        // 3. If it has no prefix, also try common prefixes (gml:, core:, etc.)
+        // Try multiple name variants for namespace prefix handling
         let mut names_to_try = vec![head_name.to_string()];
 
         if let Some((_prefix, local)) = head_name.split_once(':') {
-            // Has prefix -> also try local name
             names_to_try.push(local.to_string());
         } else {
-            // No prefix -> also try with common prefixes
-            // Search substitution_groups for keys ending with this local name
+            // No prefix -> try with common prefixes from schema
             for key in self.schema.substitution_groups.keys() {
                 if let Some((_prefix, local)) = key.split_once(':') {
                     if local == head_name {
@@ -551,8 +561,8 @@ impl StreamingSchemaValidator {
                     if !members.contains(member) {
                         members.push(member.clone());
                     }
-                    // Recursively collect members of this member (it might be a head too)
-                    self.collect_transitive_members(member, members, visited);
+                    // Recursively collect this member's members
+                    self.collect_transitive_members_fallback(member, members, visited);
                 }
             }
         }
@@ -722,12 +732,17 @@ impl StreamingSchemaValidator {
     /// If the expected child is a substitution group head, occurrences of any member
     /// element (including transitive members) are counted toward the head's requirement.
     fn validate_min_occurs(&mut self, ctx: &ElementContext) {
+        let flattened = match &ctx.flattened_children {
+            Some(f) => f,
+            None => return, // No constraints to validate
+        };
+
         // For Choice content model, we only need ONE of the choices to be present
-        if ctx.content_model_type == ContentModelType::Choice {
+        if flattened.content_model_type == ContentModelType::Choice {
             // Check if at least one choice element is present
             let mut any_choice_present = false;
 
-            for child_name in ctx.expected_children.keys() {
+            for child_name in flattened.constraints.keys() {
                 let mut count = ctx.get_child_count(child_name);
 
                 // Also try with local name if child_name has a prefix
@@ -737,7 +752,7 @@ impl StreamingSchemaValidator {
 
                 // Add counts from substitution group members
                 let all_members = self.get_all_substitution_members(child_name);
-                for member in &all_members {
+                for member in all_members.iter() {
                     count += ctx.get_child_count(member);
                 }
 
@@ -748,8 +763,8 @@ impl StreamingSchemaValidator {
             }
 
             // Only report error if no choice element is present and there are expected children
-            if !any_choice_present && !ctx.expected_children.is_empty() {
-                let choices: Vec<_> = ctx.expected_children.keys().cloned().collect();
+            if !any_choice_present && !flattened.constraints.is_empty() {
+                let choices: Vec<_> = flattened.constraints.keys().cloned().collect();
                 let error = self
                     .make_error(
                         ValidationErrorType::MissingRequiredElement,
@@ -769,7 +784,7 @@ impl StreamingSchemaValidator {
         }
 
         // For Sequence/All content models, check each element's min_occurs
-        for (child_name, &(min_occurs, _)) in &ctx.expected_children {
+        for (child_name, &(min_occurs, _)) in &flattened.constraints {
             if min_occurs > 0 {
                 // Calculate actual count including substitution group members (transitively)
                 let mut actual_count = ctx.get_child_count(child_name);
@@ -781,7 +796,7 @@ impl StreamingSchemaValidator {
 
                 // Add counts from all substitution group members (including transitive)
                 let all_members = self.get_all_substitution_members(child_name);
-                for member in &all_members {
+                for member in all_members.iter() {
                     actual_count += ctx.get_child_count(member);
                 }
 

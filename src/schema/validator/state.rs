@@ -1,25 +1,10 @@
 //! Validation state management during streaming.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::namespace::Namespace;
-
-/// Type alias for child element occurrence constraints (min_occurs, max_occurs).
-pub(crate) type ChildConstraints = HashMap<String, (u32, Option<u32>)>;
-
-/// Content model type for an element.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ContentModelType {
-    /// Sequence - all elements in order, each with their own min/max occurs
-    #[default]
-    Sequence,
-    /// Choice - exactly one of the elements must be present
-    Choice,
-    /// All - all elements must be present, but in any order
-    All,
-    /// Empty - no child elements allowed
-    Empty,
-}
+use crate::schema::types::{ContentModelType, FlattenedChildren};
 
 /// Validation state during streaming.
 #[derive(Debug, Default)]
@@ -48,10 +33,10 @@ pub(crate) struct ElementContext {
     pub schema_validated: bool,
     /// Type reference for this element (if known from schema)
     pub type_ref: Option<String>,
-    /// Expected child elements with their occurrence constraints (name -> (min, max))
-    pub expected_children: ChildConstraints,
-    /// Content model type (Sequence, Choice, All, or Empty)
-    pub content_model_type: ContentModelType,
+    /// Pre-computed flattened children constraints from schema cache.
+    /// Using Arc to avoid cloning for every element - this is a reference to
+    /// the pre-computed cache in CompiledSchema.
+    pub flattened_children: Option<Arc<FlattenedChildren>>,
 }
 
 impl ElementContext {
@@ -63,8 +48,7 @@ impl ElementContext {
             text_content: String::new(),
             schema_validated: false,
             type_ref: None,
-            expected_children: HashMap::new(),
-            content_model_type: ContentModelType::default(),
+            flattened_children: None,
         }
     }
 
@@ -76,6 +60,38 @@ impl ElementContext {
 
     pub fn get_child_count(&self, child_name: &str) -> u32 {
         *self.child_counts.get(child_name).unwrap_or(&0)
+    }
+
+    /// Returns the content model type from the flattened children, or Empty if not set.
+    #[allow(dead_code)]
+    pub fn content_model_type(&self) -> ContentModelType {
+        self.flattened_children
+            .as_ref()
+            .map(|f| f.content_model_type)
+            .unwrap_or(ContentModelType::Empty)
+    }
+
+    /// Checks if a child element is expected by this element.
+    pub fn expects_child(&self, child_name: &str) -> bool {
+        self.flattened_children
+            .as_ref()
+            .map(|f| f.constraints.contains_key(child_name))
+            .unwrap_or(false)
+    }
+
+    /// Gets the constraint for a child element, if any.
+    pub fn get_child_constraint(&self, child_name: &str) -> Option<(u32, Option<u32>)> {
+        self.flattened_children
+            .as_ref()
+            .and_then(|f| f.constraints.get(child_name).copied())
+    }
+
+    /// Iterates over expected child constraints.
+    #[allow(dead_code)]
+    pub fn expected_children(&self) -> impl Iterator<Item = (&String, &(u32, Option<u32>))> {
+        self.flattened_children
+            .iter()
+            .flat_map(|f| f.constraints.iter())
     }
 }
 
@@ -160,7 +176,7 @@ mod tests {
         assert!(ctx.text_content.is_empty());
         assert!(!ctx.schema_validated);
         assert!(ctx.type_ref.is_none());
-        assert!(ctx.expected_children.is_empty());
+        assert!(ctx.flattened_children.is_none());
     }
 
     #[test]
