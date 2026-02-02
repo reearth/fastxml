@@ -713,6 +713,8 @@ fn run_file_benchmark(
 /// Schema info with both compiled schema and raw XSD bytes
 struct SchemaInfo {
     compiled: Arc<CompiledSchema>,
+    /// Used only with compare-libxml feature for libxml validation
+    #[allow(dead_code)]
     xsd_bytes: Option<Vec<u8>>,
 }
 
