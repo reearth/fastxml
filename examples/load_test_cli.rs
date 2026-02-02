@@ -50,13 +50,11 @@ use std::time::{Duration, Instant};
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
-#[cfg(feature = "ureq")]
-use fastxml::parse_schema_locations;
 use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
-use fastxml::schema::{DefaultFetcher, InMemoryStore, SchemaFetcher, SchemaStore};
+use fastxml::schema::{DefaultFetcher, export::export_schemas_from_xml};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -390,24 +388,24 @@ mod libxml_bench {
         })
     }
 
-    /// Parse and validate XML with libxml using XSD schema
+    /// Parse and validate XML with libxml using exported schema file
     pub fn validate_with_libxml(
         content: &[u8],
-        schema_content: &[u8],
+        schema_path: &std::path::Path,
         iterations: usize,
         get_memory: fn() -> Option<usize>,
     ) -> Option<LibxmlValidationResult> {
         use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 
         let xml_str = std::str::from_utf8(content).ok()?;
-        let schema_str = std::str::from_utf8(schema_content).ok()?;
+        let schema_path_str = schema_path.to_str()?;
         let parser = libxml::parser::Parser::default();
 
-        // Parse schema once
-        let mut schema_parser = SchemaParserContext::from_buffer(schema_str);
+        // Parse schema once to verify it works
+        let mut schema_parser = SchemaParserContext::from_file(schema_path_str);
         let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
         if schema_ctx.is_err() {
-            eprintln!("    libxml: Failed to parse schema");
+            eprintln!("    libxml: Failed to parse schema from {:?}", schema_path);
             return None;
         }
 
@@ -417,7 +415,7 @@ mod libxml_bench {
 
         for i in 0..iterations {
             // Need fresh schema context for each validation
-            let mut schema_parser = SchemaParserContext::from_buffer(schema_str);
+            let mut schema_parser = SchemaParserContext::from_file(schema_path_str);
             let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
             let mut schema_ctx = match schema_ctx {
                 Ok(ctx) => ctx,
@@ -715,170 +713,100 @@ fn run_file_benchmark(
     }
 }
 
-/// Schema info with both compiled schema and raw XSD bytes
+/// Schema info with compiled schema and exported schema directory
 struct SchemaInfo {
     compiled: Arc<CompiledSchema>,
-    /// Used only with compare-libxml feature for libxml validation
+    /// Directory containing exported schemas (for libxml comparison)
     #[allow(dead_code)]
-    xsd_bytes: Option<Vec<u8>>,
-}
-
-/// Resolve a schema location relative to an XML file path.
-fn resolve_schema_location(xml_file_path: Option<&str>, location: &str) -> Option<String> {
-    // If location is already an absolute URL, return as-is
-    if location.starts_with("http://") || location.starts_with("https://") {
-        return Some(location.to_string());
-    }
-
-    // If we have a file path, resolve relative path
-    if let Some(file_path) = xml_file_path {
-        let xml_path = Path::new(file_path);
-        if let Some(parent) = xml_path.parent() {
-            let resolved = parent.join(location);
-            if resolved.exists() {
-                return resolved
-                    .canonicalize()
-                    .ok()
-                    .map(|p| p.display().to_string());
-            }
-        }
-    }
-
-    None
+    export_dir: Option<PathBuf>,
+    /// Entry schema filename in export_dir
+    #[allow(dead_code)]
+    entry_filename: Option<String>,
 }
 
 /// Extracts schema from XML content using xsi:schemaLocation.
+/// Exports all schemas to a temp directory for fair comparison with libxml.
 #[cfg(feature = "ureq")]
 fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Option<SchemaInfo> {
-    use fastxml::schema::xsd::parse_xsd_with_imports;
+    use fastxml::schema::xsd::parse_xsd_multiple;
 
-    let doc = match parse(content) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!(
-                "  Warning: Failed to parse XML for schema extraction: {}",
-                e
+    // Create temp directory for exported schemas
+    let export_dir = std::env::temp_dir().join(format!("fastxml_schemas_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&export_dir);
+
+    // Create fetcher with base directory from XML file
+    let fetcher = if let Some(path) = xml_file_path {
+        let base_dir = Path::new(path).parent().unwrap_or(Path::new("."));
+        DefaultFetcher::with_base_dir(base_dir)
+    } else {
+        DefaultFetcher::new()
+    };
+
+    // Export schemas
+    print!("  Exporting schemas... ");
+    match export_schemas_from_xml(content, &export_dir, &fetcher) {
+        Ok(result) => {
+            if result.schema_count == 0 {
+                println!("no schemas found, using built-in schema");
+                return Some(SchemaInfo {
+                    compiled: Arc::new(create_builtin_schema()),
+                    export_dir: None,
+                    entry_filename: None,
+                });
+            }
+            println!(
+                "exported {} schemas to {:?}",
+                result.schema_count, export_dir
             );
-            return Some(SchemaInfo {
-                compiled: Arc::new(create_builtin_schema()),
-                xsd_bytes: None,
-            });
-        }
-    };
 
-    let locations = match parse_schema_locations(&doc) {
-        Ok(l) => l,
+            if let Some(ref entry) = result.entry_filename {
+                println!("  Entry schema: {}", entry);
+            }
+
+            // Parse exported schemas with fastxml
+            print!("  Compiling schemas for fastxml... ");
+            let mut xsd_contents: Vec<(String, Vec<u8>)> = Vec::new();
+            for (uri, filename) in &result.uri_to_filename {
+                let path = export_dir.join(filename);
+                if let Ok(content) = fs::read(&path) {
+                    xsd_contents.push((uri.clone(), content));
+                }
+            }
+            let xsd_refs: Vec<(&str, &[u8])> = xsd_contents
+                .iter()
+                .map(|(uri, content)| (uri.as_str(), content.as_slice()))
+                .collect();
+
+            match parse_xsd_multiple(&xsd_refs) {
+                Ok(schema) => {
+                    println!("OK ({} types)", schema.types.len());
+                    Some(SchemaInfo {
+                        compiled: Arc::new(schema),
+                        export_dir: Some(export_dir),
+                        entry_filename: result.entry_filename,
+                    })
+                }
+                Err(e) => {
+                    eprintln!("FAILED: {}", e);
+                    println!("  Falling back to built-in schema");
+                    Some(SchemaInfo {
+                        compiled: Arc::new(create_builtin_schema()),
+                        export_dir: Some(export_dir),
+                        entry_filename: result.entry_filename,
+                    })
+                }
+            }
+        }
         Err(e) => {
-            eprintln!("  Warning: Failed to extract schemaLocation: {}", e);
-            return Some(SchemaInfo {
+            eprintln!("FAILED: {}", e);
+            println!("  Falling back to built-in schema");
+            Some(SchemaInfo {
                 compiled: Arc::new(create_builtin_schema()),
-                xsd_bytes: None,
-            });
-        }
-    };
-
-    if locations.is_empty() {
-        println!("  No xsi:schemaLocation found, using built-in schema");
-        return Some(SchemaInfo {
-            compiled: Arc::new(create_builtin_schema()),
-            xsd_bytes: None,
-        });
-    }
-
-    println!("  Found {} schema location(s):", locations.len());
-    for (ns, loc) in &locations {
-        println!("    {} -> {}", ns, loc);
-    }
-
-    let fetcher = DefaultFetcher::new();
-    let store = InMemoryStore::new();
-
-    // Try to fetch and parse schemas
-    for (_namespace, location) in &locations {
-        // Try to resolve relative paths first
-        let resolved = resolve_schema_location(xml_file_path, location);
-
-        let (fetch_location, is_local) = if let Some(ref resolved_path) = resolved {
-            if Path::new(resolved_path).exists() {
-                (resolved_path.as_str(), true)
-            } else {
-                (location.as_str(), false)
-            }
-        } else {
-            (location.as_str(), false)
-        };
-
-        print!("  Fetching {}... ", fetch_location);
-
-        // Handle local file
-        if is_local {
-            match fs::read(fetch_location) {
-                Ok(xsd_content) => {
-                    println!("OK ({} bytes)", xsd_content.len());
-                    let xsd_bytes = xsd_content.clone();
-                    let file_url = format!("file://{}", fetch_location);
-                    let _ = store.put(&file_url, &xsd_content);
-
-                    // Create a fetcher that can handle local files for imports
-                    let base_dir = Path::new(fetch_location).parent().unwrap_or(Path::new("."));
-                    let local_fetcher = DefaultFetcher::with_base_dir(base_dir);
-
-                    match parse_xsd_with_imports(&xsd_content, &file_url, &local_fetcher, &store) {
-                        Ok(schema) => {
-                            println!("  Schema compiled successfully");
-                            return Some(SchemaInfo {
-                                compiled: Arc::new(schema),
-                                xsd_bytes: Some(xsd_bytes),
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("  Warning: Failed to parse schema: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("FAILED: {}", e);
-                }
-            }
-        } else {
-            // Remote fetch
-            match fetcher.fetch(fetch_location) {
-                Ok(fetch_result) => {
-                    println!("OK ({} bytes)", fetch_result.content.len());
-                    let xsd_bytes = fetch_result.content.clone();
-                    let _ = store.put(&fetch_result.final_url, &fetch_result.content);
-
-                    match parse_xsd_with_imports(
-                        &fetch_result.content,
-                        &fetch_result.final_url,
-                        &fetcher,
-                        &store,
-                    ) {
-                        Ok(schema) => {
-                            println!("  Schema compiled successfully");
-                            return Some(SchemaInfo {
-                                compiled: Arc::new(schema),
-                                xsd_bytes: Some(xsd_bytes),
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("  Warning: Failed to parse schema: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("FAILED: {}", e);
-                }
-            }
+                export_dir: None,
+                entry_filename: None,
+            })
         }
     }
-
-    // Fall back to built-in schema
-    println!("  Falling back to built-in schema");
-    Some(SchemaInfo {
-        compiled: Arc::new(create_builtin_schema()),
-        xsd_bytes: None,
-    })
 }
 
 #[cfg(not(feature = "ureq"))]
@@ -886,7 +814,8 @@ fn get_schema_from_content(_content: &[u8], _xml_file_path: Option<&str>) -> Opt
     println!("  Note: Schema fetching requires 'ureq' feature, using built-in schema");
     Some(SchemaInfo {
         compiled: Arc::new(create_builtin_schema()),
-        xsd_bytes: None,
+        export_dir: None,
+        entry_filename: None,
     })
 }
 
@@ -973,18 +902,20 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         }
 
         // libxml validation comparison (if schema is available)
-        // TODO: libxml schema validation currently fails for CityGML because
-        // the schema has external imports (xAL.xsd, etc.) that need to be
-        // resolved. Need to implement proper schema catalog or prefetch all
-        // imported schemas for a fair comparison.
         if let Some(info) = schema_info
-            && let Some(xsd_bytes) = &info.xsd_bytes
+            && let Some(ref export_dir) = info.export_dir
+            && let Some(ref entry_filename) = info.entry_filename
         {
+            let schema_path = export_dir.join(entry_filename);
             println!();
             println!("    [Validation Comparison]");
-            if let Some(libxml_val_result) =
-                libxml_bench::validate_with_libxml(content, xsd_bytes, iterations, get_memory_usage)
-            {
+            println!("    Schema: {:?}", schema_path);
+            if let Some(libxml_val_result) = libxml_bench::validate_with_libxml(
+                content,
+                &schema_path,
+                iterations,
+                get_memory_usage,
+            ) {
                 println!(
                     "    libxml + validate: {} ({:.2} MB/s)",
                     format_duration(libxml_val_result.avg_time),
