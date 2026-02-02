@@ -35,7 +35,7 @@ use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
 use fastxml::schema::XmlSchemaValidationContext;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::{StreamingSchemaValidator, TwoPassSchemaValidator};
+use fastxml::schema::validator::{OnePassSchemaValidator, TwoPassSchemaValidator};
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
 use fastxml::schema::{DefaultFetcher, ResolveOptions, resolve_schema_from_xml};
@@ -547,7 +547,7 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
     }
 
     // fastxml DOM + validation benchmark
-    if let Some(ref info) = schema_info {
+    if let Some(info) = schema_info {
         let ctx = XmlSchemaValidationContext::from_arc(Arc::clone(&info.compiled));
         let mut total_validate_time = Duration::ZERO;
         let mut fastxml_val_mem_delta: Option<usize> = None;
@@ -699,7 +699,7 @@ fn run_streaming_benchmark(
             let mut parser = StreamingParser::new(reader);
             let handler = StatsHandler::new();
             parser.add_handler(Box::new(handler));
-            let validator = StreamingSchemaValidator::new(Arc::clone(s));
+            let validator = OnePassSchemaValidator::new(Arc::clone(s));
             parser.add_handler(Box::new(validator));
             let result = parser.parse();
             total_validate_time += start.elapsed();
@@ -710,7 +710,7 @@ fn run_streaming_benchmark(
                     && let Some(validator) = handlers
                         .pop()
                         .map(|h| h.as_any())
-                        .and_then(|h| h.downcast::<StreamingSchemaValidator>().ok())
+                        .and_then(|h| h.downcast::<OnePassSchemaValidator>().ok())
                 {
                     validation_errors = validator.into_errors();
                 }

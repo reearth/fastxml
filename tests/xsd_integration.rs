@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use fastxml::event::{XmlEvent, XmlEventHandler};
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::schema::xsd;
 
 /// Test parsing a simple CityGML-like schema
@@ -74,7 +74,7 @@ fn test_citygml_schema_parsing() {
 #[test]
 fn test_builtin_schema_validation() {
     let schema = xsd::create_builtin_schema();
-    let validator = StreamingSchemaValidator::new(Arc::new(schema));
+    let validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // The validator should be valid initially
     assert!(validator.is_valid());
@@ -84,7 +84,7 @@ fn test_builtin_schema_validation() {
 #[test]
 fn test_gml_document_validation() {
     let schema = xsd::create_builtin_schema();
-    let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // Simulate parsing a GML document
     validator
@@ -314,7 +314,7 @@ fn test_streaming_parse_with_validator() {
 
     // Create schema with built-in types and use it for validation
     let schema = xsd::create_builtin_schema();
-    let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // Simulate validation by handling events
     validator

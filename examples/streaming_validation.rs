@@ -9,7 +9,7 @@
 
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 use std::io::BufReader;
 use std::sync::Arc;
@@ -106,7 +106,7 @@ fn run_demo() -> Result<()> {
     parser.add_handler(Box::new(CountingHandler::new(Arc::clone(&element_count))));
 
     // Add streaming validator
-    let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
+    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
     parser.add_handler(Box::new(validator));
 
     println!("Starting streaming parse with validation...\n");

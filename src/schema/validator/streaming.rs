@@ -1,4 +1,4 @@
-//! Streaming schema validator implementation.
+//! One-pass streaming schema validator implementation.
 
 use std::sync::Arc;
 
@@ -36,10 +36,11 @@ pub struct ValidationOptions {
     pub skip_substitution_groups: bool,
 }
 
-/// Streaming schema validator.
+/// One-pass streaming schema validator.
 ///
-/// Validates XML documents against an XSD schema during streaming parsing.
-pub struct StreamingSchemaValidator {
+/// Validates XML documents against an XSD schema during streaming parsing
+/// in a single pass. Best for memory-constrained environments or non-seekable streams.
+pub struct OnePassSchemaValidator {
     schema: Arc<CompiledSchema>,
     state: ValidationState,
     errors: Vec<StructuredError>,
@@ -54,8 +55,8 @@ pub struct StreamingSchemaValidator {
     options: ValidationOptions,
 }
 
-impl StreamingSchemaValidator {
-    /// Creates a new streaming validator in strict mode.
+impl OnePassSchemaValidator {
+    /// Creates a new one-pass validator in strict mode.
     pub fn new(schema: Arc<CompiledSchema>) -> Self {
         Self {
             schema,
@@ -858,7 +859,7 @@ impl StreamingSchemaValidator {
     }
 }
 
-impl XmlEventHandler for StreamingSchemaValidator {
+impl XmlEventHandler for OnePassSchemaValidator {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         match event {
             XmlEvent::StartElement {
@@ -927,6 +928,13 @@ impl XmlEventHandler for StreamingSchemaValidator {
         self
     }
 }
+
+/// Deprecated alias for [`OnePassSchemaValidator`].
+///
+/// This type alias is provided for backwards compatibility.
+/// New code should use [`OnePassSchemaValidator`] instead.
+#[deprecated(since = "0.3.0", note = "renamed to OnePassSchemaValidator")]
+pub type StreamingSchemaValidator = OnePassSchemaValidator;
 
 #[cfg(test)]
 mod tests {
@@ -1017,13 +1025,13 @@ mod tests {
     }
 
     // =============================================
-    // StreamingSchemaValidator Tests
+    // OnePassSchemaValidator Tests
     // =============================================
 
     #[test]
     fn test_streaming_validator_new() {
         let schema = CompiledSchema::new();
-        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let validator = OnePassSchemaValidator::new(Arc::new(schema));
         assert!(validator.is_valid());
         assert!(validator.is_clean());
         assert_eq!(validator.error_count(), 0);
@@ -1033,14 +1041,14 @@ mod tests {
     fn test_streaming_validator_with_mode() {
         let schema = CompiledSchema::new();
         let validator =
-            StreamingSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+            OnePassSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
         assert!(validator.is_valid());
     }
 
     #[test]
     fn test_streaming_validator_max_errors() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
         validator.set_max_errors(2);
 
         // Add 3 errors
@@ -1055,7 +1063,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_make_error() {
         let schema = CompiledSchema::new();
-        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         let error = validator.make_error(ValidationErrorType::UnknownElement, "test error");
         assert_eq!(error.message, "test error");
@@ -1065,7 +1073,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_errors_and_warnings() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator.add_error(
             StructuredError::new("error1", ValidationErrorType::Other)
@@ -1106,7 +1114,7 @@ mod tests {
             TypeDef::Simple(SimpleType::new("xs:string")),
         );
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Valid element
         let _ = validator.handle(&XmlEvent::StartElement {
@@ -1132,7 +1140,7 @@ mod tests {
             .elements
             .insert("known".to_string(), ElementDef::new("known"));
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         let _ = validator.handle(&XmlEvent::StartElement {
             name: "unknown".into(),
@@ -1165,7 +1173,7 @@ mod tests {
             .insert("known".to_string(), ElementDef::new("known"));
 
         let mut validator =
-            StreamingSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
+            OnePassSchemaValidator::with_mode(Arc::new(schema), ValidationMode::Lenient);
 
         let _ = validator.handle(&XmlEvent::StartElement {
             name: "unknown".into(),
@@ -1183,7 +1191,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_text_content() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         let _ = validator.handle(&XmlEvent::StartElement {
             name: "test".into(),
@@ -1204,7 +1212,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_cdata_content() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         let _ = validator.handle(&XmlEvent::StartElement {
             name: "test".into(),
@@ -1225,7 +1233,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_finish_unclosed_element() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start element but don't close it
         let _ = validator.handle(&XmlEvent::StartElement {
@@ -1252,7 +1260,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_into_errors() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator.add_error(StructuredError::new(
             "test error",
@@ -1291,7 +1299,7 @@ mod tests {
             .types
             .insert("ParentType".to_string(), TypeDef::Complex(complex_type));
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start parent element
         let _ = validator.handle(&XmlEvent::StartElement {
@@ -1322,7 +1330,7 @@ mod tests {
     #[test]
     fn test_streaming_validator() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator
             .handle(&XmlEvent::StartElement {
@@ -1351,7 +1359,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_set_max_errors() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
         validator.set_max_errors(5);
         assert!(validator.is_valid());
     }
@@ -1359,7 +1367,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_errors_methods() {
         let schema = CompiledSchema::new();
-        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let validator = OnePassSchemaValidator::new(Arc::new(schema));
         assert!(validator.errors().is_empty());
         assert!(validator.errors_only().is_empty());
         assert!(validator.warnings().is_empty());
@@ -1370,14 +1378,14 @@ mod tests {
     #[test]
     fn test_streaming_validator_is_clean() {
         let schema = CompiledSchema::new();
-        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let validator = OnePassSchemaValidator::new(Arc::new(schema));
         assert!(validator.is_clean());
     }
 
     #[test]
     fn test_streaming_validator_with_prefix() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator
             .handle(&XmlEvent::StartElement {
@@ -1407,7 +1415,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_with_attributes() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator
             .handle(&XmlEvent::StartElement {
@@ -1441,7 +1449,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_nested_elements() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         validator
             .handle(&XmlEvent::StartElement {
@@ -1508,7 +1516,7 @@ mod tests {
     #[test]
     fn test_streaming_validator_other_events() {
         let schema = CompiledSchema::new();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // ProcessingInstruction
         validator
@@ -1594,7 +1602,7 @@ mod tests {
         let root_elem = ElementDef::new("root").with_type("ExtendedType");
         schema.elements.insert("root".to_string(), root_elem);
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start root element
         validator
@@ -1733,7 +1741,7 @@ mod tests {
         let root_elem = ElementDef::new("root").with_type("ChildType");
         schema.elements.insert("root".to_string(), root_elem);
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start root
         validator
@@ -1894,7 +1902,7 @@ mod tests {
             Arc::new(vec!["ReliefFeature".to_string()]),
         );
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start parent element
         validator
@@ -2040,7 +2048,7 @@ mod tests {
             Arc::new(vec!["ReliefFeature".to_string(), "Building".to_string()]),
         );
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start parent
         validator
@@ -2131,7 +2139,7 @@ mod tests {
         let parent_elem = ElementDef::new("boundedBy").with_type("BoundingShapeType");
         schema.elements.insert("boundedBy".to_string(), parent_elem);
 
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start boundedBy
         validator

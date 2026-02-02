@@ -9,15 +9,15 @@ use crate::event::{XmlEvent, XmlEventHandler};
 use crate::schema::fetcher::SchemaFetcher;
 use crate::schema::store::SchemaStore;
 
-use super::streaming::StreamingSchemaValidator;
+use super::streaming::OnePassSchemaValidator;
 
 /// A streaming validator that lazily initializes schema from xsi:schemaLocation.
 ///
 /// On the first StartElement event, this validator extracts xsi:schemaLocation,
-/// fetches and compiles the schema, then delegates to StreamingSchemaValidator.
+/// fetches and compiles the schema, then delegates to [`OnePassSchemaValidator`].
 pub struct LazySchemaValidator<F: SchemaFetcher> {
     fetcher: F,
-    validator: Option<StreamingSchemaValidator>,
+    validator: Option<OnePassSchemaValidator>,
     initialized: bool,
     errors: Vec<StructuredError>,
 }
@@ -139,7 +139,7 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
             crate::schema::xsd::create_builtin_schema()
         };
 
-        self.validator = Some(StreamingSchemaValidator::new(Arc::new(schema)));
+        self.validator = Some(OnePassSchemaValidator::new(Arc::new(schema)));
     }
 }
 
@@ -168,7 +168,7 @@ impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidator<F> {
 /// Internal validator with shared error collection for streaming validation functions.
 pub(crate) struct LazySchemaValidatorWithSharedErrors<F: SchemaFetcher> {
     fetcher: F,
-    validator: Option<StreamingSchemaValidator>,
+    validator: Option<OnePassSchemaValidator>,
     initialized: bool,
     shared_errors: Arc<Mutex<Vec<StructuredError>>>,
 }
@@ -280,7 +280,7 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
             crate::schema::xsd::create_builtin_schema()
         };
 
-        self.validator = Some(StreamingSchemaValidator::new(Arc::new(schema)));
+        self.validator = Some(OnePassSchemaValidator::new(Arc::new(schema)));
     }
 }
 

@@ -8,7 +8,7 @@ use fastxml::error::Error;
 use fastxml::event::{XmlEvent, XmlEventHandler};
 use fastxml::schema::error::SchemaError;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::schema::xsd::{create_builtin_schema, parse_xsd};
 
 // =============================================================================
@@ -671,7 +671,7 @@ mod streaming_validation {
     #[test]
     fn test_validator_with_builtin_types() {
         let schema = create_builtin_schema();
-        let validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Initial state should be valid
         assert!(validator.is_valid());
@@ -680,7 +680,7 @@ mod streaming_validation {
     #[test]
     fn test_validator_events() {
         let schema = create_builtin_schema();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // Start element
         validator
@@ -717,7 +717,7 @@ mod streaming_validation {
     #[test]
     fn test_validator_collects_errors() {
         let schema = create_test_schema();
-        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
         // This would collect validation errors as they occur
         // The actual validation logic depends on the schema definition

@@ -1,11 +1,17 @@
-//! Streaming XML schema validator.
+//! XML schema validators.
 //!
-//! This module provides streaming validation of XML documents against XSD schemas.
+//! This module provides multiple validation approaches for XML documents against XSD schemas:
+//!
+//! - [`DomSchemaValidator`] - Direct DOM tree validation (~37 MB/s)
+//! - [`TwoPassSchemaValidator`] - Skeleton-based batch validation (~31 MB/s)
+//! - [`OnePassSchemaValidator`] - Streaming single-pass validation (~15 MB/s)
 //!
 //! # Module Structure
 //!
+//! - `dom` - DOM-based validator for pre-parsed documents
+//! - `two_pass` - Two-pass skeleton-based validator
+//! - `streaming` - One-pass streaming validator
 //! - `state` - Validation state management during streaming
-//! - `streaming` - Core streaming schema validator
 //! - `context` - Schema validation context wrapper
 //! - `lazy` - Lazy validators that initialize from xsi:schemaLocation
 //! - `api` - Public API functions
@@ -25,7 +31,8 @@ pub use self::mode::ValidationMode;
 pub use context::XmlSchemaValidationContext;
 pub use dom::DomSchemaValidator;
 pub use lazy::LazySchemaValidator;
-pub use streaming::{StreamingSchemaValidator, ValidationOptions};
+#[allow(deprecated)]
+pub use streaming::{OnePassSchemaValidator, StreamingSchemaValidator, ValidationOptions};
 pub use two_pass::{DocumentSkeleton, ElementSkeleton, TwoPassSchemaValidator};
 
 // Re-export API functions

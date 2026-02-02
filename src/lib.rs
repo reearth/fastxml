@@ -344,7 +344,7 @@ pub fn validate_with_schema_location_and_fetcher<F: schema::SchemaFetcher>(
 /// ```ignore
 /// use fastxml::get_schema_from_schema_location;
 /// use fastxml::event::StreamingParser;
-/// use fastxml::schema::validator::StreamingSchemaValidator;
+/// use fastxml::schema::validator::OnePassSchemaValidator;
 /// use std::sync::Arc;
 /// use std::io::BufReader;
 ///
@@ -352,7 +352,7 @@ pub fn validate_with_schema_location_and_fetcher<F: schema::SchemaFetcher>(
 /// let schema = Arc::new(get_schema_from_schema_location(&xml_bytes)?);
 ///
 /// let mut parser = StreamingParser::new(BufReader::new(xml_bytes.as_slice()));
-/// parser.add_handler(Box::new(StreamingSchemaValidator::new(schema)));
+/// parser.add_handler(Box::new(OnePassSchemaValidator::new(schema)));
 /// parser.parse()?;
 /// ```
 #[cfg(feature = "ureq")]

@@ -318,13 +318,13 @@ This requires the `ureq` feature:
 fastxml = { version = "0.2", features = ["ureq"] }
 ```
 
-### Streaming Validation
+### One-Pass Streaming Validation
 
 For large files, validate while parsing in a single pass:
 
 ```rust
 use fastxml::event::StreamingParser;
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::schema::parse_xsd;
 use std::sync::Arc;
 use std::io::BufReader;
@@ -338,7 +338,7 @@ let schema = Arc::new(parse_xsd(&xsd_content)?);
 let file = File::open("large_document.xml")?;
 let mut parser = StreamingParser::new(BufReader::new(file));
 
-let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
+let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
 parser.add_handler(Box::new(validator));
 
 // Parse and validate in single pass
@@ -388,11 +388,11 @@ fastxml provides multiple validators optimized for different use cases:
 |-----------|----------|------------|--------|
 | `DomSchemaValidator` | Pre-parsed documents | ~37 MB/s | High (DOM) |
 | `TwoPassSchemaValidator` | Large files, seekable streams | ~31 MB/s | Medium |
-| `StreamingSchemaValidator` | Huge files, non-seekable streams | ~15 MB/s | **Minimal** |
+| `OnePassSchemaValidator` | Huge files, non-seekable streams | ~15 MB/s | **Minimal** |
 
 - **DOM Validator**: Used automatically when calling `validate()` on a parsed document. Directly traverses the DOM tree without event reconstruction.
 - **Two-Pass**: Builds a lightweight skeleton in pass 1, validates in pass 2. Good balance of speed and memory.
-- **Streaming**: Single-pass validation during parsing. Best for memory-constrained environments.
+- **One-Pass (Streaming)**: Single-pass validation during parsing. Best for memory-constrained environments.
 
 ```rust
 use fastxml::schema::validator::{DomSchemaValidator, TwoPassSchemaValidator};

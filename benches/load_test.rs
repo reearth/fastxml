@@ -18,7 +18,7 @@ use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
 use fastxml::schema::types::{CompiledSchema, ElementDef};
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -511,7 +511,7 @@ fn bench_schema_validation(c: &mut Criterion) {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
                     let mut parser = StreamingParser::new(reader);
-                    let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
+                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
                     parser.add_handler(Box::new(validator));
                     parser.parse().unwrap()
                 })
@@ -542,7 +542,7 @@ fn bench_schema_validation(c: &mut Criterion) {
                     let reader = std::io::Cursor::new(black_box(xml));
                     let mut parser = StreamingParser::new(reader);
                     let handler = CountingHandler::new();
-                    let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
+                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
                     parser.add_handler(Box::new(handler));
                     parser.add_handler(Box::new(validator));
                     parser.parse().unwrap()
@@ -567,7 +567,7 @@ fn bench_schema_validation(c: &mut Criterion) {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
                     let mut parser = StreamingParser::new(reader);
-                    let validator = StreamingSchemaValidator::new(Arc::clone(&schema));
+                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
                     parser.add_handler(Box::new(validator));
                     parser.parse().unwrap()
                 })

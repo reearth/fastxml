@@ -7,7 +7,7 @@ use crate::error::{Result, StructuredError};
 use crate::schema::types::CompiledSchema;
 
 use super::dom::DomSchemaValidator;
-use super::streaming::StreamingSchemaValidator;
+use super::streaming::OnePassSchemaValidator;
 
 /// Schema validation context.
 ///
@@ -38,9 +38,9 @@ impl XmlSchemaValidationContext {
         validator.validate(doc)
     }
 
-    /// Creates a streaming validator.
-    pub fn create_validator(&self) -> StreamingSchemaValidator {
-        StreamingSchemaValidator::new(Arc::clone(&self.schema))
+    /// Creates a one-pass streaming validator.
+    pub fn create_validator(&self) -> OnePassSchemaValidator {
+        OnePassSchemaValidator::new(Arc::clone(&self.schema))
     }
 
     /// Returns a reference to the schema.
