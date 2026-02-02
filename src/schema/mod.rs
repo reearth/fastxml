@@ -57,6 +57,7 @@ pub mod export;
 pub mod fetch_error;
 pub mod fetcher;
 pub mod memory;
+pub mod resolve;
 pub mod store;
 pub mod tempdir;
 pub mod types;
@@ -99,3 +100,8 @@ pub use store::AsyncSchemaStore;
 
 // Re-export XSD parsing functions
 pub use xsd::{create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports};
+
+// Re-export schema resolution functions
+pub use resolve::{
+    ResolveOptions, ResolvedSchema, resolve_schema_from_file, resolve_schema_from_xml,
+};

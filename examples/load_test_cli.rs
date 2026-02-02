@@ -12,40 +12,23 @@
 //!
 //! ## Real files (URLs or local paths)
 //! ```bash
-//! # Local files
 //! cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
-//!
-//! # URLs (requires sync feature)
-//! cargo run --release --example load_test_cli --features sync -- \
-//!     https://example.com/file.xml
-//!
-//! # From stdin
-//! cat urls.txt | cargo run --release --example load_test_cli --features sync
+//! cargo run --release --example load_test_cli --features ureq -- https://example.com/file.xml
 //! ```
 //!
-//! ## Comparison with libxml
+//! ## With schema validation
 //! ```bash
-//! # With libxml comparison
-//! cargo run --release --example load_test_cli --features compare-libxml -- ./file.xml
-//! ```
-//!
-//! ## Options
-//! ```bash
-//! --pattern <PATTERN>   Test pattern: many-elements, deep-nesting, large-content, citygml
-//! --size <SIZE>         Size parameter for pattern
-//! --mode <MODE>         Processing mode: dom, streaming, both (default)
-//! --iterations <N>      Number of iterations (default: 3)
-//! --validate            Enable schema validation benchmark
-//! --cache-dir <DIR>     Cache directory for downloaded URLs (default: examples/cache)
+//! cargo run --release --example load_test_cli --features "ureq,compare-libxml" -- \
+//!     ./file.xml --validate
 //! ```
 
 use std::fs;
-#[cfg(feature = "ureq")]
-use std::io::Write;
 use std::io::{BufRead, BufReader, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use clap::{Parser, ValueEnum};
 
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
@@ -54,158 +37,58 @@ use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
-use fastxml::schema::{DefaultFetcher, export::export_schemas_from_xml};
+use fastxml::schema::{DefaultFetcher, ResolveOptions, resolve_schema_from_xml};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
-// Configuration
+// CLI Arguments
 // =============================================================================
 
-struct Config {
-    mode: Mode,
-    processing_mode: String,
+#[derive(Parser, Debug)]
+#[command(name = "fastxml-load-test")]
+#[command(about = "Load testing CLI for fastxml", long_about = None)]
+struct Args {
+    /// Input files (local paths or URLs)
+    inputs: Vec<String>,
+
+    /// Test pattern for synthetic data
+    #[arg(long, value_enum)]
+    pattern: Option<Pattern>,
+
+    /// Size parameter for pattern
+    #[arg(long, default_value = "10000")]
+    size: usize,
+
+    /// Processing mode
+    #[arg(long, value_enum, default_value = "both")]
+    mode: ProcessingMode,
+
+    /// Number of iterations
+    #[arg(long, default_value = "3")]
     iterations: usize,
+
+    /// Enable schema validation benchmark
+    #[arg(long)]
     validate: bool,
+
+    /// Cache directory for downloaded URLs
+    #[arg(long, default_value = "examples/cache")]
     cache_dir: PathBuf,
 }
 
-enum Mode {
-    Pattern { pattern: String, size: usize },
-    Files { inputs: Vec<String> },
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Pattern {
+    ManyElements,
+    DeepNesting,
+    LargeContent,
+    Citygml,
 }
 
-impl Config {
-    fn from_args() -> Self {
-        let args: Vec<String> = std::env::args().collect();
-
-        let mut pattern: Option<String> = None;
-        let mut size = 10_000usize;
-        let mut processing_mode = "both".to_string();
-        let mut iterations = 3usize;
-        let mut validate = false;
-        let mut cache_dir = PathBuf::from("examples/cache");
-        let mut inputs: Vec<String> = Vec::new();
-        let mut show_help = false;
-
-        let mut i = 1;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-h" | "--help" => show_help = true,
-                "--pattern" => {
-                    i += 1;
-                    if i < args.len() {
-                        pattern = Some(args[i].clone());
-                    }
-                }
-                "--size" => {
-                    i += 1;
-                    if i < args.len() {
-                        size = args[i].parse().unwrap_or(10_000);
-                    }
-                }
-                "--mode" => {
-                    i += 1;
-                    if i < args.len() {
-                        processing_mode = args[i].clone();
-                    }
-                }
-                "--iterations" => {
-                    i += 1;
-                    if i < args.len() {
-                        iterations = args[i].parse().unwrap_or(3);
-                    }
-                }
-                "--validate" => validate = true,
-                "--cache-dir" => {
-                    i += 1;
-                    if i < args.len() {
-                        cache_dir = PathBuf::from(&args[i]);
-                    }
-                }
-                arg if !arg.starts_with('-') => {
-                    inputs.push(arg.to_string());
-                }
-                _ => {
-                    eprintln!("Unknown option: {}", args[i]);
-                    std::process::exit(1);
-                }
-            }
-            i += 1;
-        }
-
-        if show_help {
-            print_help(&args[0]);
-            std::process::exit(0);
-        }
-
-        // Read from stdin if no inputs and not a terminal
-        if inputs.is_empty() && pattern.is_none() && !std::io::stdin().is_terminal() {
-            let stdin = std::io::stdin();
-            for line in stdin.lock().lines().map_while(|l| l.ok()) {
-                let line = line.trim();
-                if !line.is_empty() && !line.starts_with('#') {
-                    inputs.push(line.to_string());
-                }
-            }
-        }
-
-        let mode = if let Some(p) = pattern {
-            Mode::Pattern { pattern: p, size }
-        } else if !inputs.is_empty() {
-            Mode::Files { inputs }
-        } else {
-            // Default to pattern mode
-            Mode::Pattern {
-                pattern: "many-elements".to_string(),
-                size,
-            }
-        };
-
-        Self {
-            mode,
-            processing_mode,
-            iterations,
-            validate,
-            cache_dir,
-        }
-    }
-}
-
-fn print_help(program: &str) {
-    eprintln!("fastxml Load Test CLI");
-    eprintln!();
-    eprintln!("Usage: {} [OPTIONS] [FILES...]", program);
-    eprintln!();
-    eprintln!("Modes:");
-    eprintln!(
-        "  Synthetic data:  {} --pattern <PATTERN> --size <SIZE>",
-        program
-    );
-    eprintln!("  Real files:      {} file1.xml file2.xml", program);
-    eprintln!("  From stdin:      cat urls.txt | {}", program);
-    eprintln!();
-    eprintln!("Options:");
-    eprintln!("  --pattern <PATTERN>   Test pattern (synthetic mode):");
-    eprintln!("                        - many-elements: wide tree with many sibling elements");
-    eprintln!("                        - deep-nesting: deeply nested elements");
-    eprintln!("                        - large-content: elements with large text content");
-    eprintln!("                        - citygml: CityGML-style document with namespaces");
-    eprintln!("  --size <SIZE>         Size parameter for pattern (default: 10000)");
-    eprintln!("  --mode <MODE>         Processing mode: dom, streaming, both (default: both)");
-    eprintln!("  --iterations <N>      Number of iterations (default: 3)");
-    eprintln!("  --validate            Enable schema validation benchmark");
-    eprintln!("  --cache-dir <DIR>     Cache directory for URLs (default: examples/cache)");
-    eprintln!("  -h, --help            Show this help message");
-    eprintln!();
-    eprintln!("Examples:");
-    eprintln!("  # Synthetic: 100k elements");
-    eprintln!("  {} --pattern many-elements --size 100000", program);
-    eprintln!();
-    eprintln!("  # Synthetic: CityGML with 1000 buildings");
-    eprintln!("  {} --pattern citygml --size 1000 --validate", program);
-    eprintln!();
-    eprintln!("  # Real files");
-    eprintln!("  {} ./large.xml https://example.com/data.xml", program);
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
+enum ProcessingMode {
+    Dom,
+    Streaming,
+    Both,
 }
 
 // =============================================================================
@@ -349,7 +232,6 @@ fn print_separator() {
 mod libxml_bench {
     use std::time::{Duration, Instant};
 
-    /// Parse XML with libxml and return timing info
     pub fn parse_with_libxml(
         content: &[u8],
         iterations: usize,
@@ -363,7 +245,6 @@ mod libxml_bench {
         let mut memory_delta = None;
 
         for i in 0..iterations {
-            // Measure memory on first iteration
             let mem_before = if i == 0 { get_memory() } else { None };
 
             let start = Instant::now();
@@ -375,7 +256,6 @@ mod libxml_bench {
                 if let (Some(before), Some(after)) = (mem_before, mem_after) {
                     memory_delta = Some(after.saturating_sub(before));
                 }
-                // Count nodes on first iteration
                 node_count = count_nodes(&doc);
             }
         }
@@ -388,7 +268,6 @@ mod libxml_bench {
         })
     }
 
-    /// Parse and validate XML with libxml using exported schema file
     pub fn validate_with_libxml(
         content: &[u8],
         schema_path: &std::path::Path,
@@ -401,10 +280,8 @@ mod libxml_bench {
         let schema_path_str = schema_path.to_str()?;
         let parser = libxml::parser::Parser::default();
 
-        // Parse schema once to verify it works
         let mut schema_parser = SchemaParserContext::from_file(schema_path_str);
-        let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
-        if schema_ctx.is_err() {
+        if SchemaValidationContext::from_parser(&mut schema_parser).is_err() {
             eprintln!("    libxml: Failed to parse schema from {:?}", schema_path);
             return None;
         }
@@ -414,13 +291,8 @@ mod libxml_bench {
         let mut validation_errors = 0usize;
 
         for i in 0..iterations {
-            // Need fresh schema context for each validation
             let mut schema_parser = SchemaParserContext::from_file(schema_path_str);
-            let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser);
-            let mut schema_ctx = match schema_ctx {
-                Ok(ctx) => ctx,
-                Err(_) => return None,
-            };
+            let mut schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser).ok()?;
 
             let mem_before = if i == 0 { get_memory() } else { None };
 
@@ -514,6 +386,8 @@ fn load_file(
     input: &str,
     cache_dir: &Path,
 ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+    use std::io::Write;
+
     if is_url(input) {
         let file_name = input.split('/').next_back().unwrap_or("unknown.xml");
         let cache_path = cache_dir.join(file_name);
@@ -546,195 +420,34 @@ fn load_file(
     _cache_dir: &Path,
 ) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
     if is_url(input) {
-        Err("URL loading requires 'sync' feature. Use: cargo run --features sync --example load_test_cli".into())
+        Err("URL loading requires 'ureq' feature".into())
     } else {
         Ok(fs::read(input)?)
     }
 }
 
 // =============================================================================
-// Pattern Mode Benchmark
+// Schema Resolution
 // =============================================================================
 
-fn run_pattern_test(
-    config: GeneratorConfig,
-    processing_mode: &str,
-    iterations: usize,
-    validate: bool,
-) {
-    println!();
-    print_separator();
-    println!("Configuration (Synthetic):");
-    println!("  Elements:     {:>10}", config.element_count);
-    println!("  Max Depth:    {:>10}", config.max_depth);
-    println!("  Content Size: {:>10}", format_bytes(config.content_size));
-    println!("  Attributes:   {:>10}/element", config.attribute_count);
-    println!("  Namespaces:   {:>10}", config.with_namespaces);
-    println!(
-        "  Est. Size:    {:>10}",
-        format_bytes(config.estimated_size())
-    );
-    print_separator();
-
-    // Generate XML once for DOM tests
-    let xml_bytes = if processing_mode == "streaming" {
-        Vec::new()
-    } else {
-        println!("\nGenerating XML...");
-        let start = Instant::now();
-        let mut xml_gen = XmlStreamGenerator::new(config.clone());
-        let mut bytes = Vec::new();
-        xml_gen.read_to_end(&mut bytes).unwrap();
-        println!(
-            "  Generated {} in {}",
-            format_bytes(bytes.len()),
-            format_duration(start.elapsed())
-        );
-        bytes
-    };
-
-    let schema = if validate {
-        Some(Arc::new(create_builtin_schema()))
-    } else {
-        None
-    };
-
-    // DOM parsing test
-    if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(&xml_bytes, iterations, None);
-
-        // XPath test
-        println!("\n--- XPath Evaluation ---");
-        let doc = parse(&xml_bytes).unwrap();
-
-        let start = Instant::now();
-        let result = evaluate(&doc, "//*").unwrap();
-        let count = result.into_nodes().len();
-        println!(
-            "  //*: {} elements in {}",
-            count,
-            format_duration(start.elapsed())
-        );
-
-        if config.with_namespaces {
-            let start = Instant::now();
-            let result = evaluate(&doc, "//bldg:Building").unwrap();
-            let count = result.into_nodes().len();
-            println!(
-                "  //bldg:Building: {} elements in {}",
-                count,
-                format_duration(start.elapsed())
-            );
-        }
-    }
-
-    // Streaming test
-    if processing_mode == "streaming" || processing_mode == "both" {
-        println!("\n--- Streaming Parse ---");
-        let mem_before = get_memory_usage();
-
-        let mut total_time = Duration::ZERO;
-        let mut total_bytes = 0usize;
-
-        for i in 0..iterations {
-            let xml_gen = XmlStreamGenerator::new(config.clone());
-            let reader = BufReader::with_capacity(64 * 1024, xml_gen);
-
-            let start = Instant::now();
-            let mut counting_reader = CountingReader::new(reader);
-            let mut parser = StreamingParser::new(&mut counting_reader);
-            let handler = StatsHandler::new();
-            parser.add_handler(Box::new(handler));
-            if let Some(ref s) = schema {
-                let validator = StreamingSchemaValidator::new(Arc::clone(s));
-                parser.add_handler(Box::new(validator));
-            }
-            let _ = parser.parse();
-
-            total_time += start.elapsed();
-            total_bytes = counting_reader.bytes_read;
-
-            if i == 0 {
-                println!("  Processed: {}", format_bytes(total_bytes));
-            }
-        }
-
-        let mem_after = get_memory_usage();
-        let avg_time = total_time / iterations as u32;
-        let throughput = total_bytes as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
-
-        println!("  Avg Time:    {}", format_duration(avg_time));
-        println!("  Throughput:  {:.2} MB/s", throughput);
-
-        if let (Some(before), Some(after)) = (mem_before, mem_after) {
-            println!(
-                "  Memory:      {} -> {} (Δ {})",
-                format_bytes(before),
-                format_bytes(after),
-                format_bytes(after.saturating_sub(before))
-            );
-        }
-    }
-}
-
-// =============================================================================
-// File Mode Benchmark
-// =============================================================================
-
-fn run_file_benchmark(
-    name: &str,
-    file_path: Option<&str>,
-    content: &[u8],
-    processing_mode: &str,
-    iterations: usize,
-    validate: bool,
-) {
-    println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
-
-    // Get schema from xsi:schemaLocation if validation is enabled
-    let schema_info: Option<SchemaInfo> = if validate {
-        get_schema_from_content(content, file_path)
-    } else {
-        None
-    };
-
-    // DOM
-    if processing_mode == "dom" || processing_mode == "both" {
-        run_dom_benchmark(content, iterations, schema_info.as_ref());
-    }
-
-    // Streaming
-    if processing_mode == "streaming" || processing_mode == "both" {
-        run_streaming_benchmark(
-            content,
-            iterations,
-            schema_info.as_ref().map(|s| &s.compiled),
-        );
-    }
-}
-
-/// Schema info with compiled schema and exported schema directory
+/// Schema info for benchmarking
 struct SchemaInfo {
     compiled: Arc<CompiledSchema>,
-    /// Directory containing exported schemas (for libxml comparison)
     #[allow(dead_code)]
     export_dir: Option<PathBuf>,
-    /// Entry schema filename in export_dir
     #[allow(dead_code)]
     entry_filename: Option<String>,
 }
 
-/// Extracts schema from XML content using xsi:schemaLocation.
-/// Exports all schemas to a temp directory for fair comparison with libxml.
 #[cfg(feature = "ureq")]
 fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Option<SchemaInfo> {
-    use fastxml::schema::xsd::parse_xsd_multiple;
+    let options = if let Some(path) = xml_file_path {
+        let base_dir = Path::new(path).parent().unwrap_or(Path::new("."));
+        ResolveOptions::with_base_dir(base_dir)
+    } else {
+        ResolveOptions::default()
+    };
 
-    // Create temp directory for exported schemas
-    let export_dir = std::env::temp_dir().join(format!("fastxml_schemas_{}", std::process::id()));
-    let _ = fs::remove_dir_all(&export_dir);
-
-    // Create fetcher with base directory from XML file
     let fetcher = if let Some(path) = xml_file_path {
         let base_dir = Path::new(path).parent().unwrap_or(Path::new("."));
         DefaultFetcher::with_base_dir(base_dir)
@@ -742,60 +455,30 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
         DefaultFetcher::new()
     };
 
-    // Export schemas
-    print!("  Exporting schemas... ");
-    match export_schemas_from_xml(content, &export_dir, &fetcher) {
-        Ok(result) => {
-            if result.schema_count == 0 {
+    print!("  Resolving schemas... ");
+    match resolve_schema_from_xml(content, &fetcher, &options) {
+        Ok(resolved) => {
+            if resolved.is_builtin() {
                 println!("no schemas found, using built-in schema");
-                return Some(SchemaInfo {
-                    compiled: Arc::new(create_builtin_schema()),
-                    export_dir: None,
-                    entry_filename: None,
-                });
-            }
-            println!(
-                "exported {} schemas to {:?}",
-                result.schema_count, export_dir
-            );
-
-            if let Some(ref entry) = result.entry_filename {
-                println!("  Entry schema: {}", entry);
-            }
-
-            // Parse exported schemas with fastxml
-            print!("  Compiling schemas for fastxml... ");
-            let mut xsd_contents: Vec<(String, Vec<u8>)> = Vec::new();
-            for (uri, filename) in &result.uri_to_filename {
-                let path = export_dir.join(filename);
-                if let Ok(content) = fs::read(&path) {
-                    xsd_contents.push((uri.clone(), content));
+            } else {
+                println!(
+                    "resolved {} schemas ({} types)",
+                    resolved
+                        .export_result
+                        .as_ref()
+                        .map(|r| r.schema_count)
+                        .unwrap_or(0),
+                    resolved.compiled.types.len()
+                );
+                if let Some(ref entry) = resolved.entry_filename {
+                    println!("  Entry schema: {}", entry);
                 }
             }
-            let xsd_refs: Vec<(&str, &[u8])> = xsd_contents
-                .iter()
-                .map(|(uri, content)| (uri.as_str(), content.as_slice()))
-                .collect();
-
-            match parse_xsd_multiple(&xsd_refs) {
-                Ok(schema) => {
-                    println!("OK ({} types)", schema.types.len());
-                    Some(SchemaInfo {
-                        compiled: Arc::new(schema),
-                        export_dir: Some(export_dir),
-                        entry_filename: result.entry_filename,
-                    })
-                }
-                Err(e) => {
-                    eprintln!("FAILED: {}", e);
-                    println!("  Falling back to built-in schema");
-                    Some(SchemaInfo {
-                        compiled: Arc::new(create_builtin_schema()),
-                        export_dir: Some(export_dir),
-                        entry_filename: result.entry_filename,
-                    })
-                }
-            }
+            Some(SchemaInfo {
+                compiled: resolved.compiled,
+                export_dir: resolved.export_dir,
+                entry_filename: resolved.entry_filename,
+            })
         }
         Err(e) => {
             eprintln!("FAILED: {}", e);
@@ -819,6 +502,10 @@ fn get_schema_from_content(_content: &[u8], _xml_file_path: Option<&str>) -> Opt
     })
 }
 
+// =============================================================================
+// Benchmarks
+// =============================================================================
+
 fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&SchemaInfo>) {
     println!("\n  [DOM]");
 
@@ -826,7 +513,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
     let mut fastxml_mem_delta: Option<usize> = None;
 
     for i in 0..iterations {
-        // Measure memory on first iteration (keep doc alive for measurement)
         if i == 0 {
             let mem_before = get_memory_usage();
             let start = Instant::now();
@@ -839,7 +525,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
             if let (Some(before), Some(after)) = (mem_before, mem_after) {
                 fastxml_mem_delta = Some(after.saturating_sub(before));
             }
-            // doc drops here after memory measurement
         } else {
             let start = Instant::now();
             let _doc = parse(content).unwrap();
@@ -860,7 +545,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         println!("    fastxml mem: Δ {}", format_bytes(mem));
     }
 
-    // libxml comparison
     #[cfg(feature = "compare-libxml")]
     {
         if let Some(libxml_result) =
@@ -876,7 +560,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
                 println!("    libxml mem: Δ {}", format_bytes(mem));
             }
 
-            // Comparison
             println!();
             println!("    [Comparison]");
             let speedup = libxml_result.avg_time.as_secs_f64() / avg_parse.as_secs_f64();
@@ -886,7 +569,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
                 println!("    Speed:  libxml is {:.2}x faster", 1.0 / speedup);
             }
 
-            // Memory comparison
             if let (Some(fastxml_mem), Some(libxml_mem)) =
                 (fastxml_mem_delta, libxml_result.memory_delta)
                 && fastxml_mem > 0
@@ -901,10 +583,9 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
             }
         }
 
-        // libxml validation comparison (if schema is available)
         if let Some(info) = schema_info
-            && let Some(ref export_dir) = info.export_dir
-            && let Some(ref entry_filename) = info.entry_filename
+            && let (Some(export_dir), Some(entry_filename)) =
+                (&info.export_dir, &info.entry_filename)
         {
             let schema_path = export_dir.join(entry_filename);
             println!();
@@ -934,7 +615,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         }
     }
 
-    // Suppress unused variable warning when compare-libxml is not enabled
     let _ = schema_info;
 }
 
@@ -946,7 +626,6 @@ fn run_streaming_benchmark(
     println!("\n  [Streaming]");
     let mem_before = get_memory_usage();
 
-    // Parse only
     let mut total_parse_time = Duration::ZERO;
     for _ in 0..iterations {
         let reader = BufReader::new(std::io::Cursor::new(content));
@@ -966,7 +645,6 @@ fn run_streaming_benchmark(
         parse_throughput
     );
 
-    // With validation
     if let Some(s) = schema {
         let mut total_validate_time = Duration::ZERO;
         let mut validation_errors = Vec::new();
@@ -981,10 +659,8 @@ fn run_streaming_benchmark(
             let result = parser.parse();
             total_validate_time += start.elapsed();
 
-            // Collect errors from first iteration
             if i == 0 && result.is_ok() {
                 let mut handlers = parser.into_handlers();
-                // The validator is the second handler (index 1)
                 if handlers.len() > 1
                     && let Some(validator) = handlers
                         .pop()
@@ -1008,7 +684,6 @@ fn run_streaming_benchmark(
         let overhead = (avg_validate.as_secs_f64() / avg_parse.as_secs_f64() - 1.0) * 100.0;
         println!("    Overhead:   {:.1}%", overhead);
 
-        // Print validation errors
         if !validation_errors.is_empty() {
             let error_count = validation_errors.iter().filter(|e| e.is_error()).count();
             let warning_count = validation_errors.iter().filter(|e| e.is_warning()).count();
@@ -1016,7 +691,6 @@ fn run_streaming_benchmark(
                 "    Errors:     {} errors, {} warnings",
                 error_count, warning_count
             );
-            // Print first 10 errors
             for (i, err) in validation_errors.iter().take(10).enumerate() {
                 println!("      {}: {}", i + 1, err.message);
             }
@@ -1035,113 +709,254 @@ fn run_streaming_benchmark(
     }
 }
 
+fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: usize) {
+    println!();
+    print_separator();
+    println!("Configuration (Synthetic):");
+    println!("  Elements:     {:>10}", config.element_count);
+    println!("  Max Depth:    {:>10}", config.max_depth);
+    println!("  Content Size: {:>10}", format_bytes(config.content_size));
+    println!("  Attributes:   {:>10}/element", config.attribute_count);
+    println!("  Namespaces:   {:>10}", config.with_namespaces);
+    println!(
+        "  Est. Size:    {:>10}",
+        format_bytes(config.estimated_size())
+    );
+    print_separator();
+
+    let xml_bytes = if mode == ProcessingMode::Streaming {
+        Vec::new()
+    } else {
+        println!("\nGenerating XML...");
+        let start = Instant::now();
+        let mut xml_gen = XmlStreamGenerator::new(config.clone());
+        let mut bytes = Vec::new();
+        xml_gen.read_to_end(&mut bytes).unwrap();
+        println!(
+            "  Generated {} in {}",
+            format_bytes(bytes.len()),
+            format_duration(start.elapsed())
+        );
+        bytes
+    };
+
+    if mode == ProcessingMode::Dom || mode == ProcessingMode::Both {
+        run_dom_benchmark(&xml_bytes, iterations, None);
+
+        println!("\n--- XPath Evaluation ---");
+        let doc = parse(&xml_bytes).unwrap();
+
+        let start = Instant::now();
+        let result = evaluate(&doc, "//*").unwrap();
+        let count = result.into_nodes().len();
+        println!(
+            "  //*: {} elements in {}",
+            count,
+            format_duration(start.elapsed())
+        );
+
+        if config.with_namespaces {
+            let start = Instant::now();
+            let result = evaluate(&doc, "//bldg:Building").unwrap();
+            let count = result.into_nodes().len();
+            println!(
+                "  //bldg:Building: {} elements in {}",
+                count,
+                format_duration(start.elapsed())
+            );
+        }
+    }
+
+    if mode == ProcessingMode::Streaming || mode == ProcessingMode::Both {
+        println!("\n--- Streaming Parse ---");
+        let mem_before = get_memory_usage();
+
+        let mut total_time = Duration::ZERO;
+        let mut total_bytes = 0usize;
+
+        for i in 0..iterations {
+            let xml_gen = XmlStreamGenerator::new(config.clone());
+            let reader = BufReader::with_capacity(64 * 1024, xml_gen);
+
+            let start = Instant::now();
+            let mut counting_reader = CountingReader::new(reader);
+            let mut parser = StreamingParser::new(&mut counting_reader);
+            let handler = StatsHandler::new();
+            parser.add_handler(Box::new(handler));
+            let _ = parser.parse();
+
+            total_time += start.elapsed();
+            total_bytes = counting_reader.bytes_read;
+
+            if i == 0 {
+                println!("  Processed: {}", format_bytes(total_bytes));
+            }
+        }
+
+        let mem_after = get_memory_usage();
+        let avg_time = total_time / iterations as u32;
+        let throughput = total_bytes as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+        println!("  Avg Time:    {}", format_duration(avg_time));
+        println!("  Throughput:  {:.2} MB/s", throughput);
+
+        if let (Some(before), Some(after)) = (mem_before, mem_after) {
+            println!(
+                "  Memory:      {} -> {} (Δ {})",
+                format_bytes(before),
+                format_bytes(after),
+                format_bytes(after.saturating_sub(before))
+            );
+        }
+    }
+}
+
+fn run_file_benchmark(
+    name: &str,
+    file_path: Option<&str>,
+    content: &[u8],
+    mode: ProcessingMode,
+    iterations: usize,
+    validate: bool,
+) {
+    println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
+
+    let schema_info: Option<SchemaInfo> = if validate {
+        get_schema_from_content(content, file_path)
+    } else {
+        None
+    };
+
+    if mode == ProcessingMode::Dom || mode == ProcessingMode::Both {
+        run_dom_benchmark(content, iterations, schema_info.as_ref());
+    }
+
+    if mode == ProcessingMode::Streaming || mode == ProcessingMode::Both {
+        run_streaming_benchmark(
+            content,
+            iterations,
+            schema_info.as_ref().map(|s| &s.compiled),
+        );
+    }
+}
+
 // =============================================================================
 // Main
 // =============================================================================
 
 fn main() {
-    let config = Config::from_args();
+    let args = Args::parse();
+
+    // Read from stdin if no inputs and not a terminal
+    let inputs =
+        if args.inputs.is_empty() && args.pattern.is_none() && !std::io::stdin().is_terminal() {
+            let stdin = std::io::stdin();
+            stdin
+                .lock()
+                .lines()
+                .map_while(|l| l.ok())
+                .filter(|line| {
+                    let line = line.trim();
+                    !line.is_empty() && !line.starts_with('#')
+                })
+                .collect()
+        } else {
+            args.inputs.clone()
+        };
 
     println!();
     print_separator();
     println!("  fastxml Load Test CLI");
     print_separator();
 
-    match config.mode {
-        Mode::Pattern { pattern, size } => {
-            println!("Mode: Synthetic ({})", pattern);
-            println!(
-                "Processing: {}, Iterations: {}, Validate: {}",
-                config.processing_mode, config.iterations, config.validate
-            );
+    if let Some(pattern) = args.pattern {
+        println!("Mode: Synthetic ({:?})", pattern);
+        println!(
+            "Processing: {:?}, Iterations: {}",
+            args.mode, args.iterations
+        );
 
-            let gen_config = match pattern.as_str() {
-                "many-elements" => GeneratorConfig::many_elements(size),
-                "deep-nesting" => GeneratorConfig::deep_nesting(size),
-                "large-content" => GeneratorConfig::large_content(size * 1024),
-                "citygml" => GeneratorConfig::citygml_style(size),
-                _ => {
-                    eprintln!("Unknown pattern: {}", pattern);
-                    std::process::exit(1);
+        let gen_config = match pattern {
+            Pattern::ManyElements => GeneratorConfig::many_elements(args.size),
+            Pattern::DeepNesting => GeneratorConfig::deep_nesting(args.size),
+            Pattern::LargeContent => GeneratorConfig::large_content(args.size * 1024),
+            Pattern::Citygml => GeneratorConfig::citygml_style(args.size),
+        };
+
+        run_pattern_test(gen_config, args.mode, args.iterations);
+    } else if !inputs.is_empty() {
+        println!("Mode: Real files ({} inputs)", inputs.len());
+        println!(
+            "Processing: {:?}, Iterations: {}, Validate: {}",
+            args.mode, args.iterations, args.validate
+        );
+
+        println!("\n--- Loading Files ---");
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut total_size = 0usize;
+
+        for input in &inputs {
+            match load_file(input, &args.cache_dir) {
+                Ok(content) => {
+                    println!(
+                        "  OK: {} ({})",
+                        get_display_name(input),
+                        format_bytes(content.len())
+                    );
+                    total_size += content.len();
+                    files.push((input.clone(), content));
                 }
+                Err(e) => {
+                    println!("  SKIP: {} ({})", get_display_name(input), e);
+                }
+            }
+        }
+
+        if files.is_empty() {
+            eprintln!("\nNo files loaded!");
+            std::process::exit(1);
+        }
+
+        println!(
+            "\nTotal: {} files, {}",
+            files.len(),
+            format_bytes(total_size)
+        );
+
+        for (input, content) in &files {
+            let file_path = if is_url(input) {
+                None
+            } else {
+                Some(input.as_str())
             };
-
-            run_pattern_test(
-                gen_config,
-                &config.processing_mode,
-                config.iterations,
-                config.validate,
+            run_file_benchmark(
+                get_display_name(input),
+                file_path,
+                content,
+                args.mode,
+                args.iterations,
+                args.validate,
             );
         }
 
-        Mode::Files { inputs } => {
-            println!("Mode: Real files ({} inputs)", inputs.len());
-            println!(
-                "Processing: {}, Iterations: {}, Validate: {}",
-                config.processing_mode, config.iterations, config.validate
-            );
-
-            // Load all files
-            println!("\n--- Loading Files ---");
-            let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-            let mut total_size = 0usize;
-
-            for input in &inputs {
-                match load_file(input, &config.cache_dir) {
-                    Ok(content) => {
-                        println!(
-                            "  OK: {} ({})",
-                            get_display_name(input),
-                            format_bytes(content.len())
-                        );
-                        total_size += content.len();
-                        files.push((input.clone(), content));
-                    }
-                    Err(e) => {
-                        println!("  SKIP: {} ({})", get_display_name(input), e);
-                    }
-                }
-            }
-
-            if files.is_empty() {
-                eprintln!("\nNo files loaded!");
-                std::process::exit(1);
-            }
-
-            println!(
-                "\nTotal: {} files, {}",
-                files.len(),
-                format_bytes(total_size)
-            );
-
-            // Run benchmarks
-            for (input, content) in &files {
-                // Pass file path for local files (not URLs)
-                let file_path = if input.starts_with("http://") || input.starts_with("https://") {
-                    None
-                } else {
-                    Some(input.as_str())
-                };
-                run_file_benchmark(
-                    get_display_name(input),
-                    file_path,
-                    content,
-                    &config.processing_mode,
-                    config.iterations,
-                    config.validate,
-                );
-            }
-
-            // Summary
-            if files.len() > 1 {
-                println!();
-                print_separator();
-                println!("  Summary");
-                print_separator();
-                println!("  Files:      {}", files.len());
-                println!("  Total size: {}", format_bytes(total_size));
-            }
+        if files.len() > 1 {
+            println!();
+            print_separator();
+            println!("  Summary");
+            print_separator();
+            println!("  Files:      {}", files.len());
+            println!("  Total size: {}", format_bytes(total_size));
         }
+    } else {
+        // Default to pattern mode
+        println!("Mode: Synthetic (ManyElements)");
+        println!(
+            "Processing: {:?}, Iterations: {}",
+            args.mode, args.iterations
+        );
+
+        let gen_config = GeneratorConfig::many_elements(args.size);
+        run_pattern_test(gen_config, args.mode, args.iterations);
     }
 
     println!();
