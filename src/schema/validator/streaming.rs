@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
 
-use crate::schema::types::{CompiledSchema, ContentModel, ElementDef, SimpleType, TypeDef};
+use crate::schema::types::{CompiledSchema, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef};
 use crate::schema::xsd::constraints::ConstraintValidator;
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
@@ -128,7 +128,48 @@ impl StreamingSchemaValidator {
             .or_else(|| self.schema.get_element(name))
     }
 
+    /// Collects all child elements from a complex type, including inherited elements.
+    ///
+    /// This function follows the type inheritance chain (via ComplexExtension) to collect
+    /// all valid child elements, not just those defined directly on the type.
+    fn collect_elements_with_inheritance(
+        &self,
+        complex: &ComplexType,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Vec<ElementDef> {
+        let mut elements = Vec::new();
+
+        match &complex.content {
+            ContentModel::Sequence(elems)
+            | ContentModel::Choice(elems)
+            | ContentModel::All(elems) => {
+                elements.extend(elems.iter().cloned());
+            }
+            ContentModel::ComplexExtension {
+                base_type,
+                elements: ext_elements,
+            } => {
+                // First, get elements from the base type (inherited elements)
+                if !visited.contains(base_type.as_str()) {
+                    visited.insert(base_type.clone());
+                    if let Some(TypeDef::Complex(base_complex)) = self.schema.get_type(base_type.as_str()) {
+                        let base_elements =
+                            self.collect_elements_with_inheritance(base_complex, visited);
+                        elements.extend(base_elements);
+                    }
+                }
+                // Then add the extension's own elements
+                elements.extend(ext_elements.iter().cloned());
+            }
+            _ => {}
+        }
+
+        elements
+    }
+
     /// Extracts child element occurrence constraints from an element definition.
+    ///
+    /// This includes inherited elements from base types when using ComplexExtension.
     fn get_child_constraints_for_element(&self, elem: &ElementDef) -> ChildConstraints {
         // Try to get the type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -144,15 +185,11 @@ impl StreamingSchemaValidator {
         let mut constraints = HashMap::new();
 
         if let TypeDef::Complex(complex) = type_def {
-            let elements = match &complex.content {
-                ContentModel::Sequence(elems)
-                | ContentModel::Choice(elems)
-                | ContentModel::All(elems) => elems,
-                ContentModel::ComplexExtension { elements, .. } => elements,
-                _ => return constraints,
-            };
+            // Collect all elements including inherited ones
+            let mut visited = std::collections::HashSet::new();
+            let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-            for elem in elements {
+            for elem in &elements {
                 constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
             }
         }
@@ -265,6 +302,8 @@ impl StreamingSchemaValidator {
     }
 
     /// Gets type information for an inline element from the parent's content model.
+    ///
+    /// This searches through inherited elements as well when the parent type uses ComplexExtension.
     fn get_inline_element_info(&self, name: &str) -> (Option<String>, ChildConstraints) {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
@@ -295,16 +334,11 @@ impl StreamingSchemaValidator {
             return (None, HashMap::new());
         };
 
-        // Find the child element in the content model
-        let elements = match &complex.content {
-            ContentModel::Sequence(elems)
-            | ContentModel::Choice(elems)
-            | ContentModel::All(elems) => elems,
-            ContentModel::ComplexExtension { elements, .. } => elements,
-            _ => return (None, HashMap::new()),
-        };
+        // Collect all elements including inherited ones
+        let mut visited = std::collections::HashSet::new();
+        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-        for elem in elements {
+        for elem in &elements {
             if elem.name == name {
                 // Found the inline element - get its type info
                 let type_ref = elem.type_ref.clone();
@@ -334,21 +368,16 @@ impl StreamingSchemaValidator {
     }
 
     /// Extracts child element constraints from a complex type definition.
-    fn extract_child_constraints_from_complex(
-        &self,
-        complex: &crate::schema::types::ComplexType,
-    ) -> ChildConstraints {
+    ///
+    /// This includes inherited elements from base types when using ComplexExtension.
+    fn extract_child_constraints_from_complex(&self, complex: &ComplexType) -> ChildConstraints {
         let mut constraints = HashMap::new();
 
-        let elements = match &complex.content {
-            ContentModel::Sequence(elems)
-            | ContentModel::Choice(elems)
-            | ContentModel::All(elems) => elems,
-            ContentModel::ComplexExtension { elements, .. } => elements,
-            _ => return constraints,
-        };
+        // Use the inheritance-aware element collector
+        let mut visited = std::collections::HashSet::new();
+        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-        for elem in elements {
+        for elem in &elements {
             constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
         }
 
@@ -441,6 +470,8 @@ impl StreamingSchemaValidator {
     }
 
     /// Gets inline type definition for an element (either global or from parent's content model).
+    ///
+    /// This searches through inherited elements as well when the parent type uses ComplexExtension.
     fn get_element_inline_type(&self, name: &str) -> Option<TypeDef> {
         // First try global element
         if let Some(elem) = self.schema.get_element(name) {
@@ -468,15 +499,11 @@ impl StreamingSchemaValidator {
             return None;
         };
 
-        let elements = match &complex.content {
-            ContentModel::Sequence(elems)
-            | ContentModel::Choice(elems)
-            | ContentModel::All(elems) => elems,
-            ContentModel::ComplexExtension { elements, .. } => elements,
-            _ => return None,
-        };
+        // Collect all elements including inherited ones
+        let mut visited = std::collections::HashSet::new();
+        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-        for elem in elements {
+        for elem in &elements {
             if elem.name == name {
                 return elem.inline_type.clone();
             }
@@ -1252,5 +1279,261 @@ mod tests {
 
         validator.finish().unwrap();
         assert!(validator.is_valid());
+    }
+
+    // =============================================
+    // Type Inheritance Tests
+    // =============================================
+
+    /// Test that inherited elements from base types are recognized.
+    ///
+    /// This test reproduces the issue where elements like `creationDate` defined
+    /// in a base type (e.g., AbstractCityObjectType) are not recognized when
+    /// validating an element whose type extends that base type.
+    #[test]
+    fn test_inherited_elements_from_base_type() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        // Build a schema with type inheritance:
+        // - BaseType has element "baseElement" (like creationDate in _CityObject)
+        // - ExtendedType extends BaseType and adds "extElement" (like lod in ReliefFeature)
+        // - "root" element uses ExtendedType
+
+        let mut schema = CompiledSchema::new();
+
+        // BaseType with "baseElement"
+        let mut base_type = ComplexType::new("BaseType");
+        base_type.content = ContentModel::Sequence(vec![
+            ElementDef::new("baseElement").with_type("xs:string").optional(),
+        ]);
+        schema.types.insert("BaseType".to_string(), TypeDef::Complex(base_type));
+
+        // ExtendedType extends BaseType, adds "extElement"
+        let mut extended_type = ComplexType::new("ExtendedType");
+        extended_type.content = ContentModel::ComplexExtension {
+            base_type: "BaseType".to_string(),
+            elements: vec![
+                ElementDef::new("extElement").with_type("xs:integer").optional(),
+            ],
+        };
+        schema.types.insert("ExtendedType".to_string(), TypeDef::Complex(extended_type));
+
+        // Root element uses ExtendedType
+        let root_elem = ElementDef::new("root").with_type("ExtendedType");
+        schema.elements.insert("root".to_string(), root_elem);
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Start root element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
+
+        // Add inherited element (baseElement) - this should be valid!
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "baseElement".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::Text("inherited content".to_string()))
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "baseElement".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // Add direct extension element (extElement)
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "extElement".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(3),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::Text("42".to_string()))
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "extElement".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // End root
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Check for errors - inherited element should NOT cause an error
+        let errors: Vec<_> = validator.errors().iter()
+            .filter(|e| e.message.contains("baseElement"))
+            .collect();
+
+        assert!(
+            errors.is_empty(),
+            "Inherited element 'baseElement' should be recognized, but got errors: {:?}",
+            errors
+        );
+
+        assert!(
+            validator.is_valid(),
+            "Validation should pass for inherited elements, but got errors: {:?}",
+            validator.errors()
+        );
+    }
+
+    /// Test multi-level type inheritance (grandparent -> parent -> child).
+    #[test]
+    fn test_multi_level_inheritance() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // GrandparentType has "grandparentElem"
+        let mut grandparent_type = ComplexType::new("GrandparentType");
+        grandparent_type.content = ContentModel::Sequence(vec![
+            ElementDef::new("grandparentElem").with_type("xs:string").optional(),
+        ]);
+        schema.types.insert("GrandparentType".to_string(), TypeDef::Complex(grandparent_type));
+
+        // ParentType extends GrandparentType, adds "parentElem"
+        let mut parent_type = ComplexType::new("ParentType");
+        parent_type.content = ContentModel::ComplexExtension {
+            base_type: "GrandparentType".to_string(),
+            elements: vec![
+                ElementDef::new("parentElem").with_type("xs:string").optional(),
+            ],
+        };
+        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+
+        // ChildType extends ParentType, adds "childElem"
+        let mut child_type = ComplexType::new("ChildType");
+        child_type.content = ContentModel::ComplexExtension {
+            base_type: "ParentType".to_string(),
+            elements: vec![
+                ElementDef::new("childElem").with_type("xs:string").optional(),
+            ],
+        };
+        schema.types.insert("ChildType".to_string(), TypeDef::Complex(child_type));
+
+        // Root element uses ChildType
+        let root_elem = ElementDef::new("root").with_type("ChildType");
+        schema.elements.insert("root".to_string(), root_elem);
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Start root
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "root".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
+
+        // Add grandparent-level element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "grandparentElem".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+            })
+            .unwrap();
+        validator.handle(&XmlEvent::Text("gp".to_string())).unwrap();
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "grandparentElem".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // Add parent-level element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "parentElem".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(3),
+            })
+            .unwrap();
+        validator.handle(&XmlEvent::Text("p".to_string())).unwrap();
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "parentElem".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // Add child-level element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "childElem".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(4),
+            })
+            .unwrap();
+        validator.handle(&XmlEvent::Text("c".to_string())).unwrap();
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "childElem".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // End root
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "root".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // All three elements should be valid (inherited from different levels)
+        assert!(
+            validator.is_valid(),
+            "Multi-level inheritance should work, but got errors: {:?}",
+            validator.errors()
+        );
     }
 }
