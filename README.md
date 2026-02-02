@@ -5,123 +5,80 @@
 [![docs.rs](https://docs.rs/fastxml/badge.svg)](https://docs.rs/fastxml)
 [![License](https://img.shields.io/crates/l/fastxml.svg)](LICENSE)
 
-A fast, memory-efficient XML library for Rust with XPath and streaming schema validation support. Designed for processing large XML documents like CityGML files used in [PLATEAU](https://www.mlit.go.jp/plateau/).
+A fast, memory-efficient XML library for Rust with XPath and schema validation support. Designed for processing large XML documents like CityGML files used in [PLATEAU](https://www.mlit.go.jp/plateau/).
 
 ## Features
 
-- 🦀 **Pure Rust** — No C dependencies, no unsafe code
-- ✅ **libxml Compatible** — Consistent parsing/XPath results
-- ⚡ **Streaming** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
-- 🔄 **Zero-Copy Transform** — Stream-based XPath transformation with minimal allocations
-- 📋 **Full XPath & XSD** — Complete XPath 1.0, schema parsing with import resolution, built-in GML types
+- **Pure Rust** — No C dependencies, no unsafe code
+- **libxml Compatible** — Consistent parsing/XPath results
+- **Memory Efficient** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
+- **Multiple Validators** — DOM, Two-Pass, and One-Pass validation strategies
+- **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling
+- **XSD Support** — Schema parsing with import resolution, built-in GML types
 
 ## Performance
 
-### Comparison with libxml
+Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/load_test_cli.rs):
 
-fastxml is designed as a drop-in replacement for libxml in Rust projects:
-
-| Feature | libxml | fastxml |
-|---------|--------|---------|
-| DOM parsing | ✅ | ✅ |
-| XPath | ✅ | ✅ |
-| Schema validation | ✅ (DOM only) | ✅ (DOM + Streaming) |
-| Streaming | ❌ | ✅ |
-| Memory efficiency | Low | High |
-| Pure Rust | ❌ | ✅ |
-
-**Benchmark** (PLATEAU DEM GML, 907 MB, 31M nodes) — [benchmark code](examples/load_test_cli.rs):
-
-Parse only:
+**Parse only:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM | 4.39s | 207 MB/s | 2.93 GB |
 | fastxml DOM | 5.21s | 174 MB/s | 1.73 GB |
-| fastxml Streaming | 4.20s | 216 MB/s | **~1 MB** |
+| fastxml One-Pass | 4.20s | 216 MB/s | **~1 MB** |
 
-Parse + Schema Validation (via xsi:schemaLocation):
+**Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM + validate | 9.88s | 92 MB/s | 2.93 GB |
 | fastxml DOM + validate | 24.52s | 37 MB/s | 2.62 GB |
 | fastxml Two-Pass | 29.56s | 31 MB/s | 780 MB |
-| fastxml Streaming | 62.01s | 15 MB/s | **~1 MB** |
+| fastxml One-Pass | 62.01s | 15 MB/s | **~1 MB** |
 
-- **DOM**: fastxml uses **1.7x less memory** than libxml for parsing
-- **DOM + validate**: Direct DOM traversal without event reconstruction (**3x faster** than previous implementation)
-- **Two-Pass**: **2x faster** than Streaming validation, uses **3.8x less memory** than libxml
-- **Streaming**: Constant memory regardless of file size (only parser buffers)
-- Schema validation auto-fetches XSD from `xsi:schemaLocation`
-
-**Compatibility Testing**: Parsing, XPath, and validation results are verified against libxml2. Run with `cargo test --features compare-libxml` (requires libxml2-dev).
+- **DOM**: 1.7x less memory than libxml
+- **Two-Pass**: Good balance of speed and memory
+- **One-Pass**: Constant ~1 MB memory regardless of file size
 
 ## Installation
-
-Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 fastxml = "0.2"
 ```
 
-### Features
-
-By default, no HTTP client is included. Choose the features you need:
+### Cargo Features
 
 | Feature | Description |
 |---------|-------------|
-| `ureq` | Sync HTTP client (`UreqFetcher`, `DefaultFetcher`) for schema fetching |
-| `reqwest` | Async HTTP client (`ReqwestFetcher`, `AsyncDefaultFetcher`) for schema fetching |
-| `async-trait` | Async trait support for custom `AsyncSchemaStore` implementations |
-| `profile` | Memory profiling utilities |
-| `compare-libxml` | Enable libxml2 comparison tests (requires libxml2-dev) |
+| `ureq` | Sync HTTP client for schema fetching (recommended) |
+| `reqwest` | Async HTTP client for schema fetching |
+| `async-trait` | Async trait support for custom implementations |
+| `compare-libxml` | Enable libxml2 comparison tests |
 
 ```toml
-# For sync schema fetching (recommended)
+# Recommended: sync schema fetching
 fastxml = { version = "0.2", features = ["ureq"] }
 
-# For async schema fetching
+# Async schema fetching
 fastxml = { version = "0.2", features = ["reqwest"] }
-
-# For custom async implementations (without built-in HTTP client)
-fastxml = { version = "0.2", features = ["async-trait"] }
 ```
 
 ### Schema Fetchers
 
-fastxml provides flexible schema fetching with support for both local files and HTTP:
-
 | Fetcher | Description |
 |---------|-------------|
-| `FileFetcher` | Local filesystem (`file://` URLs, absolute/relative paths) |
-| `UreqFetcher` | Sync HTTP client (requires `ureq` feature) |
-| `ReqwestFetcher` | Async HTTP client (requires `reqwest` feature) |
-| `CombinedFetcher` | Chain multiple fetchers (tries in order) |
-| `DefaultFetcher` | **Recommended sync** — combines `FileFetcher` + `UreqFetcher` |
-| `AsyncDefaultFetcher` | **Recommended async** — combines `FileFetcher` + `ReqwestFetcher` |
+| `FileFetcher` | Local filesystem |
+| `UreqFetcher` | Sync HTTP (requires `ureq`) |
+| `ReqwestFetcher` | Async HTTP (requires `reqwest`) |
+| `DefaultFetcher` | File + HTTP combined (recommended) |
 
 ```rust
 use fastxml::schema::{DefaultFetcher, SchemaFetcher};
 
-// DefaultFetcher tries local files first, then HTTP
-let fetcher = DefaultFetcher::new();
-
-// Or with a base directory for relative paths
 let fetcher = DefaultFetcher::with_base_dir("/path/to/schemas");
-
-let result = fetcher.fetch("schema.xsd")?;  // Local file
-let result = fetcher.fetch("http://example.com/schema.xsd")?;  // HTTP
-```
-
-For async contexts:
-
-```rust
-use fastxml::schema::AsyncDefaultFetcher;
-
-let fetcher = AsyncDefaultFetcher::new()?;
-let result = fetcher.fetch("http://example.com/schema.xsd").await?;
+let result = fetcher.fetch("schema.xsd")?;
 ```
 
 ## Quick Start
@@ -131,21 +88,12 @@ let result = fetcher.fetch("http://example.com/schema.xsd").await?;
 ```rust
 use fastxml::{parse, evaluate};
 
-let xml = r#"
-<root>
-    <item id="1">Hello</item>
-    <item id="2">World</item>
-</root>
-"#;
+let xml = r#"<root><item id="1">Hello</item><item id="2">World</item></root>"#;
 
-// Parse XML
 let doc = parse(xml.as_bytes())?;
-println!("Node count: {}", doc.node_count());
-
-// XPath query
 let result = evaluate(&doc, "//item")?;
 for node in result.into_nodes() {
-    println!("Found: {}", node.tag_name());
+    println!("{}: {}", node.get_attribute("id").unwrap(), node.get_content().unwrap());
 }
 ```
 
@@ -158,385 +106,209 @@ use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use std::io::BufReader;
 use std::fs::File;
 
-struct MyHandler {
-    element_count: usize,
-}
+struct Counter { count: usize }
 
-impl XmlEventHandler for MyHandler {
+impl XmlEventHandler for Counter {
     fn handle(&mut self, event: &XmlEvent) -> fastxml::error::Result<()> {
-        if let XmlEvent::StartElement { name, .. } = event {
-            self.element_count += 1;
-            println!("Element: {}", name);
+        if let XmlEvent::StartElement { .. } = event {
+            self.count += 1;
         }
         Ok(())
     }
 }
 
 let file = File::open("large_file.xml")?;
-let reader = BufReader::new(file);
-
-let mut parser = StreamingParser::new(reader);
-parser.add_handler(Box::new(MyHandler { element_count: 0 }));
+let mut parser = StreamingParser::new(BufReader::new(file));
+parser.add_handler(Box::new(Counter { count: 0 }));
 parser.parse()?;
 ```
 
-### Streaming Transform
+### Stream Transform
 
-Transform XML documents efficiently with XPath-based element selection. Only matched elements are converted to DOM, providing significant memory savings for large files.
+Transform XML with XPath-based element selection:
 
 ```rust
 use fastxml::transform::StreamTransformer;
 
 let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
-// Modify specific elements
+// Modify elements
 let result = StreamTransformer::new(xml)
     .xpath("//item[@id='2']")
-    .transform(|node| {
-        node.set_attribute("modified", "true");
-    })
-    .to_string()
-    .unwrap();
-// Result: <root><item id="1">A</item><item id="2" modified="true">B</item></root>
+    .transform(|node| node.set_attribute("modified", "true"))
+    .to_string()?;
 
-// Remove elements
-let result = StreamTransformer::new(xml)
-    .xpath("//item[@id='1']")
-    .transform(|node| {
-        node.remove();
-    })
-    .to_string()
-    .unwrap();
-// Result: <root><item id="2">B</item></root>
-
-// Extract data without transformation
+// Extract data
 let ids: Vec<String> = StreamTransformer::new(xml)
     .xpath("//item")
-    .collect(|node| node.get_attribute("id").unwrap_or_default())
-    .unwrap();
-// ids: ["1", "2"]
-
-// Iterate over matched elements
-let mut count = 0;
-StreamTransformer::new(xml)
-    .xpath("//item")
-    .for_each(|node| {
-        println!("Found: {:?}", node.get_content());
-        count += 1;
-    })
-    .unwrap();
+    .collect(|node| node.get_attribute("id").unwrap_or_default())?;
 ```
 
-With namespace support:
+## Schema Validation
 
-```rust
-use fastxml::{parse, transform::StreamTransformer};
-
-let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
-    <gml:Point><gml:pos>1 2</gml:pos></gml:Point>
-</root>"#;
-
-// Option 1: Register namespaces manually
-let result = StreamTransformer::new(xml)
-    .namespaces([
-        ("gml", "http://www.opengis.net/gml"),
-        ("bldg", "http://www.opengis.net/citygml/building/2.0"),
-    ])
-    .xpath("//gml:Point")
-    .transform(|node| {
-        node.set_attribute("srsName", "EPSG:4326");
-    })
-    .to_string()
-    .unwrap();
-
-// Option 2: Import namespaces from parsed document
-let doc = parse(xml).unwrap();
-let result = StreamTransformer::new(xml)
-    .with_document_namespaces(&doc)
-    .xpath("//gml:Point")
-    .transform(|node| {
-        node.set_attribute("srsName", "EPSG:4326");
-    })
-    .to_string()
-    .unwrap();
-```
-
-**Performance** (100K elements, 11 MB XML):
-
-| Approach | Time | Memory |
-|----------|------|--------|
-| Streaming Transform | 47ms | ~11 MB |
-| DOM Parse + XPath | 141ms | ~135 MB |
-
-Streaming is **3x faster** and uses **12x less memory**.
-
-### Schema Validation
-
-Validate XML documents against XSD schemas:
+### DOM Validation
 
 ```rust
 use fastxml::{parse, validate_document_by_schema};
 
-// Parse the XML document
-let xml = std::fs::read("document.xml")?;
-let doc = parse(&xml)?;
-
-// Validate against XSD schema (fetches imports automatically)
+let doc = parse(std::fs::read("document.xml")?.as_slice())?;
 let errors = validate_document_by_schema(&doc, "schema.xsd".to_string())?;
 
 if errors.is_empty() {
-    println!("Document is valid!");
-} else {
-    for error in &errors {
-        println!("{}", error);
-    }
+    println!("Valid!");
 }
 ```
 
-#### Auto-detect Schema from xsi:schemaLocation
+### One-Pass Validation
 
-Automatically fetch and validate against schemas referenced in the XML document:
-
-```rust
-use fastxml::{parse, validate_with_schema_location};
-
-let xml = r#"<?xml version="1.0"?>
-<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
-    <element>content</element>
-</root>"#;
-
-let doc = parse(xml.as_bytes())?;
-
-// Reads xsi:schemaLocation, fetches schemas, and validates
-let errors = validate_with_schema_location(&doc)?;
-```
-
-This requires the `ureq` feature:
-
-```toml
-fastxml = { version = "0.2", features = ["ureq"] }
-```
-
-### One-Pass Streaming Validation
-
-For large files, validate while parsing in a single pass:
+Validate during parsing with minimal memory:
 
 ```rust
 use fastxml::event::StreamingParser;
 use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::schema::parse_xsd;
 use std::sync::Arc;
-use std::io::BufReader;
-use std::fs::File;
 
-// Load and compile the schema
-let xsd_content = std::fs::read("schema.xsd")?;
-let schema = Arc::new(parse_xsd(&xsd_content)?);
-
-// Create streaming parser with validation
-let file = File::open("large_document.xml")?;
-let mut parser = StreamingParser::new(BufReader::new(file));
-
-let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-parser.add_handler(Box::new(validator));
-
-// Parse and validate in single pass
+let schema = Arc::new(fastxml::schema::parse_xsd(&std::fs::read("schema.xsd")?)?);
+let mut parser = StreamingParser::new(std::io::BufReader::new(file));
+parser.add_handler(Box::new(OnePassSchemaValidator::new(schema)));
 parser.parse()?;
 ```
 
-#### Streaming Validation with xsi:schemaLocation
+### Two-Pass Validation
 
-For files with `xsi:schemaLocation`, fetch schemas automatically and validate in streaming mode with a single pass:
-
-```rust
-use fastxml::streaming_validate_with_schema_location;
-use std::fs::File;
-use std::io::BufReader;
-
-let file = File::open("large_document.xml")?;
-
-// Single-pass: reads schemaLocation from first element, fetches schema, validates
-let errors = streaming_validate_with_schema_location(BufReader::new(file))?;
-```
-
-Or with more control using `LazySchemaValidator`:
+Balance of speed and memory for seekable streams:
 
 ```rust
-use fastxml::event::StreamingParser;
-use fastxml::schema::{LazySchemaValidator, DefaultFetcher};
-use std::fs::File;
-use std::io::BufReader;
+use fastxml::schema::validator::TwoPassSchemaValidator;
 
-let file = File::open("document.xml")?;
-let mut parser = StreamingParser::new(BufReader::new(file));
-
-// LazySchemaValidator fetches schema on first StartElement
-// DefaultFetcher tries local files first, then HTTP
-let validator = LazySchemaValidator::new(DefaultFetcher::new());
-parser.add_handler(Box::new(validator));
-parser.parse()?;
-```
-
-This requires the `ureq` feature.
-
-### Validator Types
-
-fastxml provides multiple validators optimized for different use cases:
-
-| Validator | Best For | Throughput | Memory |
-|-----------|----------|------------|--------|
-| `DomSchemaValidator` | Pre-parsed documents | ~37 MB/s | High (DOM) |
-| `TwoPassSchemaValidator` | Large files, seekable streams | ~31 MB/s | Medium |
-| `OnePassSchemaValidator` | Huge files, non-seekable streams | ~15 MB/s | **Minimal** |
-
-- **DOM Validator**: Used automatically when calling `validate()` on a parsed document. Directly traverses the DOM tree without event reconstruction.
-- **Two-Pass**: Builds a lightweight skeleton in pass 1, validates in pass 2. Good balance of speed and memory.
-- **One-Pass (Streaming)**: Single-pass validation during parsing. Best for memory-constrained environments.
-
-```rust
-use fastxml::schema::validator::{DomSchemaValidator, TwoPassSchemaValidator};
-use std::sync::Arc;
-
-// DOM validation (automatic via XmlSchemaValidationContext)
-let doc = fastxml::parse(xml_bytes)?;
-let ctx = fastxml::schema::XmlSchemaValidationContext::from_arc(schema.clone());
-let errors = ctx.validate(&doc)?;
-
-// Two-pass validation (for seekable readers)
-let reader = std::io::Cursor::new(xml_bytes);
 let errors = TwoPassSchemaValidator::new(reader, schema)
     .with_max_errors(100)
     .validate()?;
 ```
 
-### Error Handling
+### Validator Comparison
 
-Validation errors include detailed location and context information:
+| Validator | Best For | Throughput | Memory |
+|-----------|----------|------------|--------|
+| `DomSchemaValidator` | Pre-parsed documents | ~37 MB/s | High |
+| `TwoPassSchemaValidator` | Large seekable files | ~31 MB/s | Medium |
+| `OnePassSchemaValidator` | Huge/non-seekable files | ~15 MB/s | **Minimal** |
+
+### Auto-detect Schema
+
+Fetch schemas from `xsi:schemaLocation` automatically (requires `ureq` or `reqwest` feature):
 
 ```rust
-use fastxml::{parse, validate_document_by_schema, ErrorLevel};
+use fastxml::{parse, validate_with_schema_location};
 
 let doc = parse(xml_bytes)?;
-let errors = validate_document_by_schema(&doc, schema_path)?;
+let errors = validate_with_schema_location(&doc)?;
+```
+
+For streaming:
+
+```rust
+use fastxml::streaming_validate_with_schema_location;
+
+let errors = streaming_validate_with_schema_location(reader)?;
+```
+
+### Validation Errors
+
+```rust
+use fastxml::ErrorLevel;
 
 for error in &errors {
-    // Error severity: Warning, Error, or Fatal
     match error.level {
         ErrorLevel::Warning => print!("[WARN] "),
         ErrorLevel::Error => print!("[ERROR] "),
         ErrorLevel::Fatal => print!("[FATAL] "),
     }
-
-    // Location information
-    if let Some(path) = &error.element_path {
-        print!("{}", path);
-    }
     if let Some(line) = error.line {
-        print!(" (line {})", line);
+        print!("line {}: ", line);
     }
-    print!(": ");
-
-    // Error message with expected/found values
     println!("{}", error.message);
-    if let (Some(expected), Some(found)) = (&error.expected, &error.found) {
-        println!("  expected: {}, found: {}", expected, found);
-    }
 }
-
-// Filter by severity
-let fatal_errors: Vec<_> = errors.iter()
-    .filter(|e| e.level == ErrorLevel::Fatal)
-    .collect();
 ```
 
-### XPath with Namespaces
+## XPath
+
+### Basic Usage
 
 ```rust
 use fastxml::{parse, evaluate};
 
+let doc = parse(xml)?;
+let result = evaluate(&doc, "//item[@id='1']/text()")?;
+```
+
+### With Namespaces
+
+```rust
 let xml = r#"
 <core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0"
                 xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
     <bldg:Building gml:id="bldg_001">
         <bldg:measuredHeight>25.5</bldg:measuredHeight>
     </bldg:Building>
-</core:CityModel>
-"#;
+</core:CityModel>"#;
 
 let doc = parse(xml.as_bytes())?;
-
-// Query with namespace prefix
 let buildings = evaluate(&doc, "//bldg:Building")?;
-println!("Found {} buildings", buildings.into_nodes().len());
-
-// Query with name() function
-let heights = evaluate(&doc, "//*[name()='measuredHeight']/text()")?;
 ```
 
-## Limitations
+## Supported Specifications
 
-### XPath
+### XPath 1.0
 
-**Supported expressions:**
-
-| Expression | Example | Description |
-|------------|---------|-------------|
-| Absolute path | `/root/child` | Direct path from root |
-| Descendant | `//element` | Any descendant |
-| Wildcard | `//*` | All elements |
-| Name predicate | `//*[name()='Building']` | Match by name |
-| Logical operators | `//*[name()='A' or name()='B']` | `and`, `or`, `not` |
-| Text | `//element/text()` | Text content |
-| Namespace | `//bldg:Building` | Namespaced elements |
-| Axes | `ancestor::div`, `following-sibling::*` | All standard axes |
-| Arithmetic | `@value + 10` | `+`, `-`, `*`, `div`, `mod` |
-| Comparison | `@count > 5` | `=`, `!=`, `<`, `>`, `<=`, `>=` |
-| Functions | `count(//item)`, `contains(@name, 'test')` | Position, string, math functions |
-| Union | `//a \| //b` | Combine multiple paths |
-| Variables | `//item[@id=$target]` | Variable references |
-| Namespace axis | `namespace::*` | In-scope namespaces |
+| Feature | Examples |
+|---------|----------|
+| Paths | `/root/child`, `//element`, `//*` |
+| Predicates | `[@id='1']`, `[position()=1]`, `[name()='foo']` |
+| Axes | `ancestor::`, `following-sibling::`, `namespace::` |
+| Operators | `and`, `or`, `not()`, `=`, `!=`, `<`, `>`, `+`, `-`, `*`, `div`, `mod` |
+| Functions | `count()`, `contains()`, `string()`, `number()`, `sum()`, etc. |
+| Namespaces | `//ns:element`, `namespace::*` |
+| Variables | `$var` |
+| Union | `//a | //b` |
 
 ### XSD Schema
 
-**Supported:** Element/attribute definitions, complex types (sequence/choice/all), simple types (restriction/list/union), type inheritance, facets, attribute/model groups, import/include/redefine, built-in XSD and GML types, identity constraints (unique/key/keyref), substitution groups, streaming validation with error location info.
+| Feature | Support |
+|---------|---------|
+| Element/attribute definitions | ✅ |
+| Complex types (sequence/choice/all) | ✅ |
+| Simple types (restriction/list/union) | ✅ |
+| Type inheritance | ✅ |
+| Facets | ✅ |
+| Attribute/model groups | ✅ |
+| import/include/redefine | ✅ |
+| Built-in XSD and GML types | ✅ |
+| Identity constraints (unique/key/keyref) | ✅ |
+| Substitution groups | ✅ |
 
 ### Not Supported
 
-- XQuery, DTD validation, XSLT, XInclude, XML Signature/Encryption
+- XQuery, XSLT, XInclude
+- DTD validation
+- XML Signature/Encryption
 - Catalog support
-- Entity expansion (basic only)
+- Full entity expansion
 
 ## Development
 
 ```bash
-cargo test                              # Run all tests
-cargo test --features compare-libxml    # With libxml comparison (requires libxml2-dev)
-cargo bench                             # Run benchmarks
+cargo test                              # Run tests
+cargo test --features compare-libxml    # With libxml comparison
+cargo bench                             # Benchmarks
 ```
 
 ### Load Test CLI
 
 ```bash
-# Synthetic data
-cargo run --release --example load_test_cli -- --pattern citygml --size 50000
-
-# Real files
 cargo run --release --example load_test_cli -- ./file.xml
-
-# Real files with schema validation (auto-fetches from xsi:schemaLocation)
 cargo run --release --features ureq --example load_test_cli -- ./file.xml --validate
-
-# Compare with libxml
-cargo run --release --features compare-libxml --example load_test_cli -- --mode dom ./file.xml
 ```
-
-| Option | Description |
-|--------|-------------|
-| `--pattern <PATTERN>` | `many-elements`, `deep-nesting`, `large-content`, `citygml` |
-| `--size <SIZE>` | Size for pattern |
-| `--mode <MODE>` | `dom`, `streaming`, or `both` (default) |
-| `--validate` | Enable schema validation (reads `xsi:schemaLocation` and fetches schemas, requires `ureq` feature) |
 
 ## License
 
