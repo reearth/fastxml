@@ -57,62 +57,76 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let mut compiled = None;
-            let mut fetch_error = None;
+            let mut merged_schema = crate::schema::xsd::create_builtin_schema();
+            let store = crate::schema::memory::InMemoryStore::new();
+            let mut loaded_any = false;
 
+            // Process all schemaLocation entries and merge them
             for chunk in parts.chunks(2) {
                 if chunk.len() == 2 {
                     let location = chunk[1];
                     match self.fetcher.fetch(location) {
                         Ok(result) => {
-                            let store = crate::schema::memory::InMemoryStore::new();
-                            if let Ok(()) =
-                                SchemaStore::put(&store, &result.final_url, &result.content)
-                            {
-                                match crate::schema::xsd::parse_xsd_with_imports(
-                                    &result.content,
-                                    &result.final_url,
-                                    &self.fetcher,
-                                    &store,
-                                ) {
-                                    Ok(schema) => {
-                                        compiled = Some(schema);
-                                        break;
+                            let _ = SchemaStore::put(&store, &result.final_url, &result.content);
+
+                            match crate::schema::xsd::parse_xsd_with_imports(
+                                &result.content,
+                                &result.final_url,
+                                &self.fetcher,
+                                &store,
+                            ) {
+                                Ok(schema) => {
+                                    // Merge into combined schema
+                                    merged_schema.types.extend(schema.types);
+                                    merged_schema.elements.extend(schema.elements);
+                                    merged_schema.attributes.extend(schema.attributes);
+                                                                        if merged_schema.target_namespace.is_none() {
+                                        merged_schema.target_namespace = schema.target_namespace;
                                     }
-                                    Err(e) => {
-                                        fetch_error = Some(format!(
-                                            "Failed to parse schema {}: {}",
+                                    loaded_any = true;
+                                }
+                                Err(e) => {
+                                    // Log warning but continue with other schemas
+                                    self.errors.push(StructuredError {
+                                        message: format!(
+                                            "Warning: Failed to parse schema {}: {}",
                                             location, e
-                                        ));
-                                    }
+                                        ),
+                                        line: None,
+                                        column: None,
+                                        error_type: ValidationErrorType::SchemaNotFound,
+                                        level: ErrorLevel::Warning,
+                                        element_path: None,
+                                        node_name: None,
+                                        expected: None,
+                                        found: None,
+                                    });
                                 }
                             }
                         }
-                        Err(e) => {
-                            fetch_error =
-                                Some(format!("Failed to fetch schema {}: {}", location, e));
+                        Err(_e) => {
+                            // Skip schemas that can't be fetched (may be local paths)
+                            // Don't log error for local paths that don't exist
                         }
                     }
                 }
             }
 
-            if compiled.is_none() {
-                if let Some(err_msg) = fetch_error {
-                    self.errors.push(StructuredError {
-                        message: err_msg,
-                        line: None,
-                        column: None,
-                        error_type: ValidationErrorType::SchemaNotFound,
-                        level: ErrorLevel::Error,
-                        element_path: None,
-                        node_name: None,
-                        expected: None,
-                        found: None,
-                    });
-                }
+            if !loaded_any {
+                self.errors.push(StructuredError {
+                    message: "No schemas could be loaded from xsi:schemaLocation".to_string(),
+                    line: None,
+                    column: None,
+                    error_type: ValidationErrorType::SchemaNotFound,
+                    level: ErrorLevel::Warning,
+                    element_path: None,
+                    node_name: None,
+                    expected: None,
+                    found: None,
+                });
             }
 
-            compiled.unwrap_or_else(crate::schema::xsd::create_builtin_schema)
+            merged_schema
         } else {
             crate::schema::xsd::create_builtin_schema()
         };
@@ -172,62 +186,76 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let mut compiled = None;
-            let mut fetch_error = None;
+            let mut merged_schema = crate::schema::xsd::create_builtin_schema();
+            let store = crate::schema::memory::InMemoryStore::new();
+            let mut loaded_any = false;
 
+            // Process all schemaLocation entries and merge them
             for chunk in parts.chunks(2) {
                 if chunk.len() == 2 {
                     let location = chunk[1];
                     match self.fetcher.fetch(location) {
                         Ok(result) => {
-                            let store = crate::schema::memory::InMemoryStore::new();
-                            if let Ok(()) =
-                                SchemaStore::put(&store, &result.final_url, &result.content)
-                            {
-                                match crate::schema::xsd::parse_xsd_with_imports(
-                                    &result.content,
-                                    &result.final_url,
-                                    &self.fetcher,
-                                    &store,
-                                ) {
-                                    Ok(schema) => {
-                                        compiled = Some(schema);
-                                        break;
+                            let _ = SchemaStore::put(&store, &result.final_url, &result.content);
+
+                            match crate::schema::xsd::parse_xsd_with_imports(
+                                &result.content,
+                                &result.final_url,
+                                &self.fetcher,
+                                &store,
+                            ) {
+                                Ok(schema) => {
+                                    // Merge into combined schema
+                                    merged_schema.types.extend(schema.types);
+                                    merged_schema.elements.extend(schema.elements);
+                                    merged_schema.attributes.extend(schema.attributes);
+                                                                        if merged_schema.target_namespace.is_none() {
+                                        merged_schema.target_namespace = schema.target_namespace;
                                     }
-                                    Err(e) => {
-                                        fetch_error = Some(format!(
-                                            "Failed to parse schema {}: {}",
+                                    loaded_any = true;
+                                }
+                                Err(e) => {
+                                    // Log warning but continue with other schemas
+                                    self.shared_errors.lock().unwrap().push(StructuredError {
+                                        message: format!(
+                                            "Warning: Failed to parse schema {}: {}",
                                             location, e
-                                        ));
-                                    }
+                                        ),
+                                        line: None,
+                                        column: None,
+                                        error_type: ValidationErrorType::SchemaNotFound,
+                                        level: ErrorLevel::Warning,
+                                        element_path: None,
+                                        node_name: None,
+                                        expected: None,
+                                        found: None,
+                                    });
                                 }
                             }
                         }
-                        Err(e) => {
-                            fetch_error =
-                                Some(format!("Failed to fetch schema {}: {}", location, e));
+                        Err(_e) => {
+                            // Skip schemas that can't be fetched (may be local paths)
+                            // Don't log error for local paths that don't exist
                         }
                     }
                 }
             }
 
-            if compiled.is_none() {
-                if let Some(err_msg) = fetch_error {
-                    self.shared_errors.lock().unwrap().push(StructuredError {
-                        message: err_msg,
-                        line: None,
-                        column: None,
-                        error_type: ValidationErrorType::SchemaNotFound,
-                        level: ErrorLevel::Error,
-                        element_path: None,
-                        node_name: None,
-                        expected: None,
-                        found: None,
-                    });
-                }
+            if !loaded_any {
+                self.shared_errors.lock().unwrap().push(StructuredError {
+                    message: "No schemas could be loaded from xsi:schemaLocation".to_string(),
+                    line: None,
+                    column: None,
+                    error_type: ValidationErrorType::SchemaNotFound,
+                    level: ErrorLevel::Warning,
+                    element_path: None,
+                    node_name: None,
+                    expected: None,
+                    found: None,
+                });
             }
 
-            compiled.unwrap_or_else(crate::schema::xsd::create_builtin_schema)
+            merged_schema
         } else {
             crate::schema::xsd::create_builtin_schema()
         };

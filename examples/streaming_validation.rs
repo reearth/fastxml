@@ -4,7 +4,8 @@
 //! This is memory-efficient as it doesn't build a full DOM tree.
 //!
 //! Run with: cargo run --example streaming_validation
-//! Run with schema fetching: cargo run --example streaming_validation --features ureq
+//! Run with file: cargo run --example streaming_validation -- path/to/file.xml
+//! Run with schema fetching: cargo run --example streaming_validation --features ureq -- path/to/file.xml
 
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
@@ -43,6 +44,19 @@ impl XmlEventHandler for CountingHandler {
 }
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    // If file argument provided, validate that file
+    if args.len() > 1 {
+        let file_path = &args[1];
+        return validate_file(file_path);
+    }
+
+    // Otherwise run the demo with embedded XML
+    run_demo()
+}
+
+fn run_demo() -> Result<()> {
     // Sample CityGML-like document
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <CityModel xmlns="http://www.opengis.net/citygml/2.0"
@@ -72,7 +86,7 @@ fn main() -> Result<()> {
 </CityModel>
 "#;
 
-    println!("=== Streaming Validation Example ===\n");
+    println!("=== Streaming Validation Example (Demo) ===\n");
 
     // Create schema (in real usage, load from XSD file)
     let schema = Arc::new(create_builtin_schema());
@@ -106,52 +120,67 @@ fn main() -> Result<()> {
     println!("\nStreaming validation complete!");
     println!("Note: Memory usage stays constant regardless of file size.");
 
-    // Example 2: Streaming validation with xsi:schemaLocation
-    #[cfg(feature = "ureq")]
-    {
-        println!("\n=== Streaming Validation with xsi:schemaLocation ===\n");
-        streaming_validation_with_schema_location()?;
+    Ok(())
+}
+
+/// Validate a file from command line argument
+#[cfg(feature = "ureq")]
+fn validate_file(file_path: &str) -> Result<()> {
+    use fastxml::schema::UreqFetcher;
+    use fastxml::schema::validator::streaming_validate_with_schema_location_and_fetcher;
+    use std::fs::File;
+
+    println!("=== Streaming Validation: {} ===\n", file_path);
+
+    let file = File::open(file_path).map_err(fastxml::error::Error::Io)?;
+    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    println!("File size: {:.2} MB", file_size as f64 / 1024.0 / 1024.0);
+
+    println!("Starting streaming parse with validation...");
+    println!("(Schema will be fetched from xsi:schemaLocation if present)\n");
+
+    let start = std::time::Instant::now();
+    let reader = BufReader::new(file);
+    let fetcher = UreqFetcher::new();
+    let errors = streaming_validate_with_schema_location_and_fetcher(reader, fetcher)?;
+    let elapsed = start.elapsed();
+
+    let mut error_count = 0;
+    let mut warning_count = 0;
+
+    for err in &errors {
+        if err.is_error() {
+            error_count += 1;
+            println!("[ERROR] {}", err.message);
+        } else {
+            warning_count += 1;
+            println!("[WARN] {}", err.message);
+        }
+    }
+
+    println!("\n=== Results ===\n");
+    println!("Time: {:.2?}", elapsed);
+    println!(
+        "Throughput: {:.2} MB/s",
+        file_size as f64 / 1024.0 / 1024.0 / elapsed.as_secs_f64()
+    );
+    println!("Errors: {}, Warnings: {}", error_count, warning_count);
+
+    if error_count == 0 {
+        println!("\nValidation: PASSED");
+    } else {
+        println!("\nValidation: FAILED");
     }
 
     Ok(())
 }
 
-/// Demonstrates single-pass streaming validation using schemas from xsi:schemaLocation.
-///
-/// Uses `LazySchemaValidator` which fetches the schema on the first StartElement event,
-/// enabling true single-pass streaming validation.
-#[cfg(feature = "ureq")]
-fn streaming_validation_with_schema_location() -> Result<()> {
-    use fastxml::schema::{LazySchemaValidator, UreqFetcher};
-
-    // Sample XML with schemaLocation
-    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
-<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-      xsi:schemaLocation="http://www.w3.org/2001/XMLSchema http://www.w3.org/2001/XMLSchema.xsd">
-    <element>content</element>
-</root>
-"#;
-
-    println!("Running single-pass streaming validation with LazySchemaValidator...");
-    println!("(Schema will be fetched on first StartElement)\n");
-
-    let element_count = Arc::new(AtomicUsize::new(0));
-    let reader = BufReader::new(xml.as_bytes());
-    let mut parser = StreamingParser::new(reader);
-
-    // Add counting handler
-    parser.add_handler(Box::new(CountingHandler::new(Arc::clone(&element_count))));
-
-    // LazySchemaValidator fetches schema lazily on first StartElement
-    let validator = LazySchemaValidator::new(UreqFetcher::new());
-    parser.add_handler(Box::new(validator));
-
-    parser.parse()?;
-
-    println!(
-        "\nValidation complete! Processed {} elements.",
-        element_count.load(Ordering::SeqCst)
+#[cfg(not(feature = "ureq"))]
+fn validate_file(file_path: &str) -> Result<()> {
+    eprintln!("Error: File validation requires the 'ureq' feature for schema fetching.");
+    eprintln!(
+        "Run with: cargo run --example streaming_validation --features ureq -- {}",
+        file_path
     );
-
-    Ok(())
+    std::process::exit(1);
 }

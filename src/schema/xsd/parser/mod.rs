@@ -24,8 +24,11 @@ pub struct XsdParser {
     stack: Vec<StackFrame>,
     /// The schema being built
     schema: XsdSchema,
-    /// Detected XSD namespace prefix (usually "xs" or "xsd")
-    xsd_prefix: Option<String>,
+    /// Detected XSD namespace prefix.
+    /// - `None` = not yet detected
+    /// - `Some(None)` = default namespace (no prefix)
+    /// - `Some(Some("xs"))` = prefix "xs"
+    xsd_prefix: Option<Option<String>>,
     /// Current text content being collected
     current_text: String,
     /// Depth counter for skipping annotation content
@@ -38,7 +41,7 @@ impl XsdParser {
         Self {
             stack: Vec::new(),
             schema: XsdSchema::new(),
-            xsd_prefix: None,
+            xsd_prefix: None, // Not yet detected
             current_text: String::new(),
             skip_depth: 0,
         }
@@ -57,10 +60,15 @@ impl XsdParser {
     /// Checks if the element name matches an XSD element.
     fn is_xsd_element(&self, _name: &str, prefix: Option<&str>) -> bool {
         match (&self.xsd_prefix, prefix) {
-            (Some(xsd_prefix), Some(p)) => p == xsd_prefix,
-            (None, None) => true, // No prefix XSD (default namespace)
-            (None, Some(_)) => false,
-            (Some(_), None) => false,
+            // XSD prefix detected as "xs" or "xsd", element has same prefix
+            (Some(Some(xsd_prefix)), Some(p)) => p == xsd_prefix,
+            // XSD uses default namespace (no prefix), element has no prefix
+            (Some(None), None) => true,
+            // XSD not yet detected - accept elements with no prefix (schema element)
+            // This allows the initial schema element to be processed
+            (None, None) => true,
+            // Mismatched prefixes
+            (Some(Some(_)), None) | (Some(None), Some(_)) | (None, Some(_)) => false,
         }
     }
 

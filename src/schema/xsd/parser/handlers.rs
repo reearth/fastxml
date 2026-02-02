@@ -18,17 +18,26 @@ impl XsdParser {
         attrs: &[(&str, &str)],
         namespace_decls: &[crate::namespace::Namespace],
     ) -> Result<()> {
-        // Check for XSD namespace binding
+        // Check for XSD namespace binding (only if not yet detected)
         if self.xsd_prefix.is_none() {
+            // First pass: look for default namespace (empty prefix) - preferred
+            let mut prefixed_binding: Option<String> = None;
             for ns in namespace_decls {
                 if ns.uri() == XSD_NAMESPACE {
                     if ns.prefix().is_empty() {
-                        // Default namespace is XSD
-                        self.xsd_prefix = None;
-                    } else {
-                        self.xsd_prefix = Some(ns.prefix().to_string());
+                        // Default namespace is XSD (no prefix) - this is preferred
+                        self.xsd_prefix = Some(None);
+                        break;
+                    } else if prefixed_binding.is_none() {
+                        // Remember the prefixed binding as fallback
+                        prefixed_binding = Some(ns.prefix().to_string());
                     }
-                    break;
+                }
+            }
+            // If no default namespace, use the prefixed binding
+            if self.xsd_prefix.is_none() {
+                if let Some(prefix) = prefixed_binding {
+                    self.xsd_prefix = Some(Some(prefix));
                 }
             }
         }
