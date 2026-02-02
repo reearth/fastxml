@@ -22,7 +22,7 @@ pub use self::mode::ValidationMode;
 // Re-export main types
 pub use context::XmlSchemaValidationContext;
 pub use lazy::LazySchemaValidator;
-pub use streaming::StreamingSchemaValidator;
+pub use streaming::{StreamingSchemaValidator, ValidationOptions};
 
 // Re-export API functions
 pub use api::{

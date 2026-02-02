@@ -486,15 +486,26 @@ impl XsdCompiler {
     /// so validation doesn't need to recurse at runtime.
     fn build_transitive_substitution_groups(&self, schema: &mut CompiledSchema) {
         // Build reverse lookup (member -> head)
+        // Register both prefixed and non-prefixed versions for efficient lookup
         for (head, members) in &schema.substitution_groups {
             for member in members {
+                // Register with original name
                 schema
                     .substitution_group_heads
                     .insert(member.clone(), head.clone());
+
+                // Also register with local name (without prefix) for faster lookup
+                if let Some((_prefix, local)) = member.split_once(':') {
+                    schema
+                        .substitution_group_heads
+                        .entry(local.to_string())
+                        .or_insert_with(|| head.clone());
+                }
             }
         }
 
         // Build transitive closure for each head
+        // Register both prefixed and non-prefixed versions for efficient lookup
         for head in schema.substitution_groups.keys() {
             let mut all_members = Vec::new();
             let mut visited = HashSet::new();
@@ -504,9 +515,20 @@ impl XsdCompiler {
                 &mut all_members,
                 &mut visited,
             );
+            let members_arc = Arc::new(all_members);
+
+            // Register with original name
             schema
                 .transitive_substitution_groups
-                .insert(head.clone(), Arc::new(all_members));
+                .insert(head.clone(), Arc::clone(&members_arc));
+
+            // Also register with local name (without prefix) for faster lookup
+            if let Some((_prefix, local)) = head.split_once(':') {
+                schema
+                    .transitive_substitution_groups
+                    .entry(local.to_string())
+                    .or_insert_with(|| Arc::clone(&members_arc));
+            }
         }
     }
 

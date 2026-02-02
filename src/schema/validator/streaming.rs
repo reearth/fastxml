@@ -15,6 +15,27 @@ use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 use super::ValidationMode;
 use super::state::{ElementContext, ValidationState};
 
+/// Options for controlling which validations are performed.
+///
+/// By default, all validations are enabled. Disabling specific validations
+/// can significantly improve performance for large documents.
+#[derive(Debug, Clone, Default)]
+pub struct ValidationOptions {
+    /// Skip minOccurs validation (required child element checks).
+    /// Disabling this can improve performance but may miss missing required elements.
+    pub skip_min_occurs: bool,
+
+    /// Skip maxOccurs validation (element count limit checks).
+    /// Disabling this can significantly improve performance (~50%) but may miss
+    /// element count violations.
+    pub skip_max_occurs: bool,
+
+    /// Skip substitution group resolution in occurs validation.
+    /// Disabling this can improve performance but may cause false positives/negatives
+    /// for elements that use substitution groups.
+    pub skip_substitution_groups: bool,
+}
+
 /// Streaming schema validator.
 ///
 /// Validates XML documents against an XSD schema during streaming parsing.
@@ -29,6 +50,8 @@ pub struct StreamingSchemaValidator {
     mode: ValidationMode,
     /// Maximum number of errors to collect (0 = unlimited)
     max_errors: usize,
+    /// Options for controlling which validations are performed
+    options: ValidationOptions,
 }
 
 impl StreamingSchemaValidator {
@@ -42,6 +65,7 @@ impl StreamingSchemaValidator {
             constraint_validator: ConstraintValidator::new(),
             mode: ValidationMode::Strict,
             max_errors: 0,
+            options: ValidationOptions::default(),
         }
     }
 
@@ -51,6 +75,24 @@ impl StreamingSchemaValidator {
             mode,
             ..Self::new(schema)
         }
+    }
+
+    /// Creates a new streaming validator with specified options.
+    pub fn with_options(schema: Arc<CompiledSchema>, options: ValidationOptions) -> Self {
+        Self {
+            options,
+            ..Self::new(schema)
+        }
+    }
+
+    /// Sets validation options.
+    pub fn set_options(&mut self, options: ValidationOptions) {
+        self.options = options;
+    }
+
+    /// Returns the current validation options.
+    pub fn options(&self) -> &ValidationOptions {
+        &self.options
     }
 
     /// Sets the maximum number of errors to collect.
@@ -437,6 +479,11 @@ impl StreamingSchemaValidator {
     /// substitution group member, the constraint from the head element is used,
     /// and the total count includes all members of the substitution group (transitively).
     fn validate_max_occurs(&mut self, child_name: &str) {
+        // Skip if disabled via options
+        if self.options.skip_max_occurs {
+            return;
+        }
+
         if self.state.element_stack.len() < 2 {
             return;
         }
@@ -444,7 +491,11 @@ impl StreamingSchemaValidator {
         let parent_idx = self.state.element_stack.len() - 2;
         if let Some(parent) = self.state.element_stack.get(parent_idx) {
             // First, try to find which substitution group head this element belongs to
-            let head_name = self.find_substitution_group_head(child_name);
+            let head_name = if self.options.skip_substitution_groups {
+                None
+            } else {
+                self.find_substitution_group_head(child_name)
+            };
 
             // Determine the constraint source (head or direct)
             let constraint_name = head_name.as_deref().unwrap_or(child_name);
@@ -460,10 +511,12 @@ impl StreamingSchemaValidator {
                         total_count += parent.get_child_count(local);
                     }
 
-                    // Add counts from all transitive members (using pre-computed cache)
-                    let all_members = self.get_all_substitution_members(constraint_name);
-                    for member in all_members.iter() {
-                        total_count += parent.get_child_count(member);
+                    // Add counts from all transitive members (unless skipped)
+                    if !self.options.skip_substitution_groups {
+                        let all_members = self.get_all_substitution_members(constraint_name);
+                        for member in all_members.iter() {
+                            total_count += parent.get_child_count(member);
+                        }
                     }
 
                     if total_count > max {
@@ -488,37 +541,40 @@ impl StreamingSchemaValidator {
     ///
     /// Returns Some(head_name) if the element is a member of a substitution group,
     /// or None if it's not a member of any substitution group.
-    /// Uses the pre-computed substitution_group_heads cache for O(1) lookup,
-    /// falling back to linear search if cache is not populated.
+    /// Uses the pre-computed substitution_group_heads cache for O(1) lookup.
+    #[inline]
     fn find_substitution_group_head(&self, element_name: &str) -> Option<String> {
-        // Use the pre-computed reverse lookup cache
+        // Fast path: direct cache lookup (most common case)
         if let Some(head) = self.schema.substitution_group_heads.get(element_name) {
             return Some(head.clone());
         }
 
-        // Also check if the element itself declares a substitution_group
+        // Try with local name if element_name has a prefix
+        if let Some((_prefix, local)) = element_name.split_once(':') {
+            if let Some(head) = self.schema.substitution_group_heads.get(local) {
+                return Some(head.clone());
+            }
+        }
+
+        // Check if the element itself declares a substitution_group
+        // This is needed for elements not in the pre-computed cache
         if let Some(elem) = self.schema.get_element(element_name) {
             if let Some(ref sg) = elem.substitution_group {
                 return Some(sg.clone());
             }
         }
 
-        // Fall back to linear search if cache is not populated
-        for (head, members) in &self.schema.substitution_groups {
-            if members.contains(&element_name.to_string()) {
-                return Some(head.clone());
-            }
-        }
-
+        // No substitution group found - this is the common case for most elements
         None
     }
 
     /// Gets all substitution group members for a head element, including transitive members.
     ///
-    /// Uses the pre-computed transitive_substitution_groups cache for O(1) lookup,
-    /// falling back to computing transitively if cache is not populated.
+    /// Uses the pre-computed transitive_substitution_groups cache for O(1) lookup.
+    /// Returns empty Vec if not found in cache (most elements are not substitution group heads).
+    #[inline]
     fn get_all_substitution_members(&self, head_name: &str) -> Arc<Vec<String>> {
-        // Try direct lookup first in the cache
+        // Fast path: direct cache lookup
         if let Some(members) = self.schema.transitive_substitution_groups.get(head_name) {
             return Arc::clone(members);
         }
@@ -530,64 +586,8 @@ impl StreamingSchemaValidator {
             }
         }
 
-        // Try finding a prefixed version if head_name has no prefix
-        for key in self.schema.transitive_substitution_groups.keys() {
-            if let Some((_prefix, local)) = key.split_once(':') {
-                if local == head_name {
-                    if let Some(members) = self.schema.transitive_substitution_groups.get(key) {
-                        return Arc::clone(members);
-                    }
-                }
-            }
-        }
-
-        // Fall back to computing transitively if cache is not populated
-        // This is for backward compatibility with manually-created schemas
-        let mut all_members = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        self.collect_transitive_members_fallback(head_name, &mut all_members, &mut visited);
-        Arc::new(all_members)
-    }
-
-    /// Helper function to recursively collect substitution group members (fallback).
-    fn collect_transitive_members_fallback(
-        &self,
-        head_name: &str,
-        members: &mut Vec<String>,
-        visited: &mut std::collections::HashSet<String>,
-    ) {
-        if visited.contains(head_name) {
-            return;
-        }
-        visited.insert(head_name.to_string());
-
-        // Try multiple name variants for namespace prefix handling
-        let mut names_to_try = vec![head_name.to_string()];
-
-        if let Some((_prefix, local)) = head_name.split_once(':') {
-            names_to_try.push(local.to_string());
-        } else {
-            // No prefix -> try with common prefixes from schema
-            for key in self.schema.substitution_groups.keys() {
-                if let Some((_prefix, local)) = key.split_once(':') {
-                    if local == head_name {
-                        names_to_try.push(key.clone());
-                    }
-                }
-            }
-        }
-
-        for name in names_to_try {
-            if let Some(direct_members) = self.schema.substitution_groups.get(&name) {
-                for member in direct_members {
-                    if !members.contains(member) {
-                        members.push(member.clone());
-                    }
-                    // Recursively collect this member's members
-                    self.collect_transitive_members_fallback(member, members, visited);
-                }
-            }
-        }
+        // Not a substitution group head - return empty (common case)
+        Arc::new(Vec::new())
     }
 
     fn validate_attributes(&mut self, element_name: &Arc<str>, attributes: &[(&str, &str)]) {
@@ -756,6 +756,11 @@ impl StreamingSchemaValidator {
     /// If the expected child is a substitution group head, occurrences of any member
     /// element (including transitive members) are counted toward the head's requirement.
     fn validate_min_occurs(&mut self, ctx: &ElementContext) {
+        // Skip if disabled via options
+        if self.options.skip_min_occurs {
+            return;
+        }
+
         let flattened = match &ctx.flattened_children {
             Some(f) => f,
             None => return, // No constraints to validate
@@ -774,10 +779,12 @@ impl StreamingSchemaValidator {
                     count += ctx.get_child_count(local);
                 }
 
-                // Add counts from substitution group members
-                let all_members = self.get_all_substitution_members(child_name);
-                for member in all_members.iter() {
-                    count += ctx.get_child_count(member);
+                // Add counts from substitution group members (unless skipped)
+                if !self.options.skip_substitution_groups {
+                    let all_members = self.get_all_substitution_members(child_name);
+                    for member in all_members.iter() {
+                        count += ctx.get_child_count(member);
+                    }
                 }
 
                 if count > 0 {
@@ -818,10 +825,12 @@ impl StreamingSchemaValidator {
                     actual_count += ctx.get_child_count(local);
                 }
 
-                // Add counts from all substitution group members (including transitive)
-                let all_members = self.get_all_substitution_members(child_name);
-                for member in all_members.iter() {
-                    actual_count += ctx.get_child_count(member);
+                // Add counts from all substitution group members (unless skipped)
+                if !self.options.skip_substitution_groups {
+                    let all_members = self.get_all_substitution_members(child_name);
+                    for member in all_members.iter() {
+                        actual_count += ctx.get_child_count(member);
+                    }
                 }
 
                 if actual_count < min_occurs {
@@ -1874,6 +1883,17 @@ mod tests {
             .substitution_groups
             .insert("_CityObject".to_string(), vec!["ReliefFeature".to_string()]);
 
+        // Build reverse lookup cache (member -> head)
+        schema
+            .substitution_group_heads
+            .insert("ReliefFeature".to_string(), "_CityObject".to_string());
+
+        // Build transitive members cache (head -> all members)
+        schema.transitive_substitution_groups.insert(
+            "_CityObject".to_string(),
+            Arc::new(vec!["ReliefFeature".to_string()]),
+        );
+
         let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
 
         // Start parent element
@@ -2004,6 +2024,20 @@ mod tests {
         schema.substitution_groups.insert(
             "_CityObject".to_string(),
             vec!["ReliefFeature".to_string(), "Building".to_string()],
+        );
+
+        // Build reverse lookup cache (member -> head)
+        schema
+            .substitution_group_heads
+            .insert("ReliefFeature".to_string(), "_CityObject".to_string());
+        schema
+            .substitution_group_heads
+            .insert("Building".to_string(), "_CityObject".to_string());
+
+        // Build transitive members cache (head -> all members)
+        schema.transitive_substitution_groups.insert(
+            "_CityObject".to_string(),
+            Arc::new(vec!["ReliefFeature".to_string(), "Building".to_string()]),
         );
 
         let mut validator = StreamingSchemaValidator::new(Arc::new(schema));

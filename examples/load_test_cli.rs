@@ -33,6 +33,7 @@ use clap::{Parser, ValueEnum};
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
+use fastxml::schema::XmlSchemaValidationContext;
 use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
@@ -543,6 +544,50 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
 
     if let Some(mem) = fastxml_mem_delta {
         println!("    fastxml mem: Δ {}", format_bytes(mem));
+    }
+
+    // fastxml DOM + validation benchmark
+    if let Some(ref info) = schema_info {
+        let ctx = XmlSchemaValidationContext::from_arc(Arc::clone(&info.compiled));
+        let mut total_validate_time = Duration::ZERO;
+        let mut fastxml_val_mem_delta: Option<usize> = None;
+        let mut fastxml_validation_errors = 0usize;
+
+        for i in 0..iterations {
+            let mem_before = if i == 0 { get_memory_usage() } else { None };
+
+            let start = Instant::now();
+            let doc = parse(content).unwrap();
+            let errors = ctx.validate(&doc).unwrap_or_default();
+            total_validate_time += start.elapsed();
+
+            if i == 0 {
+                fastxml_validation_errors = errors.iter().filter(|e| e.is_error()).count();
+                let mem_after = get_memory_usage();
+                if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                    fastxml_val_mem_delta = Some(after.saturating_sub(before));
+                }
+            }
+        }
+
+        let avg_validate = total_validate_time / iterations as u32;
+        let validate_throughput =
+            content.len() as f64 / avg_validate.as_secs_f64() / (1024.0 * 1024.0);
+
+        println!(
+            "    fastxml + validate: {} ({:.2} MB/s)",
+            format_duration(avg_validate),
+            validate_throughput
+        );
+        if fastxml_validation_errors > 0 {
+            println!(
+                "    fastxml validation errors: {}",
+                fastxml_validation_errors
+            );
+        }
+        if let Some(mem) = fastxml_val_mem_delta {
+            println!("    fastxml val mem: Δ {}", format_bytes(mem));
+        }
     }
 
     #[cfg(feature = "compare-libxml")]

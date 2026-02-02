@@ -36,18 +36,18 @@ Parse only:
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 3.29s | 276 MB/s | 4.19 GB |
-| fastxml DOM | 3.67s | 247 MB/s | 666 MB |
-| fastxml Streaming | 3.13s | 290 MB/s | **~1 MB** |
+| libxml DOM | 4.39s | 207 MB/s | 2.93 GB |
+| fastxml DOM | 5.21s | 174 MB/s | 1.73 GB |
+| fastxml Streaming | 4.20s | 216 MB/s | **~1 MB** |
 
 Parse + Schema Validation (via xsi:schemaLocation):
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM + validate | 8.07s | 112 MB/s | 4.22 GB |
-| fastxml Streaming | 18.14s | 50 MB/s | **~1 MB** |
+| libxml DOM + validate | 9.88s | 92 MB/s | 2.93 GB |
+| fastxml Streaming | 52.36s | 17 MB/s | **~1 MB** |
 
-- **DOM**: fastxml uses **6.3x less memory** than libxml
+- **DOM**: fastxml uses **1.7x less memory** than libxml
 - **Streaming**: Constant memory regardless of file size (only parser buffers)
 - Schema validation auto-fetches XSD from `xsi:schemaLocation`
 
