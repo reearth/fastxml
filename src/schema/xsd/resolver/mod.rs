@@ -16,8 +16,8 @@
 //!
 //! Two implementations are provided:
 //!
-//! - [`SchemaResolver`]: Synchronous resolver using [`SchemaFetcher`] and [`SchemaStore`]
-//! - [`AsyncSchemaResolver`]: Async resolver using [`AsyncSchemaFetcher`] and [`AsyncSchemaStore`]
+//! - [`SchemaResolver`]: Synchronous resolver using `SchemaFetcher` and `SchemaStore`
+//! - [`AsyncSchemaResolver`]: Async resolver using `AsyncSchemaFetcher` and `AsyncSchemaStore`
 //!   (requires `tokio` feature)
 //!
 //! Both implementations share common helper functions from the `common` module.
