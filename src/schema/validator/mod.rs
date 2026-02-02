@@ -15,6 +15,7 @@ mod context;
 mod lazy;
 mod state;
 mod streaming;
+mod two_pass;
 
 // Re-export ValidationMode
 pub use self::mode::ValidationMode;
@@ -23,19 +24,21 @@ pub use self::mode::ValidationMode;
 pub use context::XmlSchemaValidationContext;
 pub use lazy::LazySchemaValidator;
 pub use streaming::{StreamingSchemaValidator, ValidationOptions};
+pub use two_pass::{DocumentSkeleton, ElementSkeleton, TwoPassSchemaValidator};
 
 // Re-export API functions
 pub use api::{
     create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
     get_schema_from_schema_location_with_fetcher,
-    streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,
+    streaming_validate_with_schema_location_and_fetcher,
+    two_pass_validate_with_schema_location_and_fetcher, validate_document_by_schema,
     validate_document_by_schema_context, validate_with_schema_location_and_fetcher,
 };
 
 #[cfg(feature = "ureq")]
 pub use api::{
     get_schema_from_schema_location, streaming_validate_with_schema_location,
-    validate_with_schema_location,
+    two_pass_validate_with_schema_location, validate_with_schema_location,
 };
 
 /// Validation mode module.

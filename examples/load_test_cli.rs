@@ -35,7 +35,7 @@ use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
 use fastxml::schema::XmlSchemaValidationContext;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::StreamingSchemaValidator;
+use fastxml::schema::validator::{StreamingSchemaValidator, TwoPassSchemaValidator};
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
 use fastxml::schema::{DefaultFetcher, ResolveOptions, resolve_schema_from_xml};
@@ -741,6 +741,63 @@ fn run_streaming_benchmark(
             }
             if validation_errors.len() > 10 {
                 println!("      ... and {} more", validation_errors.len() - 10);
+            }
+        }
+    }
+
+    // Two-pass validation benchmark
+    if let Some(s) = schema {
+        println!();
+        println!("  [Two-Pass Validation]");
+        let mut total_two_pass_time = Duration::ZERO;
+        let mut two_pass_errors = Vec::new();
+        let mut two_pass_mem_delta: Option<usize> = None;
+
+        for i in 0..iterations {
+            let mem_before = if i == 0 { get_memory_usage() } else { None };
+
+            let reader = std::io::Cursor::new(content.to_vec());
+            let start = Instant::now();
+            let validator = TwoPassSchemaValidator::new(reader, Arc::clone(s));
+            let result = validator.validate();
+            total_two_pass_time += start.elapsed();
+
+            if i == 0 {
+                let mem_after = get_memory_usage();
+                if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                    two_pass_mem_delta = Some(after.saturating_sub(before));
+                }
+                if let Ok(errors) = result {
+                    two_pass_errors = errors;
+                }
+            }
+        }
+
+        let avg_two_pass = total_two_pass_time / iterations as u32;
+        let two_pass_throughput =
+            content.len() as f64 / avg_two_pass.as_secs_f64() / (1024.0 * 1024.0);
+        println!(
+            "    Validate:   {} ({:.2} MB/s)",
+            format_duration(avg_two_pass),
+            two_pass_throughput
+        );
+
+        if let Some(mem) = two_pass_mem_delta {
+            println!("    Memory:     Δ {}", format_bytes(mem));
+        }
+
+        if !two_pass_errors.is_empty() {
+            let error_count = two_pass_errors.iter().filter(|e| e.is_error()).count();
+            let warning_count = two_pass_errors.iter().filter(|e| e.is_warning()).count();
+            println!(
+                "    Errors:     {} errors, {} warnings",
+                error_count, warning_count
+            );
+            for (i, err) in two_pass_errors.iter().take(5).enumerate() {
+                println!("      {}: {}", i + 1, err.message);
+            }
+            if two_pass_errors.len() > 5 {
+                println!("      ... and {} more", two_pass_errors.len() - 5);
             }
         }
     }

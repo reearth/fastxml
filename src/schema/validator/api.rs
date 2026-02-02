@@ -1,5 +1,8 @@
 //! Public API functions for schema validation.
 
+use std::io::{BufRead, Seek};
+use std::sync::Arc;
+
 use crate::document::XmlDocument;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::schema::fetcher::SchemaFetcher;
@@ -8,6 +11,7 @@ use crate::schema::types::CompiledSchema;
 
 use super::context::XmlSchemaValidationContext;
 use super::lazy::LazySchemaValidatorWithSharedErrors;
+use super::two_pass::TwoPassSchemaValidator;
 
 /// Creates a schema validation context from a schema location.
 ///
@@ -353,6 +357,120 @@ pub fn streaming_validate_with_schema_location_and_fetcher<
     // Collect errors from shared state
     let errors = shared_errors.lock().unwrap().clone();
     Ok(errors)
+}
+
+/// Performs two-pass validation using schemas from xsi:schemaLocation.
+///
+/// This function extracts xsi:schemaLocation from the XML content, fetches
+/// the referenced schemas, and performs two-pass validation.
+///
+/// # Example
+///
+/// ```ignore
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use fastxml::schema::validator::two_pass_validate_with_schema_location;
+///
+/// let file = File::open("document.xml")?;
+/// let reader = BufReader::new(file);
+/// let errors = two_pass_validate_with_schema_location(reader)?;
+/// ```
+#[cfg(feature = "ureq")]
+pub fn two_pass_validate_with_schema_location<R: BufRead + Seek>(
+    reader: R,
+) -> Result<Vec<StructuredError>> {
+    two_pass_validate_with_schema_location_and_fetcher(
+        reader,
+        &crate::schema::fetcher::DefaultFetcher::new(),
+    )
+}
+
+/// Performs two-pass validation using schemas from xsi:schemaLocation with a custom fetcher.
+///
+/// # Arguments
+///
+/// * `reader` - A seekable reader for the XML content
+/// * `fetcher` - A schema fetcher implementation for downloading schemas
+///
+/// # Example
+///
+/// ```ignore
+/// use std::fs::File;
+/// use std::io::BufReader;
+/// use fastxml::schema::validator::two_pass_validate_with_schema_location_and_fetcher;
+/// use fastxml::schema::UreqFetcher;
+///
+/// let file = File::open("document.xml")?;
+/// let reader = BufReader::new(file);
+/// let fetcher = UreqFetcher::new().timeout(60);
+/// let errors = two_pass_validate_with_schema_location_and_fetcher(reader, &fetcher)?;
+/// ```
+pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: SchemaFetcher>(
+    mut reader: R,
+    fetcher: &F,
+) -> Result<Vec<StructuredError>> {
+    use crate::parser::parse_schema_locations;
+    use std::io::SeekFrom;
+
+    // Read the content to extract schema locations
+    let mut content = Vec::new();
+    reader.read_to_end(&mut content)?;
+
+    // Parse to extract schema locations
+    let doc = crate::parse(&content)?;
+    let locations = parse_schema_locations(&doc)?;
+
+    // Seek back to start
+    reader.seek(SeekFrom::Start(0))?;
+
+    if locations.is_empty() {
+        // No schema locations found, use built-in schema
+        let schema = crate::schema::xsd::create_builtin_schema();
+        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
+        return validator.validate();
+    }
+
+    let store = crate::schema::memory::InMemoryStore::new();
+
+    // Try to fetch and compile the first schema
+    if let Some((_namespace, location)) = locations.first() {
+        match fetcher.fetch(location) {
+            Ok(fetch_result) => {
+                let _ = store.put(&fetch_result.final_url, &fetch_result.content);
+
+                match crate::schema::xsd::parse_xsd_with_imports(
+                    &fetch_result.content,
+                    &fetch_result.final_url,
+                    fetcher,
+                    &store,
+                ) {
+                    Ok(schema) => {
+                        let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
+                        return validator.validate();
+                    }
+                    Err(_) => {
+                        return Err(crate::error::Error::Schema(
+                            crate::schema::error::SchemaError::SchemaNotFound {
+                                uri: location.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            Err(_) => {
+                return Err(crate::error::Error::Schema(
+                    crate::schema::error::SchemaError::SchemaNotFound {
+                        uri: location.clone(),
+                    },
+                ));
+            }
+        }
+    }
+
+    // Fallback to builtin schema
+    let schema = crate::schema::xsd::create_builtin_schema();
+    let validator = TwoPassSchemaValidator::new(reader, Arc::new(schema));
+    validator.validate()
 }
 
 #[cfg(test)]
