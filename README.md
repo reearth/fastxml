@@ -45,11 +45,12 @@ Parse + Schema Validation (via xsi:schemaLocation):
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM + validate | 9.88s | 92 MB/s | 2.93 GB |
-| fastxml DOM + validate | 85.12s | 11 MB/s | 2.62 GB |
+| fastxml DOM + validate | 24.52s | 37 MB/s | 2.62 GB |
 | fastxml Two-Pass | 29.56s | 31 MB/s | 780 MB |
 | fastxml Streaming | 62.01s | 15 MB/s | **~1 MB** |
 
 - **DOM**: fastxml uses **1.7x less memory** than libxml for parsing
+- **DOM + validate**: Direct DOM traversal without event reconstruction (**3x faster** than previous implementation)
 - **Two-Pass**: **2x faster** than Streaming validation, uses **3.8x less memory** than libxml
 - **Streaming**: Constant memory regardless of file size (only parser buffers)
 - Schema validation auto-fetches XSD from `xsi:schemaLocation`
@@ -378,6 +379,36 @@ parser.parse()?;
 ```
 
 This requires the `ureq` feature.
+
+### Validator Types
+
+fastxml provides multiple validators optimized for different use cases:
+
+| Validator | Best For | Throughput | Memory |
+|-----------|----------|------------|--------|
+| `DomSchemaValidator` | Pre-parsed documents | ~37 MB/s | High (DOM) |
+| `TwoPassSchemaValidator` | Large files, seekable streams | ~31 MB/s | Medium |
+| `StreamingSchemaValidator` | Huge files, non-seekable streams | ~15 MB/s | **Minimal** |
+
+- **DOM Validator**: Used automatically when calling `validate()` on a parsed document. Directly traverses the DOM tree without event reconstruction.
+- **Two-Pass**: Builds a lightweight skeleton in pass 1, validates in pass 2. Good balance of speed and memory.
+- **Streaming**: Single-pass validation during parsing. Best for memory-constrained environments.
+
+```rust
+use fastxml::schema::validator::{DomSchemaValidator, TwoPassSchemaValidator};
+use std::sync::Arc;
+
+// DOM validation (automatic via XmlSchemaValidationContext)
+let doc = fastxml::parse(xml_bytes)?;
+let ctx = fastxml::schema::XmlSchemaValidationContext::from_arc(schema.clone());
+let errors = ctx.validate(&doc)?;
+
+// Two-pass validation (for seekable readers)
+let reader = std::io::Cursor::new(xml_bytes);
+let errors = TwoPassSchemaValidator::new(reader, schema)
+    .with_max_errors(100)
+    .validate()?;
+```
 
 ### Error Handling
 

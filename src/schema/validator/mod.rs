@@ -12,6 +12,7 @@
 
 mod api;
 mod context;
+mod dom;
 mod lazy;
 mod state;
 mod streaming;
@@ -22,6 +23,7 @@ pub use self::mode::ValidationMode;
 
 // Re-export main types
 pub use context::XmlSchemaValidationContext;
+pub use dom::DomSchemaValidator;
 pub use lazy::LazySchemaValidator;
 pub use streaming::{StreamingSchemaValidator, ValidationOptions};
 pub use two_pass::{DocumentSkeleton, ElementSkeleton, TwoPassSchemaValidator};

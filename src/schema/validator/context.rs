@@ -2,14 +2,11 @@
 
 use std::sync::Arc;
 
-use compact_str::CompactString;
-
 use crate::document::XmlDocument;
 use crate::error::{Result, StructuredError};
-use crate::event::{XmlEvent, XmlEventHandler};
-use crate::node::{NodeType, XmlNode};
 use crate::schema::types::CompiledSchema;
 
+use super::dom::DomSchemaValidator;
 use super::streaming::StreamingSchemaValidator;
 
 /// Schema validation context.
@@ -33,77 +30,12 @@ impl XmlSchemaValidationContext {
     }
 
     /// Validates a document by traversing the DOM tree.
+    ///
+    /// This uses the fast DOM-based validator that directly traverses the DOM
+    /// without reconstructing XML events.
     pub fn validate(&self, doc: &XmlDocument) -> Result<Vec<StructuredError>> {
-        let mut validator = StreamingSchemaValidator::new(Arc::clone(&self.schema));
-
-        // Get root element and validate
-        if let Ok(root) = doc.get_root_element() {
-            self.validate_node_recursive(&root, &mut validator);
-        }
-
-        // Finish validation
-        validator.finish()?;
-
-        Ok(validator.into_errors())
-    }
-
-    /// Recursively validates a node and its children.
-    fn validate_node_recursive(&self, node: &XmlNode, validator: &mut StreamingSchemaValidator) {
-        match node.get_type() {
-            NodeType::Element => {
-                let name = node.get_name();
-                let prefix = node.get_prefix();
-                let namespace = node.get_namespace_uri();
-                let attrs = node.get_attributes();
-                let ns_decls = node.get_namespace_declarations();
-
-                // Create attributes list with CompactString
-                let attributes: Vec<(CompactString, CompactString)> = attrs
-                    .into_iter()
-                    .map(|(k, v)| (CompactString::from(k), CompactString::from(v)))
-                    .collect();
-
-                // Start element event
-                let _ = validator.handle(&XmlEvent::StartElement {
-                    name: name.into(),
-                    prefix: prefix.map(|p| p.into()),
-                    namespace,
-                    attributes,
-                    namespace_decls: ns_decls,
-                    line: None,
-                });
-
-                // Validate children
-                for child in node.get_child_nodes() {
-                    self.validate_node_recursive(&child, validator);
-                }
-
-                // End element event
-                let _ = validator.handle(&XmlEvent::EndElement {
-                    name: node.get_name().into(),
-                    prefix: node.get_prefix().map(|p| p.into()),
-                });
-            }
-            NodeType::Text => {
-                if let Some(content) = node.get_content() {
-                    let _ = validator.handle(&XmlEvent::Text(content));
-                }
-            }
-            NodeType::CData => {
-                if let Some(content) = node.get_content() {
-                    let _ = validator.handle(&XmlEvent::CData(content));
-                }
-            }
-            NodeType::Document => {
-                // Validate children of document node
-                for child in node.get_child_nodes() {
-                    self.validate_node_recursive(&child, validator);
-                }
-            }
-            _ => {
-                // Skip other node types (comments, PIs, etc.)
-            }
-        }
+        let validator = DomSchemaValidator::new(Arc::clone(&self.schema));
+        validator.validate(doc)
     }
 
     /// Creates a streaming validator.
