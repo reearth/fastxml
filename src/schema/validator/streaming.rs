@@ -123,11 +123,29 @@ impl StreamingSchemaValidator {
         error
     }
 
-    /// Looks up an element definition in the schema.
-    fn lookup_element(&self, name: &str, qname: &str) -> Option<&ElementDef> {
-        self.schema
-            .get_element(qname)
-            .or_else(|| self.schema.get_element(name))
+    /// Optimized element lookup: tries local name first, then qname.
+    /// Avoids constructing qname string unless necessary.
+    fn lookup_element_optimized(
+        &self,
+        name: &Arc<str>,
+        prefix: Option<&Arc<str>>,
+    ) -> Option<&ElementDef> {
+        // Try local name first (most common case for elements without prefix)
+        if let Some(elem) = self.schema.get_element(name.as_ref()) {
+            return Some(elem);
+        }
+
+        // If prefix exists, try qname
+        if let Some(p) = prefix {
+            if !p.is_empty() {
+                let qname = format!("{}:{}", p.as_ref(), name.as_ref());
+                if let Some(elem) = self.schema.get_element(&qname) {
+                    return Some(elem);
+                }
+            }
+        }
+
+        None
     }
 
     /// Gets the pre-computed flattened children for an element from the schema cache.
@@ -261,21 +279,25 @@ impl StreamingSchemaValidator {
 
     fn validate_element(
         &mut self,
-        name: &str,
-        prefix: Option<&str>,
+        name: &Arc<str>,
+        prefix: Option<&Arc<str>>,
         _namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
-        let qname = match prefix {
-            Some(p) if !p.is_empty() => format!("{}:{}", p, name),
-            _ => name.to_string(),
+        // Optimization: Try local name lookup first (most common case)
+        // Only construct qname if local lookup fails AND prefix exists
+        let elem_def = self.lookup_element_optimized(name, prefix);
+
+        // Construct qname only when needed for error messages or when prefix exists
+        let qname_owned: Option<String> = match prefix {
+            Some(p) if !p.is_empty() => Some(format!("{}:{}", p.as_ref(), name.as_ref())),
+            _ => None,
         };
+        let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
 
         // Check if this element is expected by the parent (inline element definition)
         let is_expected_by_parent = self.is_element_expected_by_parent(name);
 
-        // Look up element in schema (global element definition)
-        let elem_def = self.lookup_element(name, &qname);
         let schema_has_elements = !self.schema.elements.is_empty();
 
         if let Some(elem) = elem_def {
@@ -314,7 +336,7 @@ impl StreamingSchemaValidator {
                         ValidationErrorType::UnknownElement,
                         format!("element '{}' is not declared in schema", qname),
                     )
-                    .with_node_name(&qname)
+                    .with_node_name(qname)
                     .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
@@ -325,13 +347,13 @@ impl StreamingSchemaValidator {
     }
 
     /// Checks if an element is expected by its parent (defined in parent's content model).
-    fn is_element_expected_by_parent(&self, name: &str) -> bool {
+    fn is_element_expected_by_parent(&self, name: &Arc<str>) -> bool {
         if self.state.element_stack.len() < 2 {
             return false;
         }
         let parent_idx = self.state.element_stack.len() - 2;
         if let Some(parent) = self.state.element_stack.get(parent_idx) {
-            parent.expects_child(name)
+            parent.expects_child(name.as_ref())
         } else {
             false
         }
@@ -351,12 +373,12 @@ impl StreamingSchemaValidator {
 
         let parent_idx = self.state.element_stack.len() - 2;
         let parent_name = match self.state.element_stack.get(parent_idx) {
-            Some(p) => p.name.clone(),
+            Some(p) => &p.name,
             None => return (None, None),
         };
 
         // Look up parent element to get its type
-        let parent_elem = self.schema.get_element(&parent_name);
+        let parent_elem = self.schema.get_element(parent_name.as_ref());
         if parent_elem.is_none() {
             return (None, None);
         }
@@ -568,7 +590,7 @@ impl StreamingSchemaValidator {
         }
     }
 
-    fn validate_attributes(&mut self, element_name: &str, attributes: &[(&str, &str)]) {
+    fn validate_attributes(&mut self, element_name: &Arc<str>, attributes: &[(&str, &str)]) {
         for &(attr_name, attr_value) in attributes {
             // Skip namespace declarations
             if attr_name.starts_with("xmlns") {
@@ -593,7 +615,7 @@ impl StreamingSchemaValidator {
         }
     }
 
-    fn validate_element_end(&mut self, _name: &str) {
+    fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
             // Validate text content if element has a type
@@ -610,6 +632,8 @@ impl StreamingSchemaValidator {
     fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
         // Try to get type definition from type_ref first
         if let Some(ref type_ref) = ctx.type_ref {
+            // Note: .cloned() is required to break the borrow from self.schema
+            // before calling validate_text_against_type_def which takes &mut self
             if let Some(type_def) = self.schema.get_type(type_ref).cloned() {
                 self.validate_text_against_type_def(ctx, &type_def);
                 return;
@@ -617,7 +641,7 @@ impl StreamingSchemaValidator {
         }
 
         // If no type_ref, try to get inline type from element definition
-        if let Some(inline_type) = self.get_element_inline_type(&ctx.name) {
+        if let Some(inline_type) = self.get_element_inline_type(ctx.name.as_ref()) {
             self.validate_text_against_type_def(ctx, &inline_type);
         }
     }
@@ -639,9 +663,9 @@ impl StreamingSchemaValidator {
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
-        let parent_name = self.state.element_stack.get(parent_idx)?.name.clone();
+        let parent_name = &self.state.element_stack.get(parent_idx)?.name;
 
-        let parent_elem = self.schema.get_element(&parent_name)?;
+        let parent_elem = self.schema.get_element(parent_name.as_ref())?;
         let type_def = if let Some(ref type_ref) = parent_elem.type_ref {
             self.schema.get_type(type_ref)?
         } else {
@@ -680,7 +704,7 @@ impl StreamingSchemaValidator {
                                 ctx.name, facet_error
                             ),
                         )
-                        .with_node_name(&ctx.name)
+                        .with_node_name(ctx.name.as_ref())
                         .with_level(ErrorLevel::Error);
                     self.add_error(error);
                 }
@@ -700,7 +724,7 @@ impl StreamingSchemaValidator {
                                         ctx.name, facet_error
                                     ),
                                 )
-                                .with_node_name(&ctx.name)
+                                .with_node_name(ctx.name.as_ref())
                                 .with_level(ErrorLevel::Error);
                             self.add_error(error);
                         }
@@ -717,7 +741,7 @@ impl StreamingSchemaValidator {
                                     ctx.name
                                 ),
                             )
-                            .with_node_name(&ctx.name)
+                            .with_node_name(ctx.name.as_ref())
                             .with_level(ErrorLevel::Error);
                         self.add_error(error);
                     }
@@ -774,7 +798,7 @@ impl StreamingSchemaValidator {
                             choices.join(", ")
                         ),
                     )
-                    .with_node_name(&ctx.name)
+                    .with_node_name(ctx.name.as_ref())
                     .with_expected(format!("one of: {}", choices.join(", ")))
                     .with_found("none".to_string())
                     .with_level(ErrorLevel::Error);
@@ -814,7 +838,7 @@ impl StreamingSchemaValidator {
                                 ctx.name, child_name, min_occurs, actual_count
                             ),
                         )
-                        .with_node_name(&ctx.name)
+                        .with_node_name(ctx.name.as_ref())
                         .with_expected(format!("at least {} occurrence(s) of '{}'", min_occurs, child_name))
                         .with_found(format!("{} occurrence(s)", actual_count))
                         .with_level(ErrorLevel::Error);
@@ -838,12 +862,17 @@ impl XmlEventHandler for StreamingSchemaValidator {
             } => {
                 self.current_line = *line;
                 self.state.push_namespaces(namespace_decls);
-                self.state.push_element(name, namespace.as_deref());
+                // Pass Arc<str> directly to avoid allocation
+                self.state.push_element(
+                    Arc::clone(name),
+                    namespace.as_ref().map(|s| Arc::from(s.as_str())),
+                );
                 let attrs: Vec<(&str, &str)> = attributes
                     .iter()
                     .map(|(k, v)| (k.as_str(), v.as_str()))
                     .collect();
-                self.validate_element(name, prefix.as_deref(), namespace.as_deref(), &attrs);
+                // Pass Arc<str> references directly
+                self.validate_element(name, prefix.as_ref(), namespace.as_deref(), &attrs);
             }
             XmlEvent::EndElement { name, .. } => {
                 self.validate_element_end(name);
@@ -867,7 +896,7 @@ impl XmlEventHandler for StreamingSchemaValidator {
                 format!("element '{}' is not closed", ctx.name),
                 ValidationErrorType::UnclosedElement,
             )
-            .with_node_name(&ctx.name)
+            .with_node_name(ctx.name.as_ref())
             .with_level(ErrorLevel::Error);
             self.add_error(error);
         }
@@ -922,17 +951,17 @@ mod tests {
     fn test_validation_state_push_pop_element() {
         let mut state = ValidationState::new();
 
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         assert_eq!(state.depth, 1);
         assert_eq!(state.element_stack.len(), 1);
-        assert_eq!(state.element_stack[0].name, "root");
+        assert_eq!(state.element_stack[0].name.as_ref(), "root");
 
-        state.push_element("child", Some("http://example.com"));
+        state.push_element_str("child", Some("http://example.com"));
         assert_eq!(state.depth, 2);
         assert_eq!(state.element_stack.len(), 2);
 
         let popped = state.pop_element().unwrap();
-        assert_eq!(popped.name, "child");
+        assert_eq!(popped.name.as_ref(), "child");
         assert_eq!(state.depth, 1);
     }
 
@@ -941,10 +970,10 @@ mod tests {
         let mut state = ValidationState::new();
         assert_eq!(state.element_path(), "/");
 
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         assert_eq!(state.element_path(), "/root");
 
-        state.push_element("child", None);
+        state.push_element_str("child", None);
         assert_eq!(state.element_path(), "/root/child");
     }
 
@@ -954,9 +983,9 @@ mod tests {
 
     #[test]
     fn test_element_context_new() {
-        let ctx = ElementContext::new("test", Some("http://example.com"));
-        assert_eq!(ctx.name, "test");
-        assert_eq!(ctx.namespace, Some("http://example.com".to_string()));
+        let ctx = ElementContext::from_str("test", Some("http://example.com"));
+        assert_eq!(ctx.name.as_ref(), "test");
+        assert_eq!(ctx.namespace.as_deref(), Some("http://example.com"));
         assert!(ctx.child_counts.is_empty());
         assert!(ctx.text_content.is_empty());
         assert!(!ctx.schema_validated);
@@ -964,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_element_context_child_counts() {
-        let mut ctx = ElementContext::new("parent", None);
+        let mut ctx = ElementContext::from_str("parent", None);
 
         assert_eq!(ctx.get_child_count("child1"), 0);
 

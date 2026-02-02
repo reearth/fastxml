@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use smallvec::SmallVec;
+
 use crate::namespace::Namespace;
 use crate::schema::types::{ContentModelType, FlattenedChildren};
 
@@ -20,13 +22,13 @@ pub(crate) struct ValidationState {
 /// Context for an element being validated.
 #[derive(Debug, Clone)]
 pub(crate) struct ElementContext {
-    /// Element name (local name)
-    pub name: String,
+    /// Element name (local name) - stored as Arc<str> to avoid allocation
+    pub name: Arc<str>,
     /// Element namespace URI (for future use)
     #[allow(dead_code)]
-    pub namespace: Option<String>,
-    /// Child element occurrence counts
-    pub child_counts: HashMap<String, u32>,
+    pub namespace: Option<Arc<str>>,
+    /// Child element occurrence counts - SmallVec for inline storage (most elements have <8 children)
+    pub child_counts: SmallVec<[(Arc<str>, u32); 8]>,
     /// Text content collected
     pub text_content: String,
     /// Whether this element has been validated against schema
@@ -40,11 +42,12 @@ pub(crate) struct ElementContext {
 }
 
 impl ElementContext {
-    pub fn new(name: &str, namespace: Option<&str>) -> Self {
+    /// Creates a new ElementContext with an Arc<str> name (zero-copy from parser).
+    pub fn new(name: Arc<str>, namespace: Option<Arc<str>>) -> Self {
         Self {
-            name: name.to_string(),
-            namespace: namespace.map(|s| s.to_string()),
-            child_counts: HashMap::new(),
+            name,
+            namespace,
+            child_counts: SmallVec::new(),
             text_content: String::new(),
             schema_validated: false,
             type_ref: None,
@@ -52,14 +55,47 @@ impl ElementContext {
         }
     }
 
+    /// Creates a new ElementContext from string references (allocates new strings).
+    /// Used for tests and backward compatibility.
+    #[allow(dead_code)]
+    pub fn from_str(name: &str, namespace: Option<&str>) -> Self {
+        Self::new(Arc::from(name), namespace.map(Arc::from))
+    }
+
+    /// Increments child count using Arc<str> (zero-copy if already tracked).
+    pub fn increment_child_arc(&mut self, child_name: &Arc<str>) -> u32 {
+        // Linear search is fast for small N (typically <8 children)
+        for (name, count) in &mut self.child_counts {
+            if Arc::ptr_eq(name, child_name) || name.as_ref() == child_name.as_ref() {
+                *count += 1;
+                return *count;
+            }
+        }
+        self.child_counts.push((Arc::clone(child_name), 1));
+        1
+    }
+
+    /// Increments child count from string reference (may allocate if new).
+    #[allow(dead_code)]
     pub fn increment_child(&mut self, child_name: &str) -> u32 {
-        let count = self.child_counts.entry(child_name.to_string()).or_insert(0);
-        *count += 1;
-        *count
+        // Linear search is fast for small N (typically <8 children)
+        for (name, count) in &mut self.child_counts {
+            if name.as_ref() == child_name {
+                *count += 1;
+                return *count;
+            }
+        }
+        self.child_counts.push((Arc::from(child_name), 1));
+        1
     }
 
     pub fn get_child_count(&self, child_name: &str) -> u32 {
-        *self.child_counts.get(child_name).unwrap_or(&0)
+        for (name, count) in &self.child_counts {
+            if name.as_ref() == child_name {
+                return *count;
+            }
+        }
+        0
     }
 
     /// Returns the content model type from the flattened children, or Empty if not set.
@@ -104,14 +140,22 @@ impl ValidationState {
         }
     }
 
-    pub fn push_element(&mut self, name: &str, namespace: Option<&str>) {
-        // Increment child count in parent
+    /// Pushes a new element using Arc<str> name (zero-copy from parser).
+    pub fn push_element(&mut self, name: Arc<str>, namespace: Option<Arc<str>>) {
+        // Increment child count in parent using Arc<str> for zero-copy
         if let Some(parent) = self.element_stack.last_mut() {
-            parent.increment_child(name);
+            parent.increment_child_arc(&name);
         }
         self.element_stack
             .push(ElementContext::new(name, namespace));
         self.depth += 1;
+    }
+
+    /// Pushes a new element from string references (allocates).
+    /// Used for tests and backward compatibility.
+    #[allow(dead_code)]
+    pub fn push_element_str(&mut self, name: &str, namespace: Option<&str>) {
+        self.push_element(Arc::from(name), namespace.map(Arc::from));
     }
 
     pub fn pop_element(&mut self) -> Option<ElementContext> {
@@ -169,9 +213,9 @@ mod tests {
 
     #[test]
     fn test_element_context_new() {
-        let ctx = ElementContext::new("test", Some("http://example.com"));
-        assert_eq!(ctx.name, "test");
-        assert_eq!(ctx.namespace, Some("http://example.com".to_string()));
+        let ctx = ElementContext::from_str("test", Some("http://example.com"));
+        assert_eq!(ctx.name.as_ref(), "test");
+        assert_eq!(ctx.namespace.as_deref(), Some("http://example.com"));
         assert!(ctx.child_counts.is_empty());
         assert!(ctx.text_content.is_empty());
         assert!(!ctx.schema_validated);
@@ -181,14 +225,14 @@ mod tests {
 
     #[test]
     fn test_element_context_new_without_namespace() {
-        let ctx = ElementContext::new("test", None);
-        assert_eq!(ctx.name, "test");
+        let ctx = ElementContext::from_str("test", None);
+        assert_eq!(ctx.name.as_ref(), "test");
         assert!(ctx.namespace.is_none());
     }
 
     #[test]
     fn test_element_context_increment_child() {
-        let mut ctx = ElementContext::new("parent", None);
+        let mut ctx = ElementContext::from_str("parent", None);
         assert_eq!(ctx.increment_child("child"), 1);
         assert_eq!(ctx.increment_child("child"), 2);
         assert_eq!(ctx.increment_child("other"), 1);
@@ -197,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_element_context_get_child_count() {
-        let mut ctx = ElementContext::new("parent", None);
+        let mut ctx = ElementContext::from_str("parent", None);
         assert_eq!(ctx.get_child_count("child"), 0);
         ctx.increment_child("child");
         assert_eq!(ctx.get_child_count("child"), 1);
@@ -217,34 +261,34 @@ mod tests {
     #[test]
     fn test_validation_state_push_pop_element() {
         let mut state = ValidationState::new();
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         assert_eq!(state.depth, 1);
         assert_eq!(state.element_stack.len(), 1);
 
-        state.push_element("child", Some("http://ns"));
+        state.push_element_str("child", Some("http://ns"));
         assert_eq!(state.depth, 2);
         assert_eq!(state.element_stack.len(), 2);
 
         let popped = state.pop_element();
         assert!(popped.is_some());
-        assert_eq!(popped.unwrap().name, "child");
+        assert_eq!(popped.unwrap().name.as_ref(), "child");
         assert_eq!(state.depth, 1);
 
         let popped = state.pop_element();
         assert!(popped.is_some());
-        assert_eq!(popped.unwrap().name, "root");
+        assert_eq!(popped.unwrap().name.as_ref(), "root");
         assert_eq!(state.depth, 0);
     }
 
     #[test]
     fn test_validation_state_child_count_increment() {
         let mut state = ValidationState::new();
-        state.push_element("parent", None);
-        state.push_element("child1", None);
+        state.push_element_str("parent", None);
+        state.push_element_str("child1", None);
         state.pop_element();
-        state.push_element("child1", None);
+        state.push_element_str("child1", None);
         state.pop_element();
-        state.push_element("child2", None);
+        state.push_element_str("child2", None);
         state.pop_element();
 
         // Parent should have counts: child1=2, child2=1
@@ -258,15 +302,15 @@ mod tests {
         let mut state = ValidationState::new();
         assert!(state.current_element().is_none());
 
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         assert!(state.current_element().is_some());
-        assert_eq!(state.current_element().unwrap().name, "root");
+        assert_eq!(state.current_element().unwrap().name.as_ref(), "root");
     }
 
     #[test]
     fn test_validation_state_current_element_mut() {
         let mut state = ValidationState::new();
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         if let Some(ctx) = state.current_element_mut() {
             ctx.text_content.push_str("hello");
         }
@@ -313,13 +357,13 @@ mod tests {
     #[test]
     fn test_validation_state_element_path() {
         let mut state = ValidationState::new();
-        state.push_element("root", None);
+        state.push_element_str("root", None);
         assert_eq!(state.element_path(), "/root");
 
-        state.push_element("child", None);
+        state.push_element_str("child", None);
         assert_eq!(state.element_path(), "/root/child");
 
-        state.push_element("grandchild", None);
+        state.push_element_str("grandchild", None);
         assert_eq!(state.element_path(), "/root/child/grandchild");
     }
 
