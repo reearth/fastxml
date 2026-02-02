@@ -130,9 +130,10 @@ fn run_demo() -> Result<()> {
 /// Validate a file from command line argument
 #[cfg(feature = "ureq")]
 fn validate_file(file_path: &str) -> Result<()> {
-    use fastxml::schema::UreqFetcher;
+    use fastxml::schema::DefaultFetcher;
     use fastxml::schema::validator::streaming_validate_with_schema_location_and_fetcher;
     use std::fs::File;
+    use std::path::Path;
 
     println!("=== Streaming Validation: {} ===\n", file_path);
 
@@ -145,7 +146,15 @@ fn validate_file(file_path: &str) -> Result<()> {
 
     let start = std::time::Instant::now();
     let reader = BufReader::new(file);
-    let fetcher = UreqFetcher::new();
+
+    // Use DefaultFetcher with base directory from the XML file's location
+    // This allows resolving relative schema paths
+    let base_dir = Path::new(file_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    let fetcher = DefaultFetcher::with_base_dir(base_dir);
+
     let errors = streaming_validate_with_schema_location_and_fetcher(reader, fetcher)?;
     let elapsed = start.elapsed();
 

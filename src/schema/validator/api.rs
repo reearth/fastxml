@@ -89,7 +89,7 @@ pub fn validate_document_by_schema_context(
 /// ```
 #[cfg(feature = "ureq")]
 pub fn validate_with_schema_location(doc: &XmlDocument) -> Result<Vec<StructuredError>> {
-    validate_with_schema_location_and_fetcher(doc, &crate::schema::fetcher::UreqFetcher::new())
+    validate_with_schema_location_and_fetcher(doc, &crate::schema::fetcher::DefaultFetcher::new())
 }
 
 /// Validates a document using schemas referenced in xsi:schemaLocation with a custom fetcher.
@@ -231,7 +231,7 @@ pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
 pub fn get_schema_from_schema_location(xml_content: &[u8]) -> Result<CompiledSchema> {
     get_schema_from_schema_location_with_fetcher(
         xml_content,
-        &crate::schema::fetcher::UreqFetcher::new(),
+        &crate::schema::fetcher::DefaultFetcher::new(),
     )
 }
 
@@ -324,7 +324,7 @@ pub fn streaming_validate_with_schema_location<R: std::io::BufRead>(
 ) -> Result<Vec<StructuredError>> {
     streaming_validate_with_schema_location_and_fetcher(
         reader,
-        crate::schema::fetcher::UreqFetcher::new(),
+        crate::schema::fetcher::DefaultFetcher::new(),
     )
 }
 

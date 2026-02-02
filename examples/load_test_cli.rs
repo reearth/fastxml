@@ -56,9 +56,7 @@ use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
-use fastxml::schema::{
-    CombinedFetcher, FileFetcher, InMemoryStore, SchemaFetcher, SchemaStore, UreqFetcher,
-};
+use fastxml::schema::{DefaultFetcher, InMemoryStore, SchemaFetcher, SchemaStore};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -792,7 +790,7 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
         println!("    {} -> {}", ns, loc);
     }
 
-    let fetcher = UreqFetcher::new().timeout(60);
+    let fetcher = DefaultFetcher::new();
     let store = InMemoryStore::new();
 
     // Try to fetch and parse schemas
@@ -823,9 +821,7 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
 
                     // Create a fetcher that can handle local files for imports
                     let base_dir = Path::new(fetch_location).parent().unwrap_or(Path::new("."));
-                    let local_fetcher = CombinedFetcher::new()
-                        .with_fetcher(FileFetcher::with_base_dir(base_dir))
-                        .with_fetcher(UreqFetcher::new().timeout(60));
+                    let local_fetcher = DefaultFetcher::with_base_dir(base_dir);
 
                     match parse_xsd_with_imports(&xsd_content, &file_url, &local_fetcher, &store) {
                         Ok(schema) => {

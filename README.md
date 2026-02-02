@@ -359,7 +359,7 @@ Or with more control using `LazySchemaValidator`:
 
 ```rust
 use fastxml::event::StreamingParser;
-use fastxml::schema::{LazySchemaValidator, UreqFetcher};
+use fastxml::schema::{LazySchemaValidator, DefaultFetcher};
 use std::fs::File;
 use std::io::BufReader;
 
@@ -367,7 +367,8 @@ let file = File::open("document.xml")?;
 let mut parser = StreamingParser::new(BufReader::new(file));
 
 // LazySchemaValidator fetches schema on first StartElement
-let validator = LazySchemaValidator::new(UreqFetcher::new());
+// DefaultFetcher tries local files first, then HTTP
+let validator = LazySchemaValidator::new(DefaultFetcher::new());
 parser.add_handler(Box::new(validator));
 parser.parse()?;
 ```
