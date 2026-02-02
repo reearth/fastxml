@@ -90,6 +90,12 @@ pub use validator::{
     validate_with_schema_location,
 };
 
+#[cfg(feature = "tokio")]
+pub use validator::{
+    get_schema_from_schema_location_async, get_schema_from_schema_location_with_async_fetcher,
+    validate_with_schema_location_async, validate_with_schema_location_with_async_fetcher,
+};
+
 #[cfg(feature = "ureq")]
 pub use fetcher::UreqFetcher;
 

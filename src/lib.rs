@@ -468,6 +468,85 @@ pub fn streaming_validate_with_schema_location_and_fetcher<
     schema::streaming_validate_with_schema_location_and_fetcher(reader, fetcher)
 }
 
+/// Validates a document using schemas referenced in xsi:schemaLocation asynchronously.
+///
+/// This is the async version of [`validate_with_schema_location`]. It fetches schemas
+/// asynchronously using the default async fetcher (`AsyncDefaultFetcher`).
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::{parse, validate_with_schema_location_async};
+///
+/// let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+///                   xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
+///     <child>content</child>
+/// </root>"#;
+///
+/// let doc = parse(xml)?;
+/// let errors = validate_with_schema_location_async(&doc).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn validate_with_schema_location_async(
+    document: &XmlDocument,
+) -> Result<Vec<StructuredError>> {
+    schema::validate_with_schema_location_async(document).await
+}
+
+/// Validates a document using schemas referenced in xsi:schemaLocation with an async fetcher.
+///
+/// This is the async version of [`validate_with_schema_location_and_fetcher`].
+/// It fetches schemas asynchronously using the provided fetcher.
+#[cfg(feature = "tokio")]
+pub async fn validate_with_schema_location_with_async_fetcher<
+    F: schema::AsyncSchemaFetcher,
+    S: schema::AsyncSchemaStore,
+>(
+    document: &XmlDocument,
+    fetcher: &F,
+    store: &S,
+) -> Result<Vec<StructuredError>> {
+    schema::validate_with_schema_location_with_async_fetcher(document, fetcher, store).await
+}
+
+/// Gets a compiled schema from xsi:schemaLocation asynchronously.
+///
+/// This is the async version of [`get_schema_from_schema_location`]. It fetches schemas
+/// asynchronously using the default async fetcher (`AsyncDefaultFetcher`).
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::get_schema_from_schema_location_async;
+/// use fastxml::schema::validator::OnePassSchemaValidator;
+/// use std::sync::Arc;
+///
+/// let xml_bytes = std::fs::read("document.xml")?;
+/// let schema = Arc::new(get_schema_from_schema_location_async(&xml_bytes).await?);
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn get_schema_from_schema_location_async(
+    xml_content: &[u8],
+) -> Result<schema::types::CompiledSchema> {
+    schema::get_schema_from_schema_location_async(xml_content).await
+}
+
+/// Gets a compiled schema from xsi:schemaLocation with an async fetcher.
+///
+/// This is the async version of [`get_schema_from_schema_location_with_fetcher`].
+/// It fetches schemas asynchronously using the provided fetcher.
+#[cfg(feature = "tokio")]
+pub async fn get_schema_from_schema_location_with_async_fetcher<
+    F: schema::AsyncSchemaFetcher,
+    S: schema::AsyncSchemaStore,
+>(
+    xml_content: &[u8],
+    fetcher: &F,
+    store: &S,
+) -> Result<schema::types::CompiledSchema> {
+    schema::get_schema_from_schema_location_with_async_fetcher(xml_content, fetcher, store).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

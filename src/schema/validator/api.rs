@@ -470,6 +470,262 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
     TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader)
 }
 
+/// Validates a document using schemas referenced in xsi:schemaLocation with an async fetcher.
+///
+/// This is the async version of [`validate_with_schema_location_and_fetcher`].
+/// It fetches schemas asynchronously using the provided fetcher.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::{parse, validate_with_schema_location_with_async_fetcher};
+/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+///
+/// let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+///                   xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
+///     <child>content</child>
+/// </root>"#;
+///
+/// let doc = parse(xml)?;
+/// let fetcher = AsyncDefaultFetcher::new()?;
+/// let store = InMemoryStore::new();
+/// let errors = validate_with_schema_location_with_async_fetcher(&doc, &fetcher, &store).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn validate_with_schema_location_with_async_fetcher<
+    F: crate::schema::fetcher::AsyncSchemaFetcher,
+    S: crate::schema::store::AsyncSchemaStore,
+>(
+    doc: &XmlDocument,
+    fetcher: &F,
+    store: &S,
+) -> Result<Vec<StructuredError>> {
+    use crate::parser::parse_schema_locations;
+
+    // Get schema locations from the document
+    let locations = parse_schema_locations(doc)?;
+
+    if locations.is_empty() {
+        // No schema locations found, use built-in schema only
+        let schema = crate::schema::xsd::create_builtin_schema();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        return ctx.validate(doc);
+    }
+
+    // Fetch and parse all schemas
+    let mut all_errors = Vec::new();
+
+    for (_namespace, location) in &locations {
+        // Try to fetch the schema
+        match fetcher.fetch(location).await {
+            Ok(fetch_result) => {
+                // Store the fetched schema
+                let schema_key = fetch_result.final_url.clone();
+                if !store.contains(&schema_key).await {
+                    let _ = store.put(&schema_key, &fetch_result.content).await;
+                }
+
+                // Parse the schema with async import resolution
+                match crate::schema::xsd::parse_xsd_with_imports_async(
+                    &fetch_result.content,
+                    &fetch_result.final_url,
+                    fetcher,
+                    store,
+                )
+                .await
+                {
+                    Ok(schema) => {
+                        let ctx = XmlSchemaValidationContext::new(schema);
+                        match ctx.validate(doc) {
+                            Ok(errors) => all_errors.extend(errors),
+                            Err(e) => {
+                                all_errors.push(StructuredError {
+                                    message: format!("Validation error: {}", e),
+                                    line: None,
+                                    column: None,
+                                    error_type: ValidationErrorType::Other,
+                                    level: ErrorLevel::Error,
+                                    element_path: None,
+                                    node_name: None,
+                                    expected: None,
+                                    found: None,
+                                });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        all_errors.push(StructuredError {
+                            message: format!("Failed to parse schema {}: {}", location, e),
+                            line: None,
+                            column: None,
+                            error_type: ValidationErrorType::SchemaNotFound,
+                            level: ErrorLevel::Warning,
+                            element_path: None,
+                            node_name: None,
+                            expected: None,
+                            found: None,
+                        });
+                    }
+                }
+            }
+            Err(_) => {
+                return Err(crate::error::Error::Schema(
+                    crate::schema::error::SchemaError::SchemaNotFound {
+                        uri: location.clone(),
+                    },
+                ));
+            }
+        }
+    }
+
+    Ok(all_errors)
+}
+
+/// Validates a document using schemas referenced in xsi:schemaLocation asynchronously.
+///
+/// This is the async version of [`validate_with_schema_location`].
+/// It uses the default async fetcher (`AsyncDefaultFetcher`).
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::{parse, validate_with_schema_location_async};
+///
+/// let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+///                   xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">
+///     <child>content</child>
+/// </root>"#;
+///
+/// let doc = parse(xml)?;
+/// let errors = validate_with_schema_location_async(&doc).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn validate_with_schema_location_async(
+    doc: &XmlDocument,
+) -> Result<Vec<StructuredError>> {
+    let fetcher = crate::schema::fetcher::AsyncDefaultFetcher::new()?;
+    let store = crate::schema::memory::InMemoryStore::new();
+    validate_with_schema_location_with_async_fetcher(doc, &fetcher, &store).await
+}
+
+/// Gets a compiled schema from xsi:schemaLocation with an async fetcher.
+///
+/// This is the async version of [`get_schema_from_schema_location_with_fetcher`].
+/// It fetches schemas asynchronously using the provided fetcher.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::get_schema_from_schema_location_with_async_fetcher;
+/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+///
+/// let xml_bytes = std::fs::read("document.xml")?;
+/// let fetcher = AsyncDefaultFetcher::new()?;
+/// let store = InMemoryStore::new();
+/// let schema = get_schema_from_schema_location_with_async_fetcher(&xml_bytes, &fetcher, &store).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn get_schema_from_schema_location_with_async_fetcher<
+    F: crate::schema::fetcher::AsyncSchemaFetcher,
+    S: crate::schema::store::AsyncSchemaStore,
+>(
+    xml_content: &[u8],
+    fetcher: &F,
+    store: &S,
+) -> Result<CompiledSchema> {
+    use crate::parser::parse_schema_locations;
+
+    // Parse to extract schema locations
+    let doc = crate::parse(xml_content)?;
+    let locations = parse_schema_locations(&doc)?;
+
+    if locations.is_empty() {
+        return Ok(crate::schema::xsd::create_builtin_schema());
+    }
+
+    // Try to fetch and compile the first schema
+    if let Some((_namespace, location)) = locations.first() {
+        // Check store first
+        if let Some(content) = store.get(location).await? {
+            match crate::schema::xsd::parse_xsd_with_imports_async(
+                &content, location, fetcher, store,
+            )
+            .await
+            {
+                Ok(schema) => return Ok(schema),
+                Err(_) => {
+                    return Err(crate::error::Error::Schema(
+                        crate::schema::error::SchemaError::SchemaNotFound {
+                            uri: location.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+
+        // Fetch from network
+        match fetcher.fetch(location).await {
+            Ok(fetch_result) => {
+                let _ = store
+                    .put(&fetch_result.final_url, &fetch_result.content)
+                    .await;
+
+                match crate::schema::xsd::parse_xsd_with_imports_async(
+                    &fetch_result.content,
+                    &fetch_result.final_url,
+                    fetcher,
+                    store,
+                )
+                .await
+                {
+                    Ok(schema) => return Ok(schema),
+                    Err(_) => {
+                        return Err(crate::error::Error::Schema(
+                            crate::schema::error::SchemaError::SchemaNotFound {
+                                uri: location.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            Err(_) => {
+                return Err(crate::error::Error::Schema(
+                    crate::schema::error::SchemaError::SchemaNotFound {
+                        uri: location.clone(),
+                    },
+                ));
+            }
+        }
+    }
+
+    // This shouldn't be reached if locations is not empty
+    Err(crate::error::Error::Schema(
+        crate::schema::error::SchemaError::SchemaNotFound {
+            uri: "no schema locations".to_string(),
+        },
+    ))
+}
+
+/// Gets a compiled schema from xsi:schemaLocation asynchronously.
+///
+/// This is the async version of [`get_schema_from_schema_location`].
+/// It uses the default async fetcher (`AsyncDefaultFetcher`).
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::get_schema_from_schema_location_async;
+///
+/// let xml_bytes = std::fs::read("document.xml")?;
+/// let schema = get_schema_from_schema_location_async(&xml_bytes).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn get_schema_from_schema_location_async(xml_content: &[u8]) -> Result<CompiledSchema> {
+    let fetcher = crate::schema::fetcher::AsyncDefaultFetcher::new()?;
+    let store = crate::schema::memory::InMemoryStore::new();
+    get_schema_from_schema_location_with_async_fetcher(xml_content, &fetcher, &store).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,5 +821,153 @@ mod tests {
         let result = get_schema_from_schema_location_with_fetcher(xml, &fetcher);
         // NoopFetcher returns error
         assert!(result.is_err());
+    }
+}
+
+#[cfg(all(test, feature = "tokio"))]
+mod async_tests {
+    use super::*;
+    use crate::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
+    use crate::schema::memory::InMemoryStore;
+    use crate::schema::store::SchemaStore;
+    use parking_lot::RwLock;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::Arc;
+
+    /// Mock async fetcher for testing
+    struct MockAsyncFetcher {
+        responses: Arc<RwLock<StdHashMap<String, Vec<u8>>>>,
+    }
+
+    impl MockAsyncFetcher {
+        fn new() -> Self {
+            Self {
+                responses: Arc::new(RwLock::new(StdHashMap::new())),
+            }
+        }
+
+        fn add_response(&self, url: &str, content: &[u8]) {
+            self.responses
+                .write()
+                .insert(url.to_string(), content.to_vec());
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncSchemaFetcher for MockAsyncFetcher {
+        async fn fetch(&self, url: &str) -> crate::error::Result<FetchResult> {
+            let responses = self.responses.read();
+            if let Some(content) = responses.get(url) {
+                Ok(FetchResult {
+                    content: content.clone(),
+                    final_url: url.to_string(),
+                    redirected: false,
+                })
+            } else {
+                Err(crate::schema::fetch_error::FetchError::RequestFailed {
+                    url: url.to_string(),
+                    message: "Not found".to_string(),
+                }
+                .into())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_schema_location_async_no_schema_location() {
+        let xml = r#"<?xml version="1.0"?>
+<root>
+    <element>content</element>
+</root>"#;
+
+        let doc = crate::parse(xml.as_bytes()).unwrap();
+        let fetcher = MockAsyncFetcher::new();
+        let store = InMemoryStore::new();
+
+        let result = validate_with_schema_location_with_async_fetcher(&doc, &fetcher, &store).await;
+        // No schemaLocation found, uses builtin schema -> Ok
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_schema_location_async_with_schema() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://example.com/ns">
+    <xs:element name="root" type="xs:string"/>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd">content</root>"#;
+
+        let doc = crate::parse(xml.as_bytes()).unwrap();
+        let fetcher = MockAsyncFetcher::new();
+        fetcher.add_response("http://example.com/schema.xsd", xsd.as_bytes());
+        let store = InMemoryStore::new();
+
+        let result = validate_with_schema_location_with_async_fetcher(&doc, &fetcher, &store).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_schema_from_schema_location_async_no_schema_location() {
+        let xml = b"<root/>";
+        let fetcher = MockAsyncFetcher::new();
+        let store = InMemoryStore::new();
+
+        let result =
+            get_schema_from_schema_location_with_async_fetcher(xml, &fetcher, &store).await;
+        // No schemaLocation attribute - returns builtin schema
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_schema_from_schema_location_async_with_schema() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://example.com/ns">
+    <xs:element name="root" type="xs:string"/>
+</xs:schema>"#;
+
+        let xml = br#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://example.com/ns http://example.com/schema.xsd"/>"#;
+
+        let fetcher = MockAsyncFetcher::new();
+        fetcher.add_response("http://example.com/schema.xsd", xsd.as_bytes());
+        let store = InMemoryStore::new();
+
+        let result =
+            get_schema_from_schema_location_with_async_fetcher(xml, &fetcher, &store).await;
+        assert!(result.is_ok());
+
+        // Verify the store has cached the schema
+        assert!(SchemaStore::contains(
+            &store,
+            "http://example.com/schema.xsd"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_get_schema_from_schema_location_async_uses_cache() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <xs:element name="cached" type="xs:string"/>
+</xs:schema>"#;
+
+        let xml = br#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://example.com/ns http://example.com/cached.xsd"/>"#;
+
+        let fetcher = MockAsyncFetcher::new();
+        // Don't add to fetcher - it should be fetched from store
+
+        let store = InMemoryStore::new();
+        // Pre-populate the store
+        SchemaStore::put(&store, "http://example.com/cached.xsd", xsd.as_bytes()).unwrap();
+
+        let result =
+            get_schema_from_schema_location_with_async_fetcher(xml, &fetcher, &store).await;
+        // Should succeed because it's in the store
+        assert!(result.is_ok());
     }
 }

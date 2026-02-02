@@ -262,6 +262,29 @@ use fastxml::streaming_validate_with_schema_location;
 let errors = streaming_validate_with_schema_location(reader)?;
 ```
 
+### Async Validation
+
+Validate with async schema fetching (requires `tokio` feature):
+
+```rust
+use fastxml::{parse, validate_with_schema_location_async};
+
+#[tokio::main]
+async fn main() -> fastxml::error::Result<()> {
+    let doc = parse(xml_bytes)?;
+    let errors = validate_with_schema_location_async(&doc).await?;
+    Ok(())
+}
+```
+
+Or get the compiled schema for reuse:
+
+```rust
+use fastxml::get_schema_from_schema_location_async;
+
+let schema = get_schema_from_schema_location_async(&xml_bytes).await?;
+```
+
 ### Validation Errors
 
 ```rust

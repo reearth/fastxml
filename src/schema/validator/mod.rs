@@ -50,6 +50,12 @@ pub use api::{
     two_pass_validate_with_schema_location, validate_with_schema_location,
 };
 
+#[cfg(feature = "tokio")]
+pub use api::{
+    get_schema_from_schema_location_async, get_schema_from_schema_location_with_async_fetcher,
+    validate_with_schema_location_async, validate_with_schema_location_with_async_fetcher,
+};
+
 /// Validation mode module.
 mod mode {
     /// Validation mode controlling strictness.
