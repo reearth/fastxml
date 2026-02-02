@@ -388,7 +388,7 @@ impl StreamingSchemaValidator {
     ///
     /// This method also considers substitution groups. If the child element is a
     /// substitution group member, the constraint from the head element is used,
-    /// and the total count includes all members of the substitution group.
+    /// and the total count includes all members of the substitution group (transitively).
     fn validate_max_occurs(&mut self, child_name: &str) {
         if self.state.element_stack.len() < 2 {
             return;
@@ -405,12 +405,18 @@ impl StreamingSchemaValidator {
             // Check against parent's expected children constraints
             if let Some(&(_, max_occurs)) = parent.expected_children.get(constraint_name) {
                 if let Some(max) = max_occurs {
-                    // Calculate total count including all substitution group members
+                    // Calculate total count including all substitution group members (transitively)
                     let mut total_count = parent.get_child_count(constraint_name);
-                    if let Some(members) = self.schema.substitution_groups.get(constraint_name) {
-                        for member in members {
-                            total_count += parent.get_child_count(member);
-                        }
+
+                    // Also try with local name if constraint_name has a prefix
+                    if let Some((_prefix, local)) = constraint_name.split_once(':') {
+                        total_count += parent.get_child_count(local);
+                    }
+
+                    // Add counts from all transitive members
+                    let all_members = self.get_all_substitution_members(constraint_name);
+                    for member in &all_members {
+                        total_count += parent.get_child_count(member);
                     }
 
                     if total_count > max {
@@ -451,6 +457,65 @@ impl StreamingSchemaValidator {
         }
 
         None
+    }
+
+    /// Gets all substitution group members for a head element, including transitive members.
+    ///
+    /// For example, if `_Feature` has member `_CityObject`, and `_CityObject` has member
+    /// `ReliefFeature`, then this returns both `_CityObject` and `ReliefFeature` for `_Feature`.
+    ///
+    /// Also handles namespace prefix normalization (e.g., `gml:_Feature` matches `_Feature`).
+    fn get_all_substitution_members(&self, head_name: &str) -> Vec<String> {
+        let mut all_members = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        self.collect_transitive_members(head_name, &mut all_members, &mut visited);
+        all_members
+    }
+
+    /// Helper function to recursively collect substitution group members.
+    fn collect_transitive_members(
+        &self,
+        head_name: &str,
+        members: &mut Vec<String>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        if visited.contains(head_name) {
+            return;
+        }
+        visited.insert(head_name.to_string());
+
+        // Try multiple name variants:
+        // 1. The full name as-is
+        // 2. If it has a prefix, also try the local name
+        // 3. If it has no prefix, also try common prefixes (gml:, core:, etc.)
+        let mut names_to_try = vec![head_name.to_string()];
+
+        if let Some((_prefix, local)) = head_name.split_once(':') {
+            // Has prefix -> also try local name
+            names_to_try.push(local.to_string());
+        } else {
+            // No prefix -> also try with common prefixes
+            // Search substitution_groups for keys ending with this local name
+            for key in self.schema.substitution_groups.keys() {
+                if let Some((_prefix, local)) = key.split_once(':') {
+                    if local == head_name {
+                        names_to_try.push(key.clone());
+                    }
+                }
+            }
+        }
+
+        for name in names_to_try {
+            if let Some(direct_members) = self.schema.substitution_groups.get(&name) {
+                for member in direct_members {
+                    if !members.contains(member) {
+                        members.push(member.clone());
+                    }
+                    // Recursively collect members of this member (it might be a head too)
+                    self.collect_transitive_members(member, members, visited);
+                }
+            }
+        }
     }
 
     fn validate_attributes(&mut self, element_name: &str, attributes: &[(&str, &str)]) {
@@ -615,19 +680,22 @@ impl StreamingSchemaValidator {
     ///
     /// This method also considers substitution group members when counting occurrences.
     /// If the expected child is a substitution group head, occurrences of any member
-    /// element are counted toward the head's requirement.
+    /// element (including transitive members) are counted toward the head's requirement.
     fn validate_min_occurs(&mut self, ctx: &ElementContext) {
         for (child_name, &(min_occurs, _)) in &ctx.expected_children {
             if min_occurs > 0 {
-                // Calculate actual count including substitution group members
+                // Calculate actual count including substitution group members (transitively)
                 let mut actual_count = ctx.get_child_count(child_name);
 
-                // Add counts from substitution group members
-                // If child_name is a substitution group head, count all members
-                if let Some(members) = self.schema.substitution_groups.get(child_name) {
-                    for member in members {
-                        actual_count += ctx.get_child_count(member);
-                    }
+                // Also try with local name if child_name has a prefix
+                if let Some((_prefix, local)) = child_name.split_once(':') {
+                    actual_count += ctx.get_child_count(local);
+                }
+
+                // Add counts from all substitution group members (including transitive)
+                let all_members = self.get_all_substitution_members(child_name);
+                for member in &all_members {
+                    actual_count += ctx.get_child_count(member);
                 }
 
                 if actual_count < min_occurs {

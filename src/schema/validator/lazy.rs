@@ -80,7 +80,15 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                                     merged_schema.types.extend(schema.types);
                                     merged_schema.elements.extend(schema.elements);
                                     merged_schema.attributes.extend(schema.attributes);
-                                                                        if merged_schema.target_namespace.is_none() {
+                                    // Merge substitution groups
+                                    for (head, members) in schema.substitution_groups {
+                                        merged_schema
+                                            .substitution_groups
+                                            .entry(head)
+                                            .or_default()
+                                            .extend(members);
+                                    }
+                                    if merged_schema.target_namespace.is_none() {
                                         merged_schema.target_namespace = schema.target_namespace;
                                     }
                                     loaded_any = true;
@@ -209,7 +217,15 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                                     merged_schema.types.extend(schema.types);
                                     merged_schema.elements.extend(schema.elements);
                                     merged_schema.attributes.extend(schema.attributes);
-                                                                        if merged_schema.target_namespace.is_none() {
+                                    // Merge substitution groups
+                                    for (head, members) in schema.substitution_groups {
+                                        merged_schema
+                                            .substitution_groups
+                                            .entry(head)
+                                            .or_default()
+                                            .extend(members);
+                                    }
+                                    if merged_schema.target_namespace.is_none() {
                                         merged_schema.target_namespace = schema.target_namespace;
                                     }
                                     loaded_any = true;
