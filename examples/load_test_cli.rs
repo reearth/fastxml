@@ -424,10 +424,10 @@ mod libxml_bench {
 
             let start = Instant::now();
             let doc = parser.parse_string(xml_str).ok()?;
-            if let Err(errors) = schema_ctx.validate_document(&doc) {
-                if i == 0 {
-                    validation_errors = errors.len();
-                }
+            if let Err(errors) = schema_ctx.validate_document(&doc)
+                && i == 0
+            {
+                validation_errors = errors.len();
             }
             total_time += start.elapsed();
 
@@ -902,30 +902,30 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         // the schema has external imports (xAL.xsd, etc.) that need to be
         // resolved. Need to implement proper schema catalog or prefetch all
         // imported schemas for a fair comparison.
-        if let Some(info) = schema_info {
-            if let Some(xsd_bytes) = &info.xsd_bytes {
-                println!();
-                println!("    [Validation Comparison]");
-                if let Some(libxml_val_result) = libxml_bench::validate_with_libxml(
-                    content,
-                    xsd_bytes,
-                    iterations,
-                    get_memory_usage,
-                ) {
+        if let Some(info) = schema_info
+            && let Some(xsd_bytes) = &info.xsd_bytes
+        {
+            println!();
+            println!("    [Validation Comparison]");
+            if let Some(libxml_val_result) = libxml_bench::validate_with_libxml(
+                content,
+                xsd_bytes,
+                iterations,
+                get_memory_usage,
+            ) {
+                println!(
+                    "    libxml + validate: {} ({:.2} MB/s)",
+                    format_duration(libxml_val_result.avg_time),
+                    libxml_val_result.throughput_mb_s()
+                );
+                if libxml_val_result.validation_errors > 0 {
                     println!(
-                        "    libxml + validate: {} ({:.2} MB/s)",
-                        format_duration(libxml_val_result.avg_time),
-                        libxml_val_result.throughput_mb_s()
+                        "    libxml validation errors: {}",
+                        libxml_val_result.validation_errors
                     );
-                    if libxml_val_result.validation_errors > 0 {
-                        println!(
-                            "    libxml validation errors: {}",
-                            libxml_val_result.validation_errors
-                        );
-                    }
-                    if let Some(mem) = libxml_val_result.memory_delta {
-                        println!("    libxml val mem: Δ {}", format_bytes(mem));
-                    }
+                }
+                if let Some(mem) = libxml_val_result.memory_delta {
+                    println!("    libxml val mem: Δ {}", format_bytes(mem));
                 }
             }
         }
