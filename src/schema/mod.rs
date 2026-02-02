@@ -63,7 +63,7 @@ pub mod validator;
 pub mod xsd;
 
 // Re-export main types
-pub use fetcher::{FetchResult, NoopFetcher, SchemaFetcher};
+pub use fetcher::{CombinedFetcher, FetchResult, FileFetcher, NoopFetcher, SchemaFetcher};
 pub use memory::InMemoryStore;
 pub use store::SchemaStore;
 pub use tempdir::TempDirStore;

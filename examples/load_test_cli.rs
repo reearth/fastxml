@@ -36,7 +36,7 @@
 //! --mode <MODE>         Processing mode: dom, streaming, both (default)
 //! --iterations <N>      Number of iterations (default: 3)
 //! --validate            Enable schema validation benchmark
-//! --cache-dir <DIR>     Cache directory for downloaded URLs (default: benches/cache)
+//! --cache-dir <DIR>     Cache directory for downloaded URLs (default: examples/cache)
 //! ```
 
 use std::fs;
@@ -56,7 +56,9 @@ use fastxml::schema::types::CompiledSchema;
 use fastxml::schema::validator::StreamingSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
-use fastxml::schema::{InMemoryStore, SchemaFetcher, SchemaStore, UreqFetcher};
+use fastxml::schema::{
+    CombinedFetcher, FileFetcher, InMemoryStore, SchemaFetcher, SchemaStore, UreqFetcher,
+};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -85,7 +87,7 @@ impl Config {
         let mut processing_mode = "both".to_string();
         let mut iterations = 3usize;
         let mut validate = false;
-        let mut cache_dir = PathBuf::from("benches/cache");
+        let mut cache_dir = PathBuf::from("examples/cache");
         let mut inputs: Vec<String> = Vec::new();
         let mut show_help = false;
 
@@ -196,7 +198,7 @@ fn print_help(program: &str) {
     eprintln!("  --mode <MODE>         Processing mode: dom, streaming, both (default: both)");
     eprintln!("  --iterations <N>      Number of iterations (default: 3)");
     eprintln!("  --validate            Enable schema validation benchmark");
-    eprintln!("  --cache-dir <DIR>     Cache directory for URLs (default: benches/cache)");
+    eprintln!("  --cache-dir <DIR>     Cache directory for URLs (default: examples/cache)");
     eprintln!("  -h, --help            Show this help message");
     eprintln!();
     eprintln!("Examples:");
@@ -685,6 +687,7 @@ fn run_pattern_test(
 
 fn run_file_benchmark(
     name: &str,
+    file_path: Option<&str>,
     content: &[u8],
     processing_mode: &str,
     iterations: usize,
@@ -694,7 +697,7 @@ fn run_file_benchmark(
 
     // Get schema from xsi:schemaLocation if validation is enabled
     let schema_info: Option<SchemaInfo> = if validate {
-        get_schema_from_content(content)
+        get_schema_from_content(content, file_path)
     } else {
         None
     };
@@ -722,9 +725,33 @@ struct SchemaInfo {
     xsd_bytes: Option<Vec<u8>>,
 }
 
+/// Resolve a schema location relative to an XML file path.
+fn resolve_schema_location(xml_file_path: Option<&str>, location: &str) -> Option<String> {
+    // If location is already an absolute URL, return as-is
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return Some(location.to_string());
+    }
+
+    // If we have a file path, resolve relative path
+    if let Some(file_path) = xml_file_path {
+        let xml_path = Path::new(file_path);
+        if let Some(parent) = xml_path.parent() {
+            let resolved = parent.join(location);
+            if resolved.exists() {
+                return resolved
+                    .canonicalize()
+                    .ok()
+                    .map(|p| p.display().to_string());
+            }
+        }
+    }
+
+    None
+}
+
 /// Extracts schema from XML content using xsi:schemaLocation.
 #[cfg(feature = "ureq")]
-fn get_schema_from_content(content: &[u8]) -> Option<SchemaInfo> {
+fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Option<SchemaInfo> {
     use fastxml::schema::xsd::parse_xsd_with_imports;
 
     let doc = match parse(content) {
@@ -768,35 +795,84 @@ fn get_schema_from_content(content: &[u8]) -> Option<SchemaInfo> {
     let fetcher = UreqFetcher::new().timeout(60);
     let store = InMemoryStore::new();
 
-    // Try to fetch and parse the first schema
+    // Try to fetch and parse schemas
     for (_namespace, location) in &locations {
-        print!("  Fetching {}... ", location);
-        match fetcher.fetch(location) {
-            Ok(fetch_result) => {
-                println!("OK ({} bytes)", fetch_result.content.len());
-                let xsd_bytes = fetch_result.content.clone();
-                let _ = store.put(&fetch_result.final_url, &fetch_result.content);
+        // Try to resolve relative paths first
+        let resolved = resolve_schema_location(xml_file_path, location);
 
-                match parse_xsd_with_imports(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    &fetcher,
-                    &store,
-                ) {
-                    Ok(schema) => {
-                        println!("  Schema compiled successfully");
-                        return Some(SchemaInfo {
-                            compiled: Arc::new(schema),
-                            xsd_bytes: Some(xsd_bytes),
-                        });
-                    }
-                    Err(e) => {
-                        eprintln!("  Warning: Failed to parse schema: {}", e);
+        let (fetch_location, is_local) = if let Some(ref resolved_path) = resolved {
+            if Path::new(resolved_path).exists() {
+                (resolved_path.as_str(), true)
+            } else {
+                (location.as_str(), false)
+            }
+        } else {
+            (location.as_str(), false)
+        };
+
+        print!("  Fetching {}... ", fetch_location);
+
+        // Handle local file
+        if is_local {
+            match fs::read(fetch_location) {
+                Ok(xsd_content) => {
+                    println!("OK ({} bytes)", xsd_content.len());
+                    let xsd_bytes = xsd_content.clone();
+                    let file_url = format!("file://{}", fetch_location);
+                    let _ = store.put(&file_url, &xsd_content);
+
+                    // Create a fetcher that can handle local files for imports
+                    let base_dir = Path::new(fetch_location).parent().unwrap_or(Path::new("."));
+                    let local_fetcher = CombinedFetcher::new()
+                        .with_fetcher(FileFetcher::with_base_dir(base_dir))
+                        .with_fetcher(UreqFetcher::new().timeout(60));
+
+                    match parse_xsd_with_imports(&xsd_content, &file_url, &local_fetcher, &store) {
+                        Ok(schema) => {
+                            println!("  Schema compiled successfully");
+                            return Some(SchemaInfo {
+                                compiled: Arc::new(schema),
+                                xsd_bytes: Some(xsd_bytes),
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: Failed to parse schema: {}", e);
+                        }
                     }
                 }
+                Err(e) => {
+                    eprintln!("FAILED: {}", e);
+                }
             }
-            Err(e) => {
-                eprintln!("FAILED: {}", e);
+        } else {
+            // Remote fetch
+            match fetcher.fetch(fetch_location) {
+                Ok(fetch_result) => {
+                    println!("OK ({} bytes)", fetch_result.content.len());
+                    let xsd_bytes = fetch_result.content.clone();
+                    let _ = store.put(&fetch_result.final_url, &fetch_result.content);
+
+                    match parse_xsd_with_imports(
+                        &fetch_result.content,
+                        &fetch_result.final_url,
+                        &fetcher,
+                        &store,
+                    ) {
+                        Ok(schema) => {
+                            println!("  Schema compiled successfully");
+                            return Some(SchemaInfo {
+                                compiled: Arc::new(schema),
+                                xsd_bytes: Some(xsd_bytes),
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: Failed to parse schema: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("FAILED: {}", e);
+                }
             }
         }
     }
@@ -810,7 +886,7 @@ fn get_schema_from_content(content: &[u8]) -> Option<SchemaInfo> {
 }
 
 #[cfg(not(feature = "ureq"))]
-fn get_schema_from_content(_content: &[u8]) -> Option<SchemaInfo> {
+fn get_schema_from_content(_content: &[u8], _xml_file_path: Option<&str>) -> Option<SchemaInfo> {
     println!("  Note: Schema fetching requires 'ureq' feature, using built-in schema");
     Some(SchemaInfo {
         compiled: Arc::new(create_builtin_schema()),
@@ -1113,8 +1189,15 @@ fn main() {
 
             // Run benchmarks
             for (input, content) in &files {
+                // Pass file path for local files (not URLs)
+                let file_path = if input.starts_with("http://") || input.starts_with("https://") {
+                    None
+                } else {
+                    Some(input.as_str())
+                };
                 run_file_benchmark(
                     get_display_name(input),
+                    file_path,
                     content,
                     &config.processing_mode,
                     config.iterations,

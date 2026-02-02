@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
 
-use crate::schema::types::{CompiledSchema, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef};
+use crate::schema::types::{
+    CompiledSchema, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef,
+};
 use crate::schema::xsd::constraints::ConstraintValidator;
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
@@ -152,7 +154,9 @@ impl StreamingSchemaValidator {
                 // First, get elements from the base type (inherited elements)
                 if !visited.contains(base_type.as_str()) {
                     visited.insert(base_type.clone());
-                    if let Some(TypeDef::Complex(base_complex)) = self.schema.get_type(base_type.as_str()) {
+                    if let Some(TypeDef::Complex(base_complex)) =
+                        self.schema.get_type(base_type.as_str())
+                    {
                         let base_elements =
                             self.collect_elements_with_inheritance(base_complex, visited);
                         elements.extend(base_elements);
@@ -1511,19 +1515,27 @@ mod tests {
         // BaseType with "baseElement"
         let mut base_type = ComplexType::new("BaseType");
         base_type.content = ContentModel::Sequence(vec![
-            ElementDef::new("baseElement").with_type("xs:string").optional(),
+            ElementDef::new("baseElement")
+                .with_type("xs:string")
+                .optional(),
         ]);
-        schema.types.insert("BaseType".to_string(), TypeDef::Complex(base_type));
+        schema
+            .types
+            .insert("BaseType".to_string(), TypeDef::Complex(base_type));
 
         // ExtendedType extends BaseType, adds "extElement"
         let mut extended_type = ComplexType::new("ExtendedType");
         extended_type.content = ContentModel::ComplexExtension {
             base_type: "BaseType".to_string(),
             elements: vec![
-                ElementDef::new("extElement").with_type("xs:integer").optional(),
+                ElementDef::new("extElement")
+                    .with_type("xs:integer")
+                    .optional(),
             ],
         };
-        schema.types.insert("ExtendedType".to_string(), TypeDef::Complex(extended_type));
+        schema
+            .types
+            .insert("ExtendedType".to_string(), TypeDef::Complex(extended_type));
 
         // Root element uses ExtendedType
         let root_elem = ElementDef::new("root").with_type("ExtendedType");
@@ -1578,9 +1590,7 @@ mod tests {
             })
             .unwrap();
 
-        validator
-            .handle(&XmlEvent::Text("42".to_string()))
-            .unwrap();
+        validator.handle(&XmlEvent::Text("42".to_string())).unwrap();
 
         validator
             .handle(&XmlEvent::EndElement {
@@ -1600,7 +1610,9 @@ mod tests {
         validator.finish().unwrap();
 
         // Check for errors - inherited element should NOT cause an error
-        let errors: Vec<_> = validator.errors().iter()
+        let errors: Vec<_> = validator
+            .errors()
+            .iter()
             .filter(|e| e.message.contains("baseElement"))
             .collect();
 
@@ -1627,29 +1639,42 @@ mod tests {
         // GrandparentType has "grandparentElem"
         let mut grandparent_type = ComplexType::new("GrandparentType");
         grandparent_type.content = ContentModel::Sequence(vec![
-            ElementDef::new("grandparentElem").with_type("xs:string").optional(),
+            ElementDef::new("grandparentElem")
+                .with_type("xs:string")
+                .optional(),
         ]);
-        schema.types.insert("GrandparentType".to_string(), TypeDef::Complex(grandparent_type));
+        schema.types.insert(
+            "GrandparentType".to_string(),
+            TypeDef::Complex(grandparent_type),
+        );
 
         // ParentType extends GrandparentType, adds "parentElem"
         let mut parent_type = ComplexType::new("ParentType");
         parent_type.content = ContentModel::ComplexExtension {
             base_type: "GrandparentType".to_string(),
             elements: vec![
-                ElementDef::new("parentElem").with_type("xs:string").optional(),
+                ElementDef::new("parentElem")
+                    .with_type("xs:string")
+                    .optional(),
             ],
         };
-        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+        schema
+            .types
+            .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
 
         // ChildType extends ParentType, adds "childElem"
         let mut child_type = ComplexType::new("ChildType");
         child_type.content = ContentModel::ComplexExtension {
             base_type: "ParentType".to_string(),
             elements: vec![
-                ElementDef::new("childElem").with_type("xs:string").optional(),
+                ElementDef::new("childElem")
+                    .with_type("xs:string")
+                    .optional(),
             ],
         };
-        schema.types.insert("ChildType".to_string(), TypeDef::Complex(child_type));
+        schema
+            .types
+            .insert("ChildType".to_string(), TypeDef::Complex(child_type));
 
         // Root element uses ChildType
         let root_elem = ElementDef::new("root").with_type("ChildType");
@@ -1764,15 +1789,23 @@ mod tests {
             // Parent expects "_CityObject" as required child (min_occurs=1)
             ElementDef::new("_CityObject").with_type("AbstractCityObjectType"),
         ]);
-        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+        schema
+            .types
+            .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
 
         // Define the abstract type
         let abstract_type = ComplexType::new("AbstractCityObjectType");
-        schema.types.insert("AbstractCityObjectType".to_string(), TypeDef::Complex(abstract_type));
+        schema.types.insert(
+            "AbstractCityObjectType".to_string(),
+            TypeDef::Complex(abstract_type),
+        );
 
         // Define the concrete type
         let concrete_type = ComplexType::new("ReliefFeatureType");
-        schema.types.insert("ReliefFeatureType".to_string(), TypeDef::Complex(concrete_type));
+        schema.types.insert(
+            "ReliefFeatureType".to_string(),
+            TypeDef::Complex(concrete_type),
+        );
 
         // Define the head element (abstract)
         let mut head_elem = ElementDef::new("_CityObject");
@@ -1784,17 +1817,18 @@ mod tests {
         let mut substitute_elem = ElementDef::new("ReliefFeature");
         substitute_elem.type_ref = Some("ReliefFeatureType".to_string());
         substitute_elem.substitution_group = Some("_CityObject".to_string());
-        schema.elements.insert("ReliefFeature".to_string(), substitute_elem);
+        schema
+            .elements
+            .insert("ReliefFeature".to_string(), substitute_elem);
 
         // Define parent element
         let parent_elem = ElementDef::new("parent").with_type("ParentType");
         schema.elements.insert("parent".to_string(), parent_elem);
 
         // Build substitution groups (head -> members)
-        schema.substitution_groups.insert(
-            "_CityObject".to_string(),
-            vec!["ReliefFeature".to_string()],
-        );
+        schema
+            .substitution_groups
+            .insert("_CityObject".to_string(), vec!["ReliefFeature".to_string()]);
 
         let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
 
@@ -1840,7 +1874,9 @@ mod tests {
         validator.finish().unwrap();
 
         // Check: ReliefFeature should be accepted as a substitute for _CityObject
-        let errors: Vec<_> = validator.errors().iter()
+        let errors: Vec<_> = validator
+            .errors()
+            .iter()
             .filter(|e| e.message.contains("ReliefFeature") && e.message.contains("not declared"))
             .collect();
 
@@ -1875,17 +1911,27 @@ mod tests {
                 .with_type("AbstractCityObjectType")
                 .with_occurs(0, Some(2)),
         ]);
-        schema.types.insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+        schema
+            .types
+            .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
 
         // Define types
         let abstract_type = ComplexType::new("AbstractCityObjectType");
-        schema.types.insert("AbstractCityObjectType".to_string(), TypeDef::Complex(abstract_type));
+        schema.types.insert(
+            "AbstractCityObjectType".to_string(),
+            TypeDef::Complex(abstract_type),
+        );
 
         let relief_type = ComplexType::new("ReliefFeatureType");
-        schema.types.insert("ReliefFeatureType".to_string(), TypeDef::Complex(relief_type));
+        schema.types.insert(
+            "ReliefFeatureType".to_string(),
+            TypeDef::Complex(relief_type),
+        );
 
         let building_type = ComplexType::new("BuildingType");
-        schema.types.insert("BuildingType".to_string(), TypeDef::Complex(building_type));
+        schema
+            .types
+            .insert("BuildingType".to_string(), TypeDef::Complex(building_type));
 
         // Define elements
         let mut head_elem = ElementDef::new("_CityObject");
@@ -1896,12 +1942,16 @@ mod tests {
         let mut relief_elem = ElementDef::new("ReliefFeature");
         relief_elem.type_ref = Some("ReliefFeatureType".to_string());
         relief_elem.substitution_group = Some("_CityObject".to_string());
-        schema.elements.insert("ReliefFeature".to_string(), relief_elem);
+        schema
+            .elements
+            .insert("ReliefFeature".to_string(), relief_elem);
 
         let mut building_elem = ElementDef::new("Building");
         building_elem.type_ref = Some("BuildingType".to_string());
         building_elem.substitution_group = Some("_CityObject".to_string());
-        schema.elements.insert("Building".to_string(), building_elem);
+        schema
+            .elements
+            .insert("Building".to_string(), building_elem);
 
         let parent_elem = ElementDef::new("parent").with_type("ParentType");
         schema.elements.insert("parent".to_string(), parent_elem);
@@ -1927,7 +1977,10 @@ mod tests {
             .unwrap();
 
         // Add 3 substitutes (exceeds max_occurs=2)
-        for (i, name) in ["ReliefFeature", "Building", "ReliefFeature"].iter().enumerate() {
+        for (i, name) in ["ReliefFeature", "Building", "ReliefFeature"]
+            .iter()
+            .enumerate()
+        {
             validator
                 .handle(&XmlEvent::StartElement {
                     name: (*name).into(),
@@ -1957,7 +2010,9 @@ mod tests {
         validator.finish().unwrap();
 
         // Check: Should have a max_occurs error since we have 3 substitutes but max is 2
-        let errors: Vec<_> = validator.errors().iter()
+        let errors: Vec<_> = validator
+            .errors()
+            .iter()
             .filter(|e| e.message.contains("occurs") && e.message.contains("maximum"))
             .collect();
 
@@ -1989,7 +2044,10 @@ mod tests {
             ElementDef::new("Envelope").with_type("xs:string"),
             ElementDef::new("Null").with_type("xs:string"),
         ]);
-        schema.types.insert("BoundingShapeType".to_string(), TypeDef::Complex(choice_type));
+        schema.types.insert(
+            "BoundingShapeType".to_string(),
+            TypeDef::Complex(choice_type),
+        );
 
         // Define parent element that uses the choice type
         let parent_elem = ElementDef::new("boundedBy").with_type("BoundingShapeType");
@@ -2040,7 +2098,9 @@ mod tests {
 
         // Check: Should NOT have an error about missing 'Null' element
         // because Choice means ONE of the options, not ALL
-        let errors: Vec<_> = validator.errors().iter()
+        let errors: Vec<_> = validator
+            .errors()
+            .iter()
             .filter(|e| e.message.contains("Null") && e.message.contains("requires"))
             .collect();
 

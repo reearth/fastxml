@@ -22,4 +22,4 @@
 .DS_Store
 Thumbs.db
 
-benches/cache
+examples/cache
