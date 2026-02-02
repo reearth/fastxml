@@ -41,6 +41,10 @@ impl XmlEventHandler for CountingHandler {
         }
         Ok(())
     }
+
+    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
 }
 
 fn main() -> Result<()> {

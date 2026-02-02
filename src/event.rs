@@ -3,6 +3,7 @@
 //! This module provides an event-based interface for processing XML
 //! that enables single-pass parsing with optional validation.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
@@ -106,7 +107,7 @@ pub enum XmlEvent {
 ///
 /// Implement this trait to process XML events during streaming parsing.
 /// Multiple handlers can be attached to a single parser.
-pub trait XmlEventHandler: Send {
+pub trait XmlEventHandler: Send + Any {
     /// Called for each XML event.
     ///
     /// Return `Ok(())` to continue processing, or an error to stop.
@@ -119,6 +120,9 @@ pub trait XmlEventHandler: Send {
     fn finish(&mut self) -> Result<()> {
         Ok(())
     }
+
+    /// Returns self as Any for downcasting.
+    fn as_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
 /// A streaming XML parser that dispatches events to handlers.
@@ -145,6 +149,11 @@ impl<R: BufRead> StreamingParser<R> {
     /// Adds an event handler.
     pub fn add_handler(&mut self, handler: Box<dyn XmlEventHandler>) {
         self.handlers.push(handler);
+    }
+
+    /// Takes ownership of all handlers.
+    pub fn into_handlers(self) -> Vec<Box<dyn XmlEventHandler>> {
+        self.handlers
     }
 
     /// Parses the document, dispatching events to all handlers.
@@ -352,6 +361,10 @@ impl XmlEventHandler for EventCollector {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         self.events.push(event.clone());
         Ok(())
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn Any> {
+        self
     }
 }
 

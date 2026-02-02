@@ -11,7 +11,7 @@ use crate::schema::xsd::constraints::ConstraintValidator;
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
 use super::ValidationMode;
-use super::state::{ChildConstraints, ElementContext, ValidationState};
+use super::state::{ChildConstraints, ContentModelType, ElementContext, ValidationState};
 
 /// Streaming schema validator.
 ///
@@ -170,7 +170,10 @@ impl StreamingSchemaValidator {
     /// Extracts child element occurrence constraints from an element definition.
     ///
     /// This includes inherited elements from base types when using ComplexExtension.
-    fn get_child_constraints_for_element(&self, elem: &ElementDef) -> ChildConstraints {
+    fn get_child_constraints_for_element(
+        &self,
+        elem: &ElementDef,
+    ) -> (ChildConstraints, ContentModelType) {
         // Try to get the type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
             self.schema.get_type(type_ref)
@@ -179,12 +182,24 @@ impl StreamingSchemaValidator {
         };
 
         let Some(type_def) = type_def else {
-            return HashMap::new();
+            return (HashMap::new(), ContentModelType::Empty);
         };
 
         let mut constraints = HashMap::new();
+        let mut content_model_type = ContentModelType::Empty;
 
         if let TypeDef::Complex(complex) = type_def {
+            // Determine content model type
+            content_model_type = match &complex.content {
+                ContentModel::Sequence(_) => ContentModelType::Sequence,
+                ContentModel::Choice(_) => ContentModelType::Choice,
+                ContentModel::All(_) => ContentModelType::All,
+                ContentModel::ComplexExtension { .. } => ContentModelType::Sequence, // Extension acts like sequence
+                ContentModel::Empty => ContentModelType::Empty,
+                ContentModel::SimpleContent { .. } => ContentModelType::Empty,
+                ContentModel::Any { .. } => ContentModelType::Sequence, // Treat Any as permissive sequence
+            };
+
             // Collect all elements including inherited ones
             let mut visited = std::collections::HashSet::new();
             let elements = self.collect_elements_with_inheritance(complex, &mut visited);
@@ -194,7 +209,7 @@ impl StreamingSchemaValidator {
             }
         }
 
-        constraints
+        (constraints, content_model_type)
     }
 
     /// Creates FacetConstraints from a SimpleType definition.
@@ -245,7 +260,8 @@ impl StreamingSchemaValidator {
         if let Some(elem) = elem_def {
             // Global element found - get type information
             let type_ref = elem.type_ref.clone();
-            let expected_children = self.get_child_constraints_for_element(elem);
+            let (expected_children, content_model_type) =
+                self.get_child_constraints_for_element(elem);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -255,11 +271,13 @@ impl StreamingSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.expected_children = expected_children;
+                ctx.content_model_type = content_model_type;
             }
         } else if is_expected_by_parent {
             // Inline element - declared in parent's type definition
             // Get type info from parent's content model if available
-            let (type_ref, expected_children) = self.get_inline_element_info(name);
+            let (type_ref, expected_children, content_model_type) =
+                self.get_inline_element_info(name);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -269,6 +287,7 @@ impl StreamingSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.expected_children = expected_children;
+                ctx.content_model_type = content_model_type;
             }
         } else {
             // Element not found in schema
@@ -304,22 +323,25 @@ impl StreamingSchemaValidator {
     /// Gets type information for an inline element from the parent's content model.
     ///
     /// This searches through inherited elements as well when the parent type uses ComplexExtension.
-    fn get_inline_element_info(&self, name: &str) -> (Option<String>, ChildConstraints) {
+    fn get_inline_element_info(
+        &self,
+        name: &str,
+    ) -> (Option<String>, ChildConstraints, ContentModelType) {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
-            return (None, HashMap::new());
+            return (None, HashMap::new(), ContentModelType::Empty);
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
         let parent_name = match self.state.element_stack.get(parent_idx) {
             Some(p) => p.name.clone(),
-            None => return (None, HashMap::new()),
+            None => return (None, HashMap::new(), ContentModelType::Empty),
         };
 
         // Look up parent element to get its type
         let parent_elem = self.schema.get_element(&parent_name);
         if parent_elem.is_none() {
-            return (None, HashMap::new());
+            return (None, HashMap::new(), ContentModelType::Empty);
         }
         let parent_elem = parent_elem.unwrap();
 
@@ -331,7 +353,7 @@ impl StreamingSchemaValidator {
         };
 
         let Some(TypeDef::Complex(complex)) = type_def else {
-            return (None, HashMap::new());
+            return (None, HashMap::new(), ContentModelType::Empty);
         };
 
         // Collect all elements including inherited ones
@@ -343,35 +365,49 @@ impl StreamingSchemaValidator {
                 // Found the inline element - get its type info
                 let type_ref = elem.type_ref.clone();
 
-                // Get expected children for this inline element
-                let expected_children = if let Some(ref tr) = type_ref {
+                // Get expected children and content model type for this inline element
+                let (expected_children, content_model_type) = if let Some(ref tr) = type_ref {
                     if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
                         self.extract_child_constraints_from_complex(child_complex)
                     } else {
-                        HashMap::new()
+                        (HashMap::new(), ContentModelType::Empty)
                     }
                 } else if let Some(ref inline) = elem.inline_type {
                     if let TypeDef::Complex(child_complex) = inline {
                         self.extract_child_constraints_from_complex(child_complex)
                     } else {
-                        HashMap::new()
+                        (HashMap::new(), ContentModelType::Empty)
                     }
                 } else {
-                    HashMap::new()
+                    (HashMap::new(), ContentModelType::Empty)
                 };
 
-                return (type_ref, expected_children);
+                return (type_ref, expected_children, content_model_type);
             }
         }
 
-        (None, HashMap::new())
+        (None, HashMap::new(), ContentModelType::Empty)
     }
 
     /// Extracts child element constraints from a complex type definition.
     ///
     /// This includes inherited elements from base types when using ComplexExtension.
-    fn extract_child_constraints_from_complex(&self, complex: &ComplexType) -> ChildConstraints {
+    fn extract_child_constraints_from_complex(
+        &self,
+        complex: &ComplexType,
+    ) -> (ChildConstraints, ContentModelType) {
         let mut constraints = HashMap::new();
+
+        // Determine content model type
+        let content_model_type = match &complex.content {
+            ContentModel::Sequence(_) => ContentModelType::Sequence,
+            ContentModel::Choice(_) => ContentModelType::Choice,
+            ContentModel::All(_) => ContentModelType::All,
+            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
+            ContentModel::Empty => ContentModelType::Empty,
+            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
+            ContentModel::Any { .. } => ContentModelType::Sequence,
+        };
 
         // Use the inheritance-aware element collector
         let mut visited = std::collections::HashSet::new();
@@ -381,7 +417,7 @@ impl StreamingSchemaValidator {
             constraints.insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
         }
 
-        constraints
+        (constraints, content_model_type)
     }
 
     /// Validates max_occurs constraint for a child element.
@@ -682,6 +718,53 @@ impl StreamingSchemaValidator {
     /// If the expected child is a substitution group head, occurrences of any member
     /// element (including transitive members) are counted toward the head's requirement.
     fn validate_min_occurs(&mut self, ctx: &ElementContext) {
+        // For Choice content model, we only need ONE of the choices to be present
+        if ctx.content_model_type == ContentModelType::Choice {
+            // Check if at least one choice element is present
+            let mut any_choice_present = false;
+
+            for child_name in ctx.expected_children.keys() {
+                let mut count = ctx.get_child_count(child_name);
+
+                // Also try with local name if child_name has a prefix
+                if let Some((_prefix, local)) = child_name.split_once(':') {
+                    count += ctx.get_child_count(local);
+                }
+
+                // Add counts from substitution group members
+                let all_members = self.get_all_substitution_members(child_name);
+                for member in &all_members {
+                    count += ctx.get_child_count(member);
+                }
+
+                if count > 0 {
+                    any_choice_present = true;
+                    break;
+                }
+            }
+
+            // Only report error if no choice element is present and there are expected children
+            if !any_choice_present && !ctx.expected_children.is_empty() {
+                let choices: Vec<_> = ctx.expected_children.keys().cloned().collect();
+                let error = self
+                    .make_error(
+                        ValidationErrorType::MissingRequiredElement,
+                        format!(
+                            "element '{}' requires one of: {}",
+                            ctx.name,
+                            choices.join(", ")
+                        ),
+                    )
+                    .with_node_name(&ctx.name)
+                    .with_expected(format!("one of: {}", choices.join(", ")))
+                    .with_found("none".to_string())
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+            return;
+        }
+
+        // For Sequence/All content models, check each element's min_occurs
         for (child_name, &(min_occurs, _)) in &ctx.expected_children {
             if min_occurs > 0 {
                 // Calculate actual count including substitution group members (transitively)
@@ -781,6 +864,10 @@ impl XmlEventHandler for StreamingSchemaValidator {
         }
 
         Ok(())
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
     }
 }
 
@@ -1877,6 +1964,95 @@ mod tests {
         assert!(
             !errors.is_empty(),
             "Should have a max_occurs error when 3 substitutes are used but max is 2, errors: {:?}",
+            validator.errors()
+        );
+    }
+
+    // =============================================
+    // Choice Content Model Tests
+    // =============================================
+
+    /// Test that Choice content model accepts any one of the choices.
+    ///
+    /// This test reproduces the issue where `boundedBy` requires `Envelope` OR `Null`,
+    /// but the validator incorrectly requires both when using Choice content model.
+    #[test]
+    fn test_choice_content_model_basic() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // Define a type with Choice content model (like BoundingShapeType)
+        // Choice means: ONE of the elements should be present, not ALL
+        let mut choice_type = ComplexType::new("BoundingShapeType");
+        choice_type.content = ContentModel::Choice(vec![
+            ElementDef::new("Envelope").with_type("xs:string"),
+            ElementDef::new("Null").with_type("xs:string"),
+        ]);
+        schema.types.insert("BoundingShapeType".to_string(), TypeDef::Complex(choice_type));
+
+        // Define parent element that uses the choice type
+        let parent_elem = ElementDef::new("boundedBy").with_type("BoundingShapeType");
+        schema.elements.insert("boundedBy".to_string(), parent_elem);
+
+        let mut validator = StreamingSchemaValidator::new(Arc::new(schema));
+
+        // Start boundedBy
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "boundedBy".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+            })
+            .unwrap();
+
+        // Add Envelope (one of the choices)
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "Envelope".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "Envelope".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        // End boundedBy
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "boundedBy".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Check: Should NOT have an error about missing 'Null' element
+        // because Choice means ONE of the options, not ALL
+        let errors: Vec<_> = validator.errors().iter()
+            .filter(|e| e.message.contains("Null") && e.message.contains("requires"))
+            .collect();
+
+        assert!(
+            errors.is_empty(),
+            "Choice content model should accept any ONE of the choices, not require ALL. Got errors: {:?}",
+            errors
+        );
+
+        assert!(
+            validator.is_valid(),
+            "Validation should pass when one choice element is present, but got errors: {:?}",
             validator.errors()
         );
     }

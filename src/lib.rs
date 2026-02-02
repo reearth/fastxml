@@ -82,6 +82,10 @@
 //!         }
 //!         Ok(())
 //!     }
+//!
+//!     fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+//!         self
+//!     }
 //! }
 //!
 //! let xml = "<root><child/></root>";

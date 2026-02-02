@@ -7,6 +7,20 @@ use crate::namespace::Namespace;
 /// Type alias for child element occurrence constraints (min_occurs, max_occurs).
 pub(crate) type ChildConstraints = HashMap<String, (u32, Option<u32>)>;
 
+/// Content model type for an element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ContentModelType {
+    /// Sequence - all elements in order, each with their own min/max occurs
+    #[default]
+    Sequence,
+    /// Choice - exactly one of the elements must be present
+    Choice,
+    /// All - all elements must be present, but in any order
+    All,
+    /// Empty - no child elements allowed
+    Empty,
+}
+
 /// Validation state during streaming.
 #[derive(Debug, Default)]
 pub(crate) struct ValidationState {
@@ -36,6 +50,8 @@ pub(crate) struct ElementContext {
     pub type_ref: Option<String>,
     /// Expected child elements with their occurrence constraints (name -> (min, max))
     pub expected_children: ChildConstraints,
+    /// Content model type (Sequence, Choice, All, or Empty)
+    pub content_model_type: ContentModelType,
 }
 
 impl ElementContext {
@@ -48,6 +64,7 @@ impl ElementContext {
             schema_validated: false,
             type_ref: None,
             expected_children: HashMap::new(),
+            content_model_type: ContentModelType::default(),
         }
     }
 

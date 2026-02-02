@@ -538,6 +538,10 @@ mod streaming_errors {
             self.count += 1;
             Ok(())
         }
+
+        fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
     }
 
     #[test]

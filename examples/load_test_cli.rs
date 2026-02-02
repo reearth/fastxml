@@ -253,6 +253,10 @@ impl XmlEventHandler for StatsHandler {
         }
         Ok(())
     }
+
+    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
 }
 
 struct CountingReader<R> {
@@ -962,7 +966,8 @@ fn run_streaming_benchmark(
     // With validation
     if let Some(s) = schema {
         let mut total_validate_time = Duration::ZERO;
-        for _ in 0..iterations {
+        let mut validation_errors = Vec::new();
+        for i in 0..iterations {
             let reader = BufReader::new(std::io::Cursor::new(content));
             let start = Instant::now();
             let mut parser = StreamingParser::new(reader);
@@ -970,8 +975,22 @@ fn run_streaming_benchmark(
             parser.add_handler(Box::new(handler));
             let validator = StreamingSchemaValidator::new(Arc::clone(s));
             parser.add_handler(Box::new(validator));
-            let _ = parser.parse();
+            let result = parser.parse();
             total_validate_time += start.elapsed();
+
+            // Collect errors from first iteration
+            if i == 0 && result.is_ok() {
+                let mut handlers = parser.into_handlers();
+                // The validator is the second handler (index 1)
+                if handlers.len() > 1
+                    && let Some(validator) = handlers
+                        .pop()
+                        .map(|h| h.as_any())
+                        .and_then(|h| h.downcast::<StreamingSchemaValidator>().ok())
+                {
+                    validation_errors = validator.into_errors();
+                }
+            }
         }
 
         let avg_validate = total_validate_time / iterations as u32;
@@ -985,6 +1004,23 @@ fn run_streaming_benchmark(
 
         let overhead = (avg_validate.as_secs_f64() / avg_parse.as_secs_f64() - 1.0) * 100.0;
         println!("    Overhead:   {:.1}%", overhead);
+
+        // Print validation errors
+        if !validation_errors.is_empty() {
+            let error_count = validation_errors.iter().filter(|e| e.is_error()).count();
+            let warning_count = validation_errors.iter().filter(|e| e.is_warning()).count();
+            println!(
+                "    Errors:     {} errors, {} warnings",
+                error_count, warning_count
+            );
+            // Print first 10 errors
+            for (i, err) in validation_errors.iter().take(10).enumerate() {
+                println!("      {}: {}", i + 1, err.message);
+            }
+            if validation_errors.len() > 10 {
+                println!("      ... and {} more", validation_errors.len() - 10);
+            }
+        }
     }
 
     let mem_after = get_memory_usage();

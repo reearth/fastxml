@@ -143,7 +143,7 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
     }
 }
 
-impl<F: SchemaFetcher> XmlEventHandler for LazySchemaValidator<F> {
+impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidator<F> {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         // Initialize on first StartElement
         if let XmlEvent::StartElement { attributes, .. } = event {
@@ -158,6 +158,10 @@ impl<F: SchemaFetcher> XmlEventHandler for LazySchemaValidator<F> {
         }
 
         Ok(())
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
     }
 }
 
@@ -280,7 +284,7 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
     }
 }
 
-impl<F: SchemaFetcher> XmlEventHandler for LazySchemaValidatorWithSharedErrors<F> {
+impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidatorWithSharedErrors<F> {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         // Initialize on first StartElement
         if let XmlEvent::StartElement { attributes, .. } = event {
@@ -302,6 +306,10 @@ impl<F: SchemaFetcher> XmlEventHandler for LazySchemaValidatorWithSharedErrors<F
         }
 
         Ok(())
+    }
+
+    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
     }
 }
 
