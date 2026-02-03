@@ -164,32 +164,24 @@ pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
                         match ctx.validate(doc) {
                             Ok(errors) => all_errors.extend(errors),
                             Err(e) => {
-                                all_errors.push(StructuredError {
-                                    message: format!("Validation error: {}", e),
-                                    line: None,
-                                    column: None,
-                                    error_type: ValidationErrorType::Other,
-                                    level: ErrorLevel::Error,
-                                    element_path: None,
-                                    node_name: None,
-                                    expected: None,
-                                    found: None,
-                                });
+                                all_errors.push(
+                                    StructuredError::new(
+                                        format!("Validation error: {}", e),
+                                        ValidationErrorType::Other,
+                                    )
+                                    .with_level(ErrorLevel::Error),
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        all_errors.push(StructuredError {
-                            message: format!("Failed to parse schema {}: {}", location, e),
-                            line: None,
-                            column: None,
-                            error_type: ValidationErrorType::SchemaNotFound,
-                            level: ErrorLevel::Warning,
-                            element_path: None,
-                            node_name: None,
-                            expected: None,
-                            found: None,
-                        });
+                        all_errors.push(
+                            StructuredError::new(
+                                format!("Failed to parse schema {}: {}", location, e),
+                                ValidationErrorType::SchemaNotFound,
+                            )
+                            .with_level(ErrorLevel::Warning),
+                        );
                     }
                 }
             }
@@ -539,32 +531,24 @@ pub async fn validate_with_schema_location_with_async_fetcher<
                         match ctx.validate(doc) {
                             Ok(errors) => all_errors.extend(errors),
                             Err(e) => {
-                                all_errors.push(StructuredError {
-                                    message: format!("Validation error: {}", e),
-                                    line: None,
-                                    column: None,
-                                    error_type: ValidationErrorType::Other,
-                                    level: ErrorLevel::Error,
-                                    element_path: None,
-                                    node_name: None,
-                                    expected: None,
-                                    found: None,
-                                });
+                                all_errors.push(
+                                    StructuredError::new(
+                                        format!("Validation error: {}", e),
+                                        ValidationErrorType::Other,
+                                    )
+                                    .with_level(ErrorLevel::Error),
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        all_errors.push(StructuredError {
-                            message: format!("Failed to parse schema {}: {}", location, e),
-                            line: None,
-                            column: None,
-                            error_type: ValidationErrorType::SchemaNotFound,
-                            level: ErrorLevel::Warning,
-                            element_path: None,
-                            node_name: None,
-                            expected: None,
-                            found: None,
-                        });
+                        all_errors.push(
+                            StructuredError::new(
+                                format!("Failed to parse schema {}: {}", location, e),
+                                ValidationErrorType::SchemaNotFound,
+                            )
+                            .with_level(ErrorLevel::Warning),
+                        );
                     }
                 }
             }

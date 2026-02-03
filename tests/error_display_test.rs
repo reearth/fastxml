@@ -387,10 +387,10 @@ mod structured_error_tests {
             .with_expected("string")
             .with_found("number");
 
-        assert_eq!(err.line, Some(10));
-        assert_eq!(err.column, Some(5));
+        assert_eq!(err.line(), Some(10));
+        assert_eq!(err.column(), Some(5));
         assert_eq!(err.level, ErrorLevel::Warning);
-        assert_eq!(err.element_path, Some("/root/child".to_string()));
+        assert_eq!(err.element_path(), Some("/root/child"));
         assert_eq!(err.node_name, Some("child".to_string()));
         assert_eq!(err.expected, Some("string".to_string()));
         assert_eq!(err.found, Some("number".to_string()));
@@ -461,8 +461,8 @@ mod structured_error_tests {
     fn test_structured_error_default() {
         let err = StructuredError::default();
         assert_eq!(err.message, "");
-        assert_eq!(err.line, None);
-        assert_eq!(err.column, None);
+        assert_eq!(err.line(), None);
+        assert_eq!(err.column(), None);
         assert_eq!(err.error_type, ValidationErrorType::Other);
         assert_eq!(err.level, ErrorLevel::Error);
     }

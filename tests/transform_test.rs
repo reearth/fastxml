@@ -1071,6 +1071,53 @@ fn test_error_location_display() {
 }
 
 #[test]
+fn test_error_location_multibyte_utf8() {
+    use fastxml::ErrorLocation;
+
+    // Multi-byte UTF-8 characters should be counted as single columns
+    // "あいう" is 9 bytes (3 bytes per char), "\n" is 1 byte
+    let input = "あいう\nえお";
+
+    // At byte 0 (first char "あ")
+    let loc = ErrorLocation::from_offset_with_input(0, input);
+    assert_eq!(loc.line, Some(1));
+    assert_eq!(loc.column, Some(1));
+
+    // At byte 3 (second char "い")
+    let loc = ErrorLocation::from_offset_with_input(3, input);
+    assert_eq!(loc.line, Some(1));
+    assert_eq!(loc.column, Some(2));
+
+    // At byte 6 (third char "う")
+    let loc = ErrorLocation::from_offset_with_input(6, input);
+    assert_eq!(loc.line, Some(1));
+    assert_eq!(loc.column, Some(3));
+
+    // At byte 10 (first char of line 2 "え")
+    let loc = ErrorLocation::from_offset_with_input(10, input);
+    assert_eq!(loc.line, Some(2));
+    assert_eq!(loc.column, Some(1));
+
+    // At byte 13 (second char of line 2 "お")
+    let loc = ErrorLocation::from_offset_with_input(13, input);
+    assert_eq!(loc.line, Some(2));
+    assert_eq!(loc.column, Some(2));
+
+    // Mixed ASCII and multi-byte
+    let input = "ab\nあいう\nxy";
+
+    // At byte 3 ("あ" on line 2)
+    let loc = ErrorLocation::from_offset_with_input(3, input);
+    assert_eq!(loc.line, Some(2));
+    assert_eq!(loc.column, Some(1));
+
+    // At byte 12 ("x" on line 3)
+    let loc = ErrorLocation::from_offset_with_input(13, input);
+    assert_eq!(loc.line, Some(3));
+    assert_eq!(loc.column, Some(1));
+}
+
+#[test]
 fn test_error_location_structured_error_integration() {
     use fastxml::{ErrorLocation, StructuredError, ValidationErrorType};
 
@@ -1080,9 +1127,9 @@ fn test_error_location_structured_error_integration() {
     let err =
         StructuredError::new("test error", ValidationErrorType::InvalidContent).with_location(&loc);
 
-    assert_eq!(err.line, Some(42));
-    assert_eq!(err.column, Some(10));
-    assert_eq!(err.element_path, Some("/root/item[3]".to_string()));
+    assert_eq!(err.line(), Some(42));
+    assert_eq!(err.column(), Some(10));
+    assert_eq!(err.element_path(), Some("/root/item[3]"));
 
     // Extract location from StructuredError
     let extracted: ErrorLocation = (&err).into();

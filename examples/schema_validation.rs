@@ -59,28 +59,26 @@ fn main() -> fastxml::error::Result<()> {
 fn demonstrate_error_handling() {
     // Simulated validation errors for demonstration
     let errors = vec![
-        StructuredError {
-            message: "Attribute 'optional' is not declared".to_string(),
-            line: Some(5),
-            column: Some(10),
-            error_type: ValidationErrorType::UnknownAttribute,
-            level: ErrorLevel::Warning,
-            element_path: Some("/root/item[1]".to_string()),
-            node_name: Some("optional".to_string()),
-            expected: None,
-            found: None,
-        },
-        StructuredError {
-            message: "Element 'unknown' is not expected".to_string(),
-            line: Some(8),
-            column: Some(5),
-            error_type: ValidationErrorType::UnknownElement,
-            level: ErrorLevel::Error,
-            element_path: Some("/root/unknown".to_string()),
-            node_name: Some("unknown".to_string()),
-            expected: Some("name, count, or active".to_string()),
-            found: Some("unknown".to_string()),
-        },
+        StructuredError::new(
+            "Attribute 'optional' is not declared",
+            ValidationErrorType::UnknownAttribute,
+        )
+        .with_line(5)
+        .with_column(10)
+        .with_level(ErrorLevel::Warning)
+        .with_element_path("/root/item[1]")
+        .with_node_name("optional"),
+        StructuredError::new(
+            "Element 'unknown' is not expected",
+            ValidationErrorType::UnknownElement,
+        )
+        .with_line(8)
+        .with_column(5)
+        .with_level(ErrorLevel::Error)
+        .with_element_path("/root/unknown")
+        .with_node_name("unknown")
+        .with_expected("name, count, or active")
+        .with_found("unknown"),
     ];
 
     for error in &errors {
@@ -94,10 +92,10 @@ fn demonstrate_error_handling() {
         print!("{} ", prefix);
 
         // Location information
-        if let Some(path) = &error.element_path {
+        if let Some(path) = error.element_path() {
             print!("{}", path);
         }
-        if let Some(line) = error.line {
+        if let Some(line) = error.line() {
             print!(" (line {})", line);
         }
         print!(": ");

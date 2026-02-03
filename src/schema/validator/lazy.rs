@@ -95,20 +95,16 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                                 }
                                 Err(e) => {
                                     // Log warning but continue with other schemas
-                                    self.errors.push(StructuredError {
-                                        message: format!(
-                                            "Warning: Failed to parse schema {}: {}",
-                                            location, e
-                                        ),
-                                        line: None,
-                                        column: None,
-                                        error_type: ValidationErrorType::SchemaNotFound,
-                                        level: ErrorLevel::Warning,
-                                        element_path: None,
-                                        node_name: None,
-                                        expected: None,
-                                        found: None,
-                                    });
+                                    self.errors.push(
+                                        StructuredError::new(
+                                            format!(
+                                                "Warning: Failed to parse schema {}: {}",
+                                                location, e
+                                            ),
+                                            ValidationErrorType::SchemaNotFound,
+                                        )
+                                        .with_level(ErrorLevel::Warning),
+                                    );
                                 }
                             }
                         }
@@ -121,17 +117,13 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
             }
 
             if !loaded_any {
-                self.errors.push(StructuredError {
-                    message: "No schemas could be loaded from xsi:schemaLocation".to_string(),
-                    line: None,
-                    column: None,
-                    error_type: ValidationErrorType::SchemaNotFound,
-                    level: ErrorLevel::Warning,
-                    element_path: None,
-                    node_name: None,
-                    expected: None,
-                    found: None,
-                });
+                self.errors.push(
+                    StructuredError::new(
+                        "No schemas could be loaded from xsi:schemaLocation",
+                        ValidationErrorType::SchemaNotFound,
+                    )
+                    .with_level(ErrorLevel::Warning),
+                );
             }
 
             merged_schema
@@ -236,20 +228,16 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                                 }
                                 Err(e) => {
                                     // Log warning but continue with other schemas
-                                    self.shared_errors.lock().unwrap().push(StructuredError {
-                                        message: format!(
-                                            "Warning: Failed to parse schema {}: {}",
-                                            location, e
-                                        ),
-                                        line: None,
-                                        column: None,
-                                        error_type: ValidationErrorType::SchemaNotFound,
-                                        level: ErrorLevel::Warning,
-                                        element_path: None,
-                                        node_name: None,
-                                        expected: None,
-                                        found: None,
-                                    });
+                                    self.shared_errors.lock().unwrap().push(
+                                        StructuredError::new(
+                                            format!(
+                                                "Warning: Failed to parse schema {}: {}",
+                                                location, e
+                                            ),
+                                            ValidationErrorType::SchemaNotFound,
+                                        )
+                                        .with_level(ErrorLevel::Warning),
+                                    );
                                 }
                             }
                         }
@@ -262,17 +250,13 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
             }
 
             if !loaded_any {
-                self.shared_errors.lock().unwrap().push(StructuredError {
-                    message: "No schemas could be loaded from xsi:schemaLocation".to_string(),
-                    line: None,
-                    column: None,
-                    error_type: ValidationErrorType::SchemaNotFound,
-                    level: ErrorLevel::Warning,
-                    element_path: None,
-                    node_name: None,
-                    expected: None,
-                    found: None,
-                });
+                self.shared_errors.lock().unwrap().push(
+                    StructuredError::new(
+                        "No schemas could be loaded from xsi:schemaLocation",
+                        ValidationErrorType::SchemaNotFound,
+                    )
+                    .with_level(ErrorLevel::Warning),
+                );
             }
 
             merged_schema

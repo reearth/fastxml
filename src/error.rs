@@ -28,6 +28,13 @@ use crate::xpath::error::{XPathEvalError, XPathSyntaxError};
 /// assert_eq!(loc.line, Some(2));
 /// assert_eq!(loc.column, Some(1));
 ///
+/// // Multi-byte UTF-8 characters are counted as single columns
+/// let input = "あいう\nえお";
+/// // "あいう" is 9 bytes (3 bytes each), "\n" is 1 byte, "え" starts at byte 10
+/// let loc = ErrorLocation::from_offset_with_input(10, input);
+/// assert_eq!(loc.line, Some(2));
+/// assert_eq!(loc.column, Some(1)); // First char of line 2
+///
 /// // Add XPath information
 /// let loc = loc.with_xpath("/root/item[1]".to_string());
 /// assert!(loc.to_string().contains("/root/item[1]"));
@@ -99,9 +106,11 @@ impl ErrorLocation {
     /// Calculates line and column from byte offset in the input string.
     ///
     /// Returns (line, column) where both are 1-indexed.
+    /// Column is counted in Unicode characters (not bytes), so multi-byte
+    /// characters like Japanese are counted as single columns.
     pub fn calculate_line_column(input: &str, byte_offset: usize) -> (usize, usize) {
         let mut line = 1;
-        let mut last_newline_pos = 0;
+        let mut column = 1;
 
         for (pos, ch) in input.char_indices() {
             if pos >= byte_offset {
@@ -109,12 +118,11 @@ impl ErrorLocation {
             }
             if ch == '\n' {
                 line += 1;
-                last_newline_pos = pos + 1;
+                column = 1;
+            } else {
+                column += 1;
             }
         }
-
-        // Column is the byte distance from the last newline
-        let column = byte_offset.saturating_sub(last_newline_pos) + 1;
 
         (line, column)
     }
@@ -249,16 +257,12 @@ impl std::fmt::Display for ErrorLevel {
 pub struct StructuredError {
     /// Error message
     pub message: String,
-    /// Line number (1-based, if available)
-    pub line: Option<usize>,
-    /// Column number (1-based, if available)
-    pub column: Option<usize>,
+    /// Location information (line, column, byte_offset, xpath)
+    pub location: ErrorLocation,
     /// Error type classification
     pub error_type: ValidationErrorType,
     /// Error severity level
     pub level: ErrorLevel,
-    /// XPath-like path to the element where error occurred
-    pub element_path: Option<String>,
     /// Name of the element or attribute that caused the error
     pub node_name: Option<String>,
     /// Expected value or type (for type mismatch errors)
@@ -271,11 +275,9 @@ impl Default for StructuredError {
     fn default() -> Self {
         Self {
             message: String::new(),
-            line: None,
-            column: None,
+            location: ErrorLocation::default(),
             error_type: ValidationErrorType::Other,
             level: ErrorLevel::Error,
-            element_path: None,
             node_name: None,
             expected: None,
             found: None,
@@ -295,13 +297,19 @@ impl StructuredError {
 
     /// Sets the line number.
     pub fn with_line(mut self, line: usize) -> Self {
-        self.line = Some(line);
+        self.location.line = Some(line);
         self
     }
 
     /// Sets the column number.
     pub fn with_column(mut self, column: usize) -> Self {
-        self.column = Some(column);
+        self.location.column = Some(column);
+        self
+    }
+
+    /// Sets the byte offset.
+    pub fn with_byte_offset(mut self, offset: usize) -> Self {
+        self.location.byte_offset = Some(offset);
         self
     }
 
@@ -311,9 +319,9 @@ impl StructuredError {
         self
     }
 
-    /// Sets the element path.
+    /// Sets the element path (stored in location.xpath).
     pub fn with_element_path(mut self, path: impl Into<String>) -> Self {
-        self.element_path = Some(path.into());
+        self.location.xpath = Some(path.into());
         self
     }
 
@@ -345,34 +353,65 @@ impl StructuredError {
         self.level >= ErrorLevel::Error
     }
 
-    /// Sets location information from an ErrorLocation.
+    /// Sets location information from an ErrorLocation (merges non-None fields).
     pub fn with_location(mut self, location: &ErrorLocation) -> Self {
         if let Some(line) = location.line {
-            self.line = Some(line);
+            self.location.line = Some(line);
         }
         if let Some(column) = location.column {
-            self.column = Some(column);
+            self.location.column = Some(column);
+        }
+        if let Some(offset) = location.byte_offset {
+            self.location.byte_offset = Some(offset);
         }
         if let Some(ref xpath) = location.xpath {
-            self.element_path = Some(xpath.clone());
+            self.location.xpath = Some(xpath.clone());
         }
         self
     }
 
-    /// Extracts location information as an ErrorLocation.
-    pub fn location(&self) -> ErrorLocation {
-        ErrorLocation {
-            line: self.line,
-            column: self.column,
-            byte_offset: None,
-            xpath: self.element_path.clone(),
+    /// Sets the entire location, replacing any existing location.
+    pub fn set_location(mut self, location: ErrorLocation) -> Self {
+        self.location = location;
+        self
+    }
+
+    /// Returns the line number (convenience accessor).
+    pub fn line(&self) -> Option<usize> {
+        self.location.line
+    }
+
+    /// Returns the column number (convenience accessor).
+    pub fn column(&self) -> Option<usize> {
+        self.location.column
+    }
+
+    /// Returns the byte offset (convenience accessor).
+    pub fn byte_offset(&self) -> Option<usize> {
+        self.location.byte_offset
+    }
+
+    /// Returns the element path (convenience accessor).
+    pub fn element_path(&self) -> Option<&str> {
+        self.location.xpath.as_deref()
+    }
+
+    /// Calculates and sets line/column from byte_offset using the given input.
+    ///
+    /// This is useful when you have a byte offset but need to display line/column.
+    pub fn calculate_line_column(mut self, input: &str) -> Self {
+        if let Some(offset) = self.location.byte_offset {
+            let (line, column) = ErrorLocation::calculate_line_column(input, offset);
+            self.location.line = Some(line);
+            self.location.column = Some(column);
         }
+        self
     }
 }
 
 impl From<&StructuredError> for ErrorLocation {
     fn from(err: &StructuredError) -> Self {
-        err.location()
+        err.location.clone()
     }
 }
 
@@ -381,16 +420,18 @@ impl std::fmt::Display for StructuredError {
         // Format: [level] location: message
         write!(f, "[{}] ", self.level)?;
 
-        if let Some(ref path) = self.element_path {
+        if let Some(ref path) = self.location.xpath {
             write!(f, "{}", path)?;
-            if let Some(line) = self.line {
+            if let Some(line) = self.location.line {
                 write!(f, " (line {})", line)?;
             }
             write!(f, ": ")?;
-        } else if let (Some(line), Some(col)) = (self.line, self.column) {
+        } else if let (Some(line), Some(col)) = (self.location.line, self.location.column) {
             write!(f, "{}:{}: ", line, col)?;
-        } else if let Some(line) = self.line {
+        } else if let Some(line) = self.location.line {
             write!(f, "line {}: ", line)?;
+        } else if let Some(offset) = self.location.byte_offset {
+            write!(f, "offset {}: ", offset)?;
         }
 
         write!(f, "{}", self.message)?;
