@@ -448,6 +448,64 @@ pub mod libxml_compare {
             }
         }
     }
+
+    /// Validate XML with libxml against XSD schema
+    pub fn validate_with_libxml(xml: &str, xsd: &str) -> (bool, Vec<String>) {
+        use libxml::parser::Parser;
+        use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
+
+        let parser = Parser::default();
+        let doc = parser
+            .parse_string(xml)
+            .expect("libxml: Failed to parse XML");
+
+        let mut schema_parser = SchemaParserContext::from_buffer(xsd.as_bytes());
+        let mut ctx = SchemaValidationContext::from_parser(&mut schema_parser)
+            .expect("libxml: Failed to create validation context");
+
+        let result = ctx.validate_document(&doc);
+        let is_valid = result.is_ok();
+
+        let messages: Vec<String> = if let Err(errors) = result {
+            errors.iter().filter_map(|e| e.message.clone()).collect()
+        } else {
+            vec![]
+        };
+
+        (is_valid, messages)
+    }
+
+    /// Compare XSD validation results between fastxml and libxml
+    pub fn compare_xsd_validation(xml: &str, xsd: &str) -> CompareResult {
+        use fastxml::schema::validator::XmlSchemaValidationContext;
+        use fastxml::schema::xsd::parse_xsd;
+
+        // fastxml validation
+        let fastxml_valid = match fastxml::parse(xml.as_bytes()) {
+            Ok(doc) => match parse_xsd(xsd.as_bytes()) {
+                Ok(schema) => {
+                    let ctx = XmlSchemaValidationContext::new(schema);
+                    ctx.validate(&doc)
+                        .map(|errors| errors.iter().all(|e| !e.is_error()))
+                        .unwrap_or(false)
+                }
+                Err(_) => return CompareResult::diff("fastxml: Failed to parse XSD"),
+            },
+            Err(_) => return CompareResult::diff("fastxml: Failed to parse XML"),
+        };
+
+        // libxml validation
+        let (libxml_valid, _) = validate_with_libxml(xml, xsd);
+
+        if fastxml_valid == libxml_valid {
+            CompareResult::ok()
+        } else {
+            CompareResult::diff(format!(
+                "Validation result differs: fastxml={}, libxml={}",
+                fastxml_valid, libxml_valid
+            ))
+        }
+    }
 }
 
 /// Macro to compare fastxml result with libxml when the feature is enabled
@@ -473,6 +531,9 @@ macro_rules! compare_with_libxml {
     (consistency: $xml:expr) => {
         $crate::common::libxml_compare::assert_parse_consistency($xml);
     };
+    (validate: $xml:expr, $xsd:expr) => {
+        $crate::common::libxml_compare::compare_xsd_validation($xml, $xsd).assert_match();
+    };
 }
 
 #[macro_export]
@@ -482,4 +543,5 @@ macro_rules! compare_with_libxml {
     (xpath: $xml:expr, $xpath:expr, $doc:expr) => {};
     (xpath_vars: $xml:expr, $xpath:expr, $doc:expr, $fastxml_vars:expr, $libxml_vars:expr) => {};
     (consistency: $xml:expr) => {};
+    (validate: $xml:expr, $xsd:expr) => {};
 }

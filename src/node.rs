@@ -1,8 +1,8 @@
 //! XML node representation and operations.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 
@@ -55,7 +55,8 @@ pub(crate) struct NodeData {
     /// Text content (for text, CDATA, and comment nodes)
     pub content: Option<String>,
     /// Attributes (for element nodes)
-    pub attributes: HashMap<String, String>,
+    /// Uses IndexMap to preserve insertion order (XML source order)
+    pub attributes: IndexMap<String, String>,
     /// Namespace declarations on this element
     pub namespace_decls: Vec<Namespace>,
     /// Parent node ID
@@ -78,7 +79,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: None,
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -101,7 +102,7 @@ impl NodeData {
             prefix,
             namespace_uri,
             content: None,
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -119,7 +120,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -137,7 +138,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -155,7 +156,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -173,7 +174,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content,
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -191,7 +192,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: Some(value),
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -213,7 +214,7 @@ impl NodeData {
             prefix: None,
             namespace_uri: None,
             content: Some(uri),
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -377,7 +378,7 @@ impl XmlNode {
     }
 
     /// Returns all attributes as a map.
-    pub fn get_attributes(&self) -> HashMap<String, String> {
+    pub fn get_attributes(&self) -> IndexMap<String, String> {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
@@ -492,7 +493,7 @@ impl XmlNode {
     pub fn remove_attribute(&self, name: &str) -> Option<String> {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            return node.attributes.remove(name);
+            return node.attributes.shift_remove(name);
         }
         None
     }
@@ -663,7 +664,7 @@ impl XmlRoNode {
     }
 
     /// Returns all attributes.
-    pub fn get_attributes(&self) -> HashMap<String, String> {
+    pub fn get_attributes(&self) -> IndexMap<String, String> {
         self.inner.get_attributes()
     }
 

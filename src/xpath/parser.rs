@@ -163,10 +163,14 @@ impl Step {
     }
 
     /// Creates a descendant-or-self step matching any node.
+    /// This is used for the // abbreviation in XPath, which is
+    /// defined as /descendant-or-self::node()/ per the spec.
     pub fn descendant_or_self_any() -> Self {
         Self {
             axis: Axis::DescendantOrSelf,
-            node_test: NodeTest::Any,
+            // Use NodeTest::Node to match all nodes (not just elements)
+            // This is required because // in XPath is /descendant-or-self::node()/
+            node_test: NodeTest::Node,
             predicates: Vec::new(),
         }
     }

@@ -31,6 +31,8 @@ mod attribute_axis {
         assert_eq!(values.len(), 2);
         assert!(values.contains(&"1".to_string()));
         assert!(values.contains(&"2".to_string()));
+
+        compare_with_libxml!(xpath: xml, "//item/@id", &doc);
     }
 
     #[test]
@@ -43,6 +45,8 @@ mod attribute_axis {
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], "1");
+
+        compare_with_libxml!(xpath: xml, "//item/attribute::id", &doc);
     }
 
     #[test]
@@ -57,6 +61,9 @@ mod attribute_axis {
         assert!(values.contains(&"1".to_string()));
         assert!(values.contains(&"first".to_string()));
         assert!(values.contains(&"A".to_string()));
+
+        // Attribute order is preserved (XML source order) using IndexMap
+        compare_with_libxml!(xpath: xml, "//item/@*", &doc);
     }
 
     #[test]
@@ -71,6 +78,8 @@ mod attribute_axis {
         let result = evaluate(&doc, "//item[@status='active']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "//item[@status='active']", &doc);
     }
 
     #[test]
@@ -86,6 +95,8 @@ mod attribute_axis {
         let result = evaluate(&doc, "//item[@id]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "//item[@id]", &doc);
     }
 
     #[test]
@@ -101,6 +112,8 @@ mod attribute_axis {
         let result = evaluate(&doc, "//item[@type='A' and @status='active']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
+
+        compare_with_libxml!(xpath: xml, "//item[@type='A' and @status='active']", &doc);
     }
 
     #[test]
@@ -116,6 +129,8 @@ mod attribute_axis {
         let result = evaluate(&doc, "//item[@type='A' or @type='B']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "//item[@type='A' or @type='B']", &doc);
     }
 
     #[test]
@@ -130,6 +145,8 @@ mod attribute_axis {
         let result = evaluate(&doc, "//item[not(@status='active')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
+
+        compare_with_libxml!(xpath: xml, "//item[not(@status='active')]", &doc);
     }
 }
 
@@ -149,6 +166,8 @@ mod node_test {
         let nodes = result.into_nodes();
         // Should include the child element (and possibly text nodes)
         assert!(!nodes.is_empty());
+
+        compare_with_libxml!(xpath: xml, "/root/node()", &doc);
     }
 
     #[test]
@@ -158,8 +177,11 @@ mod node_test {
 
         let result = evaluate(&doc, "//node()").unwrap();
         let nodes = result.into_nodes();
-        // Should include root, a, b, c, and text nodes
-        assert!(nodes.len() >= 4);
+        // Should include root, a, b, c, and text node (5 total)
+        // //node() is equivalent to /descendant-or-self::node()/child::node()
+        assert_eq!(nodes.len(), 5);
+
+        compare_with_libxml!(xpath: xml, "//node()", &doc);
     }
 
     #[test]
@@ -176,6 +198,9 @@ mod node_test {
 
         // node() should return at least as many as *
         assert!(node_count >= wildcard_count);
+
+        compare_with_libxml!(xpath: xml, "/root/node()", &doc);
+        compare_with_libxml!(xpath: xml, "/root/*", &doc);
     }
 
     #[test]
@@ -186,6 +211,8 @@ mod node_test {
         let result = evaluate(&doc, "/root/node()[2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
+
+        compare_with_libxml!(xpath: xml, "/root/node()[2]", &doc);
     }
 }
 
@@ -485,6 +512,8 @@ mod sibling_axes {
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].get_name(), "c");
         assert_eq!(nodes[1].get_name(), "d");
+
+        compare_with_libxml!(xpath: xml, "/root/b/following-sibling::*", &doc);
     }
 
     #[test]
@@ -495,6 +524,8 @@ mod sibling_axes {
         let result = evaluate(&doc, "/root/c/preceding-sibling::*").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "/root/c/preceding-sibling::*", &doc);
     }
 
     #[test]
@@ -505,6 +536,8 @@ mod sibling_axes {
         let result = evaluate(&doc, "/root/other/following-sibling::item").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "/root/other/following-sibling::item", &doc);
     }
 
     #[test]
@@ -516,6 +549,8 @@ mod sibling_axes {
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "b");
+
+        compare_with_libxml!(xpath: xml, "/root/c/preceding-sibling::*[1]", &doc);
     }
 }
 
@@ -535,6 +570,8 @@ mod ancestor_axes {
         let nodes = result.into_nodes();
         // Should include child, parent, root
         assert_eq!(nodes.len(), 3);
+
+        compare_with_libxml!(xpath: xml, "//target/ancestor::*", &doc);
     }
 
     #[test]
@@ -546,6 +583,8 @@ mod ancestor_axes {
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "parent");
+
+        compare_with_libxml!(xpath: xml, "//target/ancestor::parent", &doc);
     }
 
     #[test]
@@ -557,6 +596,8 @@ mod ancestor_axes {
         let nodes = result.into_nodes();
         // Should include target, parent, root
         assert_eq!(nodes.len(), 3);
+
+        compare_with_libxml!(xpath: xml, "//target/ancestor-or-self::*", &doc);
     }
 
     #[test]
@@ -571,6 +612,8 @@ mod ancestor_axes {
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("1".to_string()));
+
+        compare_with_libxml!(xpath: xml, "//item[ancestor::container[@type='A']]", &doc);
     }
 }
 
@@ -590,6 +633,8 @@ mod descendant_axes {
         let nodes = result.into_nodes();
         // root, child, grandchild
         assert_eq!(nodes.len(), 3);
+
+        compare_with_libxml!(xpath: xml, "/root/descendant-or-self::*", &doc);
     }
 
     #[test]
@@ -600,6 +645,8 @@ mod descendant_axes {
         let result = evaluate(&doc, "/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
+
+        compare_with_libxml!(xpath: xml, "/root/descendant::target", &doc);
     }
 
     #[test]
@@ -614,6 +661,8 @@ mod descendant_axes {
         let result = evaluate(&doc, "/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 3);
+
+        compare_with_libxml!(xpath: xml, "/root/descendant::target", &doc);
     }
 }
 
@@ -634,6 +683,8 @@ mod following_preceding_axes {
         let nodes = result.into_nodes();
         // Should include c, d (not b since it's a descendant, not following)
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "/root/a/following::*", &doc);
     }
 
     #[test]
@@ -645,6 +696,8 @@ mod following_preceding_axes {
         let nodes = result.into_nodes();
         // Should include a, b
         assert_eq!(nodes.len(), 2);
+
+        compare_with_libxml!(xpath: xml, "/root/c/preceding::*", &doc);
     }
 }
 

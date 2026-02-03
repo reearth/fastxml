@@ -228,6 +228,7 @@ mod schema_parsing {
 // =============================================================================
 
 mod content_model {
+    use crate::compare_with_libxml;
     use fastxml::schema::xsd::content_model::{
         ContentElement, ContentModelError, ContentModelItem, ContentModelValidator, Occurrence,
     };
@@ -417,6 +418,171 @@ mod content_model {
             panic!("Expected UnexpectedElement error");
         }
     }
+
+    // =========================================================================
+    // Integration tests with XML/XSD (libxml comparison)
+    // =========================================================================
+
+    use fastxml::schema::validator::XmlSchemaValidationContext;
+    use fastxml::schema::xsd::parse_xsd;
+
+    fn validate_xml(xml: &str, xsd: &str) -> bool {
+        let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
+        let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+        let ctx = XmlSchemaValidationContext::new(schema);
+        let errors = ctx.validate(&doc).expect("Validation failed");
+        errors.iter().all(|e| !e.is_error())
+    }
+
+    #[test]
+    fn test_max_occurs_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="item" type="xs:string" maxOccurs="2"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root>
+  <item>first</item>
+  <item>second</item>
+</root>"#;
+
+        assert!(validate_xml(xml, xsd), "Should be valid with 2 items");
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_max_occurs_exceeded_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="item" type="xs:string" maxOccurs="2"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root>
+  <item>first</item>
+  <item>second</item>
+  <item>third</item>
+</root>"#;
+
+        assert!(!validate_xml(xml, xsd), "Should be invalid with 3 items");
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_min_occurs_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="required" type="xs:string" minOccurs="1"/>
+        <xs:element name="optional" type="xs:string" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root>
+  <required>value</required>
+</root>"#;
+
+        assert!(
+            validate_xml(xml, xsd),
+            "Should be valid with required element"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_min_occurs_missing_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="required" type="xs:string" minOccurs="1"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root>
+</root>"#;
+
+        assert!(
+            !validate_xml(xml, xsd),
+            "Should be invalid without required element"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_sequence_order_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="person">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="firstName" type="xs:string"/>
+        <xs:element name="lastName" type="xs:string"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<person>
+  <firstName>John</firstName>
+  <lastName>Doe</lastName>
+</person>"#;
+
+        assert!(
+            validate_xml(xml, xsd),
+            "Should be valid with correct sequence order"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_unknown_element_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="known" type="xs:string"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<root>
+  <known>value</known>
+  <unknown>extra</unknown>
+</root>"#;
+
+        assert!(
+            !validate_xml(xml, xsd),
+            "Should be invalid with unknown element"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
 }
 
 // =============================================================================
@@ -424,6 +590,7 @@ mod content_model {
 // =============================================================================
 
 mod facet_violations {
+    use crate::compare_with_libxml;
     use fastxml::schema::xsd::facets::{FacetConstraints, FacetError, FacetValidator};
 
     #[test]
@@ -555,6 +722,160 @@ mod facet_violations {
 
         let result = validator.validate("abc");
         assert!(result.is_ok(), "Should pass all facets");
+    }
+
+    // =========================================================================
+    // Integration tests with XML/XSD (libxml comparison)
+    // =========================================================================
+
+    use fastxml::schema::validator::XmlSchemaValidationContext;
+    use fastxml::schema::xsd::parse_xsd;
+
+    fn validate_xml(xml: &str, xsd: &str) -> bool {
+        let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
+        let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+        let ctx = XmlSchemaValidationContext::new(schema);
+        let errors = ctx.validate(&doc).expect("Validation failed");
+        errors.iter().all(|e| !e.is_error())
+    }
+
+    #[test]
+    fn test_pattern_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="code">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:pattern value="[A-Z]{3}"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<code>ABC</code>"#;
+
+        assert!(validate_xml(xml, xsd), "Should be valid with pattern match");
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_pattern_invalid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="code">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:pattern value="[A-Z]{3}"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<code>abc</code>"#;
+
+        assert!(
+            !validate_xml(xml, xsd),
+            "Should be invalid with pattern mismatch"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_enumeration_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="color">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="red"/>
+        <xs:enumeration value="green"/>
+        <xs:enumeration value="blue"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<color>green</color>"#;
+
+        assert!(
+            validate_xml(xml, xsd),
+            "Should be valid with enumeration value"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_enumeration_invalid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="color">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:enumeration value="red"/>
+        <xs:enumeration value="green"/>
+        <xs:enumeration value="blue"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<color>yellow</color>"#;
+
+        assert!(
+            !validate_xml(xml, xsd),
+            "Should be invalid with non-enumeration value"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_min_length_valid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="name">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:minLength value="3"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<name>John</name>"#;
+
+        assert!(
+            validate_xml(xml, xsd),
+            "Should be valid with sufficient length"
+        );
+        compare_with_libxml!(validate: xml, xsd);
+    }
+
+    #[test]
+    fn test_min_length_invalid_integration() {
+        let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="name">
+    <xs:simpleType>
+      <xs:restriction base="xs:string">
+        <xs:minLength value="3"/>
+      </xs:restriction>
+    </xs:simpleType>
+  </xs:element>
+</xs:schema>"#;
+
+        let xml = r#"<?xml version="1.0"?>
+<name>Jo</name>"#;
+
+        assert!(
+            !validate_xml(xml, xsd),
+            "Should be invalid with insufficient length"
+        );
+        compare_with_libxml!(validate: xml, xsd);
     }
 }
 

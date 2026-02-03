@@ -1,6 +1,6 @@
 //! Editable node for DOM manipulation during transformation.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use crate::document::{DocumentBuilder, XmlDocument};
 use crate::namespace::Namespace;
@@ -62,8 +62,8 @@ pub enum NewNode {
         name: String,
         /// Namespace prefix
         prefix: Option<String>,
-        /// Attributes
-        attributes: HashMap<String, String>,
+        /// Attributes (uses IndexMap to preserve insertion order)
+        attributes: IndexMap<String, String>,
         /// Child nodes
         children: Vec<NewNode>,
     },
@@ -112,7 +112,7 @@ impl EditableNode {
     }
 
     /// Returns all attributes as a map.
-    pub fn get_attributes(&self) -> HashMap<String, String> {
+    pub fn get_attributes(&self) -> IndexMap<String, String> {
         self.root_node().get_attributes()
     }
 
@@ -272,7 +272,7 @@ impl<'a> EditableNodeRef<'a> {
     }
 
     /// Returns all attributes.
-    pub fn get_attributes(&self) -> HashMap<String, String> {
+    pub fn get_attributes(&self) -> IndexMap<String, String> {
         self.node.get_attributes()
     }
 
@@ -759,7 +759,7 @@ mod tests {
         let _element = NewNode::Element {
             name: "elem".to_string(),
             prefix: Some("ns".to_string()),
-            attributes: HashMap::from([("id".to_string(), "1".to_string())]),
+            attributes: IndexMap::from([("id".to_string(), "1".to_string())]),
             children: vec![NewNode::Text("child text".to_string())],
         };
     }
@@ -769,12 +769,12 @@ mod tests {
         let element = NewNode::Element {
             name: "parent".to_string(),
             prefix: None,
-            attributes: HashMap::new(),
+            attributes: IndexMap::new(),
             children: vec![
                 NewNode::Element {
                     name: "child".to_string(),
                     prefix: None,
-                    attributes: HashMap::new(),
+                    attributes: IndexMap::new(),
                     children: vec![],
                 },
                 NewNode::Text("text".to_string()),

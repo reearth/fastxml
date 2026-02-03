@@ -124,8 +124,9 @@ fn analyze_path(path: &PathExpr) -> XPathAnalysis {
         }
 
         // Handle descendant-or-self from //
+        // Note: // in XPath is defined as /descendant-or-self::node()/, so we check for NodeTest::Node
         let descendant_or_self =
-            step.axis == Axis::DescendantOrSelf && step.node_test == NodeTest::Any;
+            step.axis == Axis::DescendantOrSelf && step.node_test == NodeTest::Node;
 
         if descendant_or_self {
             // This is the // shorthand, next step is the actual match
