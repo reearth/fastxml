@@ -538,21 +538,141 @@ impl<'a> StreamTransformer<'a> {
     }
 
     /// Internal: Execute for_each with all handlers
-    fn execute_for_each(self) -> TransformResult<usize> {
-        let mut total_count = 0;
-
-        for handler in self.handlers {
-            let count = stream_for_each_with_callback(
+    ///
+    /// Optimized to process multiple handlers in a single pass when all XPaths are streamable.
+    fn execute_for_each(mut self) -> TransformResult<usize> {
+        // Fast path: single handler
+        if self.handlers.len() == 1 {
+            let handler = self.handlers.remove(0);
+            return stream_for_each_with_callback(
                 self.input,
                 &handler.xpath,
                 &self.namespaces,
                 self.fallback_mode,
                 handler.callback,
-            )?;
-            total_count += count;
+            );
         }
 
-        Ok(total_count)
+        // Parse and analyze all XPaths
+        let mut analyses: Vec<XPathAnalysis> = Vec::with_capacity(self.handlers.len());
+        for handler in &self.handlers {
+            let expr = handler.xpath.parse()?;
+            analyses.push(xpath_analyze::analyze_xpath(&expr));
+        }
+
+        // Check if all are streamable
+        let mut all_streamable = true;
+        let mut first_not_streamable_reason: Option<(String, NotStreamableReason)> = None;
+
+        for (i, analysis) in analyses.iter().enumerate() {
+            if let XPathAnalysis::NotStreamable(reason) = analysis {
+                all_streamable = false;
+                if first_not_streamable_reason.is_none() {
+                    let xpath_str = self.handlers[i]
+                        .xpath
+                        .as_string()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "<ast>".to_string());
+                    first_not_streamable_reason = Some((xpath_str, reason.clone()));
+                }
+                break;
+            }
+        }
+
+        // If not all streamable and fallback is disabled, return error
+        if !all_streamable {
+            match self.fallback_mode {
+                FallbackMode::Disabled => {
+                    let (xpath, reason) = first_not_streamable_reason.unwrap();
+                    return Err(TransformError::NotStreamable { xpath, reason });
+                }
+                FallbackMode::Enabled => {
+                    // Fall back to sequential processing
+                    let mut total_count = 0;
+                    for handler in self.handlers {
+                        let count = stream_for_each_with_callback(
+                            self.input,
+                            &handler.xpath,
+                            &self.namespaces,
+                            self.fallback_mode,
+                            handler.callback,
+                        )?;
+                        total_count += count;
+                    }
+                    return Ok(total_count);
+                }
+            }
+        }
+
+        // All streamable - extract StreamableXPath from analyses
+        let streamable_xpaths: Vec<StreamableXPath> = analyses
+            .into_iter()
+            .filter_map(|a| match a {
+                XPathAnalysis::Streamable(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+
+        // Check if any handler uses WithContext
+        let has_context_handler = self
+            .handlers
+            .iter()
+            .any(|h| matches!(h.callback, HandlerCallback::WithContext(_)));
+
+        if has_context_handler {
+            // Use context-aware multi processing
+            type Callback<'a> = Box<dyn FnMut(&mut EditableNode, &TransformContext) + 'a>;
+            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
+
+            for handler in self.handlers.iter_mut() {
+                match &mut handler.callback {
+                    HandlerCallback::Simple(f) => {
+                        // Wrap simple callback to ignore context
+                        callbacks.push(Box::new(move |node: &mut EditableNode, _ctx| f(node)));
+                    }
+                    HandlerCallback::WithContext(f) => {
+                        callbacks.push(Box::new(move |node: &mut EditableNode, ctx| f(node, ctx)));
+                    }
+                }
+            }
+
+            // Build handlers array for the multi function
+            let mut handler_pairs: Vec<streaming::MultiHandlerWithContext<'_>> = streamable_xpaths
+                .iter()
+                .zip(callbacks.iter_mut())
+                .map(|(xpath, cb)| {
+                    (
+                        xpath,
+                        cb.as_mut() as &mut dyn FnMut(&mut EditableNode, &TransformContext),
+                    )
+                })
+                .collect();
+
+            streaming::process_for_each_multi_with_context(
+                self.input,
+                &mut handler_pairs,
+                &self.namespaces,
+            )
+        } else {
+            // Use simple multi processing (no context)
+            type Callback<'a> = Box<dyn FnMut(&mut EditableNode) + 'a>;
+            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
+
+            for handler in self.handlers.iter_mut() {
+                if let HandlerCallback::Simple(f) = &mut handler.callback {
+                    callbacks.push(Box::new(move |node: &mut EditableNode| f(node)));
+                }
+            }
+
+            // Build handlers array for the multi function
+            let mut handler_pairs: Vec<streaming::MultiHandler<'_>> = streamable_xpaths
+                .iter()
+                .zip(callbacks.iter_mut())
+                .map(|(xpath, cb)| (xpath, cb.as_mut() as &mut dyn FnMut(&mut EditableNode)))
+                .collect();
+
+            streaming::process_for_each_multi(self.input, &mut handler_pairs, &self.namespaces)
+        }
     }
 }
 
@@ -1684,5 +1804,175 @@ mod tests {
 
         // Should match both items regardless of namespace
         assert_eq!(matched_ids, vec!["1", "2"]);
+    }
+
+    // =============================================================================
+    // Multi-handler Single-pass Tests
+    // =============================================================================
+
+    #[test]
+    fn test_for_each_multi_handler_call_order() {
+        use std::cell::RefCell;
+
+        // Test that multiple handlers are called in document order (1,2,1,2,...)
+        // This verifies single-pass processing correctly interleaves callbacks
+        let xml = r#"<root>
+            <item id="1"/>
+            <other id="2"/>
+            <item id="3"/>
+            <other id="4"/>
+            <item id="5"/>
+        </root>"#;
+
+        let call_order = RefCell::new(Vec::new());
+
+        StreamTransformer::new(xml)
+            .on("//item", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order.borrow_mut().push(format!("item:{}", id));
+                }
+            })
+            .on("//other", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order.borrow_mut().push(format!("other:{}", id));
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        // Should be called in document order, not handler order
+        assert_eq!(
+            *call_order.borrow(),
+            vec!["item:1", "other:2", "item:3", "other:4", "item:5"]
+        );
+    }
+
+    #[test]
+    fn test_for_each_multi_handler_same_element() {
+        use std::cell::RefCell;
+
+        // Test that multiple handlers matching the same element both get called
+        let xml = r#"<root><item class="a" type="b"/></root>"#;
+
+        let call_order = RefCell::new(Vec::<&str>::new());
+
+        StreamTransformer::new(xml)
+            .on("//item[@class='a']", |_node| {
+                call_order.borrow_mut().push("handler1");
+            })
+            .on("//item[@type='b']", |_node| {
+                call_order.borrow_mut().push("handler2");
+            })
+            .for_each()
+            .unwrap();
+
+        // Both handlers should be called for the same element
+        assert_eq!(*call_order.borrow(), vec!["handler1", "handler2"]);
+    }
+
+    #[test]
+    fn test_for_each_multi_handler_with_context_call_order() {
+        use std::cell::RefCell;
+
+        // Test call order with context-aware handlers
+        let xml = r#"<root>
+            <a id="1"/>
+            <b id="2"/>
+            <a id="3"/>
+        </root>"#;
+
+        let call_order = RefCell::new(Vec::new());
+
+        StreamTransformer::new(xml)
+            .on_with_context("//a", |node, ctx| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order
+                        .borrow_mut()
+                        .push(format!("a:{} pos:{}", id, ctx.position()));
+                }
+            })
+            .on("//b", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order.borrow_mut().push(format!("b:{}", id));
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(*call_order.borrow(), vec!["a:1 pos:1", "b:2", "a:3 pos:2"]);
+    }
+
+    #[test]
+    fn test_for_each_multi_handler_nested_independent() {
+        use std::cell::RefCell;
+
+        // Test that nested elements are processed independently
+        // //items matches parent, //item matches children - both should be called
+        let xml =
+            r#"<root><items id="parent"><item id="child1"/><item id="child2"/></items></root>"#;
+
+        let call_order = RefCell::new(Vec::new());
+
+        StreamTransformer::new(xml)
+            .on("//items", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order.borrow_mut().push(format!("items:{}", id));
+                }
+            })
+            .on("//item", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    call_order.borrow_mut().push(format!("item:{}", id));
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        // items is called when its subtree is complete, item is called for each child
+        // But since items contains item elements, they are handled independently
+        assert_eq!(
+            *call_order.borrow(),
+            vec!["item:child1", "item:child2", "items:parent"]
+        );
+    }
+
+    #[test]
+    fn test_for_each_three_handlers_interleaved() {
+        use std::cell::RefCell;
+
+        // Test with three different handlers interleaved
+        let xml = r#"<root>
+            <a>1</a>
+            <b>2</b>
+            <c>3</c>
+            <a>4</a>
+            <b>5</b>
+            <c>6</c>
+        </root>"#;
+
+        let call_order = RefCell::new(Vec::new());
+
+        StreamTransformer::new(xml)
+            .on("//a", |node| {
+                call_order
+                    .borrow_mut()
+                    .push(format!("a:{}", node.get_content().unwrap_or_default()));
+            })
+            .on("//b", |node| {
+                call_order
+                    .borrow_mut()
+                    .push(format!("b:{}", node.get_content().unwrap_or_default()));
+            })
+            .on("//c", |node| {
+                call_order
+                    .borrow_mut()
+                    .push(format!("c:{}", node.get_content().unwrap_or_default()));
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(
+            *call_order.borrow(),
+            vec!["a:1", "b:2", "c:3", "a:4", "b:5", "c:6"]
+        );
     }
 }
