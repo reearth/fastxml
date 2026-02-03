@@ -65,7 +65,7 @@ impl OnePassSchemaValidator {
             state: ValidationState::new(),
             errors: Vec::new(),
             current_line: None,
-            current_column: None,
+            current_column: Some(1),
             constraint_validator: ConstraintValidator::new(),
             mode: ValidationMode::Strict,
             max_errors: 0,
@@ -1292,7 +1292,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         assert!(validator.is_valid());
@@ -1318,7 +1318,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         // Should have an error for unknown element in strict mode
@@ -1352,7 +1352,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         // Should NOT have an error in lenient mode
@@ -1371,7 +1371,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: None,
-            column: None,
+            column: Some(1),
         });
 
         let _ = validator.handle(&XmlEvent::Text("content".to_string()));
@@ -1393,7 +1393,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: None,
-            column: None,
+            column: Some(1),
         });
 
         let _ = validator.handle(&XmlEvent::CData("cdata content".to_string()));
@@ -1416,7 +1416,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: None,
-            column: None,
+            column: Some(1),
         });
 
         let _ = validator.finish();
@@ -1483,7 +1483,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         // End parent without adding required child
@@ -1515,7 +1515,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1574,7 +1574,7 @@ mod tests {
                     "http://example.com".to_string(),
                 )],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1609,7 +1609,7 @@ mod tests {
                 ],
                 namespace_decls: vec![],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1637,7 +1637,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1649,7 +1649,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1661,7 +1661,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1720,7 +1720,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: None,
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1795,7 +1795,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1808,7 +1808,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(2),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1832,7 +1832,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(3),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1937,7 +1937,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1950,7 +1950,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(2),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
         validator.handle(&XmlEvent::Text("gp".to_string())).unwrap();
@@ -1970,7 +1970,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(3),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
         validator.handle(&XmlEvent::Text("p".to_string())).unwrap();
@@ -1990,7 +1990,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(4),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
         validator.handle(&XmlEvent::Text("c".to_string())).unwrap();
@@ -2102,7 +2102,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -2115,7 +2115,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(2),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -2250,7 +2250,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -2267,7 +2267,7 @@ mod tests {
                     attributes: vec![],
                     namespace_decls: vec![],
                     line: Some(i + 2),
-                    column: None,
+                    column: Some(1),
                 })
                 .unwrap();
             validator
@@ -2343,7 +2343,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -2356,7 +2356,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(2),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 

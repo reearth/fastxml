@@ -77,7 +77,8 @@ pub(super) fn parse_facet_length(name: &str, value: &str) -> Result<u32> {
 /// Converts a quick_xml start event to our XmlEvent type.
 pub(super) fn convert_start_event(
     e: &quick_xml::events::BytesStart<'_>,
-    position: u64,
+    line: usize,
+    column: usize,
 ) -> Result<XmlEvent> {
     let name_bytes = e.name().as_ref().to_vec();
     let full_name = std::str::from_utf8(&name_bytes)?;
@@ -107,15 +108,13 @@ pub(super) fn convert_start_event(
         }
     }
 
-    let line = Some(position as usize);
-
     Ok(XmlEvent::StartElement {
         name: name.into(),
         prefix: prefix.map(|p| p.into()),
         namespace: None,
         attributes,
         namespace_decls,
-        line,
-        column: None,
+        line: Some(line),
+        column: Some(column),
     })
 }

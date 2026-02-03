@@ -98,7 +98,7 @@ fn test_gml_document_validation() {
             ],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         })
         .unwrap();
 
@@ -110,7 +110,7 @@ fn test_gml_document_validation() {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(2),
-            column: None,
+            column: Some(1),
         })
         .unwrap();
 
@@ -327,7 +327,7 @@ fn test_streaming_parse_with_validator() {
             attributes: vec![("srsName".into(), "EPSG:6697".into())],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         })
         .unwrap();
 

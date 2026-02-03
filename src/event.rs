@@ -414,7 +414,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -426,7 +426,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 

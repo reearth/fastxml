@@ -1012,7 +1012,7 @@ mod streaming_validation {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1051,7 +1051,7 @@ mod streaming_validation {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
-                column: None,
+                column: Some(1),
             })
             .unwrap();
 
@@ -1211,8 +1211,11 @@ mod unified_validation {
 </root>"#;
 
     test_validation!(max_occurs_valid, XML_MAX_OCCURS_VALID, XSD_MAX_OCCURS, true);
-    // Note: Error positions vary by validator - line checking only for now
-    // TODO: Fix position reporting consistency across validators
+    // Note: max_occurs error position differs by validator design:
+    // - DOM/TwoPass: report parent element position (line 2, <root>)
+    // - OnePass: report child element position (line 5, <item>)
+    // This is because DOM/TwoPass detect the violation when validating parent's content model,
+    // while OnePass detects it when processing the child element itself.
     test_validation!(
         max_occurs_exceeded,
         XML_MAX_OCCURS_EXCEEDED,

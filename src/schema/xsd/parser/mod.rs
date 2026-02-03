@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use crate::error::Result;
 use crate::event::{XmlEvent, XmlEventHandler};
+use crate::position::PositionTrackingReader;
 
 use super::types::*;
 
@@ -145,7 +146,8 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
-    let mut reader = Reader::from_reader(content);
+    let tracking_reader = PositionTrackingReader::new(content);
+    let mut reader = Reader::from_reader(tracking_reader);
     reader.config_mut().trim_text(false);
     reader.config_mut().expand_empty_elements = true;
 
@@ -154,12 +156,13 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
 
     loop {
         let event_result = reader.read_event_into(&mut buf);
-        let position = reader.buffer_position();
+        let line = reader.get_ref().line();
+        let column = reader.get_ref().column();
 
         match event_result {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 let is_empty = matches!(event_result, Ok(Event::Empty(_)));
-                let xml_event = convert_start_event(e, position)?;
+                let xml_event = convert_start_event(e, line, column)?;
                 xsd_parser.handle(&xml_event)?;
 
                 if is_empty {
@@ -200,7 +203,7 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
             Ok(_) => {}
             Err(e) => {
                 return Err(crate::schema::xsd::error::XsdParseError::ParseError {
-                    position: position as usize,
+                    position: reader.buffer_position() as usize,
                     message: e.to_string(),
                 }
                 .into());

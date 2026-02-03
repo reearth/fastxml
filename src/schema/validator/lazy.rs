@@ -322,7 +322,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: None,
-            column: None,
+            column: Some(1),
         });
 
         // Should use builtin schema without errors
@@ -344,7 +344,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: None,
-            column: None,
+            column: Some(1),
         });
 
         let errors = shared_errors.lock().unwrap();
@@ -381,7 +381,7 @@ mod tests {
             ],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         let _ = validator.handle(&XmlEvent::EndElement {
@@ -405,7 +405,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(1),
-            column: None,
+            column: Some(1),
         });
 
         // Child element should be delegated to inner validator
@@ -416,7 +416,7 @@ mod tests {
             attributes: vec![],
             namespace_decls: vec![],
             line: Some(2),
-            column: None,
+            column: Some(1),
         });
 
         let _ = validator.handle(&XmlEvent::Text("content".to_string()));
