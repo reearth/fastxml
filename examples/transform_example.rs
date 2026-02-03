@@ -7,16 +7,17 @@ use fastxml::transform::{StreamTransformer, stream_transform};
 fn main() {
     println!("=== Streaming XML Transform Example ===\n");
 
-    // Example 1: Builder pattern with attribute modification
-    println!("1. Builder pattern - modify specific element:");
+    // Example 1: Single handler with attribute modification
+    println!("1. Single handler - modify specific element:");
     let xml = r#"<root><item id="1">A</item><item id="2">B</item><item id="3">C</item></root>"#;
 
     let result = StreamTransformer::new(xml)
-        .xpath("//item[@id='2']")
-        .transform(|node| {
+        .on("//item[@id='2']", |node| {
             node.set_attribute("modified", "true");
             node.set_attribute("status", "processed");
         })
+        .run()
+        .unwrap()
         .to_string()
         .unwrap();
 
@@ -47,10 +48,11 @@ fn main() {
     let xml = r#"<root><keep>A</keep><remove>B</remove><keep>C</keep><remove>D</remove></root>"#;
 
     let result = StreamTransformer::new(xml)
-        .xpath("//remove")
-        .transform(|node| {
+        .on("//remove", |node| {
             node.remove();
         })
+        .run()
+        .unwrap()
         .to_string()
         .unwrap();
 
@@ -62,10 +64,11 @@ fn main() {
     let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
 
     let result = StreamTransformer::new(xml)
-        .xpath("//item[last()]")
-        .transform(|node| {
+        .on("//item[last()]", |node| {
             node.set_attribute("last", "true");
         })
+        .run()
+        .unwrap()
         .to_string()
         .unwrap();
 
@@ -81,10 +84,11 @@ fn main() {
 </root>"#;
 
     let result = StreamTransformer::new(xml)
-        .xpath("//item[@id='1']")
-        .transform(|node| {
+        .on("//item[@id='1']", |node| {
             node.set_attribute("selected", "true");
         })
+        .run()
+        .unwrap()
         .to_string()
         .unwrap();
 
@@ -102,8 +106,7 @@ fn main() {
     let xml = r#"<root><item id="1">Apple</item><item id="2">Banana</item><item id="3">Cherry</item></root>"#;
 
     let contents: Vec<String> = StreamTransformer::new(xml)
-        .xpath("//item")
-        .collect(|node| node.get_content().unwrap_or_default())
+        .collect("//item", |node| node.get_content().unwrap_or_default())
         .unwrap();
 
     println!("  Input:  {}", xml);
@@ -112,8 +115,9 @@ fn main() {
     // Example 7: Extract attributes with collect
     println!("7. Extract attributes with collect:");
     let ids: Vec<String> = StreamTransformer::new(xml)
-        .xpath("//item")
-        .collect(|node| node.get_attribute("id").unwrap_or_default())
+        .collect("//item", |node| {
+            node.get_attribute("id").unwrap_or_default()
+        })
         .unwrap();
 
     println!("  Input:  {}", xml);
@@ -124,9 +128,8 @@ fn main() {
     let xml = r#"<products><product price="100">Widget</product><product price="200">Gadget</product><product price="150">Gizmo</product></products>"#;
 
     let mut total_price = 0;
-    let count = StreamTransformer::new(xml)
-        .xpath("//product")
-        .for_each(|node| {
+    StreamTransformer::new(xml)
+        .on("//product", |node| {
             if let Some(price) = node
                 .get_attribute("price")
                 .and_then(|s| s.parse::<i32>().ok())
@@ -134,25 +137,51 @@ fn main() {
                 total_price += price;
             }
         })
+        .for_each()
         .unwrap();
 
     println!("  Input:  {}", xml);
-    println!("  Found {} products, total price: {}\n", count, total_price);
+    println!("  Total price: {}\n", total_price);
 
-    // Example 9: for_each with last() (fallback)
-    println!("9. for_each with last() (uses two-pass fallback):");
-    let xml = "<scores><score>85</score><score>92</score><score>78</score></scores>";
+    // Example 9: Multiple handlers
+    println!("9. Multiple handlers:");
+    let xml = r#"<root><item>A</item><other>B</other><item>C</item></root>"#;
 
-    let mut last_score = String::new();
-    StreamTransformer::new(xml)
-        .xpath("//score[last()]")
-        .for_each(|node| {
-            last_score = node.get_content().unwrap_or_default();
+    let result = StreamTransformer::new(xml)
+        .on("//item", |node| {
+            node.set_attribute("type", "item");
         })
+        .on("//other", |node| {
+            node.set_attribute("type", "other");
+        })
+        .run()
+        .unwrap()
+        .to_string()
         .unwrap();
 
     println!("  Input:  {}", xml);
-    println!("  Last score: {}", last_score);
+    println!("  Output: {}\n", result);
+
+    // Example 10: Multiple handlers with for_each
+    println!("10. Multiple handlers with for_each:");
+    let xml = r#"<root><item>A</item><other>B</other><item>C</item></root>"#;
+
+    let mut items = Vec::new();
+    let mut others = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on("//item", |node| {
+            items.push(node.get_content().unwrap_or_default());
+        })
+        .on("//other", |node| {
+            others.push(node.get_content().unwrap_or_default());
+        })
+        .for_each()
+        .unwrap();
+
+    println!("  Input:  {}", xml);
+    println!("  Items: {:?}", items);
+    println!("  Others: {:?}", others);
 
     println!("\n=== Done ===");
 }

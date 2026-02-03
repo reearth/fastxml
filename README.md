@@ -143,16 +143,23 @@ use fastxml::transform::StreamTransformer;
 
 let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
-// Modify elements
+// Modify elements (supports multiple handlers)
 let result = StreamTransformer::new(xml)
-    .xpath("//item[@id='2']")
-    .transform(|node| node.set_attribute("modified", "true"))
+    .on("//item[@id='2']", |node| node.set_attribute("modified", "true"))
+    .run()?
     .to_string()?;
 
 // Extract data
 let ids: Vec<String> = StreamTransformer::new(xml)
-    .xpath("//item")
-    .collect(|node| node.get_attribute("id").unwrap_or_default())?;
+    .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
+
+// Iterate for side effects (no output transformation)
+let mut ids = Vec::new();
+StreamTransformer::new(xml)
+    .on("//item", |node| {
+        ids.push(node.get_attribute("id").unwrap_or_default());
+    })
+    .for_each()?;
 ```
 
 ## Async Schema Resolution

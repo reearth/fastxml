@@ -310,7 +310,7 @@ fn serialize_editable<W: Write>(editable: &EditableNode, writer: &mut W) -> Tran
 /// Processes XML for iteration without transformation (two-pass fallback).
 pub fn process_for_each<F>(input: &str, xpath_expr: &str, mut callback: F) -> TransformResult<usize>
 where
-    F: FnMut(&EditableNode),
+    F: FnMut(&mut EditableNode),
 {
     // Pass 1: Parse document and evaluate XPath
     let doc = parse(input).map_err(|e| TransformError::XmlParse(e.to_string()))?;
@@ -343,7 +343,7 @@ fn iterate_with_matches<F>(
     callback: &mut F,
 ) -> TransformResult<usize>
 where
-    F: FnMut(&EditableNode),
+    F: FnMut(&mut EditableNode),
 {
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
@@ -393,8 +393,8 @@ where
                         let mut builder = EditableNodeBuilder::new();
                         add_event_to_builder(&mut builder, &Event::Empty(e.clone()), input)?;
 
-                        let editable = builder.build()?;
-                        callback(&editable);
+                        let mut editable = builder.build()?;
+                        callback(&mut editable);
                         match_count += 1;
                     }
                 }
@@ -409,8 +409,8 @@ where
                     add_event_to_builder(&mut builder, &Event::End(e.clone()), input)?;
 
                     if builder.is_complete() {
-                        let editable = builder.build()?;
-                        callback(&editable);
+                        let mut editable = builder.build()?;
+                        callback(&mut editable);
                         match_count += 1;
                     } else {
                         in_matched_subtree = Some((id, builder));

@@ -69,14 +69,14 @@ fn run_benchmark(element_count: usize) {
     println!("\n[1] Streaming Transform - ALL 'item' nodes:");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let mut output1 = Vec::new();
-    let count1 = StreamTransformer::new(&xml)
-        .xpath("//item")
-        .transform(|node| {
+    let output1 = StreamTransformer::new(&xml)
+        .on("//item", |node| {
             node.set_attribute("transformed", "true");
         })
-        .write_to(&mut output1)
+        .run()
         .unwrap();
+    let count1 = output1.count();
+    let output1_bytes = output1.into_bytes();
     let time1 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -90,6 +90,7 @@ fn run_benchmark(element_count: usize) {
         let mem_used = after.saturating_sub(before);
         println!("  Memory delta: +{}", format_memory(mem_used));
     }
+    drop(output1_bytes);
 
     // =========================================================================
     // Benchmark 2: Streaming Transform (selective with attribute predicate)
@@ -97,14 +98,14 @@ fn run_benchmark(element_count: usize) {
     println!("\n[2] Streaming Transform - 'item' nodes with attr0='value1':");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let mut output2 = Vec::new();
-    let count2 = StreamTransformer::new(&xml)
-        .xpath("//item[@attr0='value1']")
-        .transform(|node| {
+    let output2 = StreamTransformer::new(&xml)
+        .on("//item[@attr0='value1']", |node| {
             node.set_attribute("special", "true");
         })
-        .write_to(&mut output2)
+        .run()
         .unwrap();
+    let count2 = output2.count();
+    let output2_bytes = output2.into_bytes();
     let time2 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -118,6 +119,7 @@ fn run_benchmark(element_count: usize) {
         let mem_used = after.saturating_sub(before);
         println!("  Memory delta: +{}", format_memory(mem_used));
     }
+    drop(output2_bytes);
 
     // =========================================================================
     // Benchmark 3: Streaming Remove
@@ -125,14 +127,14 @@ fn run_benchmark(element_count: usize) {
     println!("\n[3] Streaming Transform - Remove all 'data' nodes:");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let mut output3 = Vec::new();
-    let count3 = StreamTransformer::new(&xml)
-        .xpath("//data")
-        .transform(|node| {
+    let output3 = StreamTransformer::new(&xml)
+        .on("//data", |node| {
             node.remove();
         })
-        .write_to(&mut output3)
+        .run()
         .unwrap();
+    let count3 = output3.count();
+    let output3_bytes = output3.into_bytes();
     let time3 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -141,8 +143,8 @@ fn run_benchmark(element_count: usize) {
     println!("  Input:  {:.2} MB", actual_size as f64 / 1_000_000.0);
     println!(
         "  Output: {:.2} MB ({:.1}% reduction)",
-        output3.len() as f64 / 1_000_000.0,
-        (1.0 - output3.len() as f64 / actual_size as f64) * 100.0
+        output3_bytes.len() as f64 / 1_000_000.0,
+        (1.0 - output3_bytes.len() as f64 / actual_size as f64) * 100.0
     );
     if let (Some(before), Some(after)) = (mem_before, mem_after) {
         let mem_used = after.saturating_sub(before);

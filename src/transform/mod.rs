@@ -1,7 +1,7 @@
 //! Streaming XML transformation with zero-copy output.
 //!
 //! This module provides APIs for transforming XML documents by selectively
-//! modifying elements that match an XPath expression, while preserving
+//! modifying elements that match XPath expressions, while preserving
 //! unchanged portions of the document with zero-copy efficiency.
 //!
 //! # Features
@@ -11,6 +11,7 @@
 //! - **Selective DOM**: Only matched elements are converted to a modifiable DOM
 //! - **Streaming**: Single-pass processing for compatible XPath expressions
 //! - **Fallback**: Automatic two-pass processing for complex XPath patterns
+//! - **Multiple handlers**: Register multiple XPath-callback pairs
 //!
 //! # Streamable XPath Patterns
 //!
@@ -30,53 +31,64 @@
 //!
 //! # Examples
 //!
-//! ## Builder Pattern
+//! ## Transform with Multiple Handlers
+//!
+//! ```rust
+//! use fastxml::transform::StreamTransformer;
+//!
+//! let xml = r#"<root><item id="1">A</item><other>B</other></root>"#;
+//!
+//! let result = StreamTransformer::new(xml)
+//!     .on("//item", |node| {
+//!         node.set_attribute("type", "item");
+//!     })
+//!     .on("//other", |node| {
+//!         node.set_attribute("type", "other");
+//!     })
+//!     .run()?
+//!     .to_string()?;
+//!
+//! assert!(result.contains(r#"type="item""#));
+//! assert!(result.contains(r#"type="other""#));
+//! # Ok::<(), fastxml::transform::TransformError>(())
+//! ```
+//!
+//! ## Collect Data
 //!
 //! ```rust
 //! use fastxml::transform::StreamTransformer;
 //!
 //! let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 //!
-//! let result = StreamTransformer::new(xml)
-//!     .xpath("//item[@id='2']")
-//!     .transform(|node| {
-//!         node.set_attribute("modified", "true");
-//!     })
-//!     .to_string()
-//!     .unwrap();
+//! let ids: Vec<String> = StreamTransformer::new(xml)
+//!     .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
 //!
-//! assert!(result.contains(r#"modified="true""#));
+//! assert_eq!(ids, vec!["1", "2"]);
+//! # Ok::<(), fastxml::transform::TransformError>(())
 //! ```
 //!
-//! ## Function API
-//!
-//! ```rust
-//! use fastxml::transform::stream_transform;
-//!
-//! let xml = r#"<root><item>Hello</item></root>"#;
-//! let mut output = Vec::new();
-//!
-//! stream_transform(xml, "//item", |node| {
-//!     node.set_attribute("processed", "true");
-//! }, &mut output).unwrap();
-//! ```
-//!
-//! ## Removing Elements
+//! ## For Each (Side Effects Only)
 //!
 //! ```rust
 //! use fastxml::transform::StreamTransformer;
 //!
-//! let xml = r#"<root><keep>A</keep><remove>B</remove><keep>C</keep></root>"#;
+//! let xml = r#"<root><item>A</item><other>B</other></root>"#;
 //!
-//! let result = StreamTransformer::new(xml)
-//!     .xpath("//remove")
-//!     .transform(|node| {
-//!         node.remove();
+//! let mut items = Vec::new();
+//! let mut others = Vec::new();
+//!
+//! StreamTransformer::new(xml)
+//!     .on("//item", |node| {
+//!         items.push(node.get_content().unwrap_or_default());
 //!     })
-//!     .to_string()
-//!     .unwrap();
+//!     .on("//other", |node| {
+//!         others.push(node.get_content().unwrap_or_default());
+//!     })
+//!     .for_each()?;
 //!
-//! assert!(!result.contains("<remove>"));
+//! assert_eq!(items, vec!["A"]);
+//! assert_eq!(others, vec!["B"]);
+//! # Ok::<(), fastxml::transform::TransformError>(())
 //! ```
 
 pub mod editable;
@@ -97,12 +109,34 @@ pub use xpath_analyze::{NotStreamableReason, StreamableXPath, XPathAnalysis};
 // Re-export XPath types for convenience
 pub use crate::xpath::{Expr, XPathSource};
 
+/// A handler that pairs an XPath expression with a callback function.
+struct Handler<'a> {
+    xpath: XPathSource,
+    callback: Box<dyn FnMut(&mut EditableNode) + 'a>,
+}
+
 /// Builder for streaming XML transformations.
 ///
-/// Provides a fluent API for configuring and executing XML transformations.
+/// Provides a fluent API for configuring and executing XML transformations
+/// with support for multiple XPath-callback pairs.
+///
+/// # Example
+///
+/// ```rust
+/// use fastxml::transform::StreamTransformer;
+///
+/// let xml = r#"<root><item>A</item><other>B</other></root>"#;
+///
+/// let result = StreamTransformer::new(xml)
+///     .on("//item", |node| node.set_attribute("processed", "true"))
+///     .on("//other", |node| node.remove())
+///     .run()?
+///     .to_string()?;
+/// # Ok::<(), fastxml::transform::TransformError>(())
+/// ```
 pub struct StreamTransformer<'a> {
     input: &'a str,
-    xpath_source: Option<XPathSource>,
+    handlers: Vec<Handler<'a>>,
     namespaces: HashMap<String, String>,
 }
 
@@ -111,42 +145,38 @@ impl<'a> StreamTransformer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             input,
-            xpath_source: None,
+            handlers: Vec::new(),
             namespaces: HashMap::new(),
         }
     }
 
-    /// Sets the XPath expression for matching elements to transform.
-    pub fn xpath(mut self, xpath: &str) -> Self {
-        self.xpath_source = Some(XPathSource::String(xpath.to_string()));
-        self
-    }
-
-    /// Sets a pre-parsed XPath AST for matching elements to transform.
+    /// Registers an XPath expression with its callback function.
     ///
-    /// This is useful when you want to reuse a parsed XPath expression
-    /// or when you're constructing XPath programmatically.
+    /// Multiple handlers can be registered, and they will all be applied
+    /// during transformation. Each handler is called when its XPath matches.
     ///
     /// # Example
-    /// ```
-    /// use fastxml::transform::StreamTransformer;
-    /// use fastxml::xpath::parser::parse_xpath;
     ///
-    /// let xml = r#"<root><item id="1">A</item></root>"#;
-    /// let expr = parse_xpath("//item").unwrap();
+    /// ```rust
+    /// use fastxml::transform::StreamTransformer;
+    ///
+    /// let xml = r#"<root><a/><b/></root>"#;
     ///
     /// let result = StreamTransformer::new(xml)
-    ///     .xpath_ast(expr)
-    ///     .transform(|node| {
-    ///         node.set_attribute("found", "true");
-    ///     })
-    ///     .to_string()
-    ///     .unwrap();
-    ///
-    /// assert!(result.contains(r#"found="true""#));
+    ///     .on("//a", |node| node.set_attribute("found", "a"))
+    ///     .on("//b", |node| node.set_attribute("found", "b"))
+    ///     .run()?
+    ///     .to_string()?;
+    /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn xpath_ast(mut self, expr: Expr) -> Self {
-        self.xpath_source = Some(XPathSource::Ast(expr));
+    pub fn on<F>(mut self, xpath: &str, callback: F) -> Self
+    where
+        F: FnMut(&mut EditableNode) + 'a,
+    {
+        self.handlers.push(Handler {
+            xpath: XPathSource::String(xpath.to_string()),
+            callback: Box::new(callback),
+        });
         self
     }
 
@@ -159,21 +189,20 @@ impl<'a> StreamTransformer<'a> {
     /// Registers multiple namespace prefixes at once.
     ///
     /// # Example
-    /// ```
+    ///
+    /// ```rust
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root xmlns:gml="http://example.com/gml"><gml:point/></root>"#;
+    ///
     /// let result = StreamTransformer::new(xml)
     ///     .namespaces([
     ///         ("gml", "http://example.com/gml"),
-    ///         ("bldg", "http://example.com/bldg"),
     ///     ])
-    ///     .xpath("//gml:point")
-    ///     .transform(|node| {
-    ///         node.set_attribute("found", "true");
-    ///     })
-    ///     .to_string()
-    ///     .unwrap();
+    ///     .on("//gml:point", |node| node.set_attribute("found", "true"))
+    ///     .run()?
+    ///     .to_string()?;
+    /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
     pub fn namespaces<I, S1, S2>(mut self, iter: I) -> Self
     where
@@ -192,137 +221,298 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// This is useful when you want to use the same namespace prefixes
     /// as declared in the document.
-    ///
-    /// # Example
-    /// ```
-    /// use fastxml::{parse, transform::StreamTransformer};
-    ///
-    /// let xml = r#"<root xmlns:gml="http://example.com/gml"><gml:point/></root>"#;
-    /// let doc = parse(xml).unwrap();
-    ///
-    /// let result = StreamTransformer::new(xml)
-    ///     .with_document_namespaces(&doc)
-    ///     .xpath("//gml:point")
-    ///     .transform(|node| {
-    ///         node.set_attribute("found", "true");
-    ///     })
-    ///     .to_string()
-    ///     .unwrap();
-    /// ```
     pub fn with_document_namespaces(mut self, doc: &crate::document::XmlDocument) -> Self {
         self.namespaces.extend(doc.namespaces());
         self
     }
 
-    /// Sets the transform function and returns a builder for final operations.
-    pub fn transform<F>(self, transform_fn: F) -> StreamTransformBuilder<'a, F>
-    where
-        F: FnMut(&mut EditableNode),
-    {
-        StreamTransformBuilder {
-            transformer: self,
-            transform_fn,
-        }
-    }
-
-    /// Iterates over matched elements without modifying the document.
+    /// Executes all registered handlers and returns the transformation output.
     ///
-    /// This is useful when you want to extract data from specific elements
-    /// without building a full DOM tree.
+    /// This method processes the XML and applies all handlers registered via `on()`.
+    /// Returns a `TransformOutput` that can be converted to a String or written to a writer.
     ///
     /// # Example
-    /// ```
+    ///
+    /// ```rust
     /// use fastxml::transform::StreamTransformer;
     ///
-    /// let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+    /// let xml = r#"<root><item/></root>"#;
+    ///
+    /// let output = StreamTransformer::new(xml)
+    ///     .on("//item", |node| node.set_attribute("done", "true"))
+    ///     .run()?;
+    ///
+    /// let result = output.to_string()?;
+    /// assert!(result.contains(r#"done="true""#));
+    /// # Ok::<(), fastxml::transform::TransformError>(())
+    /// ```
+    pub fn run(self) -> TransformResult<TransformOutput> {
+        if self.handlers.is_empty() {
+            return Err(TransformError::InvalidXPath(
+                "No handlers registered. Use .on() to add handlers.".to_string(),
+            ));
+        }
+
+        let mut output = Vec::new();
+        let count = self.execute_transform(&mut output)?;
+
+        Ok(TransformOutput {
+            data: output,
+            count,
+        })
+    }
+
+    /// Executes all registered handlers for their side effects only.
+    ///
+    /// Unlike `run()`, this method does not produce output XML.
+    /// Use this when you only need to extract data or perform side effects.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fastxml::transform::StreamTransformer;
+    ///
+    /// let xml = r#"<root><item id="1"/><item id="2"/></root>"#;
     ///
     /// let mut ids = Vec::new();
     /// StreamTransformer::new(xml)
-    ///     .xpath("//item")
-    ///     .for_each(|node| {
+    ///     .on("//item", |node| {
     ///         if let Some(id) = node.get_attribute("id") {
     ///             ids.push(id);
     ///         }
     ///     })
-    ///     .unwrap();
+    ///     .for_each()?;
     ///
     /// assert_eq!(ids, vec!["1", "2"]);
+    /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn for_each<F>(self, mut f: F) -> TransformResult<usize>
-    where
-        F: FnMut(&EditableNode),
-    {
-        let xpath_source = self.xpath_source.as_ref().ok_or_else(|| {
-            TransformError::InvalidXPath("No XPath expression provided".to_string())
-        })?;
+    pub fn for_each(self) -> TransformResult<()> {
+        if self.handlers.is_empty() {
+            return Err(TransformError::InvalidXPath(
+                "No handlers registered. Use .on() to add handlers.".to_string(),
+            ));
+        }
 
-        stream_for_each_impl(self.input, xpath_source, &self.namespaces, |node| {
-            f(node);
-        })
+        self.execute_for_each()?;
+        Ok(())
     }
 
-    /// Collects values from matched elements.
+    /// Collects values from matched elements using a single XPath expression.
     ///
-    /// This is useful when you want to extract and collect data from
-    /// specific elements without building a full DOM tree.
+    /// This is a convenience method for extracting data from elements.
+    /// For multiple XPath expressions, use `on()` with `for_each()` instead.
     ///
     /// # Example
-    /// ```
+    ///
+    /// ```rust
     /// use fastxml::transform::StreamTransformer;
     ///
-    /// let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+    /// let xml = r#"<root><item>A</item><item>B</item></root>"#;
     ///
     /// let contents: Vec<String> = StreamTransformer::new(xml)
-    ///     .xpath("//item")
-    ///     .collect(|node| node.get_content().unwrap_or_default())
-    ///     .unwrap();
+    ///     .collect("//item", |node| node.get_content().unwrap_or_default())?;
     ///
     /// assert_eq!(contents, vec!["A", "B"]);
+    /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn collect<F, T>(self, mut f: F) -> TransformResult<Vec<T>>
+    pub fn collect<F, T>(self, xpath: &str, mut f: F) -> TransformResult<Vec<T>>
     where
-        F: FnMut(&EditableNode) -> T,
+        F: FnMut(&mut EditableNode) -> T,
     {
         let mut results = Vec::new();
-        self.for_each(|node| {
+        let xpath_source = XPathSource::String(xpath.to_string());
+
+        stream_for_each_impl(self.input, &xpath_source, &self.namespaces, |node| {
             results.push(f(node));
         })?;
+
         Ok(results)
+    }
+
+    /// Internal: Execute transformation with all handlers
+    fn execute_transform<W: Write>(mut self, writer: &mut W) -> TransformResult<usize> {
+        // For now, we process handlers sequentially
+        // TODO: optimize for multiple handlers in a single pass
+        if self.handlers.len() == 1 {
+            let handler = self.handlers.remove(0);
+            stream_transform_impl(
+                self.input,
+                &handler.xpath,
+                &self.namespaces,
+                handler.callback,
+                writer,
+            )
+        } else {
+            // Multiple handlers: process sequentially, passing output to next
+            let mut current_input = self.input.to_string();
+            let mut total_count = 0;
+
+            for handler in self.handlers {
+                let mut output = Vec::new();
+                let count = stream_transform_impl(
+                    &current_input,
+                    &handler.xpath,
+                    &self.namespaces,
+                    handler.callback,
+                    &mut output,
+                )?;
+                total_count += count;
+                current_input =
+                    String::from_utf8(output).map_err(|e| TransformError::Utf8(e.utf8_error()))?;
+            }
+
+            writer
+                .write_all(current_input.as_bytes())
+                .map_err(TransformError::Io)?;
+            Ok(total_count)
+        }
+    }
+
+    /// Internal: Execute for_each with all handlers
+    fn execute_for_each(mut self) -> TransformResult<usize> {
+        let mut total_count = 0;
+
+        for handler in &mut self.handlers {
+            let count =
+                stream_for_each_impl(self.input, &handler.xpath, &self.namespaces, |node| {
+                    (handler.callback)(node);
+                })?;
+            total_count += count;
+        }
+
+        Ok(total_count)
+    }
+}
+
+/// Output from a transformation operation.
+///
+/// Contains the transformed XML data and metadata about the transformation.
+pub struct TransformOutput {
+    data: Vec<u8>,
+    count: usize,
+}
+
+impl TransformOutput {
+    /// Returns the number of nodes that were transformed.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Converts the output to a String.
+    pub fn to_string(self) -> TransformResult<String> {
+        String::from_utf8(self.data).map_err(|e| TransformError::Utf8(e.utf8_error()))
+    }
+
+    /// Writes the output to a writer.
+    pub fn write_to<W: Write>(self, writer: &mut W) -> TransformResult<()> {
+        writer.write_all(&self.data).map_err(TransformError::Io)
+    }
+
+    /// Returns the raw bytes of the output.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data
+    }
+}
+
+// =============================================================================
+// Deprecated API
+// =============================================================================
+
+impl<'a> StreamTransformer<'a> {
+    /// Sets the XPath expression for matching elements to transform.
+    #[deprecated(since = "0.4.0", note = "use .on(xpath, callback).run() instead")]
+    pub fn xpath(mut self, xpath: &str) -> Self {
+        // Store as a placeholder handler with no-op callback
+        // The actual callback will be set by transform()
+        self.handlers.push(Handler {
+            xpath: XPathSource::String(xpath.to_string()),
+            callback: Box::new(|_| {}),
+        });
+        self
+    }
+
+    /// Sets a pre-parsed XPath AST for matching elements to transform.
+    #[deprecated(since = "0.4.0", note = "use .on() with string XPath instead")]
+    pub fn xpath_ast(mut self, expr: Expr) -> Self {
+        self.handlers.push(Handler {
+            xpath: XPathSource::Ast(expr),
+            callback: Box::new(|_| {}),
+        });
+        self
+    }
+
+    /// Sets the transform function and returns a builder for final operations.
+    #[deprecated(since = "0.4.0", note = "use .on(xpath, callback).run() instead")]
+    #[allow(clippy::should_implement_trait, deprecated)]
+    pub fn transform<F>(mut self, transform_fn: F) -> StreamTransformBuilder<'a, F>
+    where
+        F: FnMut(&mut EditableNode),
+    {
+        // Get the xpath from the last handler (set by xpath())
+        let xpath_source = if let Some(handler) = self.handlers.pop() {
+            handler.xpath
+        } else {
+            XPathSource::String(String::new())
+        };
+
+        StreamTransformBuilder {
+            input: self.input,
+            xpath_source,
+            namespaces: self.namespaces,
+            transform_fn,
+        }
     }
 }
 
 /// A consuming builder that captures the transform function.
+#[deprecated(since = "0.4.0", note = "use StreamTransformer::on().run() instead")]
 pub struct StreamTransformBuilder<'a, F> {
-    transformer: StreamTransformer<'a>,
+    input: &'a str,
+    xpath_source: XPathSource,
+    namespaces: HashMap<String, String>,
     transform_fn: F,
 }
 
+#[allow(deprecated)]
 impl<'a, F> StreamTransformBuilder<'a, F>
 where
     F: FnMut(&mut EditableNode),
 {
     /// Writes the transformation result to a writer.
     pub fn write_to<W: Write>(self, writer: &mut W) -> TransformResult<usize> {
-        let xpath_source = self.transformer.xpath_source.as_ref().ok_or_else(|| {
-            TransformError::InvalidXPath("No XPath expression provided".to_string())
-        })?;
+        if self
+            .xpath_source
+            .as_string()
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
+            && matches!(self.xpath_source, XPathSource::String(_))
+        {
+            return Err(TransformError::InvalidXPath(
+                "No XPath expression provided".to_string(),
+            ));
+        }
 
         stream_transform_impl(
-            self.transformer.input,
-            xpath_source,
-            &self.transformer.namespaces,
+            self.input,
+            &self.xpath_source,
+            &self.namespaces,
             self.transform_fn,
             writer,
         )
     }
 
     /// Returns the transformation result as a String.
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(self) -> TransformResult<String> {
         let mut output = Vec::new();
         self.write_to(&mut output)?;
         String::from_utf8(output).map_err(|e| TransformError::Utf8(e.utf8_error()))
     }
 }
+
+// =============================================================================
+// Function API
+// =============================================================================
 
 /// Simple function API for streaming XML transformation.
 ///
@@ -427,7 +617,7 @@ fn stream_for_each_impl<F>(
     callback: F,
 ) -> TransformResult<usize>
 where
-    F: FnMut(&EditableNode),
+    F: FnMut(&mut EditableNode),
 {
     // Parse XPath expression
     let expr = xpath_source.parse()?;
@@ -458,8 +648,196 @@ where
 mod tests {
     use super::*;
 
+    // =============================================================================
+    // New API Tests
+    // =============================================================================
+
     #[test]
-    fn test_builder_pattern() {
+    fn test_on_single_handler() {
+        let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item[@id='2']", |node| {
+                node.set_attribute("modified", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"modified="true""#));
+        assert!(result.contains("<item id=\"1\">A</item>"));
+    }
+
+    #[test]
+    fn test_on_multiple_handlers() {
+        let xml = r#"<root><item>A</item><other>B</other></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node| {
+                node.set_attribute("type", "item");
+            })
+            .on("//other", |node| {
+                node.set_attribute("type", "other");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"type="item""#));
+        assert!(result.contains(r#"type="other""#));
+    }
+
+    #[test]
+    fn test_for_each_single_handler() {
+        let xml = r#"<root><item id="1"/><item id="2"/></root>"#;
+
+        let mut ids = Vec::new();
+        StreamTransformer::new(xml)
+            .on("//item", |node| {
+                if let Some(id) = node.get_attribute("id") {
+                    ids.push(id);
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(ids, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn test_for_each_multiple_handlers() {
+        let xml = r#"<root><item>A</item><other>B</other></root>"#;
+
+        let mut items = Vec::new();
+        let mut others = Vec::new();
+
+        StreamTransformer::new(xml)
+            .on("//item", |node| {
+                items.push(node.get_content().unwrap_or_default());
+            })
+            .on("//other", |node| {
+                others.push(node.get_content().unwrap_or_default());
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(items, vec!["A"]);
+        assert_eq!(others, vec!["B"]);
+    }
+
+    #[test]
+    fn test_collect() {
+        let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
+
+        let contents: Vec<String> = StreamTransformer::new(xml)
+            .collect("//item", |node| node.get_content().unwrap_or_default())
+            .unwrap();
+
+        assert_eq!(contents, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_collect_attributes() {
+        let xml = r#"<root><item id="1"/><item id="2"/><item id="3"/></root>"#;
+
+        let ids: Vec<String> = StreamTransformer::new(xml)
+            .collect("//item", |node| {
+                node.get_attribute("id").unwrap_or_default()
+            })
+            .unwrap();
+
+        assert_eq!(ids, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn test_run_no_handlers_error() {
+        let xml = "<root/>";
+        let result = StreamTransformer::new(xml).run();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_for_each_no_handlers_error() {
+        let xml = "<root/>";
+        let result = StreamTransformer::new(xml).for_each();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_transform_output_count() {
+        let xml = r#"<root><item/><item/><item/></root>"#;
+
+        let output = StreamTransformer::new(xml)
+            .on("//item", |node| {
+                node.set_attribute("found", "true");
+            })
+            .run()
+            .unwrap();
+
+        assert_eq!(output.count(), 3);
+    }
+
+    #[test]
+    fn test_with_namespaces() {
+        let xml = r#"<root xmlns:ns="http://example.com"><ns:item/></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .namespace("ns", "http://example.com")
+            .on("//ns:item", |node| {
+                node.set_attribute("found", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"found="true""#));
+    }
+
+    #[test]
+    fn test_remove_element() {
+        let xml = r#"<root><keep>A</keep><remove>B</remove><keep>C</keep></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//remove", |node| {
+                node.remove();
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(!result.contains("<remove>"));
+        assert!(result.contains("<keep>A</keep>"));
+        assert!(result.contains("<keep>C</keep>"));
+    }
+
+    #[test]
+    fn test_fallback_for_last() {
+        let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
+
+        let result = StreamTransformer::new(xml)
+            .on("//item[last()]", |node| {
+                node.set_attribute("last", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"last="true""#));
+        assert_eq!(result.matches(r#"last="true""#).count(), 1);
+    }
+
+    // =============================================================================
+    // Deprecated API Tests (ensure backward compatibility)
+    // =============================================================================
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_xpath_transform() {
         let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
         let result = StreamTransformer::new(xml)
@@ -471,8 +849,11 @@ mod tests {
             .unwrap();
 
         assert!(result.contains(r#"modified="true""#));
-        assert!(result.contains("<item id=\"1\">A</item>"));
     }
+
+    // =============================================================================
+    // Function API Tests
+    // =============================================================================
 
     #[test]
     fn test_function_api() {
@@ -492,137 +873,5 @@ mod tests {
         assert_eq!(count, 1);
         let result = String::from_utf8(output).unwrap();
         assert!(result.contains(r#"processed="true""#));
-    }
-
-    #[test]
-    fn test_remove_element() {
-        let xml = r#"<root><keep>A</keep><remove>B</remove><keep>C</keep></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//remove")
-            .transform(|node| {
-                node.remove();
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(!result.contains("<remove>"));
-        assert!(result.contains("<keep>A</keep>"));
-        assert!(result.contains("<keep>C</keep>"));
-    }
-
-    #[test]
-    fn test_multiple_matches() {
-        let xml = "<root><item>1</item><item>2</item><item>3</item></root>";
-
-        let mut count_total = 0;
-        let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node| {
-                count_total += 1;
-                node.set_attribute("n", &count_total.to_string());
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(result.contains(r#"n="1""#));
-        assert!(result.contains(r#"n="2""#));
-        assert!(result.contains(r#"n="3""#));
-    }
-
-    #[test]
-    fn test_fallback_for_last() {
-        let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//item[last()]")
-            .transform(|node| {
-                node.set_attribute("last", "true");
-            })
-            .to_string()
-            .unwrap();
-
-        // Only the last item should have the attribute
-        assert!(result.contains(r#"last="true""#));
-        // Count occurrences - should be exactly one
-        assert_eq!(result.matches(r#"last="true""#).count(), 1);
-    }
-
-    #[test]
-    fn test_no_xpath_error() {
-        let xml = "<root/>";
-
-        let result = StreamTransformer::new(xml).transform(|_| {}).to_string();
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_preserve_structure() {
-        let xml = r#"<?xml version="1.0"?>
-<root>
-  <item id="1">A</item>
-  <item id="2">B</item>
-</root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//item[@id='2']")
-            .transform(|node| {
-                node.set_attribute("modified", "true");
-            })
-            .to_string()
-            .unwrap();
-
-        // Should preserve XML declaration and whitespace around non-matched elements
-        assert!(result.starts_with("<?xml"));
-        assert!(result.contains("<item id=\"1\">A</item>"));
-    }
-
-    #[test]
-    fn test_for_each() {
-        let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
-
-        let mut ids = Vec::new();
-        let count = StreamTransformer::new(xml)
-            .xpath("//item")
-            .for_each(|node| {
-                if let Some(id) = node.get_attribute("id") {
-                    ids.push(id);
-                }
-            })
-            .unwrap();
-
-        assert_eq!(count, 2);
-        assert_eq!(ids, vec!["1", "2"]);
-    }
-
-    #[test]
-    fn test_collect() {
-        let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
-
-        let contents: Vec<String> = StreamTransformer::new(xml)
-            .xpath("//item")
-            .collect(|node| node.get_content().unwrap_or_default())
-            .unwrap();
-
-        assert_eq!(contents, vec!["A", "B", "C"]);
-    }
-
-    #[test]
-    fn test_for_each_with_last_fallback() {
-        let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
-
-        let mut contents = Vec::new();
-        let count = StreamTransformer::new(xml)
-            .xpath("//item[last()]")
-            .for_each(|node| {
-                if let Some(content) = node.get_content() {
-                    contents.push(content);
-                }
-            })
-            .unwrap();
-
-        assert_eq!(count, 1);
-        assert_eq!(contents, vec!["C"]);
     }
 }

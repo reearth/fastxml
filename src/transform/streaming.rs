@@ -465,7 +465,7 @@ pub fn process_for_each<F>(
     mut callback: F,
 ) -> TransformResult<usize>
 where
-    F: FnMut(&EditableNode),
+    F: FnMut(&mut EditableNode),
 {
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
@@ -508,8 +508,8 @@ where
                     let mut builder = EditableNodeBuilder::new();
                     add_empty_to_builder(&mut builder, &e, namespaces)?;
 
-                    let editable = builder.build()?;
-                    callback(&editable);
+                    let mut editable = builder.build()?;
+                    callback(&mut editable);
                     match_count += 1;
                 }
 
@@ -522,8 +522,8 @@ where
 
                     if builder.is_complete() {
                         // Subtree complete, call callback
-                        let editable = builder.build()?;
-                        callback(&editable);
+                        let mut editable = builder.build()?;
+                        callback(&mut editable);
                         match_count += 1;
                     } else {
                         // Not complete yet, put back
