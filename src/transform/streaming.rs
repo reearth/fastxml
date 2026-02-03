@@ -413,7 +413,12 @@ fn add_start_to_builder(
         } else if key == "xmlns" {
             ns_decls.push(Namespace::new("", value.as_ref()));
         } else {
-            attributes.push((key.to_string(), value.to_string()));
+            // Store attributes with local names only (libxml compatible)
+            let local_name = match key.split_once(':') {
+                Some((_, local)) => local,
+                None => key,
+            };
+            attributes.push((local_name.to_string(), value.to_string()));
         }
     }
 

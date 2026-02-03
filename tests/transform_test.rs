@@ -535,4 +535,44 @@ mod edge_cases {
         // Special chars should be escaped
         assert!(result.contains("&lt;") || result.contains("a<b"));
     }
+
+    #[test]
+    fn test_transform_namespaced_attribute_local_name() {
+        // Test that namespaced attributes are accessible by local name (libxml compatible)
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+            <item gml:id="test123"/>
+        </root>"#;
+
+        let mut found_id = None;
+        StreamTransformer::new(xml)
+            .namespace("gml", "http://www.opengis.net/gml")
+            .on("//item", |node: &mut EditableNode| {
+                // Should be able to get attribute by local name only
+                found_id = node.get_attribute("id");
+            })
+            .run()
+            .unwrap();
+
+        assert_eq!(found_id, Some("test123".to_string()));
+    }
+
+    #[test]
+    fn test_transform_namespaced_attribute_not_prefixed() {
+        // Verify that prefixed key does NOT work (libxml compatible)
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+            <item gml:id="test123"/>
+        </root>"#;
+
+        let mut prefixed_id = Some("should be None".to_string());
+        StreamTransformer::new(xml)
+            .namespace("gml", "http://www.opengis.net/gml")
+            .on("//item", |node: &mut EditableNode| {
+                // Prefixed key should NOT work
+                prefixed_id = node.get_attribute("gml:id");
+            })
+            .run()
+            .unwrap();
+
+        assert_eq!(prefixed_id, None);
+    }
 }
