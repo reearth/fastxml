@@ -545,3 +545,167 @@ macro_rules! compare_with_libxml {
     (consistency: $xml:expr) => {};
     (validate: $xml:expr, $xsd:expr) => {};
 }
+
+// =============================================================================
+// Unified Validation Helpers
+// =============================================================================
+
+use std::sync::Arc;
+
+use fastxml::StructuredError;
+use fastxml::schema::validator::{
+    DomSchemaValidator, OnePassSchemaValidator, TwoPassSchemaValidator,
+};
+use fastxml::schema::xsd::parse_xsd;
+
+/// Result of schema validation containing validity and errors.
+#[derive(Debug)]
+pub struct ValidationResult {
+    /// Whether the document is valid
+    pub valid: bool,
+    /// Validation errors (may contain warnings too)
+    pub errors: Vec<StructuredError>,
+}
+
+impl ValidationResult {
+    /// Returns true if the document is valid (no errors).
+    pub fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    /// Returns the list of validation errors.
+    pub fn errors(&self) -> &[StructuredError] {
+        &self.errors
+    }
+}
+
+/// Validate XML against XSD using DOM validator.
+pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
+    let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
+    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+    let validator = DomSchemaValidator::new(Arc::new(schema));
+    let errors = validator.validate(&doc).expect("Validation failed");
+    let valid = errors.iter().all(|e| !e.is_error());
+    ValidationResult { valid, errors }
+}
+
+/// Validate XML against XSD using TwoPass validator.
+pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
+    use std::io::Cursor;
+    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+    let reader = Cursor::new(xml.as_bytes().to_vec());
+    let errors = TwoPassSchemaValidator::new(Arc::new(schema))
+        .validate(reader)
+        .expect("Validation failed");
+    let valid = errors.iter().all(|e| !e.is_error());
+    ValidationResult { valid, errors }
+}
+
+/// Validate XML against XSD using OnePass (streaming) validator.
+pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
+    use std::io::BufReader;
+    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+    let reader = BufReader::new(xml.as_bytes());
+    let errors = OnePassSchemaValidator::new(Arc::new(schema))
+        .validate(reader)
+        .expect("Validation failed");
+    let valid = errors.iter().all(|e| !e.is_error());
+    ValidationResult { valid, errors }
+}
+
+/// Validate with all validators and check consistency.
+/// Returns (dom_result, twopass_result, onepass_result).
+pub fn validate_all(
+    xml: &str,
+    xsd: &str,
+) -> (ValidationResult, ValidationResult, ValidationResult) {
+    let dom = validate_dom(xml, xsd);
+    let twopass = validate_twopass(xml, xsd);
+    let onepass = validate_onepass(xml, xsd);
+    (dom, twopass, onepass)
+}
+
+/// Assert that all validators produce consistent results.
+pub fn assert_validators_consistent(xml: &str, xsd: &str) {
+    let (dom, twopass, onepass) = validate_all(xml, xsd);
+
+    assert_eq!(
+        dom.is_valid(),
+        twopass.is_valid(),
+        "DOM vs TwoPass mismatch for validity.\nDOM errors: {:?}\nTwoPass errors: {:?}",
+        dom.errors(),
+        twopass.errors()
+    );
+
+    assert_eq!(
+        twopass.is_valid(),
+        onepass.is_valid(),
+        "TwoPass vs OnePass mismatch for validity.\nTwoPass errors: {:?}\nOnePass errors: {:?}",
+        twopass.errors(),
+        onepass.errors()
+    );
+}
+
+/// Macro to test validation with all validators and optionally compare with libxml.
+///
+/// Usage:
+/// ```ignore
+/// test_validation!(test_name, xml, xsd, should_be_valid);
+/// ```
+#[macro_export]
+macro_rules! test_validation {
+    ($name:ident, $xml:expr, $xsd:expr, $expected_valid:expr) => {
+        mod $name {
+            use super::*;
+
+            #[test]
+            fn dom() {
+                let result = $crate::common::validate_dom($xml, $xsd);
+                assert_eq!(
+                    result.is_valid(),
+                    $expected_valid,
+                    "DOM validation: expected valid={}, got valid={}\nErrors: {:?}",
+                    $expected_valid,
+                    result.is_valid(),
+                    result.errors()
+                );
+            }
+
+            #[test]
+            fn twopass() {
+                let result = $crate::common::validate_twopass($xml, $xsd);
+                assert_eq!(
+                    result.is_valid(),
+                    $expected_valid,
+                    "TwoPass validation: expected valid={}, got valid={}\nErrors: {:?}",
+                    $expected_valid,
+                    result.is_valid(),
+                    result.errors()
+                );
+            }
+
+            #[test]
+            fn onepass() {
+                let result = $crate::common::validate_onepass($xml, $xsd);
+                assert_eq!(
+                    result.is_valid(),
+                    $expected_valid,
+                    "OnePass validation: expected valid={}, got valid={}\nErrors: {:?}",
+                    $expected_valid,
+                    result.is_valid(),
+                    result.errors()
+                );
+            }
+
+            #[test]
+            fn consistency() {
+                $crate::common::assert_validators_consistent($xml, $xsd);
+            }
+
+            #[test]
+            fn libxml_comparison() {
+                $crate::compare_with_libxml!(validate: $xml, $xsd);
+            }
+        }
+    };
+}

@@ -312,6 +312,8 @@ impl OnePassSchemaValidator {
             flattened
                 .constraints
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+            // Store element order for sequence validation
+            flattened.ordered_elements.push(elem.name.clone());
         }
 
         flattened
@@ -411,6 +413,9 @@ impl OnePassSchemaValidator {
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
 
+            // Check sequence order against parent's expected constraints
+            self.validate_sequence_order(name);
+
             // Update current element context with type info
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
@@ -424,6 +429,9 @@ impl OnePassSchemaValidator {
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
+
+            // Check sequence order against parent's expected constraints
+            self.validate_sequence_order(name);
 
             // Update current element context with type info
             if let Some(ctx) = self.state.current_element_mut() {
@@ -594,6 +602,99 @@ impl OnePassSchemaValidator {
                         self.add_error(error);
                     }
                 }
+            }
+        }
+    }
+
+    /// Validates sequence order constraint for a child element.
+    ///
+    /// This method checks that child elements appear in the correct sequence order
+    /// as defined by the parent's content model.
+    fn validate_sequence_order(&mut self, child_name: &str) {
+        if self.state.element_stack.len() < 2 {
+            return;
+        }
+
+        let parent_idx = self.state.element_stack.len() - 2;
+
+        // Get parent's flattened children to check sequence order
+        let (content_model_type, ordered_elements, current_index) = {
+            let parent = match self.state.element_stack.get(parent_idx) {
+                Some(p) => p,
+                None => return,
+            };
+
+            let fc = match &parent.flattened_children {
+                Some(fc) => fc,
+                None => return,
+            };
+
+            // Only validate for sequence content models
+            if fc.content_model_type != ContentModelType::Sequence {
+                return;
+            }
+
+            // Skip if no ordered elements defined
+            if fc.ordered_elements.is_empty() {
+                return;
+            }
+
+            (
+                fc.content_model_type,
+                fc.ordered_elements.clone(),
+                parent.sequence_index,
+            )
+        };
+
+        // Only validate for sequence content models
+        if content_model_type != ContentModelType::Sequence {
+            return;
+        }
+
+        // Find the position of this element in the expected sequence (starting from current position)
+        let found_pos = ordered_elements[current_index..]
+            .iter()
+            .position(|e| e.as_str() == child_name)
+            .map(|p| current_index + p);
+
+        if let Some(new_index) = found_pos {
+            // Update parent's sequence index
+            if let Some(parent) = self.state.element_stack.get_mut(parent_idx) {
+                parent.sequence_index = new_index;
+            }
+        } else {
+            // Check if this element exists earlier in the sequence (out of order)
+            let earlier_pos = ordered_elements[..current_index]
+                .iter()
+                .position(|e| e.as_str() == child_name);
+
+            if earlier_pos.is_some() {
+                // Element is out of order
+                let expected_after = if current_index > 0 {
+                    ordered_elements[current_index - 1].clone()
+                } else {
+                    "(beginning)".to_string()
+                };
+
+                // Get parent name for error message
+                let parent_name = self
+                    .state
+                    .element_stack
+                    .get(parent_idx)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_default();
+
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' in '{}' appears out of sequence order (expected after '{}')",
+                            child_name, parent_name, expected_after
+                        ),
+                    )
+                    .with_node_name(&parent_name)
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
             }
         }
     }

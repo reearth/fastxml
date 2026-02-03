@@ -39,6 +39,8 @@ pub(crate) struct ElementContext {
     /// Using Arc to avoid cloning for every element - this is a reference to
     /// the pre-computed cache in CompiledSchema.
     pub flattened_children: Option<Arc<FlattenedChildren>>,
+    /// Current position in expected sequence for sequence order validation.
+    pub sequence_index: usize,
 }
 
 impl ElementContext {
@@ -52,6 +54,7 @@ impl ElementContext {
             schema_validated: false,
             type_ref: None,
             flattened_children: None,
+            sequence_index: 0,
         }
     }
 

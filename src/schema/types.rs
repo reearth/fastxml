@@ -29,6 +29,8 @@ pub struct FlattenedChildren {
     pub constraints: HashMap<String, (u32, Option<u32>)>,
     /// Content model type
     pub content_model_type: ContentModelType,
+    /// Ordered element names for sequence validation
+    pub ordered_elements: Vec<String>,
 }
 
 impl FlattenedChildren {
@@ -37,6 +39,7 @@ impl FlattenedChildren {
         Self {
             constraints: HashMap::new(),
             content_model_type: ContentModelType::Empty,
+            ordered_elements: Vec::new(),
         }
     }
 
@@ -45,6 +48,7 @@ impl FlattenedChildren {
         Self {
             constraints: HashMap::new(),
             content_model_type,
+            ordered_elements: Vec::new(),
         }
     }
 }

@@ -15,8 +15,9 @@ use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use crate::schema::types::{
     CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
-    TypeDef,
+    SimpleType, TypeDef,
 };
+use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
 use super::ValidationMode;
 use super::streaming::ValidationOptions;
@@ -259,17 +260,20 @@ impl TwoPassSchemaValidator {
 
         // Start validation from root
         if let Some(root_index) = skeleton.root_index {
-            self.validate_node_recursive(skeleton, root_index, &mut errors);
+            self.validate_node_recursive(skeleton, root_index, None, &mut errors);
         }
 
         Ok(errors)
     }
 
     /// Recursively validates a node and its children.
+    ///
+    /// `parent_allowed_children` contains the set of child element names allowed by the parent's type.
     fn validate_node_recursive(
         &self,
         skeleton: &DocumentSkeleton,
         node_index: usize,
+        parent_allowed_children: Option<&FlattenedChildren>,
         errors: &mut Vec<StructuredError>,
     ) {
         // Check max errors
@@ -282,23 +286,38 @@ impl TwoPassSchemaValidator {
             None => return,
         };
 
-        // Look up element definition
+        // Look up element definition (global or from parent's type)
         let elem_def = self.lookup_element(&node.name, node.prefix.as_ref());
 
         let schema_has_elements = !self.schema.elements.is_empty();
 
-        if let Some(elem) = elem_def {
+        // Check if element is allowed by parent's type definition
+        let is_allowed_by_parent = parent_allowed_children
+            .map(|fc| fc.constraints.contains_key(node.name.as_ref()))
+            .unwrap_or(false);
+
+        let allowed_children = if let Some(elem) = elem_def {
             // Get flattened children for validation
-            if let Some(flattened) = self.get_flattened_children_for_element(elem) {
+            let flattened = self.get_flattened_children_for_element(elem);
+            if let Some(ref fc) = flattened {
                 // Validate min_occurs for all children
-                self.validate_min_occurs_batch(node, &flattened, errors);
+                self.validate_min_occurs_batch(node, fc, errors);
 
                 // Validate max_occurs for all children
-                self.validate_max_occurs_batch(node, &flattened, errors);
+                self.validate_max_occurs_batch(node, fc, errors);
+
+                // Validate sequence order for sequence content models
+                self.validate_sequence_order(skeleton, node, fc, errors);
             }
 
             // Validate text content
             self.validate_text_content(node, elem, errors);
+
+            flattened
+        } else if is_allowed_by_parent {
+            // Element is defined inline in parent's type - not an error
+            // Try to get inline element definition from parent's constraints
+            None
         } else if self.mode == ValidationMode::Strict && schema_has_elements {
             // Unknown element
             let qname = match &node.prefix {
@@ -318,11 +337,19 @@ impl TwoPassSchemaValidator {
             if self.should_add_error(errors) {
                 errors.push(error);
             }
-        }
+            None
+        } else {
+            None
+        };
 
-        // Validate children recursively
+        // Validate children recursively with this element's allowed children
         for &child_index in &node.children_indices {
-            self.validate_node_recursive(skeleton, child_index, errors);
+            self.validate_node_recursive(
+                skeleton,
+                child_index,
+                allowed_children.as_deref(),
+                errors,
+            );
         }
     }
 
@@ -401,6 +428,8 @@ impl TwoPassSchemaValidator {
             flattened
                 .constraints
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+            // Store element order for sequence validation
+            flattened.ordered_elements.push(elem.name.clone());
         }
 
         flattened
@@ -557,6 +586,79 @@ impl TwoPassSchemaValidator {
         }
     }
 
+    /// Validates that child elements appear in the correct sequence order.
+    fn validate_sequence_order(
+        &self,
+        skeleton: &DocumentSkeleton,
+        node: &ElementSkeleton,
+        flattened: &FlattenedChildren,
+        errors: &mut Vec<StructuredError>,
+    ) {
+        // Only validate sequence content models
+        if flattened.content_model_type != ContentModelType::Sequence {
+            return;
+        }
+
+        // Skip if no ordered elements defined
+        if flattened.ordered_elements.is_empty() {
+            return;
+        }
+
+        // Get actual child element names in order
+        let actual_children: Vec<&str> = node
+            .children_indices
+            .iter()
+            .filter_map(|&idx| skeleton.get_node(idx))
+            .map(|child| child.name.as_ref())
+            .collect();
+
+        // Track position in expected sequence
+        let mut expected_index = 0;
+
+        for actual_name in &actual_children {
+            // Find the position of this element in the expected sequence (starting from current position)
+            let found_pos = flattened.ordered_elements[expected_index..]
+                .iter()
+                .position(|e| e.as_str() == *actual_name)
+                .map(|p| expected_index + p);
+
+            if let Some(pos) = found_pos {
+                expected_index = pos;
+            } else {
+                // Check if this element exists earlier in the sequence (out of order)
+                let earlier_pos = flattened.ordered_elements[..expected_index]
+                    .iter()
+                    .position(|e| e.as_str() == *actual_name);
+
+                if earlier_pos.is_some() {
+                    // Element is out of order
+                    let expected_after = if expected_index > 0 {
+                        flattened.ordered_elements[expected_index - 1].clone()
+                    } else {
+                        "(beginning)".to_string()
+                    };
+
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "element '{}' in '{}' appears out of sequence order (expected after '{}')",
+                                actual_name, node.name, expected_after
+                            ),
+                            node,
+                        )
+                        .with_node_name(node.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+
+                    if self.should_add_error(errors) {
+                        errors.push(error);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     /// Gets the total count for an element including substitution group members.
     fn get_total_count(&self, node: &ElementSkeleton, child_name: &str) -> u32 {
         let mut count = node.get_child_count(child_name);
@@ -613,35 +715,99 @@ impl TwoPassSchemaValidator {
             elem.inline_type.clone()
         };
 
-        if let Some(TypeDef::Complex(complex)) = type_def {
-            // Non-mixed complex types shouldn't have text content
-            if !complex.mixed {
-                if let ContentModel::Sequence(_)
-                | ContentModel::Choice(_)
-                | ContentModel::All(_)
-                | ContentModel::ComplexExtension { .. } = &complex.content
-                {
-                    let trimmed = node.text_content.trim();
-                    if !trimmed.is_empty() {
-                        let error = self
-                            .make_error(
-                                ValidationErrorType::InvalidContent,
-                                format!(
-                                    "element '{}' has element-only content but contains text",
-                                    node.name
-                                ),
-                                node,
-                            )
-                            .with_node_name(node.name.as_ref())
-                            .with_level(ErrorLevel::Error);
+        match type_def {
+            Some(TypeDef::Simple(simple)) => {
+                // Validate against simple type facets
+                self.validate_simple_type_facets(node, &simple, errors);
+            }
+            Some(TypeDef::Complex(complex)) => {
+                // Check for SimpleContent with base type
+                if let ContentModel::SimpleContent { base_type } = &complex.content {
+                    if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
+                        self.validate_simple_type_facets(node, simple, errors);
+                    }
+                } else if !complex.mixed {
+                    // Non-mixed complex types shouldn't have text content
+                    if let ContentModel::Sequence(_)
+                    | ContentModel::Choice(_)
+                    | ContentModel::All(_)
+                    | ContentModel::ComplexExtension { .. } = &complex.content
+                    {
+                        let trimmed = node.text_content.trim();
+                        if !trimmed.is_empty() {
+                            let error = self
+                                .make_error(
+                                    ValidationErrorType::InvalidContent,
+                                    format!(
+                                        "element '{}' has element-only content but contains text",
+                                        node.name
+                                    ),
+                                    node,
+                                )
+                                .with_node_name(node.name.as_ref())
+                                .with_level(ErrorLevel::Error);
 
-                        if self.should_add_error(errors) {
-                            errors.push(error);
+                            if self.should_add_error(errors) {
+                                errors.push(error);
+                            }
                         }
                     }
                 }
             }
+            None => {}
         }
+    }
+
+    /// Validates text content against simple type facets.
+    fn validate_simple_type_facets(
+        &self,
+        node: &ElementSkeleton,
+        simple: &SimpleType,
+        errors: &mut Vec<StructuredError>,
+    ) {
+        let constraints = self.create_facet_constraints(simple);
+        let validator = FacetValidator::new(&constraints);
+
+        if let Err(facet_error) = validator.validate(&node.text_content) {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidTextContent,
+                    format!("element '{}': {}", node.name, facet_error),
+                    node,
+                )
+                .with_node_name(node.name.as_ref())
+                .with_level(ErrorLevel::Error);
+
+            if self.should_add_error(errors) {
+                errors.push(error);
+            }
+        }
+    }
+
+    /// Creates FacetConstraints from a SimpleType definition.
+    fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
+        let mut constraints = FacetConstraints::new();
+
+        if let Some(min_len) = simple.min_length {
+            constraints = constraints.with_min_length(min_len as usize);
+        }
+        if let Some(max_len) = simple.max_length {
+            constraints = constraints.with_max_length(max_len as usize);
+        }
+        if let Some(ref min_inc) = simple.min_inclusive {
+            constraints = constraints.with_min_inclusive(min_inc.clone());
+        }
+        if let Some(ref max_inc) = simple.max_inclusive {
+            constraints = constraints.with_max_inclusive(max_inc.clone());
+        }
+        if !simple.enumeration.is_empty() {
+            constraints = constraints.with_enumeration(simple.enumeration.clone());
+        }
+        if let Some(ref pattern) = simple.pattern {
+            constraints = constraints.with_pattern(pattern.clone());
+        }
+
+        constraints
     }
 
     /// Creates a structured error with context.

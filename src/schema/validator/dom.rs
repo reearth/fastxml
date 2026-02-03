@@ -151,6 +151,9 @@ impl DomSchemaValidator {
 
                 // Validate max_occurs for all children
                 self.validate_max_occurs_batch(node, &child_counts, fc, errors);
+
+                // Validate sequence order for sequence content models
+                self.validate_sequence_order(node, fc, errors);
             }
 
             // Validate text content
@@ -287,6 +290,8 @@ impl DomSchemaValidator {
             flattened
                 .constraints
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+            // Store element order for sequence validation
+            flattened.ordered_elements.push(elem.name.clone());
         }
 
         flattened
@@ -442,6 +447,78 @@ impl DomSchemaValidator {
                     if self.should_add_error(errors) {
                         errors.push(error);
                     }
+                }
+            }
+        }
+    }
+
+    /// Validates that child elements appear in the correct sequence order.
+    fn validate_sequence_order(
+        &self,
+        node: &XmlNode,
+        flattened: &FlattenedChildren,
+        errors: &mut Vec<StructuredError>,
+    ) {
+        // Only validate sequence content models
+        if flattened.content_model_type != ContentModelType::Sequence {
+            return;
+        }
+
+        // Skip if no ordered elements defined
+        if flattened.ordered_elements.is_empty() {
+            return;
+        }
+
+        // Get actual child element names in order
+        let actual_children: Vec<String> = node
+            .get_child_elements()
+            .iter()
+            .map(|c| c.get_name())
+            .collect();
+
+        // Track position in expected sequence
+        let mut expected_index = 0;
+
+        for actual_name in &actual_children {
+            // Find the position of this element in the expected sequence (starting from current position)
+            let found_pos = flattened.ordered_elements[expected_index..]
+                .iter()
+                .position(|e| e == actual_name)
+                .map(|p| expected_index + p);
+
+            if let Some(pos) = found_pos {
+                expected_index = pos;
+            } else {
+                // Check if this element exists earlier in the sequence (out of order)
+                let earlier_pos = flattened.ordered_elements[..expected_index]
+                    .iter()
+                    .position(|e| e == actual_name);
+
+                if earlier_pos.is_some() {
+                    // Element is out of order
+                    let node_name = node.get_name();
+                    let expected_after = if expected_index > 0 {
+                        flattened.ordered_elements[expected_index - 1].clone()
+                    } else {
+                        "(beginning)".to_string()
+                    };
+
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "element '{}' in '{}' appears out of sequence order (expected after '{}')",
+                                actual_name, node_name, expected_after
+                            ),
+                            node,
+                        )
+                        .with_node_name(&node_name)
+                        .with_level(ErrorLevel::Error);
+
+                    if self.should_add_error(errors) {
+                        errors.push(error);
+                    }
+                    return;
                 }
             }
         }
