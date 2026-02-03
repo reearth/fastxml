@@ -149,9 +149,16 @@ let result = StreamTransformer::new(xml)
     .run()?
     .to_string()?;
 
-// Extract data
+// Extract data (single XPath)
 let ids: Vec<String> = StreamTransformer::new(xml)
     .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
+
+// Extract data from multiple XPaths in a single pass
+let (ids, contents): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+    .collect_multi((
+        ("//item", |node| node.get_attribute("id").unwrap_or_default()),
+        ("//item", |node| node.get_content().unwrap_or_default()),
+    ))?;
 
 // Iterate for side effects (no output transformation)
 let mut ids = Vec::new();

@@ -45,7 +45,7 @@ impl std::fmt::Display for NotStreamableReason {
 }
 
 /// A simplified XPath for streaming matching.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StreamableXPath {
     /// The path steps for matching
     pub steps: Vec<StreamableStep>,
