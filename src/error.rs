@@ -1,5 +1,6 @@
 //! Error types for fastxml.
 
+use std::fmt;
 use std::io;
 
 use crate::namespace_error::NamespaceError;
@@ -9,6 +10,133 @@ use crate::schema::error::SchemaError;
 use crate::schema::fetch_error::FetchError;
 use crate::schema::xsd::error::XsdParseError;
 use crate::xpath::error::{XPathEvalError, XPathSyntaxError};
+
+/// Location information for errors, providing line, column, byte offset, and optional XPath.
+///
+/// This struct provides a lightweight way to attach location information to any error.
+/// It can be used across various modules (transform, parser, validator) to provide
+/// consistent error location reporting.
+///
+/// # Examples
+///
+/// ```
+/// use fastxml::error::ErrorLocation;
+///
+/// // Create from byte offset with line/column calculation
+/// let input = "line1\nline2\nline3";
+/// let loc = ErrorLocation::from_offset_with_input(6, input);
+/// assert_eq!(loc.line, Some(2));
+/// assert_eq!(loc.column, Some(1));
+///
+/// // Add XPath information
+/// let loc = loc.with_xpath("/root/item[1]".to_string());
+/// assert!(loc.to_string().contains("/root/item[1]"));
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ErrorLocation {
+    /// Line number (1-indexed)
+    pub line: Option<usize>,
+    /// Column number (1-indexed)
+    pub column: Option<usize>,
+    /// Byte offset from the beginning of the input
+    pub byte_offset: Option<usize>,
+    /// XPath-like path to the error location
+    pub xpath: Option<String>,
+}
+
+impl ErrorLocation {
+    /// Creates an empty error location.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates an error location with only byte offset.
+    pub fn from_offset(byte_offset: usize) -> Self {
+        Self {
+            byte_offset: Some(byte_offset),
+            ..Default::default()
+        }
+    }
+
+    /// Creates an error location with line and column (calculated from byte offset).
+    pub fn from_offset_with_input(byte_offset: usize, input: &str) -> Self {
+        let (line, column) = Self::calculate_line_column(input, byte_offset);
+        Self {
+            line: Some(line),
+            column: Some(column),
+            byte_offset: Some(byte_offset),
+            xpath: None,
+        }
+    }
+
+    /// Creates an error location with line and column directly.
+    pub fn from_line_column(line: usize, column: usize) -> Self {
+        Self {
+            line: Some(line),
+            column: Some(column),
+            byte_offset: None,
+            xpath: None,
+        }
+    }
+
+    /// Sets the XPath-like path.
+    pub fn with_xpath(mut self, xpath: String) -> Self {
+        self.xpath = Some(xpath);
+        self
+    }
+
+    /// Sets the byte offset.
+    pub fn with_offset(mut self, offset: usize) -> Self {
+        self.byte_offset = Some(offset);
+        self
+    }
+
+    /// Returns true if this location has any position information.
+    pub fn has_position(&self) -> bool {
+        self.line.is_some() || self.byte_offset.is_some()
+    }
+
+    /// Calculates line and column from byte offset in the input string.
+    ///
+    /// Returns (line, column) where both are 1-indexed.
+    pub fn calculate_line_column(input: &str, byte_offset: usize) -> (usize, usize) {
+        let mut line = 1;
+        let mut last_newline_pos = 0;
+
+        for (pos, ch) in input.char_indices() {
+            if pos >= byte_offset {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                last_newline_pos = pos + 1;
+            }
+        }
+
+        // Column is the byte distance from the last newline
+        let column = byte_offset.saturating_sub(last_newline_pos) + 1;
+
+        (line, column)
+    }
+}
+
+impl fmt::Display for ErrorLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+
+        if let (Some(line), Some(col)) = (self.line, self.column) {
+            parts.push(format!("line {}:{}", line, col));
+        } else if let Some(offset) = self.byte_offset {
+            parts.push(format!("position {}", offset));
+        }
+
+        if let Some(xpath) = &self.xpath {
+            parts.push(format!("at {}", xpath));
+        }
+
+        write!(f, "{}", parts.join(", "))
+    }
+}
 
 /// Main error type for fastxml operations.
 #[derive(Debug, thiserror::Error)]
@@ -215,6 +343,36 @@ impl StructuredError {
     /// Returns true if this is an error or fatal.
     pub fn is_error(&self) -> bool {
         self.level >= ErrorLevel::Error
+    }
+
+    /// Sets location information from an ErrorLocation.
+    pub fn with_location(mut self, location: &ErrorLocation) -> Self {
+        if let Some(line) = location.line {
+            self.line = Some(line);
+        }
+        if let Some(column) = location.column {
+            self.column = Some(column);
+        }
+        if let Some(ref xpath) = location.xpath {
+            self.element_path = Some(xpath.clone());
+        }
+        self
+    }
+
+    /// Extracts location information as an ErrorLocation.
+    pub fn location(&self) -> ErrorLocation {
+        ErrorLocation {
+            line: self.line,
+            column: self.column,
+            byte_offset: None,
+            xpath: self.element_path.clone(),
+        }
+    }
+}
+
+impl From<&StructuredError> for ErrorLocation {
+    fn from(err: &StructuredError) -> Self {
+        err.location()
     }
 }
 

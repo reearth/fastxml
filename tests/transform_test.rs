@@ -1020,3 +1020,107 @@ fn test_editable_node_display() {
 
     assert!(displayed.contains("<item"));
 }
+
+// =============================================================================
+// Error Location Tests
+// =============================================================================
+
+#[test]
+fn test_error_location_line_column() {
+    // ErrorLocation is available from both fastxml::ErrorLocation and fastxml::transform::ErrorLocation
+    use fastxml::ErrorLocation;
+
+    let input = "line1\nline2\nline3";
+    let loc = ErrorLocation::from_offset_with_input(6, input); // 'l' of 'line2'
+
+    assert_eq!(loc.line, Some(2));
+    assert_eq!(loc.column, Some(1));
+    assert_eq!(loc.byte_offset, Some(6));
+}
+
+#[test]
+fn test_error_location_with_xpath() {
+    use fastxml::ErrorLocation;
+
+    let loc = ErrorLocation::from_offset(100).with_xpath("/root/item[1]".to_string());
+
+    assert_eq!(loc.byte_offset, Some(100));
+    assert_eq!(loc.xpath, Some("/root/item[1]".to_string()));
+    assert!(loc.to_string().contains("/root/item[1]"));
+}
+
+#[test]
+fn test_error_location_display() {
+    use fastxml::ErrorLocation;
+
+    // With line/column
+    let loc = ErrorLocation::from_offset_with_input(6, "line1\nline2");
+    assert!(loc.to_string().contains("line 2:1"));
+
+    // With xpath
+    let loc = loc.with_xpath("/root[1]".to_string());
+    assert!(loc.to_string().contains("/root[1]"));
+
+    // Offset only
+    let loc = ErrorLocation::from_offset(42);
+    assert!(loc.to_string().contains("position 42"));
+
+    // From line/column directly
+    let loc = ErrorLocation::from_line_column(10, 5);
+    assert!(loc.to_string().contains("line 10:5"));
+}
+
+#[test]
+fn test_error_location_structured_error_integration() {
+    use fastxml::{ErrorLocation, StructuredError, ValidationErrorType};
+
+    // Create StructuredError with location
+    let loc = ErrorLocation::from_line_column(42, 10).with_xpath("/root/item[3]".to_string());
+
+    let err =
+        StructuredError::new("test error", ValidationErrorType::InvalidContent).with_location(&loc);
+
+    assert_eq!(err.line, Some(42));
+    assert_eq!(err.column, Some(10));
+    assert_eq!(err.element_path, Some("/root/item[3]".to_string()));
+
+    // Extract location from StructuredError
+    let extracted: ErrorLocation = (&err).into();
+    assert_eq!(extracted.line, Some(42));
+    assert_eq!(extracted.column, Some(10));
+    assert_eq!(extracted.xpath, Some("/root/item[3]".to_string()));
+}
+
+#[test]
+fn test_xml_parse_error_with_location() {
+    use fastxml::transform::{StreamTransformer, TransformError};
+
+    // Invalid XML - unclosed tag
+    let xml = "<root><item";
+
+    let result = StreamTransformer::new(xml).on("//item", |_| {}).run();
+
+    match result {
+        Err(TransformError::XmlParseWithLocation { message, location }) => {
+            assert!(!message.is_empty());
+            assert!(location.byte_offset.is_some());
+            assert!(location.line.is_some());
+            assert!(location.column.is_some());
+        }
+        _ => panic!("Expected XmlParseWithLocation error"),
+    }
+}
+
+#[test]
+fn test_error_location_multiline_input() {
+    use fastxml::transform::ErrorLocation;
+
+    let input = "<?xml version=\"1.0\"?>\n<root>\n  <item>text</item>\n</root>";
+    // Position after "<root>\n  " (offset = 21 + 1 + 6 + 1 + 2 = 31)
+    let offset = 30; // Start of "<item>"
+
+    let loc = ErrorLocation::from_offset_with_input(offset, input);
+
+    assert_eq!(loc.line, Some(3)); // Third line
+    assert!(loc.column.is_some());
+}

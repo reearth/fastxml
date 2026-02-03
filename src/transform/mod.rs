@@ -104,7 +104,7 @@ use std::io::Write;
 
 pub use context::{AncestorInfo, TransformContext};
 pub use editable::{EditableNode, EditableNodeBuilder, EditableNodeRef, Modification, NewNode};
-pub use error::{TransformError, TransformResult};
+pub use error::{ErrorLocation, TransformError, TransformResult};
 pub use span::ByteSpan;
 pub use xpath_analyze::{
     AttributePredicate, NotStreamableReason, PositionPredicate, StreamableStep, StreamableXPath,

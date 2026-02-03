@@ -11,8 +11,25 @@ use crate::serialize::{SerializeOptions, node_to_xml_string_with_options};
 use crate::xpath::parser::ComparisonOp;
 
 use super::editable::{EditableNode, EditableNodeBuilder};
-use super::error::{TransformError, TransformResult};
+use super::error::{ErrorLocation, TransformError, TransformResult};
 use super::xpath_analyze::{AttributePredicate, PositionPredicate, StreamableXPath};
+
+/// Creates an XML parse error with location information.
+fn xml_parse_error_with_location(
+    message: impl Into<String>,
+    byte_offset: usize,
+    input: &str,
+    xpath: Option<String>,
+) -> TransformError {
+    let mut location = ErrorLocation::from_offset_with_input(byte_offset, input);
+    if let Some(path) = xpath {
+        location = location.with_xpath(path);
+    }
+    TransformError::XmlParseWithLocation {
+        message: message.into(),
+        location,
+    }
+}
 
 /// Tracks the current element path for XPath matching.
 pub struct PathTracker {
@@ -91,6 +108,41 @@ impl PathTracker {
             }
         }
         0
+    }
+
+    /// Returns an XPath-like string representing the current path.
+    ///
+    /// The path includes position predicates for elements with siblings of the same name.
+    /// Example: `/root/items[1]/item[3]`
+    pub fn current_xpath(&self) -> String {
+        if self.path.is_empty() {
+            return String::new();
+        }
+
+        let mut parts = Vec::new();
+        for (i, info) in self.path.iter().enumerate() {
+            let qname = match &info.prefix {
+                Some(p) => format!("{}:{}", p, info.name),
+                None => info.name.clone(),
+            };
+
+            // Get position for this element
+            let position = if i == 0 {
+                1 // Root is always position 1
+            } else {
+                *self
+                    .position_counters
+                    .get(i)
+                    .and_then(|m| m.get(&qname))
+                    .unwrap_or(&1)
+            };
+
+            // Add position predicate only if there could be siblings
+            // For simplicity, always add position predicate
+            parts.push(format!("{}[{}]", qname, position));
+        }
+
+        format!("/{}", parts.join("/"))
     }
 
     /// Creates a TransformContext from the current state.
@@ -393,11 +445,13 @@ where
             }
 
             Err(e) => {
-                return Err(TransformError::XmlParse(format!(
-                    "Error at position {}: {:?}",
-                    reader.buffer_position(),
-                    e
-                )));
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
             }
         }
 
@@ -670,11 +724,13 @@ where
             }
 
             Err(e) => {
-                return Err(TransformError::XmlParse(format!(
-                    "Error at position {}: {:?}",
-                    reader.buffer_position(),
-                    e
-                )));
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
             }
         }
 
@@ -791,11 +847,13 @@ where
             Ok(_) => {}
 
             Err(e) => {
-                return Err(TransformError::XmlParse(format!(
-                    "Error at position {}: {:?}",
-                    reader.buffer_position(),
-                    e
-                )));
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
             }
         }
 
@@ -918,11 +976,13 @@ where
             Ok(_) => {}
 
             Err(e) => {
-                return Err(TransformError::XmlParse(format!(
-                    "Error at position {}: {:?}",
-                    reader.buffer_position(),
-                    e
-                )));
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
             }
         }
 

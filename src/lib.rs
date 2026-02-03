@@ -148,7 +148,7 @@ pub mod transform;
 pub mod xpath;
 
 // Re-export error types
-pub use error::{Error, ErrorLevel, Result, StructuredError, ValidationErrorType};
+pub use error::{Error, ErrorLevel, ErrorLocation, Result, StructuredError, ValidationErrorType};
 
 // Re-export document types
 pub use document::{DocumentBuilder, XmlDocument};

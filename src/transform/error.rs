@@ -4,6 +4,9 @@ use std::io;
 
 use super::xpath_analyze::NotStreamableReason;
 
+// Re-export ErrorLocation from the main error module
+pub use crate::error::ErrorLocation;
+
 /// Errors that can occur during XML transformation.
 #[derive(Debug, thiserror::Error)]
 pub enum TransformError {
@@ -14,6 +17,15 @@ pub enum TransformError {
     /// XML parsing error during transformation
     #[error("xml parse error: {0}")]
     XmlParse(String),
+
+    /// XML parsing error with location information
+    #[error("xml parse error: {message} ({location})")]
+    XmlParseWithLocation {
+        /// Error message
+        message: String,
+        /// Error location
+        location: ErrorLocation,
+    },
 
     /// IO error during output
     #[error("io error: {0}")]
