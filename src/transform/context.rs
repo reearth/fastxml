@@ -88,7 +88,7 @@ impl TransformContext {
         self.depth
     }
 
-    /// Generates a path-based ID (e.g., "root/items[2]/item[3]").
+    /// Generates a path-based ID (e.g., `root/items[2]/item[3]`).
     ///
     /// Position indices are only included when position > 1.
     ///
