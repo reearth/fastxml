@@ -48,7 +48,7 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/l
 
 ```toml
 [dependencies]
-fastxml = "0.3"
+fastxml = "0.4"
 ```
 
 ### Cargo Features
@@ -160,6 +160,92 @@ StreamTransformer::new(xml)
         ids.push(node.get_attribute("id").unwrap_or_default());
     })
     .for_each()?;
+```
+
+#### Auto-detect Namespaces
+
+Extract namespace declarations from the root element without DOM parsing:
+
+```rust
+let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
+
+StreamTransformer::new(xml)
+    .with_root_namespaces()?  // Auto-registers namespaces from root element
+    .on("//gml:point", |node| node.set_attribute("found", "true"))
+    .run()?;
+```
+
+#### Namespace URI Matching
+
+Match elements by namespace URI instead of prefix (useful when different prefixes map to the same URI):
+
+```rust
+// Matches both gml:feature and g:feature if they have the same namespace URI
+StreamTransformer::new(xml)
+    .namespace("gml", "http://www.opengis.net/gml")
+    .on("//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']", |node| {
+        // Matches any prefix that maps to this URI
+    })
+    .run()?;
+```
+
+#### Parent Context Access
+
+Access ancestor elements' information during streaming transformation:
+
+```rust
+StreamTransformer::new(xml)
+    .on_with_context("//item", |node, ctx| {
+        // Get parent element info
+        if let Some(parent) = ctx.parent() {
+            node.set_attribute("parent_name", &parent.name);
+        }
+
+        // Get path-based ID (e.g., "root/items/item[2]")
+        let path = ctx.path_id();
+        node.set_attribute("path", &format!("{}/item[{}]", path, ctx.position()));
+    })
+    .run()?;
+```
+
+#### XPath Streamability Check
+
+Check if an XPath can be processed in a single streaming pass:
+
+```rust
+use fastxml::transform::{is_streamable, analyze_xpath_str, XPathAnalysis};
+
+// Quick check
+if is_streamable("//item[@id='1']") {
+    println!("Single-pass streaming OK");
+}
+
+// Detailed analysis
+match analyze_xpath_str("//item[last()]")? {
+    XPathAnalysis::Streamable(_) => println!("Streamable"),
+    XPathAnalysis::NotStreamable(reason) => {
+        println!("Not streamable: {}", reason);
+        // Output: "Not streamable: uses last() function which requires knowing total count"
+    }
+}
+```
+
+#### Fallback Control
+
+By default, non-streamable XPath expressions return an error. Enable fallback for two-pass processing:
+
+```rust
+// Default: error on non-streamable XPath
+let result = StreamTransformer::new(xml)
+    .on("//item[last()]", |_| {})
+    .run();
+// => Err(NotStreamable { ... })
+
+// Enable fallback (loads entire document into memory)
+let result = StreamTransformer::new(xml)
+    .allow_fallback()
+    .on("//item[last()]", |_| {})
+    .run()?;
 ```
 
 ## Async Schema Resolution

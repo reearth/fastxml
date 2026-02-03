@@ -2,6 +2,8 @@
 
 use std::io;
 
+use super::xpath_analyze::NotStreamableReason;
+
 /// Errors that can occur during XML transformation.
 #[derive(Debug, thiserror::Error)]
 pub enum TransformError {
@@ -28,6 +30,17 @@ pub enum TransformError {
     /// Node modification error
     #[error("modification error: {0}")]
     Modification(String),
+
+    /// XPath is not streamable and fallback is disabled
+    #[error(
+        "xpath '{xpath}' is not streamable: {reason}. Use .allow_fallback() to enable two-pass processing, or use a streamable XPath pattern."
+    )]
+    NotStreamable {
+        /// The XPath expression
+        xpath: String,
+        /// The reason why it's not streamable
+        reason: NotStreamableReason,
+    },
 
     /// General error from the crate
     #[error(transparent)]

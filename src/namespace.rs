@@ -149,6 +149,77 @@ pub fn join_qname(prefix: Option<&str>, local_name: &str) -> String {
     }
 }
 
+/// Extracts namespace declarations from the first element without full DOM parsing.
+///
+/// This is a lightweight operation that reads only the first element's attributes
+/// to extract xmlns declarations. Useful for registering namespaces before
+/// streaming transformation.
+///
+/// # Returns
+///
+/// A map of prefix -> URI. Empty string key represents the default namespace.
+///
+/// # Example
+///
+/// ```rust
+/// use fastxml::namespace::extract_root_namespaces;
+///
+/// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns="http://example.com">
+///     <gml:point/>
+/// </root>"#;
+///
+/// let namespaces = extract_root_namespaces(xml).unwrap();
+/// assert_eq!(namespaces.get("gml"), Some(&"http://www.opengis.net/gml".to_string()));
+/// assert_eq!(namespaces.get(""), Some(&"http://example.com".to_string()));
+/// ```
+pub fn extract_root_namespaces(xml: &str) -> Result<HashMap<String, String>, crate::error::Error> {
+    use quick_xml::Reader;
+    use quick_xml::events::Event;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let mut namespaces = HashMap::new();
+                for attr in e.attributes().filter_map(|a| a.ok()) {
+                    let key = std::str::from_utf8(attr.key.as_ref()).map_err(|e| {
+                        crate::error::Error::Parse(crate::parse_error::ParseError::Generic {
+                            message: e.to_string(),
+                        })
+                    })?;
+                    let value = attr.unescape_value().map_err(|e| {
+                        crate::error::Error::Parse(crate::parse_error::ParseError::Generic {
+                            message: e.to_string(),
+                        })
+                    })?;
+
+                    if let Some(prefix) = key.strip_prefix("xmlns:") {
+                        namespaces.insert(prefix.to_string(), value.to_string());
+                    } else if key == "xmlns" {
+                        namespaces.insert(String::new(), value.to_string());
+                    }
+                }
+                return Ok(namespaces);
+            }
+            Ok(Event::Eof) => return Ok(HashMap::new()),
+            Ok(_) => {
+                buf.clear();
+                continue;
+            }
+            Err(e) => {
+                return Err(crate::error::Error::Parse(
+                    crate::parse_error::ParseError::Generic {
+                        message: e.to_string(),
+                    },
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +266,58 @@ mod tests {
         assert_eq!(join_qname(Some("gml"), "name"), "gml:name");
         assert_eq!(join_qname(None, "Building"), "Building");
         assert_eq!(join_qname(Some(""), "Building"), "Building");
+    }
+
+    #[test]
+    fn test_extract_root_namespaces_with_prefixes() {
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns:uro="http://example.com/uro">
+            <gml:point/>
+        </root>"#;
+
+        let ns = extract_root_namespaces(xml).unwrap();
+        assert_eq!(
+            ns.get("gml"),
+            Some(&"http://www.opengis.net/gml".to_string())
+        );
+        assert_eq!(ns.get("uro"), Some(&"http://example.com/uro".to_string()));
+        assert_eq!(ns.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_root_namespaces_with_default() {
+        let xml = r#"<root xmlns="http://example.com/default" xmlns:ns="http://example.com/ns">
+            <element/>
+        </root>"#;
+
+        let ns = extract_root_namespaces(xml).unwrap();
+        assert_eq!(ns.get(""), Some(&"http://example.com/default".to_string()));
+        assert_eq!(ns.get("ns"), Some(&"http://example.com/ns".to_string()));
+    }
+
+    #[test]
+    fn test_extract_root_namespaces_empty_element() {
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"/>"#;
+
+        let ns = extract_root_namespaces(xml).unwrap();
+        assert_eq!(
+            ns.get("gml"),
+            Some(&"http://www.opengis.net/gml".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_root_namespaces_no_namespaces() {
+        let xml = r#"<root id="1"><element/></root>"#;
+
+        let ns = extract_root_namespaces(xml).unwrap();
+        assert!(ns.is_empty());
+    }
+
+    #[test]
+    fn test_extract_root_namespaces_empty_xml() {
+        let xml = "";
+
+        let ns = extract_root_namespaces(xml).unwrap();
+        assert!(ns.is_empty());
     }
 }

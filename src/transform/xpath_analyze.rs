@@ -31,6 +31,19 @@ pub enum NotStreamableReason {
     NotPathExpr,
 }
 
+impl std::fmt::Display for NotStreamableReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UsesLast => write!(f, "uses last() function which requires knowing total count"),
+            Self::UsesBackwardAxis(axis) => write!(f, "uses backward axis {:?}", axis),
+            Self::UsesContextDependentCount => write!(f, "uses context-dependent count"),
+            Self::ComplexPredicate => write!(f, "uses complex predicate (and/or/not)"),
+            Self::IncompatibleUnion => write!(f, "uses union with incompatible paths"),
+            Self::NotPathExpr => write!(f, "expression is not a path expression"),
+        }
+    }
+}
+
 /// A simplified XPath for streaming matching.
 #[derive(Debug, Clone)]
 pub struct StreamableXPath {
@@ -51,6 +64,8 @@ pub struct StreamableStep {
     pub name: Option<String>,
     /// Namespace prefix to match
     pub prefix: Option<String>,
+    /// Namespace URI to match (from namespace-uri() predicate)
+    pub namespace_uri: Option<String>,
     /// Attribute predicates to check
     pub attribute_predicates: Vec<AttributePredicate>,
     /// Position predicate (if any)
@@ -137,6 +152,7 @@ fn analyze_path(path: &PathExpr) -> XPathAnalysis {
                     descendant_or_self: true,
                     name: None,
                     prefix: None,
+                    namespace_uri: None,
                     attribute_predicates: Vec::new(),
                     position_predicate: None,
                 });
@@ -186,7 +202,7 @@ fn analyze_step(
     step: &Step,
     descendant_or_self: bool,
 ) -> Result<(StreamableStep, Option<usize>), NotStreamableReason> {
-    let (name, prefix) = match &step.node_test {
+    let (mut name, prefix) = match &step.node_test {
         NodeTest::Any => (None, None),
         NodeTest::Name(n) => (Some(n.clone()), None),
         NodeTest::QName { prefix, local } => (Some(local.clone()), Some(prefix.clone())),
@@ -195,6 +211,7 @@ fn analyze_step(
 
     let mut attribute_predicates = Vec::new();
     let mut position_predicate = None;
+    let mut namespace_uri = None;
     let mut max_pos: Option<usize> = None;
 
     for pred in &step.predicates {
@@ -206,6 +223,13 @@ fn analyze_step(
                 }
                 position_predicate = Some(pp);
             }
+            PredicateAnalysis::NamespaceUri(uri) => {
+                namespace_uri = Some(uri);
+            }
+            PredicateAnalysis::LocalName(local) => {
+                // local-name() predicate overrides the name from node test
+                name = Some(local);
+            }
             PredicateAnalysis::Ignored => {}
         }
     }
@@ -215,6 +239,7 @@ fn analyze_step(
             descendant_or_self,
             name,
             prefix,
+            namespace_uri,
             attribute_predicates,
             position_predicate,
         },
@@ -225,6 +250,8 @@ fn analyze_step(
 enum PredicateAnalysis {
     Attribute(AttributePredicate),
     Position(PositionPredicate),
+    NamespaceUri(String),
+    LocalName(String),
     Ignored,
 }
 
@@ -274,6 +301,24 @@ fn analyze_predicate(pred: &Predicate) -> Result<PredicateAnalysis, NotStreamabl
                                 Ok(PredicateAnalysis::Ignored)
                             }
                         };
+                    }
+                }
+
+                // Check for namespace-uri() = 'URI'
+                if name == "namespace-uri" && args.is_empty() {
+                    if let Expr::String(uri) = right.as_ref() {
+                        if *op == ComparisonOp::Equal {
+                            return Ok(PredicateAnalysis::NamespaceUri(uri.clone()));
+                        }
+                    }
+                }
+
+                // Check for local-name() = 'name'
+                if name == "local-name" && args.is_empty() {
+                    if let Expr::String(local) = right.as_ref() {
+                        if *op == ComparisonOp::Equal {
+                            return Ok(PredicateAnalysis::LocalName(local.clone()));
+                        }
                     }
                 }
             }
@@ -800,5 +845,52 @@ mod tests {
     fn test_backward_axis_after_descendant() {
         // Even after //, backward axis is not streamable
         assert!(!is_streamable("//item/parent::*"));
+    }
+
+    // =============================================================================
+    // Namespace URI Matching
+    // =============================================================================
+
+    #[test]
+    fn test_namespace_uri_predicate_is_streamable() {
+        assert!(is_streamable("//*[namespace-uri()='http://example.com']"));
+    }
+
+    #[test]
+    fn test_namespace_uri_predicate_captured() {
+        let result = get_streamable("//*[namespace-uri()='http://example.com']").unwrap();
+        let step = result.steps.iter().find(|s| s.descendant_or_self).unwrap();
+        assert_eq!(step.namespace_uri.as_deref(), Some("http://example.com"));
+    }
+
+    #[test]
+    fn test_local_name_predicate_is_streamable() {
+        assert!(is_streamable("//*[local-name()='item']"));
+    }
+
+    #[test]
+    fn test_local_name_predicate_captured() {
+        let result = get_streamable("//*[local-name()='item']").unwrap();
+        let step = result.steps.iter().find(|s| s.descendant_or_self).unwrap();
+        assert_eq!(step.name.as_deref(), Some("item"));
+    }
+
+    #[test]
+    fn test_namespace_uri_and_local_name_combined() {
+        let result =
+            get_streamable("//*[namespace-uri()='http://example.com'][local-name()='item']")
+                .unwrap();
+        let step = result.steps.iter().find(|s| s.descendant_or_self).unwrap();
+        assert_eq!(step.namespace_uri.as_deref(), Some("http://example.com"));
+        assert_eq!(step.name.as_deref(), Some("item"));
+    }
+
+    #[test]
+    fn test_namespace_uri_with_attribute_predicate() {
+        let result = get_streamable("//*[namespace-uri()='http://example.com'][@id='1']").unwrap();
+        let step = result.steps.iter().find(|s| s.descendant_or_self).unwrap();
+        assert_eq!(step.namespace_uri.as_deref(), Some("http://example.com"));
+        assert_eq!(step.attribute_predicates.len(), 1);
+        assert_eq!(step.attribute_predicates[0].name, "id");
     }
 }

@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use crate::document::{DocumentBuilder, XmlDocument};
 use crate::namespace::Namespace;
 use crate::node::{NodeId, NodeType, XmlNode};
+use crate::serialize::{SerializeOptions, node_to_xml_string_with_options};
 
 use super::error::{TransformError, TransformResult};
 
@@ -227,9 +228,112 @@ impl EditableNode {
         &mut self.doc
     }
 
+    // =========================================================================
+    // Serialization API
+    // =========================================================================
+
+    /// Returns the XML string representation of this node.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("item", None, None, vec![("id", "1")], vec![]);
+    /// builder.text("Hello");
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let xml = node.to_xml().unwrap();
+    /// assert!(xml.contains("<item"));
+    /// assert!(xml.contains("Hello"));
+    /// ```
+    pub fn to_xml(&self) -> TransformResult<String> {
+        self.to_xml_with_options(&SerializeOptions::default())
+    }
+
+    /// Returns the XML string with custom serialization options.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// # use fastxml::serialize::SerializeOptions;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let options = SerializeOptions { indent: true, ..Default::default() };
+    /// let xml = node.to_xml_with_options(&options).unwrap();
+    /// ```
+    pub fn to_xml_with_options(&self, options: &SerializeOptions) -> TransformResult<String> {
+        let root = self
+            .doc
+            .get_root_element()
+            .map_err(|e| TransformError::Serialization(e.to_string()))?;
+        node_to_xml_string_with_options(&self.doc, &root, options)
+            .map_err(|e| TransformError::Serialization(e.to_string()))
+    }
+
     /// Returns the root node.
     fn root_node(&self) -> XmlNode {
         self.doc.get_node(self.root_id).expect("root node exists")
+    }
+}
+
+impl std::fmt::Display for EditableNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.to_xml() {
+            Ok(xml) => write!(f, "{}", xml),
+            Err(e) => write!(f, "<!-- Error: {} -->", e),
+        }
+    }
+}
+
+impl TryFrom<&EditableNode> for String {
+    type Error = TransformError;
+
+    /// Converts the node to an XML string.
+    ///
+    /// This is equivalent to calling `node.to_xml()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let xml: String = (&node).try_into().unwrap();
+    /// assert!(xml.contains("<item"));
+    /// ```
+    fn try_from(node: &EditableNode) -> Result<String, Self::Error> {
+        node.to_xml()
+    }
+}
+
+impl TryFrom<EditableNode> for String {
+    type Error = TransformError;
+
+    /// Converts the node to an XML string, consuming the node.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let xml: String = node.try_into().unwrap();
+    /// assert!(xml.contains("<item"));
+    /// ```
+    fn try_from(node: EditableNode) -> Result<String, Self::Error> {
+        node.to_xml()
     }
 }
 
@@ -783,5 +887,55 @@ mod tests {
         let debug = format!("{:?}", element);
         assert!(debug.contains("parent"));
         assert!(debug.contains("child"));
+    }
+
+    // Serialization API tests
+    #[test]
+    fn test_to_xml() {
+        let node = create_test_node();
+        let xml = node.to_xml().unwrap();
+        assert!(xml.contains("<item"));
+        assert!(xml.contains("id="));
+        assert!(xml.contains("Hello"));
+    }
+
+    #[test]
+    fn test_to_xml_with_prefix() {
+        let node = create_prefixed_node();
+        let xml = node.to_xml().unwrap();
+        assert!(xml.contains("ns:item"));
+    }
+
+    #[test]
+    fn test_display_trait() {
+        let node = create_test_node();
+        let display = format!("{}", node);
+        assert!(display.contains("<item"));
+        assert!(display.contains("Hello"));
+    }
+
+    #[test]
+    fn test_to_xml_nested() {
+        let node = create_nested_node();
+        let xml = node.to_xml().unwrap();
+        assert!(xml.contains("<root"));
+        assert!(xml.contains("<child1"));
+        assert!(xml.contains("<child2"));
+    }
+
+    #[test]
+    fn test_try_from_ref() {
+        let node = create_test_node();
+        let xml: String = (&node).try_into().unwrap();
+        assert!(xml.contains("<item"));
+        assert!(xml.contains("Hello"));
+    }
+
+    #[test]
+    fn test_try_from_owned() {
+        let node = create_test_node();
+        let xml: String = node.try_into().unwrap();
+        assert!(xml.contains("<item"));
+        assert!(xml.contains("Hello"));
     }
 }

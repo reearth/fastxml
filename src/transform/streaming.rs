@@ -29,6 +29,8 @@ pub struct ElementInfo {
     pub name: String,
     /// Namespace prefix
     pub prefix: Option<String>,
+    /// Namespace URI (resolved from prefix using registered namespaces)
+    pub namespace_uri: Option<String>,
     /// Attributes (name -> value)
     pub attributes: HashMap<String, String>,
     /// Byte offset where this element starts (position of '<')
@@ -91,6 +93,47 @@ impl PathTracker {
         0
     }
 
+    /// Creates a TransformContext from the current state.
+    ///
+    /// The context includes all ancestors (excluding the current element),
+    /// the current position, and depth.
+    pub fn to_context(&self) -> super::context::TransformContext {
+        use super::context::{AncestorInfo, TransformContext};
+
+        // Build ancestors (all elements except the current one)
+        let ancestors: Vec<AncestorInfo> = self.path[..self.path.len().saturating_sub(1)]
+            .iter()
+            .enumerate()
+            .map(|(i, info)| {
+                // Get position for this ancestor
+                let position = if i == 0 {
+                    1 // Root is always position 1
+                } else {
+                    let qname = match &info.prefix {
+                        Some(p) => format!("{}:{}", p, info.name),
+                        None => info.name.clone(),
+                    };
+                    // Position counter is at the parent's level
+                    *self
+                        .position_counters
+                        .get(i)
+                        .and_then(|m| m.get(&qname))
+                        .unwrap_or(&1)
+                };
+
+                AncestorInfo::new(
+                    info.name.clone(),
+                    info.prefix.clone(),
+                    info.attributes.clone(),
+                    position,
+                    i + 1, // depth is 1-indexed
+                )
+            })
+            .collect();
+
+        TransformContext::new(ancestors, self.current_position(), self.depth())
+    }
+
     /// Checks if the current path matches the streamable XPath.
     pub fn matches(&self, xpath: &StreamableXPath) -> bool {
         if xpath.steps.is_empty() {
@@ -140,8 +183,14 @@ impl PathTracker {
             }
         }
 
-        // Check prefix match
-        if let Some(ref prefix) = step.prefix {
+        // Check namespace URI match (takes precedence over prefix match)
+        if let Some(ref expected_uri) = step.namespace_uri {
+            match &element.namespace_uri {
+                Some(uri) if uri == expected_uri => {}
+                _ => return false,
+            }
+        } else if let Some(ref prefix) = step.prefix {
+            // Check prefix match only if no namespace_uri is specified
             match &element.prefix {
                 Some(p) if p == prefix => {}
                 _ => return false,
@@ -234,7 +283,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
 
                 tracker.push_element(element_info);
 
@@ -255,7 +304,7 @@ where
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos)?;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
 
                 tracker.push_element(element_info);
 
@@ -358,7 +407,11 @@ where
     Ok(transform_count)
 }
 
-fn extract_element_info(e: &BytesStart, start_offset: usize) -> TransformResult<ElementInfo> {
+fn extract_element_info(
+    e: &BytesStart,
+    start_offset: usize,
+    namespaces: &HashMap<String, String>,
+) -> TransformResult<ElementInfo> {
     let name_bytes = e.name();
     let full_name = std::str::from_utf8(name_bytes.as_ref()).map_err(TransformError::Utf8)?;
 
@@ -366,6 +419,15 @@ fn extract_element_info(e: &BytesStart, start_offset: usize) -> TransformResult<
         Some((p, n)) => (Some(p.to_string()), n.to_string()),
         None => (None, full_name.to_string()),
     };
+
+    // Resolve namespace URI from prefix using registered namespaces
+    let namespace_uri = prefix
+        .as_ref()
+        .and_then(|p| namespaces.get(p).cloned())
+        .or_else(|| {
+            // Check for default namespace (empty prefix)
+            namespaces.get("").cloned()
+        });
 
     let mut attributes = HashMap::new();
     for attr in e.attributes().filter_map(|a| a.ok()) {
@@ -379,6 +441,7 @@ fn extract_element_info(e: &BytesStart, start_offset: usize) -> TransformResult<
     Ok(ElementInfo {
         name,
         prefix,
+        namespace_uri,
         attributes,
         start_offset,
     })
@@ -462,6 +525,165 @@ fn serialize_editable<W: Write>(editable: &EditableNode, writer: &mut W) -> Tran
     Ok(())
 }
 
+/// Processes XML with streaming transformation and context.
+pub fn process_streaming_with_context<W, F>(
+    input: &str,
+    xpath: &StreamableXPath,
+    namespaces: &HashMap<String, String>,
+    mut transform_fn: F,
+    writer: &mut W,
+) -> TransformResult<usize>
+where
+    W: Write,
+    F: FnMut(&mut EditableNode, &super::context::TransformContext),
+{
+    let mut reader = Reader::from_str(input);
+    reader.config_mut().trim_text(false);
+
+    let mut tracker = PathTracker::new();
+    let mut subtree_builder: Option<EditableNodeBuilder> = None;
+    let mut prev_written: usize = 0;
+    let mut transform_count: usize = 0;
+    let mut buf = Vec::new();
+
+    // Store context at match start for use when processing complete
+    let mut match_context: Option<super::context::TransformContext> = None;
+
+    loop {
+        let before_pos = reader.buffer_position() as usize;
+
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+
+                tracker.push_element(element_info);
+
+                if let Some(ref mut builder) = subtree_builder {
+                    // Already inside matched subtree, keep buffering
+                    add_start_to_builder(builder, &e, namespaces)?;
+                } else if tracker.matches(xpath) {
+                    // Match starts here!
+                    // 1. Write everything before this point (zero-copy)
+                    writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                    // 2. Capture context at match point
+                    match_context = Some(tracker.to_context());
+
+                    // 3. Start buffering subtree
+                    let mut builder = EditableNodeBuilder::new();
+                    add_start_to_builder(&mut builder, &e, namespaces)?;
+                    subtree_builder = Some(builder);
+                }
+            }
+
+            Ok(Event::Empty(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+
+                tracker.push_element(element_info);
+
+                if let Some(ref mut builder) = subtree_builder {
+                    // Inside matched subtree
+                    add_empty_to_builder(builder, &e, namespaces)?;
+                } else if tracker.matches(xpath) {
+                    // This empty element is a match
+                    writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                    let ctx = tracker.to_context();
+
+                    let mut builder = EditableNodeBuilder::new();
+                    add_empty_to_builder(&mut builder, &e, namespaces)?;
+
+                    // Process immediately since it's complete
+                    let mut editable = builder.build()?;
+                    transform_fn(&mut editable, &ctx);
+                    transform_count += 1;
+
+                    if !editable.is_removed() {
+                        serialize_editable(&editable, writer)?;
+                    }
+
+                    prev_written = after_pos;
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::End(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+
+                if let Some(mut builder) = subtree_builder.take() {
+                    add_end_to_builder(&mut builder, &e)?;
+
+                    if builder.is_complete() {
+                        // Subtree complete, process it
+                        let mut editable = builder.build()?;
+                        let ctx = match_context.take().unwrap_or_else(|| tracker.to_context());
+                        transform_fn(&mut editable, &ctx);
+                        transform_count += 1;
+
+                        if !editable.is_removed() {
+                            serialize_editable(&editable, writer)?;
+                        }
+
+                        prev_written = after_pos;
+                    } else {
+                        // Not complete yet, put back
+                        subtree_builder = Some(builder);
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::Text(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = e
+                        .unescape()
+                        .map_err(|err| TransformError::XmlParse(err.to_string()))?;
+                    builder.text(&text);
+                }
+            }
+
+            Ok(Event::CData(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                    builder.cdata(text);
+                }
+            }
+
+            Ok(Event::Comment(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                    builder.comment(text);
+                }
+            }
+
+            Ok(Event::Eof) => {
+                // Write remaining (zero-copy)
+                writer.write_all(&input.as_bytes()[prev_written..])?;
+                break;
+            }
+
+            Ok(_) => {
+                // PI, Decl, DocType - pass through (handled by writing remaining)
+            }
+
+            Err(e) => {
+                return Err(TransformError::XmlParse(format!(
+                    "Error at position {}: {:?}",
+                    reader.buffer_position(),
+                    e
+                )));
+            }
+        }
+
+        buf.clear();
+    }
+
+    Ok(transform_count)
+}
+
 /// Processes XML with streaming iteration (no transformation output).
 pub fn process_for_each<F>(
     input: &str,
@@ -485,7 +707,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
 
                 tracker.push_element(element_info);
 
@@ -501,7 +723,7 @@ where
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
 
                 tracker.push_element(element_info);
 
@@ -529,6 +751,133 @@ where
                         // Subtree complete, call callback
                         let mut editable = builder.build()?;
                         callback(&mut editable);
+                        match_count += 1;
+                    } else {
+                        // Not complete yet, put back
+                        subtree_builder = Some(builder);
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::Text(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = e
+                        .unescape()
+                        .map_err(|err| TransformError::XmlParse(err.to_string()))?;
+                    builder.text(&text);
+                }
+            }
+
+            Ok(Event::CData(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                    builder.cdata(text);
+                }
+            }
+
+            Ok(Event::Comment(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                    builder.comment(text);
+                }
+            }
+
+            Ok(Event::Eof) => {
+                break;
+            }
+
+            Ok(_) => {}
+
+            Err(e) => {
+                return Err(TransformError::XmlParse(format!(
+                    "Error at position {}: {:?}",
+                    reader.buffer_position(),
+                    e
+                )));
+            }
+        }
+
+        buf.clear();
+    }
+
+    Ok(match_count)
+}
+
+/// Processes XML with streaming iteration and context (no transformation output).
+pub fn process_for_each_with_context<F>(
+    input: &str,
+    xpath: &StreamableXPath,
+    namespaces: &HashMap<String, String>,
+    mut callback: F,
+) -> TransformResult<usize>
+where
+    F: FnMut(&mut EditableNode, &super::context::TransformContext),
+{
+    let mut reader = Reader::from_str(input);
+    reader.config_mut().trim_text(false);
+
+    let mut tracker = PathTracker::new();
+    let mut subtree_builder: Option<EditableNodeBuilder> = None;
+    let mut match_count: usize = 0;
+    let mut buf = Vec::new();
+
+    // Store context at match start for use when processing complete
+    let mut match_context: Option<super::context::TransformContext> = None;
+
+    loop {
+        let before_pos = reader.buffer_position() as usize;
+
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+
+                tracker.push_element(element_info);
+
+                if let Some(ref mut builder) = subtree_builder {
+                    // Already inside matched subtree, keep buffering
+                    add_start_to_builder(builder, &e, namespaces)?;
+                } else if tracker.matches(xpath) {
+                    // Match starts here, capture context
+                    match_context = Some(tracker.to_context());
+                    let mut builder = EditableNodeBuilder::new();
+                    add_start_to_builder(&mut builder, &e, namespaces)?;
+                    subtree_builder = Some(builder);
+                }
+            }
+
+            Ok(Event::Empty(e)) => {
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+
+                tracker.push_element(element_info);
+
+                if let Some(ref mut builder) = subtree_builder {
+                    // Inside matched subtree
+                    add_empty_to_builder(builder, &e, namespaces)?;
+                } else if tracker.matches(xpath) {
+                    // This empty element is a match
+                    let ctx = tracker.to_context();
+                    let mut builder = EditableNodeBuilder::new();
+                    add_empty_to_builder(&mut builder, &e, namespaces)?;
+
+                    let mut editable = builder.build()?;
+                    callback(&mut editable, &ctx);
+                    match_count += 1;
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::End(e)) => {
+                if let Some(mut builder) = subtree_builder.take() {
+                    add_end_to_builder(&mut builder, &e)?;
+
+                    if builder.is_complete() {
+                        // Subtree complete, call callback
+                        let mut editable = builder.build()?;
+                        let ctx = match_context.take().unwrap_or_else(|| tracker.to_context());
+                        callback(&mut editable, &ctx);
                         match_count += 1;
                     } else {
                         // Not complete yet, put back

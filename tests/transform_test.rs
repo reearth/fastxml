@@ -613,3 +613,410 @@ mod edge_cases {
         assert_eq!(prefixed_id, None);
     }
 }
+
+// =============================================================================
+// New Features Tests (v0.4.0)
+// =============================================================================
+
+use fastxml::transform::{
+    XPathAnalysis, analyze_xpath_str, get_not_streamable_reason, is_streamable,
+};
+
+// -------------------------------------------------------------------------
+// Namespace Auto-Registration Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_with_root_namespaces() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+            <gml:point id="1"/>
+        </root>"#;
+
+    let result = StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |node| {
+            node.set_attribute("found", "true");
+        })
+        .run()
+        .unwrap()
+        .to_string()
+        .unwrap();
+
+    assert!(result.contains(r#"found="true""#));
+}
+
+#[test]
+fn test_with_root_namespaces_multiple() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns:uro="http://example.com/uro">
+            <gml:point/><uro:item/>
+        </root>"#;
+
+    let mut found_gml = false;
+    let mut found_uro = false;
+
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |_| found_gml = true)
+        .on("//uro:item", |_| found_uro = true)
+        .for_each()
+        .unwrap();
+
+    assert!(found_gml);
+    assert!(found_uro);
+}
+
+// -------------------------------------------------------------------------
+// Namespace URI Matching Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_namespace_uri_matching() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
+            <gml:feature id="1">Test</gml:feature>
+        </root>"#;
+
+    let result = StreamTransformer::new(xml)
+        .namespace("gml", "http://www.opengis.net/gml")
+        .on(
+            "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
+            |node| {
+                node.set_attribute("matched", "true");
+            },
+        )
+        .run()
+        .unwrap()
+        .to_string()
+        .unwrap();
+
+    assert!(result.contains(r#"matched="true""#));
+}
+
+#[test]
+fn test_namespace_uri_matching_different_prefix() {
+    // Test that namespace-uri() matches elements with different prefixes but same URI
+    let xml = r#"<root xmlns:g="http://www.opengis.net/gml">
+            <g:feature id="1">Test</g:feature>
+        </root>"#;
+
+    let result = StreamTransformer::new(xml)
+        .namespace("g", "http://www.opengis.net/gml")
+        .on(
+            "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
+            |node| {
+                node.set_attribute("matched", "true");
+            },
+        )
+        .run()
+        .unwrap()
+        .to_string()
+        .unwrap();
+
+    // Should match even though the prefix is 'g' instead of 'gml'
+    assert!(result.contains(r#"matched="true""#));
+}
+
+#[test]
+fn test_namespace_uri_no_match_wrong_uri() {
+    let xml = r#"<root xmlns:gml="http://different.uri.com">
+            <gml:feature id="1">Test</gml:feature>
+        </root>"#;
+
+    let mut matched = false;
+
+    StreamTransformer::new(xml)
+        .namespace("gml", "http://different.uri.com")
+        .on(
+            "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
+            |_| {
+                matched = true;
+            },
+        )
+        .for_each()
+        .unwrap();
+
+    // Should NOT match because the URI is different
+    assert!(!matched);
+}
+
+#[test]
+fn test_local_name_only_matching() {
+    let xml = r#"<root><item id="1">A</item><ns:item xmlns:ns="http://example.com" id="2">B</ns:item></root>"#;
+
+    let mut matched_ids = Vec::new();
+
+    StreamTransformer::new(xml)
+        .namespace("ns", "http://example.com")
+        .on("//*[local-name()='item']", |node| {
+            if let Some(id) = node.get_attribute("id") {
+                matched_ids.push(id);
+            }
+        })
+        .for_each()
+        .unwrap();
+
+    // Should match both items regardless of namespace
+    assert_eq!(matched_ids, vec!["1", "2"]);
+}
+
+// -------------------------------------------------------------------------
+// Parent Context Access Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_on_with_context_parent() {
+    let xml = r#"<root><items id="list1"><item>A</item><item>B</item></items></root>"#;
+
+    let mut parent_names = Vec::new();
+    let mut parent_ids = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on_with_context("//item", |_node, ctx| {
+            if let Some(parent) = ctx.parent() {
+                parent_names.push(parent.name.clone());
+                if let Some(id) = parent.attributes.get("id") {
+                    parent_ids.push(id.clone());
+                }
+            }
+        })
+        .for_each()
+        .unwrap();
+
+    assert_eq!(parent_names, vec!["items", "items"]);
+    assert_eq!(parent_ids, vec!["list1", "list1"]);
+}
+
+#[test]
+fn test_on_with_context_position() {
+    let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
+
+    let mut positions = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on_with_context("//item", |_node, ctx| {
+            positions.push(ctx.position());
+        })
+        .for_each()
+        .unwrap();
+
+    assert_eq!(positions, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_on_with_context_depth() {
+    let xml = r#"<root><level1><level2><target/></level2></level1></root>"#;
+
+    let mut depths = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on_with_context("//target", |_node, ctx| {
+            depths.push(ctx.depth());
+        })
+        .for_each()
+        .unwrap();
+
+    // root=1, level1=2, level2=3, target=4
+    assert_eq!(depths, vec![4]);
+}
+
+#[test]
+fn test_on_with_context_ancestors() {
+    let xml = r#"<root><a><b><target/></b></a></root>"#;
+
+    let mut ancestor_names = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on_with_context("//target", |_node, ctx| {
+            ancestor_names = ctx.ancestors().iter().map(|a| a.name.clone()).collect();
+        })
+        .for_each()
+        .unwrap();
+
+    assert_eq!(ancestor_names, vec!["root", "a", "b"]);
+}
+
+#[test]
+fn test_on_with_context_path_id() {
+    let xml = r#"<root><items><item/><item/></items><items><item/></items></root>"#;
+
+    let mut paths = Vec::new();
+
+    StreamTransformer::new(xml)
+        .on_with_context("//item", |_node, ctx| {
+            paths.push(ctx.path_id());
+        })
+        .for_each()
+        .unwrap();
+
+    // First items group: position 1
+    // Second items group: position 2
+    assert_eq!(paths, vec!["root/items", "root/items", "root/items[2]"]);
+}
+
+#[test]
+fn test_on_with_context_transform() {
+    let xml = r#"<root><items id="list1"><item/><item/></items></root>"#;
+
+    let result = StreamTransformer::new(xml)
+        .on_with_context("//item", |node, ctx| {
+            let path = ctx.path_id();
+            let pos = ctx.position();
+            node.set_attribute("path", &format!("{}/item[{}]", path, pos));
+
+            if let Some(parent_id) = ctx.parent_attribute("id") {
+                node.set_attribute("parent_id", parent_id);
+            }
+        })
+        .run()
+        .unwrap()
+        .to_string()
+        .unwrap();
+
+    assert!(result.contains(r#"path="root/items/item[1]""#));
+    assert!(result.contains(r#"path="root/items/item[2]""#));
+    assert!(result.contains(r#"parent_id="list1""#));
+}
+
+// -------------------------------------------------------------------------
+// XPath Streamability Check Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_is_streamable_true() {
+    assert!(is_streamable("//item[@id='1']"));
+    assert!(is_streamable("/root/child"));
+    assert!(is_streamable("//item[position()<=10]"));
+}
+
+#[test]
+fn test_is_streamable_false() {
+    assert!(!is_streamable("//item[last()]"));
+    assert!(!is_streamable("//item/parent::*"));
+    assert!(!is_streamable("//a | //b"));
+}
+
+#[test]
+fn test_analyze_xpath_str_streamable() {
+    let result = analyze_xpath_str("//item[@id='1']").unwrap();
+    assert!(matches!(result, XPathAnalysis::Streamable(_)));
+}
+
+#[test]
+fn test_analyze_xpath_str_not_streamable() {
+    let result = analyze_xpath_str("//item[last()]").unwrap();
+    assert!(matches!(result, XPathAnalysis::NotStreamable(_)));
+}
+
+#[test]
+fn test_get_not_streamable_reason_last() {
+    let reason = get_not_streamable_reason("//item[last()]").unwrap();
+    // Check that the reason is properly formatted
+    let reason_str = format!("{}", reason);
+    assert!(reason_str.contains("last()"));
+}
+
+#[test]
+fn test_get_not_streamable_reason_backward_axis() {
+    let reason = get_not_streamable_reason("//item/parent::*").unwrap();
+    let reason_str = format!("{}", reason);
+    assert!(reason_str.contains("backward axis"));
+}
+
+// -------------------------------------------------------------------------
+// Fallback Control Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_fallback_disabled_by_default() {
+    let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
+
+    let result = StreamTransformer::new(xml)
+        .on("//item[last()]", |_| {})
+        .run();
+
+    // Should fail because last() is not streamable and fallback is disabled
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_str = format!("{}", err);
+    assert!(err_str.contains("not streamable") || err_str.contains("NotStreamable"));
+}
+
+#[test]
+fn test_allow_fallback() {
+    let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
+
+    let result = StreamTransformer::new(xml)
+        .allow_fallback()
+        .on("//item[last()]", |node| {
+            node.set_attribute("last", "true");
+        })
+        .run()
+        .unwrap()
+        .to_string()
+        .unwrap();
+
+    // Should succeed with fallback enabled
+    assert!(result.contains(r#"last="true""#));
+    // Only the last item should have the attribute
+    assert_eq!(result.matches(r#"last="true""#).count(), 1);
+}
+
+#[test]
+fn test_fallback_mode_enum() {
+    use fastxml::transform::FallbackMode;
+
+    let xml = "<root><item>test</item></root>";
+
+    // Test with Disabled mode
+    let result_disabled = StreamTransformer::new(xml)
+        .fallback_mode(FallbackMode::Disabled)
+        .on("//item[last()]", |_| {})
+        .run();
+    assert!(result_disabled.is_err());
+
+    // Test with Enabled mode
+    let result_enabled = StreamTransformer::new(xml)
+        .fallback_mode(FallbackMode::Enabled)
+        .on("//item[last()]", |_| {})
+        .run();
+    assert!(result_enabled.is_ok());
+}
+
+// -------------------------------------------------------------------------
+// EditableNode::to_xml() Tests
+// -------------------------------------------------------------------------
+
+#[test]
+fn test_editable_node_to_xml() {
+    let xml = r#"<root><item id="1">text</item></root>"#;
+
+    let mut node_xml = String::new();
+
+    StreamTransformer::new(xml)
+        .on("//item", |node| {
+            node_xml = node.to_xml().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    assert!(node_xml.contains("<item"));
+    assert!(node_xml.contains("id=\"1\"") || node_xml.contains(r#"id="1""#));
+    assert!(node_xml.contains("text"));
+}
+
+#[test]
+fn test_editable_node_display() {
+    let xml = r#"<root><item/></root>"#;
+
+    let mut displayed = String::new();
+
+    StreamTransformer::new(xml)
+        .on("//item", |node| {
+            displayed = format!("{}", node);
+        })
+        .for_each()
+        .unwrap();
+
+    assert!(displayed.contains("<item"));
+}
