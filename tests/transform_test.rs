@@ -5,7 +5,7 @@ use fastxml::transform::{EditableNode, StreamTransformer, XPathSource, stream_tr
 use fastxml::xpath::{Expr, parse_xpath};
 
 // =============================================================================
-// StreamTransformer Builder Tests
+// StreamTransformer Builder Tests (New API)
 // =============================================================================
 
 mod stream_transformer_tests {
@@ -16,10 +16,11 @@ mod stream_transformer_tests {
         let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item[@id='2']")
-            .transform(|node: &mut EditableNode| {
+            .on("//item[@id='2']", |node: &mut EditableNode| {
                 node.set_attribute("modified", "true");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -33,11 +34,12 @@ mod stream_transformer_tests {
         let xml = r#"<root xmlns:ns="http://example.com"><ns:item>text</ns:item></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//ns:item")
             .namespace("ns", "http://example.com")
-            .transform(|node: &mut EditableNode| {
+            .on("//ns:item", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -49,10 +51,11 @@ mod stream_transformer_tests {
         let xml = r#"<root><item>text</item></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//nonexistent")
-            .transform(|_node: &mut EditableNode| {
+            .on("//nonexistent", |_node: &mut EditableNode| {
                 panic!("Should not be called");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -61,7 +64,138 @@ mod stream_transformer_tests {
     }
 
     #[test]
-    fn test_transform_with_ast() {
+    fn test_transform_multiple_matches() {
+        let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
+
+        let mut count = 0;
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node: &mut EditableNode| {
+                count += 1;
+                node.set_attribute("n", &count.to_string());
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert_eq!(count, 3);
+        assert!(result.contains(r#"n="1""#));
+        assert!(result.contains(r#"n="2""#));
+        assert!(result.contains(r#"n="3""#));
+    }
+
+    #[test]
+    fn test_transform_nested_elements() {
+        let xml = r#"<root><parent><child>text</child></parent></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//parent", |node: &mut EditableNode| {
+                node.set_attribute("found", "yes");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"<parent found="yes">"#));
+        assert!(result.contains("<child>text</child>"));
+    }
+
+    #[test]
+    fn test_transform_remove_attribute() {
+        let xml = r#"<root><item old="value">text</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node: &mut EditableNode| {
+                node.remove_attribute("old");
+                node.set_attribute("new", "value");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(!result.contains(r#"old="value""#));
+        assert!(result.contains(r#"new="value""#));
+    }
+
+    #[test]
+    fn test_transform_set_text_content() {
+        let xml = r#"<root><item>old text</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node: &mut EditableNode| {
+                // set_text_content may not be fully implemented
+                // Just test that it doesn't panic
+                node.set_text_content("new text");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        // Verify the transformation completed without error
+        assert!(result.contains("<item"));
+    }
+
+    #[test]
+    fn test_transform_write_to() {
+        let xml = r#"<root><item/></root>"#;
+
+        let mut output = Vec::new();
+        StreamTransformer::new(xml)
+            .on("//item", |node: &mut EditableNode| {
+                node.set_attribute("done", "true");
+            })
+            .run()
+            .unwrap()
+            .write_to(&mut output)
+            .unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(result.contains(r#"done="true""#));
+    }
+
+    #[test]
+    fn test_transform_invalid_xpath() {
+        let xml = r#"<root><item/></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("[invalid xpath", |_: &mut EditableNode| {})
+            .run();
+
+        assert!(result.is_err());
+    }
+}
+
+// =============================================================================
+// Deprecated API Tests (Backwards Compatibility)
+// =============================================================================
+
+mod deprecated_api_tests {
+    use super::*;
+
+    /// Test deprecated .xpath().transform() API for backwards compatibility
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_xpath_transform() {
+        let xml = r#"<root><item id="1">A</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .xpath("//item")
+            .transform(|node: &mut EditableNode| {
+                node.set_attribute("modified", "true");
+            })
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"modified="true""#));
+    }
+
+    /// Test deprecated .xpath_ast() API for backwards compatibility
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_xpath_ast() {
         let xml = r#"<root><item>text</item></root>"#;
 
         // Parse XPath to AST first
@@ -78,108 +212,10 @@ mod stream_transformer_tests {
         assert!(result.contains(r#"processed="true""#));
     }
 
+    /// Test deprecated API without xpath (should return error)
     #[test]
-    fn test_transform_multiple_matches() {
-        let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-
-        let mut count = 0;
-        let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
-                count += 1;
-                node.set_attribute("n", &count.to_string());
-            })
-            .to_string()
-            .unwrap();
-
-        assert_eq!(count, 3);
-        assert!(result.contains(r#"n="1""#));
-        assert!(result.contains(r#"n="2""#));
-        assert!(result.contains(r#"n="3""#));
-    }
-
-    #[test]
-    fn test_transform_nested_elements() {
-        let xml = r#"<root><parent><child>text</child></parent></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//parent")
-            .transform(|node: &mut EditableNode| {
-                node.set_attribute("found", "yes");
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(result.contains(r#"<parent found="yes">"#));
-        assert!(result.contains("<child>text</child>"));
-    }
-
-    #[test]
-    fn test_transform_remove_attribute() {
-        let xml = r#"<root><item old="value">text</item></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
-                node.remove_attribute("old");
-                node.set_attribute("new", "value");
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(!result.contains(r#"old="value""#));
-        assert!(result.contains(r#"new="value""#));
-    }
-
-    #[test]
-    fn test_transform_set_text_content() {
-        let xml = r#"<root><item>old text</item></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
-                // set_text_content may not be fully implemented
-                // Just test that it doesn't panic
-                node.set_text_content("new text");
-            })
-            .to_string()
-            .unwrap();
-
-        // Verify the transformation completed without error
-        assert!(result.contains("<item"));
-    }
-
-    #[test]
-    fn test_transform_write_to() {
-        let xml = r#"<root><item/></root>"#;
-
-        let mut output = Vec::new();
-        StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
-                node.set_attribute("done", "true");
-            })
-            .write_to(&mut output)
-            .unwrap();
-
-        let result = String::from_utf8(output).unwrap();
-        assert!(result.contains(r#"done="true""#));
-    }
-
-    #[test]
-    fn test_transform_invalid_xpath() {
-        let xml = r#"<root><item/></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("[invalid xpath")
-            .transform(|_: &mut EditableNode| {})
-            .to_string();
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_transform_no_xpath() {
+    #[allow(deprecated)]
+    fn test_deprecated_no_xpath() {
         let xml = r#"<root><item/></root>"#;
 
         // No xpath set - returns an error
@@ -303,11 +339,10 @@ mod editable_node_tests {
         let xml = r#"<root><myitem/></root>"#;
         let name = RefCell::new(String::new());
         let _ = StreamTransformer::new(xml)
-            .xpath("//myitem")
-            .transform(|node: &mut EditableNode| {
+            .on("//myitem", |node: &mut EditableNode| {
                 *name.borrow_mut() = node.name().to_string();
             })
-            .to_string();
+            .run();
         assert_eq!(name.into_inner(), "myitem");
     }
 
@@ -316,11 +351,10 @@ mod editable_node_tests {
         let xml = r#"<root><item attr="value"/></root>"#;
         let attr = RefCell::new(None);
         let _ = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 *attr.borrow_mut() = node.get_attribute("attr");
             })
-            .to_string();
+            .run();
         assert_eq!(attr.into_inner(), Some("value".to_string()));
     }
 
@@ -329,11 +363,10 @@ mod editable_node_tests {
         let xml = r#"<root><item/></root>"#;
         let attr = RefCell::new(Some("initial".to_string()));
         let _ = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 *attr.borrow_mut() = node.get_attribute("missing");
             })
-            .to_string();
+            .run();
         assert_eq!(attr.into_inner(), None);
     }
 
@@ -342,11 +375,10 @@ mod editable_node_tests {
         let xml = r#"<root><item>hello world</item></root>"#;
         let content = RefCell::new(None);
         let _ = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 *content.borrow_mut() = node.get_content();
             })
-            .to_string();
+            .run();
         assert_eq!(content.into_inner(), Some("hello world".to_string()));
     }
 
@@ -355,11 +387,10 @@ mod editable_node_tests {
         let xml = r#"<root><parent><child1/><child2/></parent></root>"#;
         let count = RefCell::new(0);
         let _ = StreamTransformer::new(xml)
-            .xpath("//parent")
-            .transform(|node: &mut EditableNode| {
+            .on("//parent", |node: &mut EditableNode| {
                 *count.borrow_mut() = node.children().len();
             })
-            .to_string();
+            .run();
         assert_eq!(count.into_inner(), 2);
     }
 
@@ -368,11 +399,10 @@ mod editable_node_tests {
         let xml = r#"<root><item>text<sub/>more</item></root>"#;
         let count = RefCell::new(0);
         let _ = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 *count.borrow_mut() = node.children().len();
             })
-            .to_string();
+            .run();
         // Should have: text node, sub element, text node
         assert!(count.into_inner() >= 1);
     }
@@ -395,11 +425,10 @@ mod complex_xpath_tests {
 
         let mut count = 0;
         let _ = StreamTransformer::new(xml)
-            .xpath("//item[@status='active']")
-            .transform(|_: &mut EditableNode| {
+            .on("//item[@status='active']", |_: &mut EditableNode| {
                 count += 1;
             })
-            .to_string();
+            .run();
 
         assert_eq!(count, 2);
     }
@@ -409,10 +438,11 @@ mod complex_xpath_tests {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item[1]")
-            .transform(|node: &mut EditableNode| {
+            .on("//item[1]", |node: &mut EditableNode| {
                 node.set_attribute("first", "true");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -427,10 +457,11 @@ mod complex_xpath_tests {
         let xml = r#"<root><a><b><target/></b></a></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//target")
-            .transform(|node: &mut EditableNode| {
+            .on("//target", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -450,8 +481,9 @@ mod edge_cases {
         let xml = "";
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|_: &mut EditableNode| {})
+            .on("//item", |_: &mut EditableNode| {})
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -463,10 +495,11 @@ mod edge_cases {
         let xml = r#"<?xml version="1.0"?><root><item/></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("x", "1");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -479,10 +512,11 @@ mod edge_cases {
         let xml = r#"<root><!-- comment --><item/></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("done", "true");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -495,10 +529,11 @@ mod edge_cases {
         let xml = r#"<root><item><![CDATA[some <data>]]></item></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("has_cdata", "true");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -510,10 +545,11 @@ mod edge_cases {
         let xml = r#"<root><empty/></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//empty")
-            .transform(|node: &mut EditableNode| {
+            .on("//empty", |node: &mut EditableNode| {
                 node.set_attribute("not_empty", "now");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 
@@ -525,10 +561,11 @@ mod edge_cases {
         let xml = r#"<root><item/></root>"#;
 
         let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
+            .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("special", "a<b>c&d\"e");
             })
+            .run()
+            .unwrap()
             .to_string()
             .unwrap();
 

@@ -1178,9 +1178,7 @@ mod namespace_violations {
 // =============================================================================
 
 mod unified_validation {
-    #[allow(unused_imports)]
-    use crate::common::{validate_dom, validate_onepass, validate_twopass};
-    use crate::{compare_with_libxml, test_validation};
+    use crate::test_validation;
 
     // -------------------------------------------------------------------------
     // Content Model: max/min occurs

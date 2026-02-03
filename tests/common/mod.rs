@@ -558,7 +558,12 @@ use fastxml::schema::validator::{
 };
 use fastxml::schema::xsd::parse_xsd;
 
+// Note: The following types and functions use `#[allow(dead_code)]` because
+// they are called through the `test_validation!` macro. The compiler doesn't
+// detect macro-based usage during dead code analysis.
+
 /// Result of schema validation containing validity and errors.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ValidationResult {
     /// Whether the document is valid
@@ -567,6 +572,7 @@ pub struct ValidationResult {
     pub errors: Vec<StructuredError>,
 }
 
+#[allow(dead_code)]
 impl ValidationResult {
     /// Returns true if the document is valid (no errors).
     pub fn is_valid(&self) -> bool {
@@ -580,6 +586,7 @@ impl ValidationResult {
 }
 
 /// Validate XML against XSD using DOM validator.
+#[allow(dead_code)]
 pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
     let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
     let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
@@ -590,6 +597,7 @@ pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
 }
 
 /// Validate XML against XSD using TwoPass validator.
+#[allow(dead_code)]
 pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
     use std::io::Cursor;
     let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
@@ -602,6 +610,7 @@ pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
 }
 
 /// Validate XML against XSD using OnePass (streaming) validator.
+#[allow(dead_code)]
 pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
     use std::io::BufReader;
     let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
@@ -615,6 +624,7 @@ pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
 
 /// Validate with all validators and check consistency.
 /// Returns (dom_result, twopass_result, onepass_result).
+#[allow(dead_code)]
 pub fn validate_all(
     xml: &str,
     xsd: &str,
@@ -626,6 +636,7 @@ pub fn validate_all(
 }
 
 /// Assert that all validators produce consistent results.
+#[allow(dead_code)]
 pub fn assert_validators_consistent(xml: &str, xsd: &str) {
     let (dom, twopass, onepass) = validate_all(xml, xsd);
 
