@@ -1,5 +1,6 @@
 //! XML parsing with quick-xml backend.
 
+use std::collections::HashMap;
 use std::io::BufRead;
 
 use quick_xml::Reader;
@@ -8,6 +9,55 @@ use quick_xml::events::{BytesStart, Event};
 use crate::document::{DocumentBuilder, XmlDocument};
 use crate::error::Result;
 use crate::namespace::{Namespace, split_qname};
+
+/// Stack of namespace bindings for tracking scope during parsing.
+///
+/// Each scope contains a map of prefix -> URI bindings. When entering a new
+/// element, a new scope is pushed. When leaving an element, the scope is popped.
+#[derive(Debug, Default)]
+struct NamespaceStack {
+    /// Stack of scopes, each containing prefix -> URI mappings
+    scopes: Vec<HashMap<String, String>>,
+}
+
+impl NamespaceStack {
+    /// Creates a new empty namespace stack.
+    fn new() -> Self {
+        Self {
+            scopes: vec![HashMap::new()], // Start with one scope
+        }
+    }
+
+    /// Pushes a new scope onto the stack.
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    /// Pops the current scope from the stack.
+    fn pop_scope(&mut self) {
+        if self.scopes.len() > 1 {
+            self.scopes.pop();
+        }
+    }
+
+    /// Registers a namespace binding in the current scope.
+    fn register(&mut self, prefix: &str, uri: &str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(prefix.to_string(), uri.to_string());
+        }
+    }
+
+    /// Resolves a prefix to its namespace URI by searching from current scope up to root.
+    fn resolve(&self, prefix: &str) -> Option<&str> {
+        // Search from innermost to outermost scope
+        for scope in self.scopes.iter().rev() {
+            if let Some(uri) = scope.get(prefix) {
+                return Some(uri.as_str());
+            }
+        }
+        None
+    }
+}
 
 /// Parser options for controlling XML parsing behavior.
 #[derive(Debug, Clone)]
@@ -98,19 +148,22 @@ fn parse_from_reader<R: BufRead>(
     let mut builder = DocumentBuilder::new();
     let mut buf = Vec::with_capacity(options.buffer_size);
     let mut memory_used = 0usize;
+    let mut ns_stack = NamespaceStack::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
-                process_start_element(&mut builder, e, reader)?;
+                process_start_element(&mut builder, e, reader, &mut ns_stack)?;
             }
             Ok(Event::Empty(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
-                process_start_element(&mut builder, e, reader)?;
+                process_start_element(&mut builder, e, reader, &mut ns_stack)?;
+                ns_stack.pop_scope();
                 builder.end_element();
             }
             Ok(Event::End(_)) => {
+                ns_stack.pop_scope();
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
@@ -178,13 +231,17 @@ fn process_start_element<R: BufRead>(
     builder: &mut DocumentBuilder,
     e: &BytesStart<'_>,
     reader: &Reader<R>,
+    ns_stack: &mut NamespaceStack,
 ) -> Result<()> {
-    let qname_bytes = e.name().as_ref().to_vec();
-    let (prefix, local_name, namespace_uri) = extract_name_parts(&qname_bytes)?;
+    // Push a new scope for this element
+    ns_stack.push_scope();
 
-    // Collect namespace declarations
+    let qname_bytes = e.name().as_ref().to_vec();
+    let (prefix, local_name) = extract_name_parts(&qname_bytes)?;
+
+    // First pass: collect namespace declarations and register them
     let mut namespace_decls = Vec::new();
-    let mut attributes = Vec::new();
+    let mut raw_attributes = Vec::new();
 
     for attr_result in e.attributes() {
         let attr = attr_result?;
@@ -197,12 +254,40 @@ fn process_start_element<R: BufRead>(
 
         if key == "xmlns" {
             // Default namespace declaration
+            ns_stack.register("", value.as_ref());
             namespace_decls.push(Namespace::default_ns(value.as_ref()));
         } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
             // Prefixed namespace declaration
+            ns_stack.register(ns_prefix, value.as_ref());
             namespace_decls.push(Namespace::new(ns_prefix, value.as_ref()));
         } else {
-            attributes.push((key.to_string(), value.to_string()));
+            raw_attributes.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    // Resolve namespace URI for the element
+    let namespace_uri = if let Some(p) = prefix {
+        ns_stack.resolve(p).map(|s| s.to_string())
+    } else {
+        // For elements without prefix, use default namespace if declared
+        ns_stack.resolve("").map(|s| s.to_string())
+    };
+
+    // Second pass: process attributes and resolve their namespaces
+    // Store attributes with local names as keys (libxml compatible)
+    let mut attributes = Vec::new();
+    for (key, value) in &raw_attributes {
+        let (attr_prefix, attr_local_name) = split_qname(key);
+
+        // Only use local name as key (libxml compatible behavior)
+        // Attributes with different namespace prefixes but same local name
+        // will overwrite each other, but this matches libxml behavior
+        if attr_prefix.is_some() {
+            // Namespaced attribute: store with local name only
+            attributes.push((attr_local_name.to_string(), value.clone()));
+        } else {
+            // Non-namespaced attribute
+            attributes.push((key.clone(), value.clone()));
         }
     }
 
@@ -217,7 +302,7 @@ fn process_start_element<R: BufRead>(
     builder.start_element(
         local_name,
         prefix,
-        namespace_uri,
+        namespace_uri.as_deref(),
         attr_refs,
         namespace_decls,
         line,
@@ -227,15 +312,10 @@ fn process_start_element<R: BufRead>(
     Ok(())
 }
 
-fn extract_name_parts(qname_bytes: &[u8]) -> Result<(Option<&str>, &str, Option<&str>)> {
+fn extract_name_parts(qname_bytes: &[u8]) -> Result<(Option<&str>, &str)> {
     let full_name = std::str::from_utf8(qname_bytes)?;
-
     let (prefix, local_name) = split_qname(full_name);
-
-    // Note: quick-xml doesn't resolve namespace URIs automatically
-    // We would need a namespace stack to resolve them properly
-    // For now, we just extract the prefix
-    Ok((prefix, local_name, None))
+    Ok((prefix, local_name))
 }
 
 /// Parses xsi:schemaLocation attribute and returns (namespace, location) pairs.

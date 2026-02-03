@@ -486,11 +486,8 @@ fn test_citygml_building_structure() {
     let buildings = result.into_nodes();
     assert_eq!(buildings.len(), 2);
 
-    // Get building IDs
-    let ids: Vec<_> = buildings
-        .iter()
-        .map(|b| b.get_attribute("gml:id"))
-        .collect();
+    // Get building IDs (libxml compatible: local name only)
+    let ids: Vec<_> = buildings.iter().map(|b| b.get_attribute("id")).collect();
     assert!(ids.contains(&Some("BLD_001".to_string())));
     assert!(ids.contains(&Some("BLD_002".to_string())));
 

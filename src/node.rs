@@ -1383,8 +1383,8 @@ mod tests {
     fn test_xml_node_get_attribute_ns() {
         let doc = crate::parse(r#"<root xmlns:ns="http://example.com" ns:attr="value"/>"#).unwrap();
         let root = crate::get_root_node(&doc).unwrap();
-        // The attribute is stored with prefix, so we can look it up directly
-        assert_eq!(root.get_attribute("ns:attr"), Some("value".to_string()));
+        // Attributes are stored with local names only (libxml compatible)
+        assert_eq!(root.get_attribute("attr"), Some("value".to_string()));
     }
 
     #[test]
@@ -1393,11 +1393,11 @@ mod tests {
         let root = crate::get_root_node(&doc).unwrap();
         let ro_node = XmlRoNode::from_node(root);
         // get_attribute_ns searches by namespace URI
-        // The result depends on whether namespace declarations are properly tracked
         let result = ro_node.get_attribute_ns("attr", "http://example.com");
-        // Direct access works with prefixed name
+        assert_eq!(result, Some("value".to_string()));
+        // Attributes are keyed by local name only (libxml compatible)
         let attrs = ro_node.get_attributes();
-        assert!(attrs.contains_key("ns:attr") || result.is_some());
+        assert!(attrs.contains_key("attr"));
     }
 
     // line and column tests (usually None unless explicitly set during parsing)

@@ -84,13 +84,11 @@ pub fn fn_lang(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPa
         .to_string_value()
         .to_lowercase();
 
-    // Search for xml:lang attribute in context node and ancestors
+    // Search for lang attribute in context node and ancestors
+    // (xml:lang is stored as "lang" since attributes use local names only)
     let mut node = Some(ctx.node.clone());
     while let Some(n) = node {
-        if let Some(lang_attr) = n
-            .get_attribute("xml:lang")
-            .or_else(|| n.get_attribute("lang"))
-        {
+        if let Some(lang_attr) = n.get_attribute("lang") {
             let lang_lower = lang_attr.to_lowercase();
             // Check if lang matches or is a sublanguage
             let matches =

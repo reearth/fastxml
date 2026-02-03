@@ -36,9 +36,8 @@ fn main() -> fastxml::error::Result<()> {
     println!("1. Find all buildings (//bldg:Building):");
     let result = evaluate(&doc, "//bldg:Building")?;
     for node in result.into_nodes() {
-        let id = node
-            .get_attribute("gml:id")
-            .or_else(|| node.get_attribute("id"));
+        // Attributes are stored with local names (libxml compatible)
+        let id = node.get_attribute("id");
         println!("   Found: {}", id.unwrap_or_default());
     }
 
@@ -91,7 +90,8 @@ fn main() -> fastxml::error::Result<()> {
     println!("\n7. Buildings with yearOfConstruction > 2000:");
     let result = evaluate(&doc, "//bldg:Building[bldg:yearOfConstruction > 2000]")?;
     for node in result.into_nodes() {
-        let id = node.get_attribute("gml:id").unwrap_or_default();
+        // Attributes are stored with local names (libxml compatible)
+        let id = node.get_attribute("id").unwrap_or_default();
         println!("   {}", id);
     }
 
