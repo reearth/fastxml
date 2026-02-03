@@ -605,7 +605,7 @@ impl Parser {
         }
 
         // Parse expression and check for comparison
-        let left = self.parse_expr_value()?;
+        let left = self.parse_predicate_additive_expr()?;
 
         let op = match self.current() {
             Token::Equals => Some(ComparisonOp::Equal),
@@ -619,7 +619,7 @@ impl Parser {
 
         if let Some(op) = op {
             self.advance();
-            let right = self.parse_expr_value()?;
+            let right = self.parse_predicate_additive_expr()?;
             Ok(Predicate::Comparison {
                 left: Box::new(left),
                 op,
@@ -633,6 +633,57 @@ impl Parser {
                 Ok(Predicate::Expr(Box::new(left)))
             }
         }
+    }
+
+    /// Parses an additive expression inside predicates: expr ('+' | '-') expr
+    fn parse_predicate_additive_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_predicate_multiplicative_expr()?;
+
+        loop {
+            match self.current() {
+                Token::Plus => {
+                    self.advance();
+                    let right = self.parse_predicate_multiplicative_expr()?;
+                    left = Expr::Add(Box::new(left), Box::new(right));
+                }
+                Token::Minus => {
+                    self.advance();
+                    let right = self.parse_predicate_multiplicative_expr()?;
+                    left = Expr::Subtract(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(left)
+    }
+
+    /// Parses a multiplicative expression inside predicates: expr ('*' | 'div' | 'mod') expr
+    fn parse_predicate_multiplicative_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_expr_value()?;
+
+        loop {
+            match self.current() {
+                Token::Asterisk => {
+                    self.advance();
+                    let right = self.parse_expr_value()?;
+                    left = Expr::Multiply(Box::new(left), Box::new(right));
+                }
+                Token::Div => {
+                    self.advance();
+                    let right = self.parse_expr_value()?;
+                    left = Expr::Divide(Box::new(left), Box::new(right));
+                }
+                Token::Mod => {
+                    self.advance();
+                    let right = self.parse_expr_value()?;
+                    left = Expr::Modulo(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(left)
     }
 
     fn parse_expr_value(&mut self) -> Result<Expr> {
@@ -703,8 +754,13 @@ impl Parser {
                     Ok(Expr::Path(path))
                 }
             }
-            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At |
-            Token::Asterisk => {
+            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At | Token::Asterisk |
+            // All axis tokens for paths like ancestor::*, preceding-sibling::node(), etc.
+            Token::ChildAxis | Token::DescendantAxis | Token::ParentAxis | Token::SelfAxis |
+            Token::DescendantOrSelfAxis | Token::AncestorAxis | Token::AncestorOrSelfAxis |
+            Token::FollowingSiblingAxis | Token::PrecedingSiblingAxis |
+            Token::FollowingAxis | Token::PrecedingAxis |
+            Token::AttributeAxis | Token::NamespaceAxis => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
@@ -899,7 +955,13 @@ impl Parser {
                     Ok(Expr::Path(path))
                 }
             }
-            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At | Token::Asterisk => {
+            Token::Slash | Token::DoubleSlash | Token::Dot | Token::At | Token::Asterisk |
+            // All axis tokens for paths like ancestor::*, preceding-sibling::node(), etc.
+            Token::ChildAxis | Token::DescendantAxis | Token::ParentAxis | Token::SelfAxis |
+            Token::DescendantOrSelfAxis | Token::AncestorAxis | Token::AncestorOrSelfAxis |
+            Token::FollowingSiblingAxis | Token::PrecedingSiblingAxis |
+            Token::FollowingAxis | Token::PrecedingAxis |
+            Token::AttributeAxis | Token::NamespaceAxis => {
                 let path = self.parse_path_expr()?;
                 Ok(Expr::Path(path))
             }
