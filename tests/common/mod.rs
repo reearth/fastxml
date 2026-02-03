@@ -553,6 +553,7 @@ macro_rules! compare_with_libxml {
 use std::sync::Arc;
 
 use fastxml::StructuredError;
+#[allow(deprecated)]
 use fastxml::schema::validator::{
     DomSchemaValidator, OnePassSchemaValidator, TwoPassSchemaValidator,
 };
@@ -664,7 +665,7 @@ pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
 }
 
 /// Validate XML against XSD using TwoPass validator.
-#[allow(dead_code)]
+#[allow(dead_code, deprecated)]
 pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
     use std::io::Cursor;
     let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");

@@ -1100,12 +1100,10 @@ impl XmlEventHandler for OnePassSchemaValidator {
     }
 }
 
-/// Deprecated alias for [`OnePassSchemaValidator`].
+/// Alias for [`OnePassSchemaValidator`].
 ///
-/// This type alias is provided for backwards compatibility.
-/// New code should use [`OnePassSchemaValidator`] instead.
-#[deprecated(since = "0.3.0", note = "renamed to OnePassSchemaValidator")]
-pub type StreamingSchemaValidator = OnePassSchemaValidator;
+/// This provides a convenient name for the recommended streaming validator.
+pub type StreamValidator = OnePassSchemaValidator;
 
 #[cfg(test)]
 mod tests {

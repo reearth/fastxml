@@ -78,9 +78,8 @@ pub use types::{
     AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
     SimpleType, TypeDef,
 };
-#[allow(deprecated)]
 pub use validator::{
-    LazySchemaValidator, OnePassSchemaValidator, StreamingSchemaValidator, ValidationMode,
+    LazySchemaValidator, OnePassSchemaValidator, StreamValidator, ValidationMode,
     XmlSchemaValidationContext, create_xml_schema_validation_context,
     create_xml_schema_validation_context_from_buffer, get_schema_from_schema_location_with_fetcher,
     streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,

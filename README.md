@@ -12,7 +12,6 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 - 🦀 **Pure Rust** — No C dependencies, no unsafe code
 - 🔄 **libxml Compatible** — Consistent parsing/XPath results
 - 💾 **Memory Efficient** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
-- ✅ **Multiple Validators** — DOM, Two-Pass, and One-Pass validation strategies
 - 🔍 **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling
 - 📋 **XSD Support** — Schema parsing with import resolution, built-in GML types
 - ⚡ **Async Support** — Async schema fetching and resolution with tokio
@@ -37,12 +36,10 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/l
 |------|------|------------|--------|
 | libxml DOM + validate | 11.49s | 79 MB/s | 4.19 GB |
 | fastxml DOM + validate | 54.80s | 17 MB/s | 1.77 GB |
-| fastxml Two-Pass | 23.99s | 38 MB/s | low |
-| fastxml One-Pass | 22.27s | 41 MB/s | **~1 MB** |
+| fastxml Streaming | 22.27s | 41 MB/s | **~1 MB** |
 
 - **DOM**: 1.7x less memory than libxml
-- **Streaming (One-Pass/Two-Pass)**: ~40 MB/s consistent throughput with minimal memory
-- **One-Pass**: Constant ~1 MB memory regardless of file size
+- **Streaming**: ~40 MB/s consistent throughput with minimal memory (~1 MB regardless of file size)
 
 ## Installation
 
@@ -309,41 +306,21 @@ if errors.is_empty() {
 }
 ```
 
-### One-Pass Validation
+### Streaming Validation
 
 Validate during parsing with minimal memory:
 
 ```rust
-use fastxml::schema::validator::OnePassSchemaValidator;
+use fastxml::schema::StreamValidator;
 use std::sync::Arc;
 
 let schema = Arc::new(fastxml::schema::parse_xsd(&std::fs::read("schema.xsd")?)?);
 let reader = std::io::BufReader::new(file);
 
-let errors = OnePassSchemaValidator::new(schema)
+let errors = StreamValidator::new(schema)
     .with_max_errors(100)
     .validate(reader)?;
 ```
-
-### Two-Pass Validation
-
-Balance of speed and memory for seekable streams:
-
-```rust
-use fastxml::schema::validator::TwoPassSchemaValidator;
-
-let errors = TwoPassSchemaValidator::new(schema)
-    .with_max_errors(100)
-    .validate(reader)?;
-```
-
-### Validator Comparison
-
-| Validator | Best For | Throughput | Memory |
-|-----------|----------|------------|--------|
-| `DomSchemaValidator` | Pre-parsed documents | ~17 MB/s | High |
-| `TwoPassSchemaValidator` | Large seekable files | ~38 MB/s | Medium |
-| `OnePassSchemaValidator` | Huge/non-seekable files | ~41 MB/s | **Minimal** |
 
 ### Auto-detect Schema
 

@@ -203,6 +203,10 @@ impl XmlEventHandler for SkeletonBuilder {
 ///     .with_max_errors(100)
 ///     .validate(reader)?;
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "TwoPassSchemaValidator is no longer recommended. Use OnePassSchemaValidator (or StreamValidator) instead for better performance."
+)]
 pub struct TwoPassSchemaValidator {
     schema: Arc<CompiledSchema>,
     options: ValidationOptions,
@@ -210,6 +214,7 @@ pub struct TwoPassSchemaValidator {
     max_errors: usize,
 }
 
+#[allow(deprecated)]
 impl TwoPassSchemaValidator {
     /// Creates a new two-pass validator.
     pub fn new(schema: Arc<CompiledSchema>) -> Self {
@@ -853,6 +858,7 @@ impl TwoPassSchemaValidator {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use std::io::Cursor;

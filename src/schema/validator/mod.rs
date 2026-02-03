@@ -2,15 +2,13 @@
 //!
 //! This module provides multiple validation approaches for XML documents against XSD schemas:
 //!
-//! - [`DomSchemaValidator`] - Direct DOM tree validation (~37 MB/s)
-//! - [`TwoPassSchemaValidator`] - Skeleton-based batch validation (~31 MB/s)
-//! - [`OnePassSchemaValidator`] - Streaming single-pass validation (~15 MB/s)
+//! - [`DomSchemaValidator`] - Direct DOM tree validation (~17 MB/s)
+//! - [`StreamValidator`] / [`OnePassSchemaValidator`] - Streaming single-pass validation (~41 MB/s)
 //!
 //! # Module Structure
 //!
 //! - `dom` - DOM-based validator for pre-parsed documents
-//! - `two_pass` - Two-pass skeleton-based validator
-//! - `streaming` - One-pass streaming validator
+//! - `streaming` - One-pass streaming validator (recommended for large files)
 //! - `state` - Validation state management during streaming
 //! - `context` - Schema validation context wrapper
 //! - `lazy` - Lazy validators that initialize from xsi:schemaLocation
@@ -31,23 +29,27 @@ pub use self::mode::ValidationMode;
 pub use context::XmlSchemaValidationContext;
 pub use dom::DomSchemaValidator;
 pub use lazy::LazySchemaValidator;
+pub use streaming::{OnePassSchemaValidator, StreamValidator, ValidationOptions};
 #[allow(deprecated)]
-pub use streaming::{OnePassSchemaValidator, StreamingSchemaValidator, ValidationOptions};
 pub use two_pass::{DocumentSkeleton, ElementSkeleton, TwoPassSchemaValidator};
 
 // Re-export API functions
+#[allow(deprecated)]
+pub use api::two_pass_validate_with_schema_location_and_fetcher;
 pub use api::{
     create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
     get_schema_from_schema_location_with_fetcher,
-    streaming_validate_with_schema_location_and_fetcher,
-    two_pass_validate_with_schema_location_and_fetcher, validate_document_by_schema,
+    streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,
     validate_document_by_schema_context, validate_with_schema_location_and_fetcher,
 };
 
+#[allow(deprecated)]
+#[cfg(feature = "ureq")]
+pub use api::two_pass_validate_with_schema_location;
 #[cfg(feature = "ureq")]
 pub use api::{
     get_schema_from_schema_location, streaming_validate_with_schema_location,
-    two_pass_validate_with_schema_location, validate_with_schema_location,
+    validate_with_schema_location,
 };
 
 #[cfg(feature = "tokio")]

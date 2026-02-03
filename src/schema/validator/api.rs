@@ -11,6 +11,7 @@ use crate::schema::types::CompiledSchema;
 
 use super::context::XmlSchemaValidationContext;
 use super::lazy::LazySchemaValidatorWithSharedErrors;
+#[allow(deprecated)]
 use super::two_pass::TwoPassSchemaValidator;
 
 /// Creates a schema validation context from a schema location.
@@ -367,6 +368,11 @@ pub fn streaming_validate_with_schema_location_and_fetcher<
 /// let reader = BufReader::new(file);
 /// let errors = two_pass_validate_with_schema_location(reader)?;
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use streaming_validate_with_schema_location instead for better performance"
+)]
+#[allow(deprecated)]
 #[cfg(feature = "ureq")]
 pub fn two_pass_validate_with_schema_location<R: BufRead + Seek>(
     reader: R,
@@ -397,6 +403,11 @@ pub fn two_pass_validate_with_schema_location<R: BufRead + Seek>(
 /// let fetcher = UreqFetcher::new().timeout(60);
 /// let errors = two_pass_validate_with_schema_location_and_fetcher(reader, &fetcher)?;
 /// ```
+#[deprecated(
+    since = "0.5.0",
+    note = "Use streaming_validate_with_schema_location_and_fetcher instead for better performance"
+)]
+#[allow(deprecated)]
 pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: SchemaFetcher>(
     mut reader: R,
     fetcher: &F,
