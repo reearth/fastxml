@@ -1007,11 +1007,30 @@ struct HandlerState<'a> {
     match_context: Option<super::context::TransformContext>,
 }
 
+/// State for tracking a single XPath handler during multi-xpath transform processing.
+/// Includes match_start_offset for zero-copy output.
+struct TransformHandlerState<'a> {
+    xpath: &'a StreamableXPath,
+    builder: Option<EditableNodeBuilder>,
+    match_context: Option<super::context::TransformContext>,
+    /// Byte offset where the match started (for zero-copy output).
+    match_start_offset: usize,
+}
+
 /// Handler pair for multi-xpath processing: (xpath, callback).
 pub type MultiHandler<'a> = (&'a StreamableXPath, &'a mut dyn FnMut(&mut EditableNode));
 
 /// Handler pair with context for multi-xpath processing: (xpath, callback).
 pub type MultiHandlerWithContext<'a> = (
+    &'a StreamableXPath,
+    &'a mut dyn FnMut(&mut EditableNode, &super::context::TransformContext),
+);
+
+/// Handler pair for multi-xpath transform processing: (xpath, callback).
+pub type MultiTransformHandler<'a> = (&'a StreamableXPath, &'a mut dyn FnMut(&mut EditableNode));
+
+/// Handler pair with context for multi-xpath transform processing: (xpath, callback).
+pub type MultiTransformHandlerWithContext<'a> = (
     &'a StreamableXPath,
     &'a mut dyn FnMut(&mut EditableNode, &super::context::TransformContext),
 );
@@ -1313,6 +1332,433 @@ pub fn process_for_each_multi_with_context<'a>(
     Ok(match_count)
 }
 
+/// Processes XML with streaming transformation for multiple XPath handlers in a single pass.
+///
+/// This is an optimization over calling `process_streaming` multiple times - the XML
+/// is parsed only once and each element is checked against all XPath patterns.
+///
+/// # Strategy: First-Match-Wins
+///
+/// When multiple handlers could match nested elements, only the **first matching handler**
+/// (in registration order) is active at a time. While a handler is processing an element's
+/// subtree, other handlers cannot match elements within that subtree.
+///
+/// ## Example: Nested elements
+///
+/// ```text
+/// XML: <outer><inner>content</inner></outer>
+/// Handlers: [("//outer", handler1), ("//inner", handler2)]
+///
+/// Result: Only handler1 is called for <outer>. handler2 is NOT called for <inner>
+/// because <inner> is inside the already-matched <outer> subtree.
+/// ```
+///
+/// ## Example: Non-overlapping elements
+///
+/// ```text
+/// XML: <item>A</item><other>B</other>
+/// Handlers: [("//item", handler1), ("//other", handler2)]
+///
+/// Result: Both handlers are called - handler1 for <item>, handler2 for <other>.
+/// ```
+///
+/// This behavior ensures predictable output ordering and prevents duplicate processing,
+/// but means you cannot process both a container and its children with separate handlers.
+/// If you need to process nested elements independently, use `process_for_each_multi` instead.
+#[allow(clippy::needless_range_loop)]
+pub fn process_streaming_multi<'a, W: Write>(
+    input: &str,
+    handlers: &mut [MultiTransformHandler<'a>],
+    namespaces: &HashMap<String, String>,
+    writer: &mut W,
+) -> TransformResult<usize> {
+    let mut reader = Reader::from_str(input);
+    reader.config_mut().trim_text(false);
+
+    let mut tracker = PathTracker::new();
+    let mut transform_count: usize = 0;
+    let mut buf = Vec::new();
+    let mut prev_written: usize = 0;
+
+    // Initialize handler states
+    let mut states: Vec<TransformHandlerState> = handlers
+        .iter()
+        .map(|(xpath, _)| TransformHandlerState {
+            xpath,
+            builder: None,
+            match_context: None,
+            match_start_offset: 0,
+        })
+        .collect();
+
+    // Track which handler is currently active (first-match-wins strategy)
+    let mut active_handler: Option<usize> = None;
+
+    loop {
+        let before_pos = reader.buffer_position() as usize;
+
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                tracker.push_element(element_info);
+
+                if let Some(idx) = active_handler {
+                    // Already inside matched subtree, keep buffering
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_start_to_builder(builder, &e, namespaces)?;
+                    }
+                } else {
+                    // Check each handler for a match (first-match-wins)
+                    for i in 0..states.len() {
+                        if tracker.matches(states[i].xpath) {
+                            // Match starts here!
+                            // 1. Write everything before this point (zero-copy)
+                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                            // 2. Start buffering subtree
+                            let mut builder = EditableNodeBuilder::new();
+                            builder.set_namespaces(namespaces.clone());
+                            add_start_to_builder(&mut builder, &e, namespaces)?;
+                            states[i].builder = Some(builder);
+                            states[i].match_start_offset = before_pos;
+                            active_handler = Some(i);
+                            break; // First match wins
+                        }
+                    }
+                }
+            }
+
+            Ok(Event::Empty(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                tracker.push_element(element_info);
+
+                if let Some(idx) = active_handler {
+                    // Inside matched subtree
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_empty_to_builder(builder, &e, namespaces)?;
+                    }
+                } else {
+                    // Check each handler for a match (first-match-wins)
+                    for i in 0..states.len() {
+                        if tracker.matches(states[i].xpath) {
+                            // This empty element is a match
+                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                            let mut builder = EditableNodeBuilder::new();
+                            builder.set_namespaces(namespaces.clone());
+                            add_empty_to_builder(&mut builder, &e, namespaces)?;
+
+                            // Process immediately since it's complete
+                            let mut editable = builder.build()?;
+                            handlers[i].1(&mut editable);
+                            transform_count += 1;
+
+                            if !editable.is_removed() {
+                                serialize_editable(&editable, writer)?;
+                            }
+
+                            prev_written = after_pos;
+                            break; // First match wins
+                        }
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::End(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+
+                if let Some(idx) = active_handler {
+                    if let Some(mut builder) = states[idx].builder.take() {
+                        add_end_to_builder(&mut builder, &e)?;
+
+                        if builder.is_complete() {
+                            // Subtree complete, process it
+                            let mut editable = builder.build()?;
+                            handlers[idx].1(&mut editable);
+                            transform_count += 1;
+
+                            if !editable.is_removed() {
+                                serialize_editable(&editable, writer)?;
+                            }
+
+                            prev_written = after_pos;
+                            active_handler = None;
+                        } else {
+                            // Not complete yet, put back
+                            states[idx].builder = Some(builder);
+                        }
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::Text(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = e
+                            .unescape()
+                            .map_err(|err| TransformError::XmlParse(err.to_string()))?;
+                        builder.text(&text);
+                    }
+                }
+            }
+
+            Ok(Event::CData(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                        builder.cdata(text);
+                    }
+                }
+            }
+
+            Ok(Event::Comment(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                        builder.comment(text);
+                    }
+                }
+            }
+
+            Ok(Event::Eof) => {
+                // Write remaining (zero-copy)
+                writer.write_all(&input.as_bytes()[prev_written..])?;
+                break;
+            }
+
+            Ok(_) => {
+                // PI, Decl, DocType - pass through (handled by writing remaining)
+            }
+
+            Err(e) => {
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
+            }
+        }
+
+        buf.clear();
+    }
+
+    Ok(transform_count)
+}
+
+/// Processes XML with streaming transformation and context for multiple XPath handlers in a single pass.
+///
+/// This is an optimization over calling `process_streaming_with_context` multiple times.
+///
+/// # Strategy: First-Match-Wins
+///
+/// Uses the same first-match-wins strategy as [`process_streaming_multi`].
+/// When a handler matches an element, other handlers cannot match elements
+/// within that subtree until the first handler's subtree is complete.
+///
+/// See [`process_streaming_multi`] for detailed examples and behavior documentation.
+#[allow(clippy::needless_range_loop)]
+pub fn process_streaming_multi_with_context<'a, W: Write>(
+    input: &str,
+    handlers: &mut [MultiTransformHandlerWithContext<'a>],
+    namespaces: &HashMap<String, String>,
+    writer: &mut W,
+) -> TransformResult<usize> {
+    let mut reader = Reader::from_str(input);
+    reader.config_mut().trim_text(false);
+
+    let mut tracker = PathTracker::new();
+    let mut transform_count: usize = 0;
+    let mut buf = Vec::new();
+    let mut prev_written: usize = 0;
+
+    // Initialize handler states
+    let mut states: Vec<TransformHandlerState> = handlers
+        .iter()
+        .map(|(xpath, _)| TransformHandlerState {
+            xpath,
+            builder: None,
+            match_context: None,
+            match_start_offset: 0,
+        })
+        .collect();
+
+    // Track which handler is currently active (first-match-wins strategy)
+    let mut active_handler: Option<usize> = None;
+
+    loop {
+        let before_pos = reader.buffer_position() as usize;
+
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                tracker.push_element(element_info);
+
+                if let Some(idx) = active_handler {
+                    // Already inside matched subtree, keep buffering
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_start_to_builder(builder, &e, namespaces)?;
+                    }
+                } else {
+                    // Check each handler for a match (first-match-wins)
+                    for i in 0..states.len() {
+                        if tracker.matches(states[i].xpath) {
+                            // Match starts here!
+                            // 1. Write everything before this point (zero-copy)
+                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                            // 2. Capture context at match point
+                            states[i].match_context = Some(tracker.to_context());
+
+                            // 3. Start buffering subtree
+                            let mut builder = EditableNodeBuilder::new();
+                            builder.set_namespaces(namespaces.clone());
+                            add_start_to_builder(&mut builder, &e, namespaces)?;
+                            states[i].builder = Some(builder);
+                            states[i].match_start_offset = before_pos;
+                            active_handler = Some(i);
+                            break; // First match wins
+                        }
+                    }
+                }
+            }
+
+            Ok(Event::Empty(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                tracker.push_element(element_info);
+
+                if let Some(idx) = active_handler {
+                    // Inside matched subtree
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_empty_to_builder(builder, &e, namespaces)?;
+                    }
+                } else {
+                    // Check each handler for a match (first-match-wins)
+                    for i in 0..states.len() {
+                        if tracker.matches(states[i].xpath) {
+                            // This empty element is a match
+                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
+
+                            let ctx = tracker.to_context();
+
+                            let mut builder = EditableNodeBuilder::new();
+                            builder.set_namespaces(namespaces.clone());
+                            add_empty_to_builder(&mut builder, &e, namespaces)?;
+
+                            // Process immediately since it's complete
+                            let mut editable = builder.build()?;
+                            handlers[i].1(&mut editable, &ctx);
+                            transform_count += 1;
+
+                            if !editable.is_removed() {
+                                serialize_editable(&editable, writer)?;
+                            }
+
+                            prev_written = after_pos;
+                            break; // First match wins
+                        }
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::End(e)) => {
+                let after_pos = reader.buffer_position() as usize;
+
+                if let Some(idx) = active_handler {
+                    if let Some(mut builder) = states[idx].builder.take() {
+                        add_end_to_builder(&mut builder, &e)?;
+
+                        if builder.is_complete() {
+                            // Subtree complete, process it
+                            let mut editable = builder.build()?;
+                            let ctx = states[idx]
+                                .match_context
+                                .take()
+                                .unwrap_or_else(|| tracker.to_context());
+                            handlers[idx].1(&mut editable, &ctx);
+                            transform_count += 1;
+
+                            if !editable.is_removed() {
+                                serialize_editable(&editable, writer)?;
+                            }
+
+                            prev_written = after_pos;
+                            active_handler = None;
+                        } else {
+                            // Not complete yet, put back
+                            states[idx].builder = Some(builder);
+                        }
+                    }
+                }
+
+                tracker.pop_element();
+            }
+
+            Ok(Event::Text(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = e
+                            .unescape()
+                            .map_err(|err| TransformError::XmlParse(err.to_string()))?;
+                        builder.text(&text);
+                    }
+                }
+            }
+
+            Ok(Event::CData(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                        builder.cdata(text);
+                    }
+                }
+            }
+
+            Ok(Event::Comment(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
+                        builder.comment(text);
+                    }
+                }
+            }
+
+            Ok(Event::Eof) => {
+                // Write remaining (zero-copy)
+                writer.write_all(&input.as_bytes()[prev_written..])?;
+                break;
+            }
+
+            Ok(_) => {
+                // PI, Decl, DocType - pass through (handled by writing remaining)
+            }
+
+            Err(e) => {
+                let byte_offset = reader.buffer_position() as usize;
+                return Err(xml_parse_error_with_location(
+                    format!("{:?}", e),
+                    byte_offset,
+                    input,
+                    Some(tracker.current_xpath()),
+                ));
+            }
+        }
+
+        buf.clear();
+    }
+
+    Ok(transform_count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1362,5 +1808,220 @@ mod tests {
         let result = String::from_utf8(output).unwrap();
         assert_eq!(count, 0);
         assert_eq!(result, input);
+    }
+
+    // =============================================================================
+    // Multi Transform Tests
+    // =============================================================================
+
+    #[test]
+    fn test_multi_transform_non_overlapping() {
+        // //item and //other match different elements
+        let input = r#"<root><item id="1">A</item><other id="2">B</other></root>"#;
+        let xpath_item = get_streamable_xpath("//item");
+        let xpath_other = get_streamable_xpath("//other");
+
+        let mut handler1 = |node: &mut EditableNode| {
+            node.set_attribute("type", "item");
+        };
+        let mut handler2 = |node: &mut EditableNode| {
+            node.set_attribute("type", "other");
+        };
+
+        let mut handlers: Vec<MultiTransformHandler<'_>> =
+            vec![(&xpath_item, &mut handler1), (&xpath_other, &mut handler2)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 2);
+        assert!(result.contains(r#"type="item""#));
+        assert!(result.contains(r#"type="other""#));
+    }
+
+    #[test]
+    fn test_multi_transform_interleaved() {
+        // <item/><other/><item/> order is preserved
+        let input = r#"<root><item>1</item><other>2</other><item>3</item></root>"#;
+        let xpath_item = get_streamable_xpath("//item");
+        let xpath_other = get_streamable_xpath("//other");
+
+        let mut handler1 = |node: &mut EditableNode| {
+            node.set_attribute("type", "item");
+        };
+        let mut handler2 = |node: &mut EditableNode| {
+            node.set_attribute("type", "other");
+        };
+
+        let mut handlers: Vec<MultiTransformHandler<'_>> =
+            vec![(&xpath_item, &mut handler1), (&xpath_other, &mut handler2)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 3);
+
+        // Check that order is preserved
+        let item1_pos = result.find("<item type=\"item\">1</item>").unwrap();
+        let other_pos = result.find("<other type=\"other\">2</other>").unwrap();
+        let item2_pos = result.rfind("<item type=\"item\">3</item>").unwrap();
+
+        assert!(item1_pos < other_pos);
+        assert!(other_pos < item2_pos);
+    }
+
+    #[test]
+    fn test_multi_transform_zero_copy() {
+        // Non-matched parts are preserved exactly
+        let input = r#"<?xml version="1.0"?>
+<root>
+  <!-- comment -->
+  <unchanged>keep me</unchanged>
+  <item>transform</item>
+  <also-unchanged attr="value">keep this too</also-unchanged>
+</root>"#;
+        let xpath = get_streamable_xpath("//item");
+
+        let mut handler = |node: &mut EditableNode| {
+            node.set_attribute("modified", "true");
+        };
+
+        let mut handlers: Vec<MultiTransformHandler<'_>> = vec![(&xpath, &mut handler)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 1);
+
+        // Check that XML declaration is preserved
+        assert!(result.starts_with(r#"<?xml version="1.0"?>"#));
+
+        // Check that unchanged elements are preserved exactly
+        assert!(result.contains("<unchanged>keep me</unchanged>"));
+        assert!(result.contains(r#"<also-unchanged attr="value">keep this too</also-unchanged>"#));
+
+        // Check that comment is preserved
+        assert!(result.contains("<!-- comment -->"));
+
+        // Check that transformation was applied
+        assert!(result.contains(r#"<item modified="true">transform</item>"#));
+    }
+
+    #[test]
+    fn test_multi_transform_empty_elements() {
+        // Test with empty elements
+        let input = r#"<root><item/><other/><item/></root>"#;
+        let xpath_item = get_streamable_xpath("//item");
+        let xpath_other = get_streamable_xpath("//other");
+
+        let mut handler1 = |node: &mut EditableNode| {
+            node.set_attribute("type", "item");
+        };
+        let mut handler2 = |node: &mut EditableNode| {
+            node.set_attribute("type", "other");
+        };
+
+        let mut handlers: Vec<MultiTransformHandler<'_>> =
+            vec![(&xpath_item, &mut handler1), (&xpath_other, &mut handler2)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(result.matches(r#"type="item""#).count(), 2);
+        assert_eq!(result.matches(r#"type="other""#).count(), 1);
+    }
+
+    #[test]
+    fn test_multi_transform_with_context() {
+        // Test context-aware multi transform
+        use crate::transform::context::TransformContext;
+
+        let input = r#"<root><items><item>A</item><item>B</item></items></root>"#;
+        let xpath = get_streamable_xpath("//item");
+
+        let mut handler = |node: &mut EditableNode, ctx: &TransformContext| {
+            node.set_attribute("pos", &ctx.position().to_string());
+            node.set_attribute("depth", &ctx.depth().to_string());
+        };
+
+        let mut handlers: Vec<MultiTransformHandlerWithContext<'_>> = vec![(&xpath, &mut handler)];
+
+        let mut output = Vec::new();
+        let count = process_streaming_multi_with_context(
+            input,
+            &mut handlers,
+            &HashMap::new(),
+            &mut output,
+        )
+        .unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 2);
+        assert!(result.contains(r#"pos="1""#));
+        assert!(result.contains(r#"pos="2""#));
+        assert!(result.contains(r#"depth="3""#)); // root=1, items=2, item=3
+    }
+
+    #[test]
+    fn test_multi_transform_first_match_wins() {
+        // Test first-match-wins: if //items matches, //item inside it is ignored
+        let input = r#"<root><items><item>A</item></items></root>"#;
+        let xpath_items = get_streamable_xpath("//items");
+        let xpath_item = get_streamable_xpath("//item");
+
+        let mut items_matched = false;
+        let mut item_matched = false;
+
+        let mut handler1 = |_node: &mut EditableNode| {
+            items_matched = true;
+        };
+        let mut handler2 = |_node: &mut EditableNode| {
+            item_matched = true;
+        };
+
+        // items handler is first, so it wins for nested elements
+        let mut handlers: Vec<MultiTransformHandler<'_>> =
+            vec![(&xpath_items, &mut handler1), (&xpath_item, &mut handler2)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        // Only items should match (first-match-wins), item is inside items
+        assert_eq!(count, 1);
+        assert!(items_matched);
+        assert!(!item_matched); // Nested item is ignored because items matched first
+    }
+
+    #[test]
+    fn test_multi_transform_remove_elements() {
+        // Test removing elements
+        let input = r#"<root><keep>A</keep><remove>B</remove><keep>C</keep></root>"#;
+        let xpath_remove = get_streamable_xpath("//remove");
+
+        let mut handler = |node: &mut EditableNode| {
+            node.remove();
+        };
+
+        let mut handlers: Vec<MultiTransformHandler<'_>> = vec![(&xpath_remove, &mut handler)];
+
+        let mut output = Vec::new();
+        let count =
+            process_streaming_multi(input, &mut handlers, &HashMap::new(), &mut output).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert_eq!(count, 1);
+        assert!(!result.contains("<remove>"));
+        assert!(result.contains("<keep>A</keep>"));
+        assert!(result.contains("<keep>C</keep>"));
     }
 }

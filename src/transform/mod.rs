@@ -394,6 +394,37 @@ impl<'a> StreamTransformer<'a> {
     /// This method processes the XML and applies all handlers registered via `on()`.
     /// Returns a `TransformOutput` that can be converted to a String or written to a writer.
     ///
+    /// # Multiple Handler Behavior
+    ///
+    /// When multiple handlers are registered, they are processed in a single pass using
+    /// **first-match-wins** strategy for nested elements:
+    ///
+    /// - Non-overlapping elements: All matching handlers are called
+    /// - Nested elements: Only the **first** handler (in registration order) that matches
+    ///   an outer element is called. Inner elements are NOT processed by other handlers
+    ///   while the outer element's subtree is being transformed.
+    ///
+    /// ```rust
+    /// # use fastxml::transform::StreamTransformer;
+    /// let xml = r#"<root><outer><inner/></outer></root>"#;
+    ///
+    /// // handler1 matches //outer, handler2 matches //inner
+    /// // Result: Only handler1 is called. handler2 is NOT called because
+    /// // <inner> is inside the already-matched <outer> subtree.
+    /// let result = StreamTransformer::new(xml)
+    ///     .on("//outer", |node| node.set_attribute("matched", "outer"))
+    ///     .on("//inner", |node| node.set_attribute("matched", "inner"))
+    ///     .run()?
+    ///     .to_string()?;
+    ///
+    /// assert!(result.contains(r#"matched="outer""#));
+    /// assert!(!result.contains(r#"matched="inner""#)); // inner was NOT processed
+    /// # Ok::<(), fastxml::transform::TransformError>(())
+    /// ```
+    ///
+    /// If you need to process both container and child elements, use separate
+    /// `StreamTransformer` instances or use `for_each()` which processes all matches.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -525,43 +556,178 @@ impl<'a> StreamTransformer<'a> {
     }
 
     /// Internal: Execute transformation with all handlers
+    ///
+    /// Optimized to process multiple handlers in a single pass when all XPaths are streamable.
+    ///
+    /// # Single-Pass Strategy: First-Match-Wins
+    ///
+    /// When multiple handlers are registered and all XPaths are streamable, handlers are
+    /// processed in a single XML parsing pass using first-match-wins strategy:
+    ///
+    /// - Only one handler can be "active" (processing a subtree) at a time
+    /// - When a handler matches an element, other handlers cannot match elements
+    ///   within that subtree until processing is complete
+    /// - This prevents overlapping transformations and ensures predictable output
+    ///
+    /// **Example:** If handler1 matches `//outer` and handler2 matches `//inner`,
+    /// and `<inner>` is nested inside `<outer>`, only handler1 will be called.
+    /// handler2 will NOT process `<inner>` because it's inside handler1's active subtree.
+    ///
+    /// # Fallback Behavior
+    ///
+    /// - If any XPath is not streamable (e.g., uses `last()`), behavior depends on `fallback_mode`:
+    ///   - `FallbackMode::Disabled` (default): Returns `NotStreamable` error
+    ///   - `FallbackMode::Enabled`: Falls back to sequential multi-pass processing
     fn execute_transform<W: Write>(mut self, writer: &mut W) -> TransformResult<usize> {
-        // For now, we process handlers sequentially
-        // TODO: optimize for multiple handlers in a single pass
+        // Fast path: single handler
         if self.handlers.len() == 1 {
             let handler = self.handlers.remove(0);
-            stream_transform_with_callback(
+            return stream_transform_with_callback(
                 self.input,
                 &handler.xpath,
                 &self.namespaces,
                 self.fallback_mode,
                 handler.callback,
                 writer,
-            )
-        } else {
-            // Multiple handlers: process sequentially, passing output to next
-            let mut current_input = self.input.to_string();
-            let mut total_count = 0;
+            );
+        }
 
-            for handler in self.handlers {
-                let mut output = Vec::new();
-                let count = stream_transform_with_callback(
-                    &current_input,
-                    &handler.xpath,
-                    &self.namespaces,
-                    self.fallback_mode,
-                    handler.callback,
-                    &mut output,
-                )?;
-                total_count += count;
-                current_input =
-                    String::from_utf8(output).map_err(|e| TransformError::Utf8(e.utf8_error()))?;
+        // Parse and analyze all XPaths
+        let mut analyses: Vec<XPathAnalysis> = Vec::with_capacity(self.handlers.len());
+        for handler in &self.handlers {
+            let expr = handler.xpath.parse()?;
+            analyses.push(xpath_analyze::analyze_xpath(&expr));
+        }
+
+        // Check if all are streamable
+        let mut all_streamable = true;
+        let mut first_not_streamable_reason: Option<(String, NotStreamableReason)> = None;
+
+        for (i, analysis) in analyses.iter().enumerate() {
+            if let XPathAnalysis::NotStreamable(reason) = analysis {
+                all_streamable = false;
+                if first_not_streamable_reason.is_none() {
+                    let xpath_str = self.handlers[i]
+                        .xpath
+                        .as_string()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "<ast>".to_string());
+                    first_not_streamable_reason = Some((xpath_str, reason.clone()));
+                }
+                break;
+            }
+        }
+
+        // If not all streamable and fallback is disabled, return error
+        if !all_streamable {
+            match self.fallback_mode {
+                FallbackMode::Disabled => {
+                    let (xpath, reason) = first_not_streamable_reason.unwrap();
+                    return Err(TransformError::NotStreamable { xpath, reason });
+                }
+                FallbackMode::Enabled => {
+                    // Fall back to sequential processing (multiple passes)
+                    let mut current_input = self.input.to_string();
+                    let mut total_count = 0;
+
+                    for handler in self.handlers {
+                        let mut output = Vec::new();
+                        let count = stream_transform_with_callback(
+                            &current_input,
+                            &handler.xpath,
+                            &self.namespaces,
+                            self.fallback_mode,
+                            handler.callback,
+                            &mut output,
+                        )?;
+                        total_count += count;
+                        current_input = String::from_utf8(output)
+                            .map_err(|e| TransformError::Utf8(e.utf8_error()))?;
+                    }
+
+                    writer
+                        .write_all(current_input.as_bytes())
+                        .map_err(TransformError::Io)?;
+                    return Ok(total_count);
+                }
+            }
+        }
+
+        // All streamable - extract StreamableXPath from analyses
+        let streamable_xpaths: Vec<StreamableXPath> = analyses
+            .into_iter()
+            .filter_map(|a| match a {
+                XPathAnalysis::Streamable(s) => Some(s),
+                _ => None,
+            })
+            .collect();
+
+        // Check if any handler uses WithContext
+        let has_context_handler = self
+            .handlers
+            .iter()
+            .any(|h| matches!(h.callback, HandlerCallback::WithContext(_)));
+
+        if has_context_handler {
+            // Use context-aware multi processing
+            type Callback<'a> = Box<dyn FnMut(&mut EditableNode, &TransformContext) + 'a>;
+            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
+
+            for handler in self.handlers.iter_mut() {
+                match &mut handler.callback {
+                    HandlerCallback::Simple(f) => {
+                        // Wrap simple callback to ignore context
+                        callbacks.push(Box::new(move |node: &mut EditableNode, _ctx| f(node)));
+                    }
+                    HandlerCallback::WithContext(f) => {
+                        callbacks.push(Box::new(move |node: &mut EditableNode, ctx| f(node, ctx)));
+                    }
+                }
             }
 
-            writer
-                .write_all(current_input.as_bytes())
-                .map_err(TransformError::Io)?;
-            Ok(total_count)
+            // Build handlers array for the multi function
+            let mut handler_pairs: Vec<streaming::MultiTransformHandlerWithContext<'_>> =
+                streamable_xpaths
+                    .iter()
+                    .zip(callbacks.iter_mut())
+                    .map(|(xpath, cb)| {
+                        (
+                            xpath,
+                            cb.as_mut() as &mut dyn FnMut(&mut EditableNode, &TransformContext),
+                        )
+                    })
+                    .collect();
+
+            streaming::process_streaming_multi_with_context(
+                self.input,
+                &mut handler_pairs,
+                &self.namespaces,
+                writer,
+            )
+        } else {
+            // Use simple multi processing (no context)
+            type Callback<'a> = Box<dyn FnMut(&mut EditableNode) + 'a>;
+            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
+
+            for handler in self.handlers.iter_mut() {
+                if let HandlerCallback::Simple(f) = &mut handler.callback {
+                    callbacks.push(Box::new(move |node: &mut EditableNode| f(node)));
+                }
+            }
+
+            // Build handlers array for the multi function
+            let mut handler_pairs: Vec<streaming::MultiTransformHandler<'_>> = streamable_xpaths
+                .iter()
+                .zip(callbacks.iter_mut())
+                .map(|(xpath, cb)| (xpath, cb.as_mut() as &mut dyn FnMut(&mut EditableNode)))
+                .collect();
+
+            streaming::process_streaming_multi(
+                self.input,
+                &mut handler_pairs,
+                &self.namespaces,
+                writer,
+            )
         }
     }
 
@@ -2305,5 +2471,171 @@ mod tests {
 
         assert_eq!(all, vec!["A", "B", "C"]);
         assert_eq!(last, vec!["C"]);
+    }
+
+    // =============================================================================
+    // Multi-handler Transform (run) Tests
+    // =============================================================================
+
+    #[test]
+    fn test_run_multi_handler_single_pass() {
+        // Test that multiple handlers in run() are processed in single pass
+        let xml = r#"<root><item>A</item><other>B</other><item>C</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node| {
+                node.set_attribute("type", "item");
+            })
+            .on("//other", |node| {
+                node.set_attribute("type", "other");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        // Verify both handlers were applied
+        assert!(result.contains(r#"type="item""#));
+        assert!(result.contains(r#"type="other""#));
+
+        // Verify order is preserved
+        let item1_pos = result.find("<item type=\"item\">A</item>").unwrap();
+        let other_pos = result.find("<other type=\"other\">B</other>").unwrap();
+        let item2_pos = result.rfind("<item type=\"item\">C</item>").unwrap();
+
+        assert!(item1_pos < other_pos);
+        assert!(other_pos < item2_pos);
+    }
+
+    #[test]
+    fn test_run_multi_handler_with_context() {
+        // Test multi-handler transform with context
+        let xml = r#"<root><item>A</item><item>B</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on_with_context("//item", |node, ctx| {
+                node.set_attribute("pos", &ctx.position().to_string());
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"pos="1""#));
+        assert!(result.contains(r#"pos="2""#));
+    }
+
+    #[test]
+    fn test_run_multi_handler_zero_copy_preservation() {
+        // Verify that non-matched content is preserved exactly
+        let xml = r#"<?xml version="1.0"?>
+<!-- header comment -->
+<root>
+  <unchanged>keep me</unchanged>
+  <item>transform</item>
+</root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item", |node| {
+                node.set_attribute("modified", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        // XML declaration preserved
+        assert!(result.starts_with(r#"<?xml version="1.0"?>"#));
+        // Comment preserved
+        assert!(result.contains("<!-- header comment -->"));
+        // Unchanged element preserved exactly
+        assert!(result.contains("<unchanged>keep me</unchanged>"));
+        // Transformation applied
+        assert!(result.contains(r#"<item modified="true">transform</item>"#));
+    }
+
+    #[test]
+    fn test_run_multi_handler_remove_element() {
+        // Test removing elements with multi-handler transform
+        let xml = r#"<root><keep>A</keep><remove>B</remove><modify>C</modify></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//remove", |node| {
+                node.remove();
+            })
+            .on("//modify", |node| {
+                node.set_attribute("changed", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(!result.contains("<remove>"));
+        assert!(result.contains("<keep>A</keep>"));
+        assert!(result.contains(r#"<modify changed="true">C</modify>"#));
+    }
+
+    #[test]
+    fn test_run_multi_handler_first_match_wins_nested() {
+        // Test first-match-wins behavior for nested elements
+        let xml = r#"<root><outer><inner>content</inner></outer></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//outer", |node| {
+                node.set_attribute("matched", "outer");
+            })
+            .on("//inner", |node| {
+                // This should NOT be called because outer matched first
+                node.set_attribute("matched", "inner");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        // Only outer should have been modified
+        assert!(result.contains(r#"matched="outer""#));
+        // Inner should NOT have been modified (it's nested inside outer)
+        assert!(!result.contains(r#"matched="inner""#));
+    }
+
+    #[test]
+    fn test_run_multi_handler_not_streamable_error() {
+        // Test that NotStreamable error is returned for non-streamable XPath
+        let xml = r#"<root><item>A</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .on("//item[last()]", |_| {})
+            .on("//other", |_| {})
+            .run();
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TransformError::NotStreamable { .. }
+        ));
+    }
+
+    #[test]
+    fn test_run_multi_handler_fallback_enabled() {
+        // Test that fallback works for non-streamable XPath with allow_fallback
+        let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .allow_fallback()
+            .on("//item[last()]", |node| {
+                node.set_attribute("last", "true");
+            })
+            .on("//item[1]", |node| {
+                node.set_attribute("first", "true");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(result.contains(r#"first="true""#));
+        assert!(result.contains(r#"last="true""#));
     }
 }
