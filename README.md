@@ -45,7 +45,7 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/l
 
 ```toml
 [dependencies]
-fastxml = "0.4"
+fastxml = "0.5"
 ```
 
 ### Cargo Features
@@ -59,10 +59,10 @@ fastxml = "0.4"
 
 ```toml
 # Recommended: sync schema fetching
-fastxml = { version = "0.3", features = ["ureq"] }
+fastxml = { version = "0.5", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.3", features = ["tokio"] }
+fastxml = { version = "0.5", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
