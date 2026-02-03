@@ -302,6 +302,133 @@ fn test_parse_real_gml_structure() {
     assert!(children.iter().any(|c| c.get_name() == "cityObjectMember"));
 }
 
+/// Test that sequence maxOccurs is propagated to child elements
+/// This reproduces a bug where GML's TrianglePatchArrayPropertyType
+/// has <sequence maxOccurs="unbounded"> but the child Triangle element
+/// was incorrectly compiled with max_occurs=1 instead of unbounded.
+#[test]
+fn test_sequence_maxoccurs_propagation() {
+    // Pattern from GML: sequence has maxOccurs="unbounded", child element has no maxOccurs (defaults to 1)
+    // Expected: child element should effectively be unbounded
+    let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               targetNamespace="http://example.com/test"
+               elementFormDefault="qualified">
+
+        <xs:complexType name="ArrayPropertyType">
+            <xs:sequence minOccurs="0" maxOccurs="unbounded">
+                <xs:element name="item" type="xs:string"/>
+            </xs:sequence>
+        </xs:complexType>
+
+    </xs:schema>"#;
+
+    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+
+    // Check that ArrayPropertyType exists
+    assert!(schema.types.contains_key("ArrayPropertyType"));
+
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
+        schema.types.get("ArrayPropertyType")
+    {
+        if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
+            let item = elements.iter().find(|e| e.name == "item").unwrap();
+            // The sequence has maxOccurs="unbounded", so the child element should also be unbounded
+            assert_eq!(
+                item.max_occurs, None,
+                "Child element in unbounded sequence should have max_occurs=None (unbounded), got {:?}",
+                item.max_occurs
+            );
+            // The sequence has minOccurs="0", so the child element should be optional
+            assert_eq!(
+                item.min_occurs, 0,
+                "Child element in optional sequence should have min_occurs=0, got {}",
+                item.min_occurs
+            );
+        } else {
+            panic!("Expected Sequence content model");
+        }
+    } else {
+        panic!("Expected Complex type");
+    }
+}
+
+/// Test that nested sequence maxOccurs is propagated correctly
+#[test]
+fn test_nested_sequence_maxoccurs_propagation() {
+    let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               targetNamespace="http://example.com/test"
+               elementFormDefault="qualified">
+
+        <xs:complexType name="NestedArrayType">
+            <xs:sequence maxOccurs="unbounded">
+                <xs:sequence maxOccurs="3">
+                    <xs:element name="inner" type="xs:string"/>
+                </xs:sequence>
+            </xs:sequence>
+        </xs:complexType>
+
+    </xs:schema>"#;
+
+    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.types.get("NestedArrayType")
+    {
+        if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
+            let inner = elements.iter().find(|e| e.name == "inner").unwrap();
+            // outer: unbounded * inner: 3 * element: 1 = unbounded
+            assert_eq!(
+                inner.max_occurs, None,
+                "Nested sequence should propagate unbounded, got {:?}",
+                inner.max_occurs
+            );
+        } else {
+            panic!("Expected Sequence content model");
+        }
+    } else {
+        panic!("Expected Complex type");
+    }
+}
+
+/// Test that choice maxOccurs is propagated to child elements
+#[test]
+fn test_choice_maxoccurs_propagation() {
+    let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               targetNamespace="http://example.com/test"
+               elementFormDefault="qualified">
+
+        <xs:complexType name="RepeatingChoiceType">
+            <xs:choice maxOccurs="unbounded">
+                <xs:element name="optionA" type="xs:string"/>
+                <xs:element name="optionB" type="xs:integer"/>
+            </xs:choice>
+        </xs:complexType>
+
+    </xs:schema>"#;
+
+    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
+        schema.types.get("RepeatingChoiceType")
+    {
+        if let fastxml::schema::types::ContentModel::Choice(elements) = &ct.content {
+            let option_a = elements.iter().find(|e| e.name == "optionA").unwrap();
+            // choice has maxOccurs="unbounded", so child elements should be unbounded
+            assert_eq!(
+                option_a.max_occurs, None,
+                "Child element in unbounded choice should have max_occurs=None (unbounded), got {:?}",
+                option_a.max_occurs
+            );
+        } else {
+            panic!("Expected Choice content model");
+        }
+    } else {
+        panic!("Expected Complex type");
+    }
+}
+
 /// Test streaming parsing with validator
 #[test]
 fn test_streaming_parse_with_validator() {

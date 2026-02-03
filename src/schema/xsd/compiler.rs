@@ -339,17 +339,42 @@ impl XsdCompiler {
     /// Compiles a sequence.
     fn compile_sequence(&mut self, seq: &XsdSequence) -> Result<Vec<ElementDef>> {
         let mut elements = Vec::new();
+        let seq_max = seq.max_occurs.to_option();
+        let seq_min_zero = seq.min_occurs == Occurs::Count(0);
 
         for item in &seq.particles {
             match item {
                 XsdParticleItem::Element(elem) => {
-                    elements.push(self.compile_element(elem)?);
+                    let mut compiled = self.compile_element(elem)?;
+                    // Propagate sequence's maxOccurs to child element
+                    compiled.max_occurs = Self::multiply_occurs(compiled.max_occurs, seq_max);
+                    // If sequence is optional (minOccurs=0), child is also optional
+                    if seq_min_zero {
+                        compiled.min_occurs = 0;
+                    }
+                    elements.push(compiled);
                 }
                 XsdParticleItem::Sequence(nested) => {
-                    elements.extend(self.compile_sequence(nested)?);
+                    let mut nested_elems = self.compile_sequence(nested)?;
+                    // Propagate this sequence's occurs to nested results
+                    for e in &mut nested_elems {
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
+                        if seq_min_zero {
+                            e.min_occurs = 0;
+                        }
+                    }
+                    elements.extend(nested_elems);
                 }
                 XsdParticleItem::Choice(nested) => {
-                    elements.extend(self.compile_choice(nested)?);
+                    let mut nested_elems = self.compile_choice(nested)?;
+                    // Propagate this sequence's occurs to nested results
+                    for e in &mut nested_elems {
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
+                        if seq_min_zero {
+                            e.min_occurs = 0;
+                        }
+                    }
+                    elements.extend(nested_elems);
                 }
                 XsdParticleItem::GroupRef(_) => {
                     // Group references would need resolution
@@ -363,9 +388,18 @@ impl XsdCompiler {
         Ok(elements)
     }
 
+    /// Multiplies two maxOccurs values. If either is unbounded (None), result is unbounded.
+    fn multiply_occurs(elem_max: Option<u32>, parent_max: Option<u32>) -> Option<u32> {
+        match (elem_max, parent_max) {
+            (None, _) | (_, None) => None, // unbounded
+            (Some(a), Some(b)) => Some(a.saturating_mul(b)),
+        }
+    }
+
     /// Compiles a choice.
     fn compile_choice(&mut self, choice: &XsdChoice) -> Result<Vec<ElementDef>> {
         let mut elements = Vec::new();
+        let choice_max = choice.max_occurs.to_option();
 
         for item in &choice.particles {
             match item {
@@ -373,17 +407,26 @@ impl XsdCompiler {
                     let mut compiled = self.compile_element(elem)?;
                     // Choice elements are implicitly optional
                     compiled.min_occurs = 0;
+                    // Propagate choice's maxOccurs to child element
+                    compiled.max_occurs = Self::multiply_occurs(compiled.max_occurs, choice_max);
                     elements.push(compiled);
                 }
                 XsdParticleItem::Sequence(nested) => {
                     let mut nested_elems = self.compile_sequence(nested)?;
                     for e in &mut nested_elems {
                         e.min_occurs = 0;
+                        // Propagate choice's maxOccurs to nested results
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, choice_max);
                     }
                     elements.extend(nested_elems);
                 }
                 XsdParticleItem::Choice(nested) => {
-                    elements.extend(self.compile_choice(nested)?);
+                    let mut nested_elems = self.compile_choice(nested)?;
+                    for e in &mut nested_elems {
+                        // Propagate choice's maxOccurs to nested results
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, choice_max);
+                    }
+                    elements.extend(nested_elems);
                 }
                 XsdParticleItem::GroupRef(_) => {}
                 XsdParticleItem::Any(_) => {}
