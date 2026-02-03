@@ -7,6 +7,17 @@
 
 A fast, memory-efficient XML library for Rust with XPath and schema validation support. Designed for processing large XML documents like CityGML files used in [PLATEAU](https://www.mlit.go.jp/plateau/).
 
+## ⚠️ Project Status
+
+> **This library is in early development (v0.x).** While basic functionality has been tested and benchmarked, please be aware of the following:
+
+- **API Stability**: The API may change between minor versions without notice
+- **Production Readiness**: This is a young library with limited production experience — **do not expect libxml-level maturity or reliability**
+- **Use at Your Own Risk**: No warranties are provided; use this library at your own discretion
+- **Not for Critical Systems**: Avoid using in business-critical or safety-critical systems where XML processing failures could cause significant harm
+
+We welcome bug reports and contributions, but please evaluate carefully before adopting this library for production use.
+
 ## Features
 
 - 🦀 **Pure Rust** — No C dependencies, no unsafe code
