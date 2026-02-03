@@ -286,13 +286,16 @@ impl DomSchemaValidator {
         let mut visited = std::collections::HashSet::new();
         let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
+        // Collect ordered elements into a temporary Vec, then convert to Arc<[String]>
+        let mut ordered: Vec<String> = Vec::with_capacity(elements.len());
         for elem in &elements {
             flattened
                 .constraints
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
             // Store element order for sequence validation
-            flattened.ordered_elements.push(elem.name.clone());
+            ordered.push(elem.name.clone());
         }
+        flattened.ordered_elements = std::sync::Arc::from(ordered);
 
         flattened
     }

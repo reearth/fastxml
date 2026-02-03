@@ -1,6 +1,5 @@
 //! Validation state management during streaming.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
@@ -15,8 +14,9 @@ pub(crate) struct ValidationState {
     pub element_stack: Vec<ElementContext>,
     /// Current depth
     pub depth: usize,
-    /// Namespace bindings at each depth
-    pub namespace_stack: Vec<HashMap<String, String>>,
+    /// Namespace bindings at each depth - stores only the diff for each scope
+    /// This avoids cloning the entire HashMap on each push
+    pub namespace_stack: Vec<SmallVec<[(String, String); 4]>>,
 }
 
 /// Context for an element being validated.
@@ -139,7 +139,7 @@ impl ValidationState {
         Self {
             element_stack: Vec::with_capacity(64),
             depth: 0,
-            namespace_stack: vec![HashMap::new()],
+            namespace_stack: vec![SmallVec::new()],
         }
     }
 
@@ -175,12 +175,14 @@ impl ValidationState {
         self.element_stack.last_mut()
     }
 
+    /// Pushes namespace declarations for the current scope.
+    /// Only stores the diff (new bindings) instead of cloning the entire map.
     pub fn push_namespaces(&mut self, decls: &[Namespace]) {
-        let mut current = self.namespace_stack.last().cloned().unwrap_or_default();
-        for ns in decls {
-            current.insert(ns.prefix().to_string(), ns.uri().to_string());
-        }
-        self.namespace_stack.push(current);
+        let bindings: SmallVec<[(String, String); 4]> = decls
+            .iter()
+            .map(|ns| (ns.prefix().to_string(), ns.uri().to_string()))
+            .collect();
+        self.namespace_stack.push(bindings);
     }
 
     pub fn pop_namespaces(&mut self) {
@@ -189,11 +191,18 @@ impl ValidationState {
         }
     }
 
+    /// Resolves a namespace prefix by searching from innermost to outermost scope.
     #[allow(dead_code)]
     pub fn resolve_prefix(&self, prefix: &str) -> Option<&str> {
-        self.namespace_stack
-            .last()
-            .and_then(|ns| ns.get(prefix).map(|s| s.as_str()))
+        // Search from innermost to outermost scope
+        for scope in self.namespace_stack.iter().rev() {
+            for (p, uri) in scope {
+                if p == prefix {
+                    return Some(uri.as_str());
+                }
+            }
+        }
+        None
     }
 
     /// Returns XPath-like path to current element.

@@ -29,8 +29,9 @@ pub struct FlattenedChildren {
     pub constraints: HashMap<String, (u32, Option<u32>)>,
     /// Content model type
     pub content_model_type: ContentModelType,
-    /// Ordered element names for sequence validation
-    pub ordered_elements: Vec<String>,
+    /// Ordered element names for sequence validation.
+    /// Using Arc<[String]> to make cloning cheap (pointer copy instead of deep clone).
+    pub ordered_elements: Arc<[String]>,
 }
 
 impl FlattenedChildren {
@@ -39,7 +40,7 @@ impl FlattenedChildren {
         Self {
             constraints: HashMap::new(),
             content_model_type: ContentModelType::Empty,
-            ordered_elements: Vec::new(),
+            ordered_elements: Arc::from([]),
         }
     }
 
@@ -48,7 +49,7 @@ impl FlattenedChildren {
         Self {
             constraints: HashMap::new(),
             content_model_type,
-            ordered_elements: Vec::new(),
+            ordered_elements: Arc::from([]),
         }
     }
 }

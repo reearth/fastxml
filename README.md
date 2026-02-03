@@ -27,21 +27,21 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/l
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 4.39s | 207 MB/s | 2.93 GB |
-| fastxml DOM | 5.21s | 174 MB/s | 1.73 GB |
-| fastxml One-Pass | 4.20s | 216 MB/s | **~1 MB** |
+| libxml DOM | 5.96s | 152 MB/s | 4.19 GB |
+| fastxml DOM | 10.05s | 90 MB/s | 2.45 GB |
+| fastxml Streaming | 7.87s | 115 MB/s | **~1 MB** |
 
 **Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM + validate | 9.88s | 92 MB/s | 2.93 GB |
-| fastxml DOM + validate | 24.52s | 37 MB/s | 2.62 GB |
-| fastxml Two-Pass | 29.56s | 31 MB/s | 780 MB |
-| fastxml One-Pass | 62.01s | 15 MB/s | **~1 MB** |
+| libxml DOM + validate | 11.49s | 79 MB/s | 4.19 GB |
+| fastxml DOM + validate | 54.80s | 17 MB/s | 1.77 GB |
+| fastxml Two-Pass | 23.99s | 38 MB/s | low |
+| fastxml One-Pass | 22.27s | 41 MB/s | **~1 MB** |
 
 - **DOM**: 1.7x less memory than libxml
-- **Two-Pass**: Good balance of speed and memory
+- **Streaming (One-Pass/Two-Pass)**: ~40 MB/s consistent throughput with minimal memory
 - **One-Pass**: Constant ~1 MB memory regardless of file size
 
 ## Installation
@@ -341,9 +341,9 @@ let errors = TwoPassSchemaValidator::new(schema)
 
 | Validator | Best For | Throughput | Memory |
 |-----------|----------|------------|--------|
-| `DomSchemaValidator` | Pre-parsed documents | ~37 MB/s | High |
-| `TwoPassSchemaValidator` | Large seekable files | ~31 MB/s | Medium |
-| `OnePassSchemaValidator` | Huge/non-seekable files | ~15 MB/s | **Minimal** |
+| `DomSchemaValidator` | Pre-parsed documents | ~17 MB/s | High |
+| `TwoPassSchemaValidator` | Large seekable files | ~38 MB/s | Medium |
+| `OnePassSchemaValidator` | Huge/non-seekable files | ~41 MB/s | **Minimal** |
 
 ### Auto-detect Schema
 

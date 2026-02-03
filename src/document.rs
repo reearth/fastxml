@@ -216,26 +216,32 @@ impl std::fmt::Debug for XmlDocument {
 ///
 /// This is used internally by the parser but can also be used
 /// to programmatically build documents.
+///
+/// The builder avoids RwLock overhead during construction by storing
+/// nodes directly in a Vec. The lock is only created when build() is called.
 pub struct DocumentBuilder {
-    document: XmlDocument,
+    /// Nodes stored directly without lock during construction
+    nodes: Vec<NodeData>,
+    /// Root element node ID
+    root_element_id: Option<NodeId>,
+    /// Stack of current element IDs for tracking parent-child relationships
     node_stack: Vec<NodeId>,
+    /// Next available node ID
     next_id: NodeId,
 }
 
 impl DocumentBuilder {
     /// Creates a new document builder.
     pub fn new() -> Self {
-        let document = XmlDocument::new();
+        let mut nodes = Vec::with_capacity(64);
+        nodes.push(NodeData::document());
+
         Self {
-            document,
+            nodes,
+            root_element_id: None,
             node_stack: vec![0], // Start with document node
             next_id: 1,
         }
-    }
-
-    /// Returns a reference to the document being built.
-    pub fn document(&self) -> &XmlDocument {
-        &self.document
     }
 
     /// Starts a new element.
@@ -269,22 +275,18 @@ impl DocumentBuilder {
         node.column = column;
 
         let parent_id = *self.node_stack.last().unwrap_or(&0);
+        node.parent = Some(parent_id);
 
-        // Add to document
-        {
-            let mut nodes = self.document.nodes.write();
-            node.parent = Some(parent_id);
-            nodes.push(node);
-
-            // Add as child of parent
-            if let Some(parent) = nodes.get_mut(parent_id) {
-                parent.children.push(id);
-            }
+        // Add as child of parent (direct access, no lock needed)
+        if let Some(parent) = self.nodes.get_mut(parent_id) {
+            parent.children.push(id);
         }
 
+        self.nodes.push(node);
+
         // Set as root element if this is the first element
-        if self.document.root_element_id.is_none() && parent_id == 0 {
-            self.document.root_element_id = Some(id);
+        if self.root_element_id.is_none() && parent_id == 0 {
+            self.root_element_id = Some(id);
         }
 
         self.node_stack.push(id);
@@ -305,20 +307,16 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let node = NodeData::text(id, content.to_string());
+        let mut node = NodeData::text(id, content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
+        node.parent = Some(parent_id);
 
-        {
-            let mut nodes = self.document.nodes.write();
-            let mut node = node;
-            node.parent = Some(parent_id);
-            nodes.push(node);
-
-            if let Some(parent) = nodes.get_mut(parent_id) {
-                parent.children.push(id);
-            }
+        // Add as child of parent (direct access, no lock needed)
+        if let Some(parent) = self.nodes.get_mut(parent_id) {
+            parent.children.push(id);
         }
 
+        self.nodes.push(node);
         id
     }
 
@@ -327,20 +325,16 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let node = NodeData::cdata(id, content.to_string());
+        let mut node = NodeData::cdata(id, content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
+        node.parent = Some(parent_id);
 
-        {
-            let mut nodes = self.document.nodes.write();
-            let mut node = node;
-            node.parent = Some(parent_id);
-            nodes.push(node);
-
-            if let Some(parent) = nodes.get_mut(parent_id) {
-                parent.children.push(id);
-            }
+        // Add as child of parent (direct access, no lock needed)
+        if let Some(parent) = self.nodes.get_mut(parent_id) {
+            parent.children.push(id);
         }
 
+        self.nodes.push(node);
         id
     }
 
@@ -349,20 +343,16 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let node = NodeData::comment(id, content.to_string());
+        let mut node = NodeData::comment(id, content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
+        node.parent = Some(parent_id);
 
-        {
-            let mut nodes = self.document.nodes.write();
-            let mut node = node;
-            node.parent = Some(parent_id);
-            nodes.push(node);
-
-            if let Some(parent) = nodes.get_mut(parent_id) {
-                parent.children.push(id);
-            }
+        // Add as child of parent (direct access, no lock needed)
+        if let Some(parent) = self.nodes.get_mut(parent_id) {
+            parent.children.push(id);
         }
 
+        self.nodes.push(node);
         id
     }
 
@@ -371,32 +361,33 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let node = NodeData::processing_instruction(
+        let mut node = NodeData::processing_instruction(
             id,
             target.to_string(),
             content.map(|s| s.to_string()),
         );
         let parent_id = *self.node_stack.last().unwrap_or(&0);
+        node.parent = Some(parent_id);
 
-        {
-            let mut nodes = self.document.nodes.write();
-            let mut node = node;
-            node.parent = Some(parent_id);
-            nodes.push(node);
-
-            if let Some(parent) = nodes.get_mut(parent_id) {
-                parent.children.push(id);
-            }
+        // Add as child of parent (direct access, no lock needed)
+        if let Some(parent) = self.nodes.get_mut(parent_id) {
+            parent.children.push(id);
         }
 
+        self.nodes.push(node);
         id
     }
 
     /// Finishes building and returns the document.
     pub fn build(self) -> XmlDocument {
+        let document = XmlDocument {
+            nodes: Arc::new(RwLock::new(self.nodes)),
+            root_element_id: self.root_element_id,
+            namespace_resolver: Arc::new(RwLock::new(NamespaceResolver::new())),
+        };
         // Extract namespaces from root element
-        self.document.extract_and_register_namespaces();
-        self.document
+        document.extract_and_register_namespaces();
+        document
     }
 }
 
