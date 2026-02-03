@@ -33,21 +33,29 @@ pub struct ElementSkeleton {
     pub child_counts: HashMap<String, u32>,
     /// Indices of child skeleton nodes in the flat storage
     pub children_indices: Vec<usize>,
-    /// Line number for error reporting
+    /// Line number for error reporting (1-indexed)
     pub line: Option<usize>,
+    /// Column number for error reporting (1-indexed, in UTF-8 characters)
+    pub column: Option<usize>,
     /// Collected text content
     pub text_content: String,
 }
 
 impl ElementSkeleton {
     /// Creates a new element skeleton.
-    pub fn new(name: Arc<str>, prefix: Option<Arc<str>>, line: Option<usize>) -> Self {
+    pub fn new(
+        name: Arc<str>,
+        prefix: Option<Arc<str>>,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> Self {
         Self {
             name,
             prefix,
             child_counts: HashMap::new(),
             children_indices: Vec::new(),
             line,
+            column,
             text_content: String::new(),
         }
     }
@@ -116,11 +124,19 @@ impl XmlEventHandler for SkeletonBuilder {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         match event {
             XmlEvent::StartElement {
-                name, prefix, line, ..
+                name,
+                prefix,
+                line,
+                column,
+                ..
             } => {
                 // Create new skeleton node
-                let node =
-                    ElementSkeleton::new(Arc::clone(name), prefix.as_ref().map(Arc::clone), *line);
+                let node = ElementSkeleton::new(
+                    Arc::clone(name),
+                    prefix.as_ref().map(Arc::clone),
+                    *line,
+                    *column,
+                );
 
                 // Add to flat storage
                 let node_index = self.skeleton.nodes.len();
@@ -821,6 +837,9 @@ impl TwoPassSchemaValidator {
         if let Some(line) = node.line {
             error = error.with_line(line);
         }
+        if let Some(column) = node.column {
+            error = error.with_column(column);
+        }
         error
     }
 
@@ -841,17 +860,18 @@ mod tests {
 
     #[test]
     fn test_element_skeleton_new() {
-        let skeleton = ElementSkeleton::new("test".into(), None, Some(1));
+        let skeleton = ElementSkeleton::new("test".into(), None, Some(1), Some(5));
         assert_eq!(skeleton.name.as_ref(), "test");
         assert!(skeleton.prefix.is_none());
         assert_eq!(skeleton.line, Some(1));
+        assert_eq!(skeleton.column, Some(5));
         assert!(skeleton.child_counts.is_empty());
         assert!(skeleton.text_content.is_empty());
     }
 
     #[test]
     fn test_element_skeleton_child_counts() {
-        let mut skeleton = ElementSkeleton::new("parent".into(), None, None);
+        let mut skeleton = ElementSkeleton::new("parent".into(), None, None, None);
 
         assert_eq!(skeleton.get_child_count("child"), 0);
 

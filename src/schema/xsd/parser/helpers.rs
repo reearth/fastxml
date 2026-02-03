@@ -116,5 +116,6 @@ pub(super) fn convert_start_event(
         attributes,
         namespace_decls,
         line,
+        column: None,
     })
 }

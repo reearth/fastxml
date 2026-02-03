@@ -14,6 +14,7 @@ use quick_xml::events::Event;
 
 use crate::error::Result;
 use crate::namespace::Namespace;
+use crate::position::PositionTrackingReader;
 
 /// String interner for reducing memory allocations.
 ///
@@ -67,8 +68,10 @@ pub enum XmlEvent {
         attributes: Vec<(CompactString, CompactString)>,
         /// Namespace declarations on this element
         namespace_decls: Vec<Namespace>,
-        /// Line number (if available)
+        /// Line number (1-indexed, if available)
         line: Option<usize>,
+        /// Column number (1-indexed, in UTF-8 characters, if available)
+        column: Option<usize>,
     },
     /// End of an element
     EndElement {
@@ -127,7 +130,7 @@ pub trait XmlEventHandler: Send + Any {
 
 /// A streaming XML parser that dispatches events to handlers.
 pub struct StreamingParser<R: BufRead> {
-    reader: Reader<R>,
+    reader: Reader<PositionTrackingReader<R>>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
     interner: StringInterner,
 }
@@ -135,7 +138,8 @@ pub struct StreamingParser<R: BufRead> {
 impl<R: BufRead> StreamingParser<R> {
     /// Creates a new streaming parser from a BufRead source.
     pub fn new(reader: R) -> Self {
-        let mut xml_reader = Reader::from_reader(reader);
+        let position_reader = PositionTrackingReader::new(reader);
+        let mut xml_reader = Reader::from_reader(position_reader);
         xml_reader.config_mut().trim_text(false);
         xml_reader.config_mut().expand_empty_elements = true;
 
@@ -144,6 +148,16 @@ impl<R: BufRead> StreamingParser<R> {
             handlers: Vec::new(),
             interner: StringInterner::new(),
         }
+    }
+
+    /// Returns the current line number (1-indexed).
+    fn current_line(&self) -> usize {
+        self.reader.get_ref().line()
+    }
+
+    /// Returns the current column number (1-indexed, in UTF-8 characters).
+    fn current_column(&self) -> usize {
+        self.reader.get_ref().column()
     }
 
     /// Adds an event handler.
@@ -162,15 +176,16 @@ impl<R: BufRead> StreamingParser<R> {
 
         loop {
             let event_result = self.reader.read_event_into(&mut buffer);
-            let position = self.reader.buffer_position();
+            let line = self.current_line();
+            let column = self.current_column();
 
             match event_result {
                 Ok(Event::Start(ref e)) => {
-                    let event = convert_start_event(e, position, &mut self.interner)?;
+                    let event = convert_start_event(e, line, column, &mut self.interner)?;
                     self.dispatch_event(&event)?;
                 }
                 Ok(Event::Empty(ref e)) => {
-                    let start_event = convert_start_event(e, position, &mut self.interner)?;
+                    let start_event = convert_start_event(e, line, column, &mut self.interner)?;
                     self.dispatch_event(&start_event)?;
 
                     // For empty elements, also dispatch end event
@@ -259,7 +274,7 @@ impl<R: BufRead> StreamingParser<R> {
                 }
                 Err(e) => {
                     return Err(crate::parse_error::ParseError::AtPosition {
-                        position,
+                        position: self.reader.get_ref().byte_offset() as u64,
                         message: e.to_string(),
                     }
                     .into());
@@ -286,7 +301,8 @@ impl<R: BufRead> StreamingParser<R> {
 
 fn convert_start_event(
     e: &quick_xml::events::BytesStart<'_>,
-    position: u64,
+    line: usize,
+    column: usize,
     interner: &mut StringInterner,
 ) -> Result<XmlEvent> {
     let name_bytes = e.name().as_ref().to_vec();
@@ -317,15 +333,14 @@ fn convert_start_event(
         }
     }
 
-    let line = Some(position as usize);
-
     Ok(XmlEvent::StartElement {
         name: interner.intern(name),
         prefix: prefix.map(|p| interner.intern(p)),
         namespace: None, // Would need namespace resolution
         attributes,
         namespace_decls,
-        line,
+        line: Some(line),
+        column: Some(column),
     })
 }
 
@@ -399,6 +414,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
+                column: None,
             })
             .unwrap();
 
@@ -410,6 +426,7 @@ mod tests {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
+                column: None,
             })
             .unwrap();
 

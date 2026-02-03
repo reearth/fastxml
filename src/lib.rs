@@ -141,6 +141,7 @@ pub mod node;
 pub mod node_error;
 pub mod parse_error;
 pub mod parser;
+pub mod position;
 pub mod profile;
 pub mod schema;
 pub mod serialize;
@@ -166,6 +167,9 @@ pub use compact_str::CompactString;
 pub use parser::{
     ParserOptions, parse, parse_from_bufread, parse_schema_locations, parse_with_options,
 };
+
+// Re-export position tracking
+pub use position::PositionTrackingReader;
 
 // Re-export XPath context (for libxml compatibility)
 pub use xpath::context::{XmlContext, XmlSafeContext};

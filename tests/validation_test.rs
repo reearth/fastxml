@@ -1012,6 +1012,7 @@ mod streaming_validation {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
+                column: None,
             })
             .unwrap();
 
@@ -1050,6 +1051,7 @@ mod streaming_validation {
                 attributes: vec![],
                 namespace_decls: vec![],
                 line: Some(1),
+                column: None,
             })
             .unwrap();
 
@@ -1209,6 +1211,8 @@ mod unified_validation {
 </root>"#;
 
     test_validation!(max_occurs_valid, XML_MAX_OCCURS_VALID, XSD_MAX_OCCURS, true);
+    // Note: Error positions vary by validator - line checking only for now
+    // TODO: Fix position reporting consistency across validators
     test_validation!(
         max_occurs_exceeded,
         XML_MAX_OCCURS_EXCEEDED,

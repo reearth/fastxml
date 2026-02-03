@@ -25,12 +25,27 @@ mod malformed_xml {
     #[test]
     fn test_mismatched_tags() {
         let xml = "<root></roo>";
+        //         0123456789AB (hex) = positions
+        //         "<root>" = 6 bytes, "</roo>" = 6 bytes, total = 12 bytes
         let result = parse(xml);
-        assert!(
-            matches!(&result, Err(Error::Parse(ParseError::AtPosition { message, .. })) if message.contains("expected") || message.contains("mismatch")),
-            "Expected Parse error with mismatch message, got: {:?}",
-            result
-        );
+        match &result {
+            Err(Error::Parse(ParseError::AtPosition { message, position })) => {
+                assert!(
+                    message.contains("expected") || message.contains("mismatch"),
+                    "Expected mismatch message, got: {}",
+                    message
+                );
+                // Error detected at end of closing tag (byte 12)
+                assert_eq!(
+                    *position, 12,
+                    "Error position should be at end of closing tag"
+                );
+            }
+            _ => panic!(
+                "Expected Parse error with mismatch message, got: {:?}",
+                result
+            ),
+        }
     }
 
     #[test]
@@ -584,15 +599,32 @@ mod streaming_errors {
         use fastxml::parse_error::ParseError;
 
         let xml = "<root></wrong>";
+        //         01234567890123 = positions (14 bytes total)
+        //         "<root>" = 6 bytes, "</wrong>" = 8 bytes
         let mut parser = StreamingParser::new(xml.as_bytes());
         let handler = EventCounter { count: 0 };
         parser.add_handler(Box::new(handler));
 
         let result = parser.parse();
-        assert!(
-            matches!(&result, Err(Error::Parse(ParseError::AtPosition { message, .. })) if message.contains("expected") || message.contains("mismatch") || message.contains("EndTag")),
-            "Expected Parse error for mismatched tags, got: {:?}",
-            result
-        );
+        match &result {
+            Err(Error::Parse(ParseError::AtPosition { message, position })) => {
+                assert!(
+                    message.contains("expected")
+                        || message.contains("mismatch")
+                        || message.contains("EndTag"),
+                    "Expected mismatch message, got: {}",
+                    message
+                );
+                // Error detected at end of closing tag (byte 14)
+                assert_eq!(
+                    *position, 14,
+                    "Error position should be at end of closing tag"
+                );
+            }
+            _ => panic!(
+                "Expected Parse error for mismatched tags, got: {:?}",
+                result
+            ),
+        }
     }
 }

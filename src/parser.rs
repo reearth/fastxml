@@ -9,6 +9,7 @@ use quick_xml::events::{BytesStart, Event};
 use crate::document::{DocumentBuilder, XmlDocument};
 use crate::error::Result;
 use crate::namespace::{Namespace, split_qname};
+use crate::position::PositionTrackingReader;
 
 /// Stack of namespace bindings for tracking scope during parsing.
 ///
@@ -122,14 +123,16 @@ pub fn parse<T: AsRef<[u8]>>(xml: T) -> Result<XmlDocument> {
 
 /// Parses XML content with custom options.
 pub fn parse_with_options<T: AsRef<[u8]>>(xml: T, options: &ParserOptions) -> Result<XmlDocument> {
-    let mut reader = Reader::from_reader(xml.as_ref());
+    let tracking_reader = PositionTrackingReader::new(xml.as_ref());
+    let mut reader = Reader::from_reader(tracking_reader);
     configure_reader(&mut reader, options);
     parse_from_reader(&mut reader, options)
 }
 
 /// Parses XML from a BufRead source.
 pub fn parse_from_bufread<R: BufRead>(reader: R, options: &ParserOptions) -> Result<XmlDocument> {
-    let mut xml_reader = Reader::from_reader(reader);
+    let tracking_reader = PositionTrackingReader::new(reader);
+    let mut xml_reader = Reader::from_reader(tracking_reader);
     configure_reader(&mut xml_reader, options);
     parse_from_reader(&mut xml_reader, options)
 }
@@ -142,7 +145,7 @@ fn configure_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions)
 }
 
 fn parse_from_reader<R: BufRead>(
-    reader: &mut Reader<R>,
+    reader: &mut Reader<PositionTrackingReader<R>>,
     options: &ParserOptions,
 ) -> Result<XmlDocument> {
     let mut builder = DocumentBuilder::new();
@@ -154,11 +157,15 @@ fn parse_from_reader<R: BufRead>(
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
-                process_start_element(&mut builder, e, reader, &mut ns_stack)?;
+                let line = reader.get_ref().line();
+                let column = reader.get_ref().column();
+                process_start_element(&mut builder, e, reader, &mut ns_stack, line, column)?;
             }
             Ok(Event::Empty(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
-                process_start_element(&mut builder, e, reader, &mut ns_stack)?;
+                let line = reader.get_ref().line();
+                let column = reader.get_ref().column();
+                process_start_element(&mut builder, e, reader, &mut ns_stack, line, column)?;
                 ns_stack.pop_scope();
                 builder.end_element();
             }
@@ -230,8 +237,10 @@ fn check_memory(options: &ParserOptions, used: &mut usize, additional: usize) ->
 fn process_start_element<R: BufRead>(
     builder: &mut DocumentBuilder,
     e: &BytesStart<'_>,
-    reader: &Reader<R>,
+    _reader: &Reader<PositionTrackingReader<R>>,
     ns_stack: &mut NamespaceStack,
+    line: usize,
+    column: usize,
 ) -> Result<()> {
     // Push a new scope for this element
     ns_stack.push_scope();
@@ -297,16 +306,14 @@ fn process_start_element<R: BufRead>(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let line = Some(reader.buffer_position() as usize);
-
     builder.start_element(
         local_name,
         prefix,
         namespace_uri.as_deref(),
         attr_refs,
         namespace_decls,
-        line,
-        None,
+        Some(line),
+        Some(column),
     );
 
     Ok(())

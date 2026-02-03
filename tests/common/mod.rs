@@ -583,6 +583,73 @@ impl ValidationResult {
     pub fn errors(&self) -> &[StructuredError] {
         &self.errors
     }
+
+    /// Asserts that all errors have line position information.
+    /// Call this when validation is expected to fail to verify error positions are reported.
+    pub fn assert_errors_have_line(&self) {
+        for (i, error) in self.errors.iter().filter(|e| e.is_error()).enumerate() {
+            assert!(
+                error.line().is_some(),
+                "Error {} should have line number: {:?}",
+                i,
+                error
+            );
+        }
+    }
+
+    /// Asserts that all errors have both line and column position information.
+    pub fn assert_errors_have_line_column(&self) {
+        for (i, error) in self.errors.iter().filter(|e| e.is_error()).enumerate() {
+            assert!(
+                error.line().is_some(),
+                "Error {} should have line number: {:?}",
+                i,
+                error
+            );
+            assert!(
+                error.column().is_some(),
+                "Error {} should have column number: {:?}",
+                i,
+                error
+            );
+        }
+    }
+
+    /// Asserts that the first error has the expected line number.
+    pub fn assert_first_error_line(&self, expected_line: usize) {
+        let error = self
+            .errors
+            .iter()
+            .find(|e| e.is_error())
+            .expect("Expected at least one error");
+        assert_eq!(
+            error.line(),
+            Some(expected_line),
+            "First error line mismatch. Error: {:?}",
+            error
+        );
+    }
+
+    /// Asserts that the first error has the expected line and column.
+    pub fn assert_first_error_position(&self, expected_line: usize, expected_column: usize) {
+        let error = self
+            .errors
+            .iter()
+            .find(|e| e.is_error())
+            .expect("Expected at least one error");
+        assert_eq!(
+            error.line(),
+            Some(expected_line),
+            "First error line mismatch. Error: {:?}",
+            error
+        );
+        assert_eq!(
+            error.column(),
+            Some(expected_column),
+            "First error column mismatch. Error: {:?}",
+            error
+        );
+    }
 }
 
 /// Validate XML against XSD using DOM validator.
@@ -661,10 +728,61 @@ pub fn assert_validators_consistent(xml: &str, xsd: &str) {
 ///
 /// Usage:
 /// ```ignore
+/// // Basic usage (checks errors have line info when invalid)
 /// test_validation!(test_name, xml, xsd, should_be_valid);
+///
+/// // With expected error position (line, column)
+/// test_validation!(test_name, xml, xsd, false, line: 5, column: 3);
 /// ```
 #[macro_export]
 macro_rules! test_validation {
+    // Variant with expected error position (line and column)
+    ($name:ident, $xml:expr, $xsd:expr, false, line: $line:expr, column: $col:expr) => {
+        mod $name {
+            use super::*;
+
+            #[test]
+            fn dom() {
+                let result = $crate::common::validate_dom($xml, $xsd);
+                assert!(
+                    !result.is_valid(),
+                    "DOM validation: expected invalid, got valid"
+                );
+                result.assert_first_error_position($line, $col);
+            }
+
+            #[test]
+            fn twopass() {
+                let result = $crate::common::validate_twopass($xml, $xsd);
+                assert!(
+                    !result.is_valid(),
+                    "TwoPass validation: expected invalid, got valid"
+                );
+                result.assert_first_error_position($line, $col);
+            }
+
+            #[test]
+            fn onepass() {
+                let result = $crate::common::validate_onepass($xml, $xsd);
+                assert!(
+                    !result.is_valid(),
+                    "OnePass validation: expected invalid, got valid"
+                );
+                result.assert_first_error_position($line, $col);
+            }
+
+            #[test]
+            fn consistency() {
+                $crate::common::assert_validators_consistent($xml, $xsd);
+            }
+
+            #[test]
+            fn libxml_comparison() {
+                $crate::compare_with_libxml!(validate: $xml, $xsd);
+            }
+        }
+    };
+    // Basic variant (existing behavior)
     ($name:ident, $xml:expr, $xsd:expr, $expected_valid:expr) => {
         mod $name {
             use super::*;
@@ -680,6 +798,10 @@ macro_rules! test_validation {
                     result.is_valid(),
                     result.errors()
                 );
+                // When validation fails, verify errors have position info
+                if !$expected_valid {
+                    result.assert_errors_have_line();
+                }
             }
 
             #[test]
@@ -693,6 +815,10 @@ macro_rules! test_validation {
                     result.is_valid(),
                     result.errors()
                 );
+                // When validation fails, verify errors have position info
+                if !$expected_valid {
+                    result.assert_errors_have_line();
+                }
             }
 
             #[test]
@@ -706,6 +832,10 @@ macro_rules! test_validation {
                     result.is_valid(),
                     result.errors()
                 );
+                // When validation fails, verify errors have position info
+                if !$expected_valid {
+                    result.assert_errors_have_line();
+                }
             }
 
             #[test]

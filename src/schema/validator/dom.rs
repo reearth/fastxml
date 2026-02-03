@@ -690,6 +690,9 @@ impl DomSchemaValidator {
         if let Some(line) = node.line() {
             error = error.with_line(line);
         }
+        if let Some(column) = node.column() {
+            error = error.with_column(column);
+        }
         error
     }
 
