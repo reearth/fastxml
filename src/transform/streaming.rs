@@ -349,6 +349,7 @@ where
 
                     // 2. Start buffering subtree
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_start_to_builder(&mut builder, &e, namespaces)?;
                     subtree_builder = Some(builder);
                 }
@@ -368,6 +369,7 @@ where
                     writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
 
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_empty_to_builder(&mut builder, &e, namespaces)?;
 
                     // Process immediately since it's complete
@@ -625,6 +627,7 @@ where
 
                     // 3. Start buffering subtree
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_start_to_builder(&mut builder, &e, namespaces)?;
                     subtree_builder = Some(builder);
                 }
@@ -646,6 +649,7 @@ where
                     let ctx = tracker.to_context();
 
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_empty_to_builder(&mut builder, &e, namespaces)?;
 
                     // Process immediately since it's complete
@@ -773,6 +777,7 @@ where
                 } else if tracker.matches(xpath) {
                     // Match starts here, start buffering subtree
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_start_to_builder(&mut builder, &e, namespaces)?;
                     subtree_builder = Some(builder);
                 }
@@ -789,6 +794,7 @@ where
                 } else if tracker.matches(xpath) {
                     // This empty element is a match
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_empty_to_builder(&mut builder, &e, namespaces)?;
 
                     let mut editable = builder.build()?;
@@ -900,6 +906,7 @@ where
                     // Match starts here, capture context
                     match_context = Some(tracker.to_context());
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_start_to_builder(&mut builder, &e, namespaces)?;
                     subtree_builder = Some(builder);
                 }
@@ -917,6 +924,7 @@ where
                     // This empty element is a match
                     let ctx = tracker.to_context();
                     let mut builder = EditableNodeBuilder::new();
+                    builder.set_namespaces(namespaces.clone());
                     add_empty_to_builder(&mut builder, &e, namespaces)?;
 
                     let mut editable = builder.build()?;

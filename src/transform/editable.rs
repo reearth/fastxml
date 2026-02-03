@@ -1,5 +1,7 @@
 //! Editable node for DOM manipulation during transformation.
 
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 
 use crate::document::{DocumentBuilder, XmlDocument};
@@ -22,6 +24,8 @@ pub struct EditableNode {
     modifications: Vec<Modification>,
     /// Whether the node should be removed from output
     removed: bool,
+    /// Registered namespaces (prefix -> URI) for use in serialization
+    namespaces: HashMap<String, String>,
 }
 
 /// A modification to apply to a node.
@@ -84,6 +88,22 @@ impl EditableNode {
             root_id,
             modifications: Vec::new(),
             removed: false,
+            namespaces: HashMap::new(),
+        }
+    }
+
+    /// Creates a new editable node with namespace mappings.
+    pub(crate) fn with_namespaces(
+        doc: XmlDocument,
+        root_id: NodeId,
+        namespaces: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            doc,
+            root_id,
+            modifications: Vec::new(),
+            removed: false,
+            namespaces,
         }
     }
 
@@ -276,6 +296,135 @@ impl EditableNode {
             .map_err(|e| TransformError::Serialization(e.to_string()))
     }
 
+    /// Returns the XML string with namespace declarations automatically added.
+    ///
+    /// This method analyzes the XML output to find all used namespace prefixes
+    /// and adds the corresponding `xmlns:prefix` declarations to the root element.
+    /// Only prefixes that are registered via `with_root_namespaces()` on the
+    /// `StreamTransformer` will be included.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::StreamTransformer;
+    /// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
+    ///
+    /// let mut fragment_xml = String::new();
+    /// StreamTransformer::new(xml)
+    ///     .with_root_namespaces()
+    ///     .unwrap()
+    ///     .on("//gml:point", |node| {
+    ///         fragment_xml = node.to_xml_with_namespaces().unwrap();
+    ///     })
+    ///     .for_each()
+    ///     .unwrap();
+    ///
+    /// // The fragment includes the namespace declaration
+    /// assert!(fragment_xml.contains("xmlns:gml"));
+    /// assert!(fragment_xml.contains("http://www.opengis.net/gml"));
+    /// ```
+    pub fn to_xml_with_namespaces(&self) -> TransformResult<String> {
+        self.to_xml_with_namespaces_and_options(&SerializeOptions::default())
+    }
+
+    /// Returns the XML string with namespace declarations and custom options.
+    pub fn to_xml_with_namespaces_and_options(
+        &self,
+        options: &SerializeOptions,
+    ) -> TransformResult<String> {
+        let xml = self.to_xml_with_options(options)?;
+
+        if self.namespaces.is_empty() {
+            return Ok(xml);
+        }
+
+        // Collect prefixes used in the XML
+        let used_prefixes = self.collect_used_prefixes();
+
+        if used_prefixes.is_empty() {
+            return Ok(xml);
+        }
+
+        // Build namespace declarations for used prefixes
+        let mut ns_decls = Vec::new();
+        for prefix in &used_prefixes {
+            if let Some(uri) = self.namespaces.get(prefix) {
+                // Check if the declaration already exists in the XML
+                let decl_pattern = format!("xmlns:{}=", prefix);
+                if !xml.contains(&decl_pattern) {
+                    ns_decls.push(format!("xmlns:{}=\"{}\"", prefix, uri));
+                }
+            }
+        }
+
+        if ns_decls.is_empty() {
+            return Ok(xml);
+        }
+
+        // Insert namespace declarations into the root element
+        self.insert_namespace_declarations(&xml, &ns_decls)
+    }
+
+    /// Collects all namespace prefixes used in the element and its descendants.
+    fn collect_used_prefixes(&self) -> Vec<String> {
+        let mut prefixes = Vec::new();
+        self.collect_prefixes_recursive(&self.root_node(), &mut prefixes);
+        prefixes
+    }
+
+    /// Recursively collects namespace prefixes from a node and its children.
+    fn collect_prefixes_recursive(&self, node: &XmlNode, prefixes: &mut Vec<String>) {
+        if node.is_element() {
+            if let Some(prefix) = node.get_prefix() {
+                if !prefix.is_empty() && !prefixes.contains(&prefix) {
+                    prefixes.push(prefix);
+                }
+            }
+        }
+
+        for child in node.get_child_nodes() {
+            self.collect_prefixes_recursive(&child, prefixes);
+        }
+    }
+
+    /// Inserts namespace declarations into the first element tag.
+    fn insert_namespace_declarations(
+        &self,
+        xml: &str,
+        ns_decls: &[String],
+    ) -> TransformResult<String> {
+        // Find the position after the element name (before attributes or >)
+        if let Some(first_lt) = xml.find('<') {
+            let after_lt = &xml[first_lt + 1..];
+
+            // Skip if it's a comment, PI, or closing tag
+            if after_lt.starts_with('!') || after_lt.starts_with('?') || after_lt.starts_with('/') {
+                return Ok(xml.to_string());
+            }
+
+            // Find the end of the element name (space, /, or >)
+            if let Some(end_pos) =
+                after_lt.find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+            {
+                let insert_pos = first_lt + 1 + end_pos;
+                let ns_decl_str = format!(" {}", ns_decls.join(" "));
+
+                let mut result = String::with_capacity(xml.len() + ns_decl_str.len());
+                result.push_str(&xml[..insert_pos]);
+                result.push_str(&ns_decl_str);
+                result.push_str(&xml[insert_pos..]);
+                return Ok(result);
+            }
+        }
+
+        Ok(xml.to_string())
+    }
+
+    /// Returns the registered namespaces.
+    pub fn namespaces(&self) -> &HashMap<String, String> {
+        &self.namespaces
+    }
+
     /// Returns the root node.
     fn root_node(&self) -> XmlNode {
         self.doc.get_node(self.root_id).expect("root node exists")
@@ -395,6 +544,7 @@ impl<'a> EditableNodeRef<'a> {
 pub struct EditableNodeBuilder {
     builder: DocumentBuilder,
     depth: usize,
+    namespaces: HashMap<String, String>,
 }
 
 impl EditableNodeBuilder {
@@ -403,7 +553,21 @@ impl EditableNodeBuilder {
         Self {
             builder: DocumentBuilder::new(),
             depth: 0,
+            namespaces: HashMap::new(),
         }
+    }
+
+    /// Sets the namespace mappings for the built EditableNode.
+    ///
+    /// These namespaces will be available for use with `to_xml_with_namespaces()`.
+    pub fn with_namespaces(mut self, namespaces: HashMap<String, String>) -> Self {
+        self.namespaces = namespaces;
+        self
+    }
+
+    /// Sets the namespace mappings (mutable reference version).
+    pub fn set_namespaces(&mut self, namespaces: HashMap<String, String>) {
+        self.namespaces = namespaces;
     }
 
     /// Adds a start element event.
@@ -464,7 +628,11 @@ impl EditableNodeBuilder {
         let root_id = doc
             .root_element_id
             .ok_or_else(|| TransformError::XmlParse("no root element in subtree".to_string()))?;
-        Ok(EditableNode::new(doc, root_id))
+        if self.namespaces.is_empty() {
+            Ok(EditableNode::new(doc, root_id))
+        } else {
+            Ok(EditableNode::with_namespaces(doc, root_id, self.namespaces))
+        }
     }
 }
 

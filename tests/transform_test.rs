@@ -1124,3 +1124,163 @@ fn test_error_location_multiline_input() {
     assert_eq!(loc.line, Some(3)); // Third line
     assert!(loc.column.is_some());
 }
+
+// =============================================================================
+// Namespace Auto-Attachment Tests
+// =============================================================================
+
+#[test]
+fn test_to_xml_with_namespaces_basic() {
+    use fastxml::transform::StreamTransformer;
+
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point id="1"/></root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |node| {
+            fragment_xml = node.to_xml_with_namespaces().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // The fragment should include the namespace declaration
+    assert!(fragment_xml.contains("xmlns:gml"));
+    assert!(fragment_xml.contains("http://www.opengis.net/gml"));
+    assert!(fragment_xml.contains("gml:point"));
+}
+
+#[test]
+fn test_to_xml_with_namespaces_nested() {
+    use fastxml::transform::StreamTransformer;
+
+    let xml = r#"<root xmlns:ns="http://example.com"><ns:parent><ns:child>text</ns:child></ns:parent></root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//ns:parent", |node| {
+            fragment_xml = node.to_xml_with_namespaces().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // Should contain ns declaration
+    assert!(fragment_xml.contains("xmlns:ns"));
+    assert!(fragment_xml.contains("http://example.com"));
+    assert!(fragment_xml.contains("ns:parent"));
+    assert!(fragment_xml.contains("ns:child"));
+}
+
+#[test]
+fn test_to_xml_with_namespaces_multiple_prefixes() {
+    use fastxml::transform::StreamTransformer;
+
+    let xml = r#"<root xmlns:a="http://a.com" xmlns:b="http://b.com">
+        <a:outer><b:inner/></a:outer>
+    </root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//a:outer", |node| {
+            fragment_xml = node.to_xml_with_namespaces().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // Should contain both namespace declarations
+    assert!(fragment_xml.contains("xmlns:a"));
+    assert!(fragment_xml.contains("http://a.com"));
+    assert!(fragment_xml.contains("xmlns:b"));
+    assert!(fragment_xml.contains("http://b.com"));
+}
+
+#[test]
+fn test_to_xml_with_namespaces_no_duplicates() {
+    use fastxml::transform::StreamTransformer;
+
+    // Element already has the namespace declaration
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point xmlns:gml="http://www.opengis.net/gml" id="1"/></root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |node| {
+            fragment_xml = node.to_xml_with_namespaces().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // Should not add duplicate xmlns declaration
+    let count = fragment_xml.matches("xmlns:gml").count();
+    assert_eq!(count, 1, "Should not duplicate existing xmlns declaration");
+}
+
+#[test]
+fn test_to_xml_without_namespaces_fallback() {
+    use fastxml::transform::StreamTransformer;
+
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point id="1"/></root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |node| {
+            // Using to_xml() (without namespaces) should NOT add xmlns declarations
+            fragment_xml = node.to_xml().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // The fragment should NOT contain the namespace declaration (using to_xml, not to_xml_with_namespaces)
+    assert!(!fragment_xml.contains("xmlns:gml"));
+}
+
+#[test]
+fn test_to_xml_with_namespaces_empty_namespaces() {
+    use fastxml::transform::StreamTransformer;
+
+    // No namespaces registered
+    let xml = r#"<root><item id="1"/></root>"#;
+
+    let mut fragment_xml = String::new();
+    StreamTransformer::new(xml)
+        .on("//item", |node| {
+            fragment_xml = node.to_xml_with_namespaces().unwrap();
+        })
+        .for_each()
+        .unwrap();
+
+    // Should work without error and not add any xmlns
+    assert!(fragment_xml.contains("<item"));
+    assert!(!fragment_xml.contains("xmlns"));
+}
+
+#[test]
+fn test_editable_node_namespaces_accessor() {
+    use fastxml::transform::StreamTransformer;
+
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
+
+    let mut has_namespaces = false;
+    StreamTransformer::new(xml)
+        .with_root_namespaces()
+        .unwrap()
+        .on("//gml:point", |node| {
+            let ns = node.namespaces();
+            has_namespaces = ns.contains_key("gml");
+        })
+        .for_each()
+        .unwrap();
+
+    assert!(
+        has_namespaces,
+        "EditableNode should have access to registered namespaces"
+    );
+}
