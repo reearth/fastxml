@@ -508,23 +508,41 @@ impl OnePassSchemaValidator {
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
-        let parent_name = match self.state.element_stack.get(parent_idx) {
-            Some(p) => &p.name,
+        let parent_ctx = match self.state.element_stack.get(parent_idx) {
+            Some(p) => p,
             None => return (None, None),
         };
 
-        // Look up parent element to get its type
-        let parent_elem = self.schema.get_element(parent_name.as_ref());
-        if parent_elem.is_none() {
-            return (None, None);
-        }
-        let parent_elem = parent_elem.unwrap();
-
-        // Get parent's type definition
-        let type_def = if let Some(ref type_ref) = parent_elem.type_ref {
+        // Use parent's type_ref from ElementContext directly (already resolved during parent's validation)
+        // This avoids issues with prefixed element names (e.g., brid:BridgePart vs BridgePart)
+        let type_def = if let Some(ref type_ref) = parent_ctx.type_ref {
             self.schema.get_type(type_ref)
         } else {
-            parent_elem.inline_type.as_ref()
+            // Fallback: try to look up parent element from schema
+            let parent_name = &parent_ctx.name;
+            let parent_elem = self.schema.get_element(parent_name.as_ref());
+            if let Some(elem) = parent_elem {
+                if let Some(ref type_ref) = elem.type_ref {
+                    self.schema.get_type(type_ref)
+                } else {
+                    elem.inline_type.as_ref()
+                }
+            } else {
+                // Try without prefix
+                let local_name = parent_name
+                    .split(':')
+                    .next_back()
+                    .unwrap_or(parent_name.as_ref());
+                if let Some(elem) = self.schema.get_element(local_name) {
+                    if let Some(ref type_ref) = elem.type_ref {
+                        self.schema.get_type(type_ref)
+                    } else {
+                        elem.inline_type.as_ref()
+                    }
+                } else {
+                    None
+                }
+            }
         };
 
         let Some(TypeDef::Complex(complex)) = type_def else {
@@ -1060,9 +1078,14 @@ impl XmlEventHandler for OnePassSchemaValidator {
                 self.current_line = *line;
                 self.current_column = *column;
                 self.state.push_namespaces(namespace_decls);
-                // Pass Arc<str> directly to avoid allocation
+                // Use prefixed name to distinguish elements with same local name but different namespaces
+                // e.g., gml:boundedBy vs brid:boundedBy
+                let qualified_name = match prefix {
+                    Some(p) if !p.is_empty() => Arc::from(format!("{}:{}", p, name)),
+                    _ => Arc::clone(name),
+                };
                 self.state.push_element(
-                    Arc::clone(name),
+                    qualified_name,
                     namespace.as_ref().map(|s| Arc::from(s.as_str())),
                 );
                 let attrs: Vec<(&str, &str)> = attributes
@@ -2563,11 +2586,12 @@ mod tests {
             .unwrap();
 
         // Use prefixed substitute element: gml:LinearRing instead of _Ring
-        // This is the key - the element name has prefix "gml:"
+        // Note: In actual XML parsing, 'name' is the local name only,
+        // and 'prefix' is passed separately
         validator
             .handle(&XmlEvent::StartElement {
-                name: "gml:LinearRing".into(), // PREFIXED name!
-                prefix: Some("gml".into()),
+                name: "LinearRing".into(),  // Local name only
+                prefix: Some("gml".into()), // Prefix passed separately
                 namespace: Some("http://www.opengis.net/gml".into()),
                 attributes: vec![],
                 namespace_decls: vec![],
@@ -2578,7 +2602,7 @@ mod tests {
 
         validator
             .handle(&XmlEvent::EndElement {
-                name: "gml:LinearRing".into(),
+                name: "LinearRing".into(),
                 prefix: Some("gml".into()),
             })
             .unwrap();
@@ -2604,6 +2628,141 @@ mod tests {
             ring_errors.is_empty(),
             "Prefixed substitution group member 'gml:LinearRing' should satisfy '_Ring' requirement, but got errors: {:?}",
             ring_errors
+        );
+    }
+
+    /// Test that elements with same local name but different namespaces are distinguished.
+    ///
+    /// This reproduces the issue where `gml:boundedBy` (expects Envelope/Null) and
+    /// `brid:boundedBy` (expects WallSurface/RoofSurface) are conflated.
+    #[test]
+    fn test_same_local_name_different_namespaces() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // Define gml:BoundingShapeType with Choice(Envelope, Null)
+        let mut gml_bounding_type = ComplexType::new("BoundingShapeType");
+        gml_bounding_type.content = ContentModel::Choice(vec![
+            ElementDef::new("Envelope").with_type("xs:string"),
+            ElementDef::new("Null").with_type("xs:string"),
+        ]);
+        schema.types.insert(
+            "gml:BoundingShapeType".to_string(),
+            TypeDef::Complex(gml_bounding_type),
+        );
+
+        // Define brid:BridgeBoundedByType with Choice(WallSurface, RoofSurface)
+        let mut brid_bounded_type = ComplexType::new("BridgeBoundedByType");
+        brid_bounded_type.content = ContentModel::Choice(vec![
+            ElementDef::new("WallSurface").with_type("xs:string"),
+            ElementDef::new("RoofSurface").with_type("xs:string"),
+        ]);
+        schema.types.insert(
+            "brid:BridgeBoundedByType".to_string(),
+            TypeDef::Complex(brid_bounded_type),
+        );
+
+        // Define gml:boundedBy element
+        let gml_bounded_elem = ElementDef::new("boundedBy").with_type("gml:BoundingShapeType");
+        schema
+            .elements
+            .insert("gml:boundedBy".to_string(), gml_bounded_elem);
+
+        // Define brid:boundedBy element
+        let brid_bounded_elem = ElementDef::new("boundedBy").with_type("brid:BridgeBoundedByType");
+        schema
+            .elements
+            .insert("brid:boundedBy".to_string(), brid_bounded_elem);
+
+        // Pre-populate type_children_cache
+        let gml_cache = FlattenedChildren::with_content_model(ContentModelType::Choice);
+        schema.type_children_cache.insert(
+            "gml:BoundingShapeType".to_string(),
+            Arc::new({
+                let mut f = gml_cache;
+                f.constraints.insert("Envelope".to_string(), (0, Some(1)));
+                f.constraints.insert("Null".to_string(), (0, Some(1)));
+                f
+            }),
+        );
+
+        let brid_cache = FlattenedChildren::with_content_model(ContentModelType::Choice);
+        schema.type_children_cache.insert(
+            "brid:BridgeBoundedByType".to_string(),
+            Arc::new({
+                let mut f = brid_cache;
+                f.constraints
+                    .insert("WallSurface".to_string(), (0, Some(1)));
+                f.constraints
+                    .insert("RoofSurface".to_string(), (0, Some(1)));
+                f
+            }),
+        );
+
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
+
+        // Start brid:boundedBy (expects WallSurface or RoofSurface)
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "boundedBy".into(),
+                prefix: Some("brid".into()),
+                namespace: Some("http://www.opengis.net/citygml/bridge/2.0".into()),
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+                column: Some(1),
+            })
+            .unwrap();
+
+        // Add WallSurface (valid for brid:boundedBy)
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "WallSurface".into(),
+                prefix: Some("brid".into()),
+                namespace: Some("http://www.opengis.net/citygml/bridge/2.0".into()),
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+                column: Some(1),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "WallSurface".into(),
+                prefix: Some("brid".into()),
+            })
+            .unwrap();
+
+        // End brid:boundedBy
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "boundedBy".into(),
+                prefix: Some("brid".into()),
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Should NOT have an error about missing 'Envelope' or 'Null'
+        // because brid:boundedBy expects WallSurface/RoofSurface, not Envelope/Null
+        let envelope_errors: Vec<_> = validator
+            .errors()
+            .iter()
+            .filter(|e| e.message.contains("Envelope") || e.message.contains("Null"))
+            .collect();
+
+        assert!(
+            envelope_errors.is_empty(),
+            "brid:boundedBy should NOT require Envelope/Null (those are for gml:boundedBy). Got errors: {:?}",
+            envelope_errors
+        );
+
+        assert!(
+            validator.is_valid(),
+            "Validation should pass for brid:boundedBy with WallSurface, but got errors: {:?}",
+            validator.errors()
         );
     }
 }
