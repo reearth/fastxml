@@ -480,7 +480,9 @@ impl SchemaFetcher for CachingFetcher {
         // Resolve relative URLs
         let resolved_url = self.resolve_url(url);
 
-        // Check cache first (with both original and resolved URL)
+        // Check cache first (only by resolved absolute URL)
+        // We don't cache by relative URL since the same relative path resolves to
+        // different absolute URLs for different base URLs (XML file locations)
         if let Ok(Some(content)) = self.store.get(&resolved_url) {
             return Ok(FetchResult {
                 content,
@@ -488,26 +490,16 @@ impl SchemaFetcher for CachingFetcher {
                 redirected: false,
             });
         }
-        if url != resolved_url {
-            if let Ok(Some(content)) = self.store.get(url) {
-                return Ok(FetchResult {
-                    content,
-                    final_url: url.to_string(),
-                    redirected: false,
-                });
-            }
-        }
 
         // Fetch from network
         let result = self.inner.fetch(&resolved_url)?;
 
-        // Store in cache
+        // Store in cache by absolute URLs only
+        // Never cache by relative URL since the same relative path resolves to
+        // different absolute URLs for different base URLs (XML file locations)
         let _ = self.store.put(&result.final_url, &result.content);
         if result.final_url != resolved_url {
             let _ = self.store.put(&resolved_url, &result.content);
-        }
-        if url != resolved_url {
-            let _ = self.store.put(url, &result.content);
         }
 
         // Track downloaded URL
@@ -517,5 +509,100 @@ impl SchemaFetcher for CachingFetcher {
             .push(result.final_url.clone());
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_url_path() {
+        // Basic normalization
+        assert_eq!(
+            normalize_url_path("https://example.com/a/b/c"),
+            "https://example.com/a/b/c"
+        );
+
+        // With parent directory references
+        assert_eq!(
+            normalize_url_path("https://example.com/a/b/../c"),
+            "https://example.com/a/c"
+        );
+
+        // Multiple parent references
+        assert_eq!(
+            normalize_url_path("https://example.com/a/b/c/../../d"),
+            "https://example.com/a/d"
+        );
+
+        // Current directory references
+        assert_eq!(
+            normalize_url_path("https://example.com/a/./b/./c"),
+            "https://example.com/a/b/c"
+        );
+    }
+
+    #[test]
+    fn test_caching_fetcher_resolve_url_with_different_base_urls() {
+        // This test verifies that the same relative path resolves to different
+        // absolute URLs when the base URL changes
+        let store = Arc::new(InMemoryStore::new());
+        let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        // Create fetcher with first base URL
+        let fetcher1 = CachingFetcher::new(
+            DefaultFetcher::new(),
+            Arc::clone(&store),
+            Arc::clone(&downloaded_urls),
+        )
+        .with_base_url("https://example.com/dir1/file1.xml".to_string());
+
+        // Create fetcher with second base URL
+        let fetcher2 = CachingFetcher::new(
+            DefaultFetcher::new(),
+            Arc::clone(&store),
+            Arc::clone(&downloaded_urls),
+        )
+        .with_base_url("https://example.com/dir2/file2.xml".to_string());
+
+        // Same relative path should resolve to different absolute URLs
+        let relative_path = "../schemas/test.xsd";
+        let resolved1 = fetcher1.resolve_url(relative_path);
+        let resolved2 = fetcher2.resolve_url(relative_path);
+
+        assert_eq!(resolved1, "https://example.com/schemas/test.xsd");
+        assert_eq!(resolved2, "https://example.com/schemas/test.xsd");
+
+        // Different base directories
+        let fetcher3 = CachingFetcher::new(
+            DefaultFetcher::new(),
+            Arc::clone(&store),
+            Arc::clone(&downloaded_urls),
+        )
+        .with_base_url("https://other.com/project/data/file.xml".to_string());
+
+        let resolved3 = fetcher3.resolve_url(relative_path);
+        assert_eq!(resolved3, "https://other.com/project/schemas/test.xsd");
+    }
+
+    #[test]
+    fn test_caching_fetcher_resolve_url_deep_relative_path() {
+        let store = Arc::new(InMemoryStore::new());
+        let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let fetcher = CachingFetcher::new(
+            DefaultFetcher::new(),
+            Arc::clone(&store),
+            Arc::clone(&downloaded_urls),
+        )
+        .with_base_url("https://example.com/assets/abc/project/udx/area/file.xml".to_string());
+
+        // This mimics the PLATEAU schema path: ../../schemas/iur/urf/3.1/urbanFunction.xsd
+        let resolved = fetcher.resolve_url("../../schemas/iur/urf/3.1/urbanFunction.xsd");
+        assert_eq!(
+            resolved,
+            "https://example.com/assets/abc/project/schemas/iur/urf/3.1/urbanFunction.xsd"
+        );
     }
 }

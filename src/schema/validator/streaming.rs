@@ -553,7 +553,10 @@ impl OnePassSchemaValidator {
         let mut visited = std::collections::HashSet::new();
         let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-        for elem in &elements {
+        // Search from the end to prioritize derived type's elements over base type's
+        // This is important when an element is redefined in a derived type with a different type
+        // (e.g., brid:boundedBy in AbstractBridgeType shadows gml:boundedBy in AbstractFeatureType)
+        for elem in elements.iter().rev() {
             if elem.name == name {
                 // Found the inline element - get its type info
                 let type_ref = elem.type_ref.clone();
@@ -885,7 +888,8 @@ impl OnePassSchemaValidator {
         let mut visited = std::collections::HashSet::new();
         let elements = self.collect_elements_with_inheritance(complex, &mut visited);
 
-        for elem in &elements {
+        // Search from the end to prioritize derived type's elements over base type's
+        for elem in elements.iter().rev() {
             if elem.name == name {
                 return elem.inline_type.clone();
             }
