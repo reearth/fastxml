@@ -2456,4 +2456,137 @@ mod tests {
 
         assert!(errors.is_empty());
     }
+
+    /// Test substitution groups with prefixed element names.
+    ///
+    /// This reproduces the issue where:
+    /// - Schema expects `_Ring` as child (abstract element)
+    /// - XML has `gml:LinearRing` (prefixed substitution group member)
+    /// - Substitution members are stored as `["Ring", "LinearRing"]` (no prefix)
+    /// - Child counts are stored as `gml:LinearRing` (with prefix)
+    /// - Validation should recognize `gml:LinearRing` as a valid substitute for `_Ring`
+    #[test]
+    fn test_substitution_group_with_prefixed_elements() {
+        use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
+
+        let mut schema = CompiledSchema::new();
+
+        // Define parent type (like AbstractRingPropertyType) that expects "_Ring"
+        let mut parent_type = ComplexType::new("AbstractRingPropertyType");
+        parent_type.content = ContentModel::Sequence(vec![
+            // Parent expects "_Ring" as required child
+            ElementDef::new("_Ring").with_type("AbstractRingType"),
+        ]);
+        schema.types.insert(
+            "AbstractRingPropertyType".to_string(),
+            TypeDef::Complex(parent_type),
+        );
+
+        // Define the abstract type
+        let abstract_type = ComplexType::new("AbstractRingType");
+        schema.types.insert(
+            "AbstractRingType".to_string(),
+            TypeDef::Complex(abstract_type),
+        );
+
+        // Define the concrete type
+        let concrete_type = ComplexType::new("LinearRingType");
+        schema.types.insert(
+            "LinearRingType".to_string(),
+            TypeDef::Complex(concrete_type),
+        );
+
+        // Define the head element (abstract)
+        let mut head_elem = ElementDef::new("_Ring");
+        head_elem.is_abstract = true;
+        head_elem.type_ref = Some("AbstractRingType".to_string());
+        schema.elements.insert("_Ring".to_string(), head_elem);
+
+        // Define the substitute element
+        let mut substitute_elem = ElementDef::new("LinearRing");
+        substitute_elem.type_ref = Some("LinearRingType".to_string());
+        substitute_elem.substitution_group = Some("_Ring".to_string());
+        schema
+            .elements
+            .insert("LinearRing".to_string(), substitute_elem);
+
+        // Define parent element (like "exterior")
+        let parent_elem = ElementDef::new("exterior").with_type("AbstractRingPropertyType");
+        schema.elements.insert("exterior".to_string(), parent_elem);
+
+        // Build substitution groups (head -> members)
+        schema
+            .substitution_groups
+            .insert("_Ring".to_string(), vec!["LinearRing".to_string()]);
+
+        // Build reverse lookup cache (member -> head)
+        schema
+            .substitution_group_heads
+            .insert("LinearRing".to_string(), "_Ring".to_string());
+
+        // Build transitive members cache (head -> all members)
+        schema.transitive_substitution_groups.insert(
+            "_Ring".to_string(),
+            Arc::new(vec!["LinearRing".to_string()]),
+        );
+
+        let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
+
+        // Start exterior element
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "exterior".into(),
+                prefix: None,
+                namespace: None,
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(1),
+                column: Some(1),
+            })
+            .unwrap();
+
+        // Use prefixed substitute element: gml:LinearRing instead of _Ring
+        // This is the key - the element name has prefix "gml:"
+        validator
+            .handle(&XmlEvent::StartElement {
+                name: "gml:LinearRing".into(), // PREFIXED name!
+                prefix: Some("gml".into()),
+                namespace: Some("http://www.opengis.net/gml".into()),
+                attributes: vec![],
+                namespace_decls: vec![],
+                line: Some(2),
+                column: Some(1),
+            })
+            .unwrap();
+
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "gml:LinearRing".into(),
+                prefix: Some("gml".into()),
+            })
+            .unwrap();
+
+        // End exterior
+        validator
+            .handle(&XmlEvent::EndElement {
+                name: "exterior".into(),
+                prefix: None,
+            })
+            .unwrap();
+
+        validator.finish().unwrap();
+
+        // Should have no errors - gml:LinearRing should be recognized as substitute for _Ring
+        let ring_errors: Vec<_> = validator
+            .errors()
+            .iter()
+            .filter(|e| e.message.contains("_Ring"))
+            .collect();
+
+        assert!(
+            ring_errors.is_empty(),
+            "Prefixed substitution group member 'gml:LinearRing' should satisfy '_Ring' requirement, but got errors: {:?}",
+            ring_errors
+        );
+    }
 }

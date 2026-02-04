@@ -434,10 +434,16 @@ mod tests {
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
 
         // MeasureType should be SimpleContent
-        let measure_type = schema.types.get("MeasureType").expect("MeasureType not found");
+        let measure_type = schema
+            .types
+            .get("MeasureType")
+            .expect("MeasureType not found");
         if let crate::schema::types::TypeDef::Complex(ct) = measure_type {
             assert!(
-                matches!(ct.content, crate::schema::types::ContentModel::SimpleContent { .. }),
+                matches!(
+                    ct.content,
+                    crate::schema::types::ContentModel::SimpleContent { .. }
+                ),
                 "MeasureType should be SimpleContent, got {:?}",
                 ct.content
             );
@@ -446,10 +452,16 @@ mod tests {
         }
 
         // LengthType should also be SimpleContent (not ComplexExtension!)
-        let length_type = schema.types.get("LengthType").expect("LengthType not found");
+        let length_type = schema
+            .types
+            .get("LengthType")
+            .expect("LengthType not found");
         if let crate::schema::types::TypeDef::Complex(ct) = length_type {
             assert!(
-                matches!(ct.content, crate::schema::types::ContentModel::SimpleContent { .. }),
+                matches!(
+                    ct.content,
+                    crate::schema::types::ContentModel::SimpleContent { .. }
+                ),
                 "LengthType should be SimpleContent, got {:?}",
                 ct.content
             );

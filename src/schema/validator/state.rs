@@ -93,12 +93,27 @@ impl ElementContext {
     }
 
     pub fn get_child_count(&self, child_name: &str) -> u32 {
+        let mut total = 0;
+
+        // Check if child_name has a prefix
+        let has_prefix = child_name.contains(':');
+
         for (name, count) in &self.child_counts {
             if name.as_ref() == child_name {
-                return *count;
+                // Exact match
+                total += count;
+            } else if !has_prefix {
+                // child_name is local name only - also match prefixed variants
+                // e.g., child_name="LinearRing" should match "gml:LinearRing"
+                if let Some((_prefix, local)) = name.split_once(':') {
+                    if local == child_name {
+                        total += count;
+                    }
+                }
             }
         }
-        0
+
+        total
     }
 
     /// Returns the content model type from the flattened children, or Empty if not set.
@@ -395,5 +410,47 @@ mod tests {
         assert_eq!(state.namespace_stack.len(), 1);
         state.pop_namespaces();
         assert_eq!(state.namespace_stack.len(), 1);
+    }
+
+    /// Test that get_child_count matches local name even when stored with prefix.
+    /// This is important for substitution group validation where we have:
+    /// - XML element: `gml:LinearRing` (stored with prefix)
+    /// - Schema substitution member: `LinearRing` (local name only)
+    #[test]
+    fn test_get_child_count_matches_local_name_with_prefix() {
+        let mut ctx = ElementContext::from_str("parent", None);
+
+        // Store child with prefix (as it comes from XML parser)
+        ctx.increment_child("gml:LinearRing");
+
+        // Should find it with exact match
+        assert_eq!(ctx.get_child_count("gml:LinearRing"), 1);
+
+        // Should also find it with local name only (for substitution group lookup)
+        assert_eq!(
+            ctx.get_child_count("LinearRing"),
+            1,
+            "get_child_count should match local name 'LinearRing' for prefixed child 'gml:LinearRing'"
+        );
+    }
+
+    #[test]
+    fn test_get_child_count_matches_local_name_multiple_prefixes() {
+        let mut ctx = ElementContext::from_str("parent", None);
+
+        // Store children with different prefixes but same local name
+        ctx.increment_child("gml:Ring");
+        ctx.increment_child("ns:Ring");
+
+        // Exact match should find individual counts
+        assert_eq!(ctx.get_child_count("gml:Ring"), 1);
+        assert_eq!(ctx.get_child_count("ns:Ring"), 1);
+
+        // Local name should find the sum of all prefixed versions
+        assert_eq!(
+            ctx.get_child_count("Ring"),
+            2,
+            "get_child_count with local name should sum all prefixed variants"
+        );
     }
 }

@@ -80,7 +80,7 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                                     merged_schema.types.extend(schema.types);
                                     merged_schema.elements.extend(schema.elements);
                                     merged_schema.attributes.extend(schema.attributes);
-                                    // Merge substitution groups
+                                    // Merge substitution groups and caches
                                     for (head, members) in schema.substitution_groups {
                                         merged_schema
                                             .substitution_groups
@@ -88,6 +88,12 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                                             .or_default()
                                             .extend(members);
                                     }
+                                    merged_schema
+                                        .substitution_group_heads
+                                        .extend(schema.substitution_group_heads);
+                                    merged_schema
+                                        .transitive_substitution_groups
+                                        .extend(schema.transitive_substitution_groups);
                                     if merged_schema.target_namespace.is_none() {
                                         merged_schema.target_namespace = schema.target_namespace;
                                     }
@@ -213,7 +219,7 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                                     merged_schema.types.extend(schema.types);
                                     merged_schema.elements.extend(schema.elements);
                                     merged_schema.attributes.extend(schema.attributes);
-                                    // Merge substitution groups
+                                    // Merge substitution groups and caches
                                     for (head, members) in schema.substitution_groups {
                                         merged_schema
                                             .substitution_groups
@@ -221,6 +227,12 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                                             .or_default()
                                             .extend(members);
                                     }
+                                    merged_schema
+                                        .substitution_group_heads
+                                        .extend(schema.substitution_group_heads);
+                                    merged_schema
+                                        .transitive_substitution_groups
+                                        .extend(schema.transitive_substitution_groups);
                                     if merged_schema.target_namespace.is_none() {
                                         merged_schema.target_namespace = schema.target_namespace;
                                     }
