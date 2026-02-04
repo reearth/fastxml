@@ -53,6 +53,7 @@ Note: `clippy` and `doc` with `--all-features` require `libxml2-dev` system pack
 When bumping the version, update these files:
 
 - `Cargo.toml` - `version = "x.y.z"`
+- `Cargo.lock` - Run `cargo update -p fastxml` to update the lock file
 - `README.md` - All `fastxml = "x.y"` references in installation examples
 
 ## Manual Testing Tools
