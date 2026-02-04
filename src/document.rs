@@ -6,8 +6,8 @@ use parking_lot::RwLock;
 
 use crate::error::Result;
 use crate::namespace::{Namespace, NamespaceResolver};
+use crate::node::error::NodeError;
 use crate::node::{NodeData, NodeId, XmlNode, XmlRoNode};
-use crate::node_error::NodeError;
 
 /// An XML document.
 ///

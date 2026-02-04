@@ -47,6 +47,8 @@
 //! # }
 //! ```
 
+pub mod error;
+
 mod cache;
 mod combined;
 mod file;

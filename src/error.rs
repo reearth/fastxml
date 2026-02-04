@@ -3,11 +3,11 @@
 use std::fmt;
 use std::io;
 
-use crate::namespace_error::NamespaceError;
-use crate::node_error::NodeError;
-use crate::parse_error::ParseError;
+use crate::namespace::error::NamespaceError;
+use crate::node::error::NodeError;
+use crate::parser::error::ParseError;
 use crate::schema::error::SchemaError;
-use crate::schema::fetch_error::FetchError;
+use crate::schema::fetcher::error::FetchError;
 use crate::schema::xsd::error::XsdParseError;
 use crate::xpath::error::{XPathEvalError, XPathSyntaxError};
 

@@ -2,8 +2,8 @@
 //!
 //! This file tests all functional requirements from the implementation plan.
 
-use fastxml::node_error::NodeError;
-use fastxml::parse_error::ParseError;
+use fastxml::node::error::NodeError;
+use fastxml::parser::error::ParseError;
 use fastxml::schema::{create_xml_schema_validation_context, validate_document_by_schema};
 use fastxml::xpath::collect_text_values;
 use fastxml::xpath::error::XPathEvalError;

@@ -41,7 +41,6 @@
 
 pub mod error;
 pub mod export;
-pub mod fetch_error;
 pub mod fetcher;
 pub mod resolve;
 pub mod types;

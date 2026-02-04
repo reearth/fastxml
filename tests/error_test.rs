@@ -1,8 +1,8 @@
 //! Tests for error handling with malformed XML and validation violations.
 
 use fastxml::error::Error;
-use fastxml::node_error::NodeError;
-use fastxml::parse_error::ParseError;
+use fastxml::node::error::NodeError;
+use fastxml::parser::error::ParseError;
 use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
 use fastxml::{ParserOptions, parse, parse_with_options};
 
@@ -596,7 +596,7 @@ mod streaming_errors {
     #[test]
     fn test_streaming_mismatched_tags() {
         use fastxml::error::Error;
-        use fastxml::parse_error::ParseError;
+        use fastxml::parser::error::ParseError;
 
         let xml = "<root></wrong>";
         //         01234567890123 = positions (14 bytes total)

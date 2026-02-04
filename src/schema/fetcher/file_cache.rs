@@ -310,7 +310,7 @@ mod tests {
                     final_url: url.to_string(),
                     redirected: false,
                 }),
-                None => Err(crate::schema::fetch_error::FetchError::RequestFailed {
+                None => Err(crate::schema::fetcher::error::FetchError::RequestFailed {
                     url: url.to_string(),
                     message: "Not found".to_string(),
                 }

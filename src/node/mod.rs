@@ -1,5 +1,7 @@
 //! XML node representation and operations.
 
+pub mod error;
+
 use std::sync::Arc;
 
 use indexmap::IndexMap;

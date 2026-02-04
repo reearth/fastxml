@@ -1,5 +1,7 @@
 //! Namespace handling for XML documents.
 
+pub mod error;
+
 use std::collections::HashMap;
 
 /// Represents an XML namespace with prefix and URI.
@@ -186,12 +188,12 @@ pub fn extract_root_namespaces(xml: &str) -> Result<HashMap<String, String>, cra
                 let mut namespaces = HashMap::new();
                 for attr in e.attributes().filter_map(|a| a.ok()) {
                     let key = std::str::from_utf8(attr.key.as_ref()).map_err(|e| {
-                        crate::error::Error::Parse(crate::parse_error::ParseError::Generic {
+                        crate::error::Error::Parse(crate::parser::error::ParseError::Generic {
                             message: e.to_string(),
                         })
                     })?;
                     let value = attr.unescape_value().map_err(|e| {
-                        crate::error::Error::Parse(crate::parse_error::ParseError::Generic {
+                        crate::error::Error::Parse(crate::parser::error::ParseError::Generic {
                             message: e.to_string(),
                         })
                     })?;
@@ -211,7 +213,7 @@ pub fn extract_root_namespaces(xml: &str) -> Result<HashMap<String, String>, cra
             }
             Err(e) => {
                 return Err(crate::error::Error::Parse(
-                    crate::parse_error::ParseError::Generic {
+                    crate::parser::error::ParseError::Generic {
                         message: e.to_string(),
                     },
                 ));

@@ -51,7 +51,7 @@ impl AsyncSchemaFetcher for MockAsyncFetcher {
                 redirected: false,
             })
         } else {
-            Err(fastxml::schema::fetch_error::FetchError::RequestFailed {
+            Err(fastxml::schema::fetcher::error::FetchError::RequestFailed {
                 url: url.to_string(),
                 message: "Schema not found".to_string(),
             }

@@ -214,7 +214,7 @@ impl<R: BufRead> StreamingParser<R> {
                 }
                 Ok(Event::Text(ref e)) => {
                     let text = e.unescape().map_err(|e| {
-                        crate::parse_error::ParseError::TextDecodeError {
+                        crate::parser::error::ParseError::TextDecodeError {
                             message: e.to_string(),
                         }
                     })?;
@@ -273,7 +273,7 @@ impl<R: BufRead> StreamingParser<R> {
                     break;
                 }
                 Err(e) => {
-                    return Err(crate::parse_error::ParseError::AtPosition {
+                    return Err(crate::parser::error::ParseError::AtPosition {
                         position: self.reader.get_ref().byte_offset() as u64,
                         message: e.to_string(),
                     }
@@ -316,7 +316,7 @@ fn convert_start_event(
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
         let value = attr.unescape_value().map_err(|e| {
-            crate::parse_error::ParseError::AttributeDecodeError {
+            crate::parser::error::ParseError::AttributeDecodeError {
                 message: e.to_string(),
             }
         })?;

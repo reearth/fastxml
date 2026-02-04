@@ -186,11 +186,11 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
                 xsd_parser.handle(&event)?;
             }
             Ok(Event::Text(ref e)) => {
-                let text =
-                    e.unescape()
-                        .map_err(|e| crate::parse_error::ParseError::TextDecodeError {
-                            message: e.to_string(),
-                        })?;
+                let text = e.unescape().map_err(|e| {
+                    crate::parser::error::ParseError::TextDecodeError {
+                        message: e.to_string(),
+                    }
+                })?;
                 if !text.is_empty() {
                     let event = XmlEvent::Text(text.into_owned());
                     xsd_parser.handle(&event)?;

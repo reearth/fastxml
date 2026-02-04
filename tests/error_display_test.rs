@@ -2,9 +2,9 @@
 //! This improves coverage for error types that have 0% coverage.
 
 use fastxml::error::{Error, ErrorLevel, StructuredError, ValidationErrorType};
-use fastxml::namespace_error::NamespaceError;
-use fastxml::node_error::NodeError;
-use fastxml::parse_error::ParseError;
+use fastxml::namespace::error::NamespaceError;
+use fastxml::node::error::NodeError;
+use fastxml::parser::error::ParseError;
 use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
 use fastxml::xpath::lexer::Token;
 
@@ -811,7 +811,7 @@ mod schema_error_tests {
 // =============================================================================
 
 mod fetch_error_tests {
-    use fastxml::schema::fetch_error::FetchError;
+    use fastxml::schema::fetcher::error::FetchError;
 
     #[test]
     fn test_request_failed_display() {

@@ -825,7 +825,7 @@ mod async_tests {
                     redirected: false,
                 })
             } else {
-                Err(crate::schema::fetch_error::FetchError::RequestFailed {
+                Err(crate::schema::fetcher::error::FetchError::RequestFailed {
                     url: url.to_string(),
                     message: "Not found".to_string(),
                 }

@@ -1,7 +1,7 @@
 //! No-op fetcher implementation.
 
+use super::error::FetchError;
 use crate::error::Result;
-use crate::schema::fetch_error::FetchError;
 
 use super::{FetchResult, SchemaFetcher};
 

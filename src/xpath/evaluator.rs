@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::document::XmlDocument;
 use crate::error::Result;
 use crate::namespace::NamespaceResolver;
-use crate::namespace_error::NamespaceError;
+use crate::namespace::error::NamespaceError;
 use crate::node::XmlNode;
 
 use super::axes;

@@ -1,7 +1,7 @@
 //! Async schema fetcher using reqwest.
 
+use super::error::FetchError;
 use crate::error::Result;
-use crate::schema::fetch_error::FetchError;
 
 use super::FetchResult;
 use super::traits::AsyncSchemaFetcher;

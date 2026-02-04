@@ -1,5 +1,7 @@
 //! XML parsing with quick-xml backend.
 
+pub mod error;
+
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -174,11 +176,11 @@ fn parse_from_reader<R: BufRead>(
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
-                let text =
-                    e.unescape()
-                        .map_err(|e| crate::parse_error::ParseError::TextDecodeError {
-                            message: e.to_string(),
-                        })?;
+                let text = e.unescape().map_err(|e| {
+                    crate::parser::error::ParseError::TextDecodeError {
+                        message: e.to_string(),
+                    }
+                })?;
                 if !text.is_empty() {
                     check_memory(options, &mut memory_used, text.len())?;
                     builder.text(&text);
@@ -209,7 +211,7 @@ fn parse_from_reader<R: BufRead>(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(crate::parse_error::ParseError::AtPosition {
+                return Err(crate::parser::error::ParseError::AtPosition {
                     position: reader.buffer_position(),
                     message: e.to_string(),
                 }
@@ -228,7 +230,7 @@ fn check_memory(options: &ParserOptions, used: &mut usize, additional: usize) ->
         && *used > max
     {
         return Err(
-            crate::parse_error::ParseError::MemoryLimitExceeded { used: *used, max }.into(),
+            crate::parser::error::ParseError::MemoryLimitExceeded { used: *used, max }.into(),
         );
     }
     Ok(())
@@ -256,7 +258,7 @@ fn process_start_element<R: BufRead>(
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
         let value = attr.unescape_value().map_err(|e| {
-            crate::parse_error::ParseError::AttributeDecodeError {
+            crate::parser::error::ParseError::AttributeDecodeError {
                 message: e.to_string(),
             }
         })?;
