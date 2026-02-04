@@ -106,6 +106,18 @@ impl XsdCompiler {
             result.target_namespace = schema.target_namespace.clone();
         }
 
+        // Store namespace bindings in result for runtime lookup (uri -> prefix)
+        // This allows the validator to resolve elements by namespace URI
+        for (prefix, uri) in &self.namespace_bindings {
+            if !prefix.is_empty() {
+                // Only add if not already present (first prefix wins)
+                result
+                    .namespace_prefixes
+                    .entry(uri.clone())
+                    .or_insert_with(|| prefix.clone());
+            }
+        }
+
         // Compile types
         for type_def in schema.types {
             let compiled = self.compile_type(&type_def)?;

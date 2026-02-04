@@ -76,6 +76,11 @@ pub struct CompiledSchema {
     /// Substitution groups (head element name -> list of substitute element names)
     pub substitution_groups: HashMap<String, Vec<String>>,
 
+    // === Namespace resolution ===
+    /// Namespace URI to prefix mapping (uri -> prefix).
+    /// Used to resolve element lookups when XML uses different prefix than schema.
+    pub namespace_prefixes: HashMap<String, String>,
+
     // === Performance optimization caches ===
     /// Pre-computed flattened child elements per type (type_name -> `Arc<FlattenedChildren>`).
     ///
@@ -106,6 +111,8 @@ impl CompiledSchema {
             attributes: IndexMap::new(),
             imports: HashMap::new(),
             substitution_groups: HashMap::new(),
+            // Namespace resolution
+            namespace_prefixes: HashMap::new(),
             // Performance optimization caches
             type_children_cache: HashMap::new(),
             transitive_substitution_groups: HashMap::new(),
@@ -145,6 +152,46 @@ impl CompiledSchema {
             // Also try local name in main map (for merged schemas)
             if let Some(elem) = self.elements.get(local) {
                 return Some(elem);
+            }
+        }
+
+        None
+    }
+
+    /// Looks up an element definition by namespace URI and local name.
+    ///
+    /// This method resolves the namespace URI to the prefix used in the schema,
+    /// then constructs the qualified name and looks it up. This allows finding
+    /// elements even when the XML uses a different prefix than the schema.
+    ///
+    /// Example: If schema uses `tran:Road` but XML uses `tr:Road` (same namespace),
+    /// calling `get_element_by_ns("http://...transportation...", "Road")` will
+    /// correctly find the element.
+    pub fn get_element_by_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&ElementDef> {
+        // First, try to find the schema's prefix for this namespace URI
+        if let Some(prefix) = self.namespace_prefixes.get(namespace_uri) {
+            // Construct the qname using the schema's prefix
+            let qname = if prefix.is_empty() {
+                local_name.to_string()
+            } else {
+                format!("{}:{}", prefix, local_name)
+            };
+            if let Some(elem) = self.elements.get(&qname) {
+                return Some(elem);
+            }
+        }
+
+        // Try local name directly (for schemas without prefix)
+        if let Some(elem) = self.elements.get(local_name) {
+            return Some(elem);
+        }
+
+        // Try all elements with matching local name (brute force fallback)
+        for (key, elem) in &self.elements {
+            if let Some((_prefix, local)) = key.split_once(':') {
+                if local == local_name {
+                    return Some(elem);
+                }
             }
         }
 

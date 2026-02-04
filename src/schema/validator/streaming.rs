@@ -231,12 +231,13 @@ impl OnePassSchemaValidator {
         error
     }
 
-    /// Optimized element lookup: tries local name first, then qname.
+    /// Optimized element lookup: tries local name first, then qname, then namespace URI.
     /// Avoids constructing qname string unless necessary.
     fn lookup_element_optimized(
         &self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
+        namespace_uri: Option<&str>,
     ) -> Option<&ElementDef> {
         // Try local name first (most common case for elements without prefix)
         if let Some(elem) = self.schema.get_element(name.as_ref()) {
@@ -250,6 +251,15 @@ impl OnePassSchemaValidator {
                 if let Some(elem) = self.schema.get_element(&qname) {
                     return Some(elem);
                 }
+            }
+        }
+
+        // If namespace URI exists, try lookup by namespace URI + local name
+        // This handles the case where XML uses different prefix than schema
+        // (e.g., XML uses tr:Road but schema has tran:Road)
+        if let Some(ns) = namespace_uri {
+            if let Some(elem) = self.schema.get_element_by_ns(ns, name.as_ref()) {
+                return Some(elem);
             }
         }
 
@@ -394,12 +404,13 @@ impl OnePassSchemaValidator {
         &mut self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
-        _namespace: Option<&str>,
+        namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
         // Optimization: Try local name lookup first (most common case)
         // Only construct qname if local lookup fails AND prefix exists
-        let elem_def = self.lookup_element_optimized(name, prefix);
+        // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
+        let elem_def = self.lookup_element_optimized(name, prefix, namespace);
 
         // Construct qname only when needed for error messages or when prefix exists
         let qname_owned: Option<String> = match prefix {
