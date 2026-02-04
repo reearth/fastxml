@@ -40,16 +40,35 @@ impl XsdCompiler {
     /// Compiles multiple XSD schemas into a single CompiledSchema.
     ///
     /// Schemas should be provided in dependency order (dependencies first).
+    /// Duplicate schemas (same targetNamespace) are automatically deduplicated,
+    /// keeping only the first occurrence of each namespace.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
         let mut result = CompiledSchema::new();
 
+        // Deduplicate schemas by targetNamespace to avoid issues when the same schema
+        // is resolved multiple times (e.g., when compile_schema_for_streaming calls
+        // resolve_all for each schema location and dependencies overlap).
+        let mut seen_namespaces: HashSet<Option<String>> = HashSet::new();
+        let deduplicated_schemas: Vec<XsdSchema> = schemas
+            .into_iter()
+            .filter(|schema| {
+                // Keep schemas with unique targetNamespace (or None)
+                // For schemas without targetNamespace (chameleon schemas), always keep them
+                if schema.target_namespace.is_none() {
+                    true
+                } else {
+                    seen_namespaces.insert(schema.target_namespace.clone())
+                }
+            })
+            .collect();
+
         // First pass: register all types for forward reference resolution
-        for schema in &schemas {
+        for schema in &deduplicated_schemas {
             self.register_types(schema)?;
         }
 
         // Second pass: compile each schema
-        for schema in schemas {
+        for schema in deduplicated_schemas {
             self.compile_schema(schema, &mut result)?;
         }
 
