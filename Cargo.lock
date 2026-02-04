@@ -428,6 +428,7 @@ dependencies = [
  "quick-xml",
  "regex",
  "reqwest",
+ "serde",
  "serde_json",
  "smallvec",
  "tempfile",

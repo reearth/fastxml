@@ -60,6 +60,12 @@ tracing = "0.1"
 # Memory profiling (optional)
 memory-stats = { version = "1", optional = true }
 
+# CLI support (optional)
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+flate2 = { version = "1", optional = true }
+
 # libxml for comparison testing (optional, requires libxml2 system library)
 libxml = { version = "0.3", optional = true }
 
@@ -80,7 +86,7 @@ default = []
 async-trait = ["dep:async-trait"]
 
 # HTTP clients
-ureq = ["dep:ureq"]                                     # Sync HTTP client (DefaultFetcher, UreqFetcher)
+ureq = ["dep:ureq", "dep:clap", "dep:serde", "dep:serde_json", "dep:flate2"]  # Sync HTTP client + CLI support
 tokio = ["async-trait", "dep:reqwest", "dep:tokio"]     # Async HTTP/file client (AsyncDefaultFetcher, AsyncFileFetcher, ReqwestFetcher)
 
 # Profiling
@@ -104,3 +110,8 @@ required-features = ["profile"]
 [[example]]
 name = "async_schema_resolution"
 required-features = ["tokio"]
+
+[[bin]]
+name = "fastxml-validate"
+path = "src/bin/validate.rs"
+required-features = ["ureq"]
