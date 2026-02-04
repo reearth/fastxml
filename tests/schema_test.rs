@@ -2223,4 +2223,38 @@ fn test_duplicate_schemas_deduplication() {
         road_type_cache.constraints.contains_key("boundedBy"),
         "RoadType should have boundedBy (inherited from AbstractFeatureType)"
     );
+
+    // Verify no double-prefix keys like "gml:tran:RoadType" or "core:tran:RoadType"
+    // This was a bug where prefixes were incorrectly concatenated
+    let double_prefix_keys: Vec<_> = compiled
+        .type_children_cache
+        .keys()
+        .filter(|k| k.matches(':').count() >= 2)
+        .collect();
+    assert!(
+        double_prefix_keys.is_empty(),
+        "Should not have double-prefix keys in type_children_cache, found: {:?}",
+        double_prefix_keys
+    );
+
+    // Also verify that types are correctly registered with proper prefixes
+    // The tran namespace types should be accessible
+    assert!(
+        compiled
+            .type_children_cache
+            .contains_key("TransportationComplexType"),
+        "Should have TransportationComplexType in cache"
+    );
+    assert!(
+        compiled
+            .type_children_cache
+            .contains_key("AbstractCityObjectType"),
+        "Should have AbstractCityObjectType in cache"
+    );
+    assert!(
+        compiled
+            .type_children_cache
+            .contains_key("AbstractFeatureType"),
+        "Should have AbstractFeatureType in cache"
+    );
 }

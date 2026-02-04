@@ -24,6 +24,8 @@ pub struct XsdCompiler {
     namespace_bindings: HashMap<String, String>,
     /// Current target namespace
     current_target_ns: Option<String>,
+    /// Current target namespace prefix (from the schema being processed)
+    current_target_prefix: Option<String>,
 }
 
 impl XsdCompiler {
@@ -34,6 +36,7 @@ impl XsdCompiler {
             substitution_groups: HashMap::new(),
             namespace_bindings: HashMap::new(),
             current_target_ns: None,
+            current_target_prefix: None,
         }
     }
 
@@ -62,12 +65,21 @@ impl XsdCompiler {
             })
             .collect();
 
-        // First pass: register all types for forward reference resolution
+        // First pass: accumulate ALL namespace bindings from ALL schemas
+        // This must happen before type registration so that cross-referenced
+        // prefixes are available (e.g., main schema defines prefix for imported schema's namespace)
+        for schema in &deduplicated_schemas {
+            for (prefix, uri) in &schema.namespace_bindings {
+                self.namespace_bindings.insert(prefix.clone(), uri.clone());
+            }
+        }
+
+        // Second pass: register all types for forward reference resolution
         for schema in &deduplicated_schemas {
             self.register_types(schema)?;
         }
 
-        // Second pass: compile each schema
+        // Third pass: compile each schema
         for schema in deduplicated_schemas {
             self.compile_schema(schema, &mut result)?;
         }
@@ -84,24 +96,35 @@ impl XsdCompiler {
 
     /// Registers types from a schema for forward reference resolution.
     fn register_types(&mut self, schema: &XsdSchema) -> Result<()> {
-        // Store namespace bindings
-        for (prefix, uri) in &schema.namespace_bindings {
-            self.namespace_bindings.insert(prefix.clone(), uri.clone());
-        }
+        // Note: namespace bindings are already accumulated in compile() before this is called
 
-        // Register types with their qualified names
+        // Find the prefix for THIS schema's target namespace.
+        // First try the schema's OWN bindings (deterministic for each schema),
+        // then fall back to accumulated bindings if needed (for schemas that don't
+        // define a prefix for their own namespace, e.g., imported schemas)
         let ns_prefix = schema.target_namespace.as_ref().and_then(|ns| {
-            self.namespace_bindings
+            // First: try schema's own bindings
+            schema
+                .namespace_bindings
                 .iter()
                 .find(|(_, v)| *v == ns)
                 .map(|(k, _)| k.clone())
+                .filter(|k| !k.is_empty())
+                // Second: fall back to accumulated bindings (already populated)
+                .or_else(|| {
+                    self.namespace_bindings
+                        .iter()
+                        .find(|(_, v)| *v == ns)
+                        .map(|(k, _)| k.clone())
+                        .filter(|k| !k.is_empty())
+                })
         });
 
         for type_def in &schema.types {
             if let Some(name) = type_def.name() {
                 let qname = match &ns_prefix {
-                    Some(p) if !p.is_empty() => format!("{}:{}", p, name),
-                    _ => name.to_string(),
+                    Some(p) => format!("{}:{}", p, name),
+                    None => name.to_string(),
                 };
 
                 // Pre-register as placeholder
@@ -109,7 +132,16 @@ impl XsdCompiler {
                     XsdTypeDef::Simple(_) => TypeDef::Simple(SimpleType::new(name)),
                     XsdTypeDef::Complex(_) => TypeDef::Complex(ComplexType::new(name)),
                 };
-                self.type_cache.insert(qname, placeholder);
+                self.type_cache.insert(qname.clone(), placeholder);
+
+                // Also register with just the local name for cross-namespace lookup
+                let local_placeholder = match type_def {
+                    XsdTypeDef::Simple(_) => TypeDef::Simple(SimpleType::new(name)),
+                    XsdTypeDef::Complex(_) => TypeDef::Complex(ComplexType::new(name)),
+                };
+                self.type_cache
+                    .entry(name.to_string())
+                    .or_insert(local_placeholder);
             }
         }
 
@@ -119,6 +151,28 @@ impl XsdCompiler {
     /// Compiles a single schema into the result.
     fn compile_schema(&mut self, schema: XsdSchema, result: &mut CompiledSchema) -> Result<()> {
         self.current_target_ns = schema.target_namespace.clone();
+
+        // Find the prefix for THIS schema's target namespace.
+        // First try the schema's OWN bindings (deterministic for each schema),
+        // then fall back to accumulated bindings if needed (for schemas that don't
+        // define a prefix for their own namespace, e.g., imported schemas)
+        self.current_target_prefix = schema.target_namespace.as_ref().and_then(|ns| {
+            // First: try schema's own bindings
+            schema
+                .namespace_bindings
+                .iter()
+                .find(|(_, v)| *v == ns)
+                .map(|(k, _)| k.clone())
+                .filter(|k| !k.is_empty())
+                // Second: fall back to accumulated bindings
+                .or_else(|| {
+                    self.namespace_bindings
+                        .iter()
+                        .find(|(_, v)| *v == ns)
+                        .map(|(k, _)| k.clone())
+                        .filter(|k| !k.is_empty())
+                })
+        });
 
         // Set target namespace if this is the first schema with one
         if result.target_namespace.is_none() && schema.target_namespace.is_some() {
@@ -175,12 +229,10 @@ impl XsdCompiler {
 
     /// Makes a qualified name using current namespace prefix.
     fn make_qname(&self, local: &str) -> String {
-        if let Some(ns) = &self.current_target_ns {
-            if let Some((prefix, _)) = self.namespace_bindings.iter().find(|(_, v)| *v == ns) {
-                if !prefix.is_empty() {
-                    return format!("{}:{}", prefix, local);
-                }
-            }
+        // Use the schema's own prefix for its target namespace (set in compile_schema)
+        // This ensures deterministic prefix selection
+        if let Some(prefix) = &self.current_target_prefix {
+            return format!("{}:{}", prefix, local);
         }
         local.to_string()
     }
@@ -671,17 +723,29 @@ impl XsdCompiler {
             if let Some(TypeDef::Complex(complex)) = schema.types.get(&type_name) {
                 let flattened = Arc::new(self.flatten_type_children(complex, schema));
 
-                // Insert with local name
+                // Insert with the original key (may have prefix like "tran:RoadType")
                 schema
                     .type_children_cache
                     .insert(type_name.clone(), Arc::clone(&flattened));
 
+                // Extract local name (strip existing prefix if present)
+                let local_name = type_name
+                    .split_once(':')
+                    .map(|(_, local)| local)
+                    .unwrap_or(&type_name);
+
+                // Insert with just the local name for fallback lookup
+                schema
+                    .type_children_cache
+                    .insert(local_name.to_string(), Arc::clone(&flattened));
+
                 // Also insert with common namespace prefixes to avoid split_once at runtime
+                // Use the local_name to avoid double prefixes like "gml:tran:RoadType"
                 for prefix in &[
                     "gml", "core", "xs", "xsd", "bldg", "dem", "tran", "urf", "luse", "fld", "uro",
                     "gen",
                 ] {
-                    let qualified = format!("{}:{}", prefix, type_name);
+                    let qualified = format!("{}:{}", prefix, local_name);
                     schema
                         .type_children_cache
                         .insert(qualified, Arc::clone(&flattened));
@@ -712,12 +776,24 @@ impl XsdCompiler {
                 .type_children_cache
                 .insert(type_name.clone(), Arc::clone(&flattened));
 
+            // Extract local name (strip existing prefix if present)
+            let local_name = type_name
+                .split_once(':')
+                .map(|(_, local)| local)
+                .unwrap_or(&type_name);
+
+            // Insert with just the local name for fallback lookup
+            schema
+                .type_children_cache
+                .insert(local_name.to_string(), Arc::clone(&flattened));
+
             // Also insert with common namespace prefixes
+            // Use the local_name to avoid double prefixes
             for prefix in &[
                 "gml", "core", "xs", "xsd", "bldg", "dem", "tran", "urf", "luse", "fld", "uro",
                 "gen",
             ] {
-                let qualified = format!("{}:{}", prefix, type_name);
+                let qualified = format!("{}:{}", prefix, local_name);
                 schema
                     .type_children_cache
                     .insert(qualified, Arc::clone(&flattened));
