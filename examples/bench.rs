@@ -1,34 +1,37 @@
-//! Load testing CLI for fastxml.
+//! Benchmark CLI for fastxml.
 //!
 //! This tool measures parsing performance with either generated or real XML files.
+//! For accurate memory measurement, mode=both runs each mode in a separate subprocess.
 //!
 //! # Usage
 //!
 //! ## Synthetic data (generated XML)
 //! ```bash
-//! cargo run --release --example load_test_cli -- --pattern many-elements --size 10000
-//! cargo run --release --example load_test_cli -- --pattern citygml --size 1000
+//! cargo run --release --example bench -- --pattern many-elements --size 10000
+//! cargo run --release --example bench -- --pattern citygml --size 1000
 //! ```
 //!
 //! ## Real files (URLs or local paths)
 //! ```bash
-//! cargo run --release --example load_test_cli -- ./file1.xml ./file2.xml
-//! cargo run --release --example load_test_cli --features ureq -- https://example.com/file.xml
+//! cargo run --release --example bench -- ./file1.xml ./file2.xml
+//! cargo run --release --features ureq --example bench -- https://example.com/file.xml
 //! ```
 //!
 //! ## With schema validation
 //! ```bash
-//! cargo run --release --example load_test_cli --features "ureq,compare-libxml" -- \
+//! cargo run --release --example bench --features "ureq,compare-libxml" -- \
 //!     ./file.xml --validate
 //! ```
 
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, ValueEnum};
+use serde_json::{Value as JsonValue, json};
 
 use fastxml::error::Result;
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
@@ -46,8 +49,8 @@ use fastxml::{evaluate, parse};
 // =============================================================================
 
 #[derive(Parser, Debug)]
-#[command(name = "fastxml-load-test")]
-#[command(about = "Load testing CLI for fastxml", long_about = None)]
+#[command(name = "fastxml-bench")]
+#[command(about = "Benchmark CLI for fastxml", long_about = None)]
 struct Args {
     /// Input files (local paths or URLs)
     inputs: Vec<String>,
@@ -75,6 +78,10 @@ struct Args {
     /// Cache directory for downloaded URLs
     #[arg(long, default_value = "examples/cache")]
     cache_dir: PathBuf,
+
+    /// Internal: run single mode in subprocess (hidden from --help)
+    #[arg(long = "internal-mode", hide = true)]
+    internal_mode: Option<InternalMode>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -90,6 +97,19 @@ enum ProcessingMode {
     Dom,
     Streaming,
     Both,
+}
+
+/// Internal mode for subprocess execution
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq)]
+enum InternalMode {
+    Dom,
+    DomValidate,
+    Streaming,
+    StreamingValidate,
+    #[cfg(feature = "compare-libxml")]
+    Libxml,
+    #[cfg(feature = "compare-libxml")]
+    LibxmlValidate,
 }
 
 // =============================================================================
@@ -215,7 +235,23 @@ fn get_memory_usage() -> Option<usize> {
             .ok()?;
         Some(rss * 1024)
     }
-    #[cfg(not(target_os = "macos"))]
+
+    #[cfg(target_os = "linux")]
+    {
+        // Read VmRSS from /proc/self/status
+        std::fs::read_to_string("/proc/self/status")
+            .ok()?
+            .lines()
+            .find(|line| line.starts_with("VmRSS:"))
+            .and_then(|line| {
+                line.split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .map(|kb| kb * 1024)
+            })
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         None
     }
@@ -225,12 +261,67 @@ fn print_separator() {
     println!("{}", "=".repeat(60));
 }
 
+/// Marker prefix for JSON results from subprocess
+const BENCH_RESULT_PREFIX: &str = "BENCH_RESULT:";
+
+/// Output JSON result for subprocess mode
+fn output_json_result(result: &JsonValue) {
+    println!("{}{}", BENCH_RESULT_PREFIX, result);
+}
+
+/// Parse JSON result from subprocess output
+fn parse_subprocess_result(output: &str) -> Option<JsonValue> {
+    for line in output.lines() {
+        if let Some(json_str) = line.strip_prefix(BENCH_RESULT_PREFIX) {
+            return serde_json::from_str(json_str).ok();
+        }
+    }
+    None
+}
+
+/// Run a subprocess with the given internal mode
+fn run_subprocess(
+    internal_mode: InternalMode,
+    inputs: &[String],
+    iterations: usize,
+    cache_dir: &Path,
+) -> Option<JsonValue> {
+    let exe = std::env::current_exe().ok()?;
+
+    let mode_str = match internal_mode {
+        InternalMode::Dom => "dom",
+        InternalMode::DomValidate => "dom-validate",
+        InternalMode::Streaming => "streaming",
+        InternalMode::StreamingValidate => "streaming-validate",
+        #[cfg(feature = "compare-libxml")]
+        InternalMode::Libxml => "libxml",
+        #[cfg(feature = "compare-libxml")]
+        InternalMode::LibxmlValidate => "libxml-validate",
+    };
+
+    let mut cmd = Command::new(exe);
+    cmd.args(inputs)
+        .arg("--iterations")
+        .arg(iterations.to_string())
+        .arg("--cache-dir")
+        .arg(cache_dir)
+        .arg("--internal-mode")
+        .arg(mode_str)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    let output = cmd.output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_subprocess_result(&stdout)
+}
+
 // =============================================================================
 // libxml Comparison
 // =============================================================================
 
 #[cfg(feature = "compare-libxml")]
 mod libxml_bench {
+    use super::*;
     use std::time::{Duration, Instant};
 
     pub fn parse_with_libxml(
@@ -359,6 +450,38 @@ mod libxml_bench {
     impl LibxmlValidationResult {
         pub fn throughput_mb_s(&self) -> f64 {
             self.size as f64 / self.avg_time.as_secs_f64() / (1024.0 * 1024.0)
+        }
+    }
+
+    /// Run libxml benchmark in subprocess mode (outputs JSON)
+    pub fn run_libxml_subprocess(content: &[u8], iterations: usize) {
+        if let Some(result) = parse_with_libxml(content, iterations, get_memory_usage) {
+            output_json_result(&json!({
+                "mode": "libxml",
+                "parse_time_ms": result.avg_time.as_secs_f64() * 1000.0,
+                "throughput_mb_s": result.throughput_mb_s(),
+                "memory_delta_bytes": result.memory_delta,
+                "node_count": result.node_count,
+            }));
+        }
+    }
+
+    /// Run libxml validation benchmark in subprocess mode (outputs JSON)
+    pub fn run_libxml_validate_subprocess(
+        content: &[u8],
+        schema_path: &std::path::Path,
+        iterations: usize,
+    ) {
+        if let Some(result) =
+            validate_with_libxml(content, schema_path, iterations, get_memory_usage)
+        {
+            output_json_result(&json!({
+                "mode": "libxml-validate",
+                "parse_time_ms": result.avg_time.as_secs_f64() * 1000.0,
+                "throughput_mb_s": result.throughput_mb_s(),
+                "memory_delta_bytes": result.memory_delta,
+                "validation_errors": result.validation_errors,
+            }));
         }
     }
 }
@@ -504,8 +627,247 @@ fn get_schema_from_content(_content: &[u8], _xml_file_path: Option<&str>) -> Opt
 }
 
 // =============================================================================
-// Benchmarks
+// Subprocess Mode Benchmarks (output JSON)
 // =============================================================================
+
+/// Run DOM benchmark in subprocess mode (outputs JSON)
+fn run_dom_subprocess(content: &[u8], iterations: usize) {
+    let mut total_parse_time = Duration::ZERO;
+    let mut node_count = 0usize;
+    let mut memory_delta: Option<usize> = None;
+
+    for i in 0..iterations {
+        if i == 0 {
+            // Measure memory only on first iteration, while doc is still alive
+            let mem_before = get_memory_usage();
+            let start = Instant::now();
+            let doc = parse(content).unwrap();
+            total_parse_time += start.elapsed();
+            let mem_after = get_memory_usage();
+
+            node_count = doc.node_count();
+            if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                memory_delta = Some(after.saturating_sub(before));
+            }
+        } else {
+            let start = Instant::now();
+            let _doc = parse(content).unwrap();
+            total_parse_time += start.elapsed();
+        }
+    }
+
+    let avg_parse = total_parse_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
+
+    output_json_result(&json!({
+        "mode": "dom",
+        "parse_time_ms": avg_parse.as_secs_f64() * 1000.0,
+        "throughput_mb_s": throughput,
+        "memory_delta_bytes": memory_delta,
+        "node_count": node_count,
+    }));
+}
+
+/// Run DOM + validation benchmark in subprocess mode (outputs JSON)
+fn run_dom_validate_subprocess(content: &[u8], iterations: usize, file_path: Option<&str>) {
+    let schema_info = get_schema_from_content(content, file_path);
+    let Some(info) = schema_info else {
+        return;
+    };
+
+    let ctx = XmlSchemaValidationContext::from_arc(Arc::clone(&info.compiled));
+    let mut total_time = Duration::ZERO;
+    let mut validation_errors = 0usize;
+    let mut node_count = 0usize;
+    let mut memory_delta: Option<usize> = None;
+
+    for i in 0..iterations {
+        if i == 0 {
+            // Measure memory only on first iteration, while doc is still alive
+            let mem_before = get_memory_usage();
+            let start = Instant::now();
+            let doc = parse(content).unwrap();
+            let errors = ctx.validate(&doc).unwrap_or_default();
+            total_time += start.elapsed();
+            let mem_after = get_memory_usage();
+
+            validation_errors = errors.iter().filter(|e| e.is_error()).count();
+            node_count = doc.node_count();
+            if let (Some(before), Some(after)) = (mem_before, mem_after) {
+                memory_delta = Some(after.saturating_sub(before));
+            }
+        } else {
+            let start = Instant::now();
+            let doc = parse(content).unwrap();
+            let _errors = ctx.validate(&doc).unwrap_or_default();
+            total_time += start.elapsed();
+        }
+    }
+
+    let avg_time = total_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+    output_json_result(&json!({
+        "mode": "dom-validate",
+        "parse_time_ms": avg_time.as_secs_f64() * 1000.0,
+        "throughput_mb_s": throughput,
+        "memory_delta_bytes": memory_delta,
+        "node_count": node_count,
+        "validation_errors": validation_errors,
+    }));
+}
+
+/// Run streaming benchmark in subprocess mode (outputs JSON)
+fn run_streaming_subprocess(content: &[u8], iterations: usize) {
+    let mem_before = get_memory_usage();
+    let mut total_parse_time = Duration::ZERO;
+
+    for _ in 0..iterations {
+        let reader = BufReader::new(std::io::Cursor::new(content));
+        let start = Instant::now();
+        let mut parser = StreamingParser::new(reader);
+        let handler = StatsHandler::new();
+        parser.add_handler(Box::new(handler));
+        let _ = parser.parse();
+        total_parse_time += start.elapsed();
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_parse = total_parse_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
+
+    let memory_delta = match (mem_before, mem_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+
+    output_json_result(&json!({
+        "mode": "streaming",
+        "parse_time_ms": avg_parse.as_secs_f64() * 1000.0,
+        "throughput_mb_s": throughput,
+        "memory_delta_bytes": memory_delta,
+    }));
+}
+
+/// Run streaming + validation benchmark in subprocess mode (outputs JSON)
+fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_path: Option<&str>) {
+    let schema_info = get_schema_from_content(content, file_path);
+    let Some(info) = schema_info else {
+        return;
+    };
+
+    let mem_before = get_memory_usage();
+    let mut total_parse_time = Duration::ZERO;
+    let mut total_validate_time = Duration::ZERO;
+    let mut validation_errors = 0usize;
+
+    // Parse only
+    for _ in 0..iterations {
+        let reader = BufReader::new(std::io::Cursor::new(content));
+        let start = Instant::now();
+        let mut parser = StreamingParser::new(reader);
+        let handler = StatsHandler::new();
+        parser.add_handler(Box::new(handler));
+        let _ = parser.parse();
+        total_parse_time += start.elapsed();
+    }
+
+    // Parse + validate
+    for i in 0..iterations {
+        let reader = BufReader::new(std::io::Cursor::new(content));
+        let start = Instant::now();
+        let mut parser = StreamingParser::new(reader);
+        let handler = StatsHandler::new();
+        parser.add_handler(Box::new(handler));
+        let validator = OnePassSchemaValidator::new(Arc::clone(&info.compiled));
+        parser.add_handler(Box::new(validator));
+        let result = parser.parse();
+        total_validate_time += start.elapsed();
+
+        if i == 0 && result.is_ok() {
+            let mut handlers = parser.into_handlers();
+            if handlers.len() > 1
+                && let Some(validator) = handlers
+                    .pop()
+                    .map(|h| h.as_any())
+                    .and_then(|h| h.downcast::<OnePassSchemaValidator>().ok())
+            {
+                let errors = validator.into_errors();
+                validation_errors = errors.iter().filter(|e| e.is_error()).count();
+            }
+        }
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_parse = total_parse_time / iterations as u32;
+    let avg_validate = total_validate_time / iterations as u32;
+    let parse_throughput = content.len() as f64 / avg_parse.as_secs_f64() / (1024.0 * 1024.0);
+    let validate_throughput = content.len() as f64 / avg_validate.as_secs_f64() / (1024.0 * 1024.0);
+
+    let memory_delta = match (mem_before, mem_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+
+    output_json_result(&json!({
+        "mode": "streaming-validate",
+        "parse_time_ms": avg_parse.as_secs_f64() * 1000.0,
+        "validate_time_ms": avg_validate.as_secs_f64() * 1000.0,
+        "throughput_mb_s": parse_throughput,
+        "validate_throughput_mb_s": validate_throughput,
+        "memory_delta_bytes": memory_delta,
+        "validation_errors": validation_errors,
+    }));
+}
+
+// =============================================================================
+// Normal Mode Benchmarks (print to console)
+// =============================================================================
+
+fn print_json_result(result: &JsonValue, prefix: &str) {
+    let mode = result["mode"].as_str().unwrap_or("unknown");
+    let time_ms = result["parse_time_ms"].as_f64().unwrap_or(0.0);
+    let throughput = result["throughput_mb_s"].as_f64().unwrap_or(0.0);
+
+    let time_str = if time_ms >= 1000.0 {
+        format!("{:.2}s", time_ms / 1000.0)
+    } else {
+        format!("{:.0}ms", time_ms)
+    };
+
+    println!(
+        "    {}{}: {} ({:.2} MB/s)",
+        prefix, mode, time_str, throughput
+    );
+
+    if let Some(node_count) = result["node_count"].as_u64() {
+        println!("    {} nodes: {}", prefix, node_count);
+    }
+
+    if let Some(mem) = result["memory_delta_bytes"].as_u64() {
+        println!("    {} mem: Δ {}", prefix, format_bytes(mem as usize));
+    }
+
+    if let Some(errors) = result["validation_errors"].as_u64()
+        && errors > 0
+    {
+        println!("    {} validation errors: {}", prefix, errors);
+    }
+
+    if let Some(validate_time_ms) = result["validate_time_ms"].as_f64() {
+        let validate_str = if validate_time_ms >= 1000.0 {
+            format!("{:.2}s", validate_time_ms / 1000.0)
+        } else {
+            format!("{:.0}ms", validate_time_ms)
+        };
+        if let Some(validate_throughput) = result["validate_throughput_mb_s"].as_f64() {
+            println!(
+                "    {} + validate: {} ({:.2} MB/s)",
+                prefix, validate_str, validate_throughput
+            );
+        }
+    }
+}
 
 fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&SchemaInfo>) {
     println!("\n  [DOM]");
@@ -856,6 +1218,8 @@ fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: u
     }
 }
 
+/// Run file benchmark with subprocess isolation for mode=Both
+#[allow(clippy::too_many_arguments)]
 fn run_file_benchmark(
     name: &str,
     file_path: Option<&str>,
@@ -863,8 +1227,14 @@ fn run_file_benchmark(
     mode: ProcessingMode,
     iterations: usize,
     validate: bool,
+    inputs: &[String],
+    cache_dir: &Path,
 ) {
     println!("\n--- {} ({}) ---", name, format_bytes(content.len()));
+
+    // For mode=Both, we could use subprocesses for isolation
+    // But for simplicity and backward compatibility, we run directly here
+    // The subprocess isolation is used when --__internal is specified
 
     let schema_info: Option<SchemaInfo> = if validate {
         get_schema_from_content(content, file_path)
@@ -872,16 +1242,80 @@ fn run_file_benchmark(
         None
     };
 
-    if mode == ProcessingMode::Dom || mode == ProcessingMode::Both {
-        run_dom_benchmark(content, iterations, schema_info.as_ref());
-    }
+    match mode {
+        ProcessingMode::Both => {
+            // Run DOM in subprocess for clean memory measurement
+            println!("\n  [DOM] (subprocess)");
+            if let Some(result) = run_subprocess(InternalMode::Dom, inputs, iterations, cache_dir) {
+                print_json_result(&result, "");
+            } else {
+                // Fallback to direct execution
+                run_dom_benchmark(content, iterations, schema_info.as_ref());
+            }
 
-    if mode == ProcessingMode::Streaming || mode == ProcessingMode::Both {
-        run_streaming_benchmark(
-            content,
-            iterations,
-            schema_info.as_ref().map(|s| &s.compiled),
-        );
+            // Run Streaming in subprocess for clean memory measurement
+            println!("\n  [Streaming] (subprocess)");
+            if let Some(result) =
+                run_subprocess(InternalMode::Streaming, inputs, iterations, cache_dir)
+            {
+                print_json_result(&result, "");
+            } else {
+                // Fallback to direct execution
+                run_streaming_benchmark(
+                    content,
+                    iterations,
+                    schema_info.as_ref().map(|s| &s.compiled),
+                );
+            }
+
+            // Validation benchmarks
+            if validate {
+                println!("\n  [DOM + Validate] (subprocess)");
+                if let Some(result) =
+                    run_subprocess(InternalMode::DomValidate, inputs, iterations, cache_dir)
+                {
+                    print_json_result(&result, "");
+                }
+
+                println!("\n  [Streaming + Validate] (subprocess)");
+                if let Some(result) = run_subprocess(
+                    InternalMode::StreamingValidate,
+                    inputs,
+                    iterations,
+                    cache_dir,
+                ) {
+                    print_json_result(&result, "");
+                }
+
+                // libxml comparison in subprocess
+                #[cfg(feature = "compare-libxml")]
+                {
+                    println!("\n  [libxml] (subprocess)");
+                    if let Some(result) =
+                        run_subprocess(InternalMode::Libxml, inputs, iterations, cache_dir)
+                    {
+                        print_json_result(&result, "");
+                    }
+
+                    println!("\n  [libxml + Validate] (subprocess)");
+                    if let Some(result) =
+                        run_subprocess(InternalMode::LibxmlValidate, inputs, iterations, cache_dir)
+                    {
+                        print_json_result(&result, "");
+                    }
+                }
+            }
+        }
+        ProcessingMode::Dom => {
+            run_dom_benchmark(content, iterations, schema_info.as_ref());
+        }
+        ProcessingMode::Streaming => {
+            run_streaming_benchmark(
+                content,
+                iterations,
+                schema_info.as_ref().map(|s| &s.compiled),
+            );
+        }
     }
 }
 
@@ -891,6 +1325,76 @@ fn run_file_benchmark(
 
 fn main() {
     let args = Args::parse();
+
+    // Handle internal subprocess mode
+    if let Some(internal_mode) = args.internal_mode {
+        // Load files for subprocess
+        let inputs = if args.inputs.is_empty() && !std::io::stdin().is_terminal() {
+            let stdin = std::io::stdin();
+            stdin
+                .lock()
+                .lines()
+                .map_while(|l| l.ok())
+                .filter(|line| {
+                    let line = line.trim();
+                    !line.is_empty() && !line.starts_with('#')
+                })
+                .collect()
+        } else {
+            args.inputs.clone()
+        };
+
+        if inputs.is_empty() {
+            eprintln!("No input files for subprocess");
+            std::process::exit(1);
+        }
+
+        // Load first file
+        let input = &inputs[0];
+        let content = match load_file(input, &args.cache_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to load file: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let file_path = if is_url(input) {
+            None
+        } else {
+            Some(input.as_str())
+        };
+
+        match internal_mode {
+            InternalMode::Dom => run_dom_subprocess(&content, args.iterations),
+            InternalMode::DomValidate => {
+                run_dom_validate_subprocess(&content, args.iterations, file_path)
+            }
+            InternalMode::Streaming => run_streaming_subprocess(&content, args.iterations),
+            InternalMode::StreamingValidate => {
+                run_streaming_validate_subprocess(&content, args.iterations, file_path)
+            }
+            #[cfg(feature = "compare-libxml")]
+            InternalMode::Libxml => libxml_bench::run_libxml_subprocess(&content, args.iterations),
+            #[cfg(feature = "compare-libxml")]
+            InternalMode::LibxmlValidate => {
+                // Need schema path for libxml validation
+                if let Some(schema_info) = get_schema_from_content(&content, file_path)
+                    && let (Some(export_dir), Some(entry_filename)) =
+                        (schema_info.export_dir, schema_info.entry_filename)
+                {
+                    let schema_path = export_dir.join(&entry_filename);
+                    libxml_bench::run_libxml_validate_subprocess(
+                        &content,
+                        &schema_path,
+                        args.iterations,
+                    );
+                }
+            }
+        }
+
+        return;
+    }
 
     // Read from stdin if no inputs and not a terminal
     let inputs =
@@ -911,7 +1415,7 @@ fn main() {
 
     println!();
     print_separator();
-    println!("  fastxml Load Test CLI");
+    println!("  fastxml Benchmark CLI");
     print_separator();
 
     if let Some(pattern) = args.pattern {
@@ -981,6 +1485,8 @@ fn main() {
                 args.mode,
                 args.iterations,
                 args.validate,
+                &inputs,
+                &args.cache_dir,
             );
         }
 

@@ -20,26 +20,26 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ## Performance
 
-Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/load_test_cli.rs):
+Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/bench.rs):
 
 **Parse only:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 5.96s | 152 MB/s | 4.19 GB |
-| fastxml DOM | 10.05s | 90 MB/s | 2.45 GB |
-| fastxml Streaming | 7.87s | 115 MB/s | **~1 MB** |
+| libxml DOM | 7.11s | 128 MB/s | 4.19 GB |
+| fastxml DOM | 11.50s | 79 MB/s | 951 MB |
+| fastxml Streaming | 9.86s | 92 MB/s | **~1 MB** |
 
 **Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM + validate | 11.49s | 79 MB/s | 4.19 GB |
-| fastxml DOM + validate | 54.80s | 17 MB/s | 1.77 GB |
-| fastxml Streaming | 22.27s | 41 MB/s | **~1 MB** |
+| libxml DOM + validate | 11.10s | 82 MB/s | 3.64 GB |
+| fastxml DOM + validate | 57.20s | 16 MB/s | 1.96 GB |
+| fastxml Streaming | 22.33s | 41 MB/s | **~1 MB** |
 
-- **DOM**: 1.7x less memory than libxml
-- **Streaming**: ~40 MB/s consistent throughput with minimal memory (~1 MB regardless of file size)
+- **DOM**: 4.4x less memory than libxml
+- **Streaming**: ~41 MB/s consistent throughput with minimal memory (~1 MB regardless of file size)
 
 ## Installation
 
@@ -464,9 +464,9 @@ cargo run --example async_schema_resolution --features tokio
 # Schema validation
 cargo run --example schema_validation --features ureq
 
-# Load test CLI
-cargo run --release --example load_test_cli -- ./file.xml
-cargo run --release --features ureq --example load_test_cli -- ./file.xml --validate
+# Benchmark CLI
+cargo run --release --example bench -- ./file.xml
+cargo run --release --features ureq --example bench -- ./file.xml --validate
 ```
 
 ## License
