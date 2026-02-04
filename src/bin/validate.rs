@@ -1,8 +1,8 @@
 //! CLI tool for XML schema validation.
 //!
-//! Usage: fastxml-validate [OPTIONS] <FILES>...
+//! Usage: `fastxml-validate [OPTIONS] <FILES>...`
 //!
-//! Run with: cargo run --features ureq --bin fastxml-validate -- <files>
+//! Run with: `cargo run --features ureq --bin fastxml-validate -- <files>`
 
 #![allow(clippy::collapsible_if)]
 
@@ -177,8 +177,8 @@ fn validate_file(
             file_path,
             size_bytes as f64 / 1024.0 / 1024.0
         );
-        if args.schema.is_some() {
-            println!("  Schema: {}", args.schema.as_ref().unwrap());
+        if let Some(schema) = &args.schema {
+            println!("  Schema: {}", schema);
         } else {
             println!("  Schema: auto-detected from xsi:schemaLocation");
         }
