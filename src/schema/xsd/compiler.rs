@@ -215,7 +215,13 @@ impl XsdCompiler {
             let compiled = self.compile_element(&element)?;
             // Store with namespace-qualified name to avoid collisions
             let qname = self.make_qname(&element.name);
-            result.elements.insert(qname, compiled);
+            result.elements.insert(qname, compiled.clone());
+
+            // Also store with just the local name for same-namespace lookups
+            result
+                .elements
+                .entry(element.name.clone())
+                .or_insert(compiled);
         }
 
         // Compile top-level attributes

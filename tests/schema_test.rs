@@ -2338,3 +2338,78 @@ fn test_same_namespace_inheritance_without_prefix() {
         "RoadType should have usage (inherited from TransportationComplexType)"
     );
 }
+
+/// Test that GML elements are accessible with both prefixed and local names.
+///
+/// GML elements like boundedBy, Envelope, MultiSurface should be accessible via:
+/// - "gml:boundedBy" (prefixed)
+/// - "boundedBy" (local name)
+///
+/// This is needed because type children references may use local names without prefix
+/// when referring to elements in the same namespace.
+#[test]
+fn test_gml_elements_accessible_by_local_name() {
+    use fastxml::schema::xsd::{compile_schemas, parser::parse_xsd_ast, register_builtin_types};
+
+    // GML schema with elements
+    let gml_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:gml="http://www.opengis.net/gml"
+               targetNamespace="http://www.opengis.net/gml"
+               elementFormDefault="qualified">
+
+        <xs:element name="boundedBy" type="xs:string"/>
+        <xs:element name="Envelope" type="xs:string"/>
+        <xs:element name="MultiSurface" type="xs:string"/>
+        <xs:element name="Polygon" type="xs:string"/>
+        <xs:element name="LinearRing" type="xs:string"/>
+        <xs:element name="posList" type="xs:string"/>
+    </xs:schema>"#;
+
+    let gml_ast = parse_xsd_ast(gml_xsd.as_bytes()).unwrap();
+    let mut compiled = compile_schemas(vec![gml_ast]).expect("Failed to compile schemas");
+    register_builtin_types(&mut compiled);
+
+    eprintln!("=== GML elements accessibility test ===");
+    eprintln!("Elements in schema: {:?}", compiled.elements.keys().collect::<Vec<_>>());
+
+    // Elements should be accessible with prefix
+    assert!(
+        compiled.get_element("gml:boundedBy").is_some(),
+        "Should find gml:boundedBy with prefix"
+    );
+    assert!(
+        compiled.get_element("gml:Envelope").is_some(),
+        "Should find gml:Envelope with prefix"
+    );
+    assert!(
+        compiled.get_element("gml:MultiSurface").is_some(),
+        "Should find gml:MultiSurface with prefix"
+    );
+
+    // Elements should ALSO be accessible WITHOUT prefix (local name)
+    assert!(
+        compiled.get_element("boundedBy").is_some(),
+        "Should find boundedBy by local name"
+    );
+    assert!(
+        compiled.get_element("Envelope").is_some(),
+        "Should find Envelope by local name"
+    );
+    assert!(
+        compiled.get_element("MultiSurface").is_some(),
+        "Should find MultiSurface by local name"
+    );
+    assert!(
+        compiled.get_element("Polygon").is_some(),
+        "Should find Polygon by local name"
+    );
+    assert!(
+        compiled.get_element("LinearRing").is_some(),
+        "Should find LinearRing by local name"
+    );
+    assert!(
+        compiled.get_element("posList").is_some(),
+        "Should find posList by local name"
+    );
+}
