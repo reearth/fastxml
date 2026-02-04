@@ -2258,3 +2258,83 @@ fn test_duplicate_schemas_deduplication() {
         "Should have AbstractFeatureType in cache"
     );
 }
+
+/// Test that same-namespace inheritance works when base type is referenced without prefix.
+///
+/// In CityGML schemas, types in the same namespace extend each other without prefix:
+/// - RoadType extends TransportationComplexType (not tran:TransportationComplexType)
+///
+/// This test verifies that the inheritance chain is resolved correctly even when
+/// the base type reference has no namespace prefix.
+#[test]
+fn test_same_namespace_inheritance_without_prefix() {
+    use fastxml::schema::xsd::{compile_schemas, parser::parse_xsd_ast, register_builtin_types};
+
+    // Schema where types extend other types in the same namespace WITHOUT prefix
+    let tran_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:tran="http://www.opengis.net/citygml/transportation/2.0"
+               targetNamespace="http://www.opengis.net/citygml/transportation/2.0"
+               elementFormDefault="qualified">
+
+        <!-- Base type with elements -->
+        <xs:complexType name="TransportationComplexType">
+            <xs:sequence>
+                <xs:element name="class" type="xs:string" minOccurs="0"/>
+                <xs:element name="function" type="xs:string" minOccurs="0"/>
+                <xs:element name="usage" type="xs:string" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <!-- Derived type extends base WITHOUT prefix (same namespace) -->
+        <xs:complexType name="RoadType">
+            <xs:complexContent>
+                <xs:extension base="TransportationComplexType">
+                    <xs:sequence>
+                        <xs:element name="trafficArea" type="xs:string" minOccurs="0"/>
+                    </xs:sequence>
+                </xs:extension>
+            </xs:complexContent>
+        </xs:complexType>
+
+        <xs:element name="Road" type="tran:RoadType"/>
+    </xs:schema>"#;
+
+    let tran_ast = parse_xsd_ast(tran_xsd.as_bytes()).unwrap();
+    let mut compiled = compile_schemas(vec![tran_ast]).expect("Failed to compile schemas");
+    register_builtin_types(&mut compiled);
+
+    eprintln!("=== Same-namespace inheritance test ===");
+
+    // Check that types are stored
+    eprintln!("Types in schema: {:?}", compiled.types.keys().collect::<Vec<_>>());
+
+    // RoadType should inherit elements from TransportationComplexType
+    let road_type_cache = compiled.type_children_cache.get("RoadType");
+    eprintln!(
+        "RoadType cache: {:?}",
+        road_type_cache.map(|f| f.constraints.keys().collect::<Vec<_>>())
+    );
+
+    let road_type_cache = road_type_cache.expect("RoadType should be in cache");
+
+    // Own element
+    assert!(
+        road_type_cache.constraints.contains_key("trafficArea"),
+        "RoadType should have trafficArea (own element)"
+    );
+
+    // Inherited elements from TransportationComplexType (extended WITHOUT prefix)
+    assert!(
+        road_type_cache.constraints.contains_key("class"),
+        "RoadType should have class (inherited from TransportationComplexType)"
+    );
+    assert!(
+        road_type_cache.constraints.contains_key("function"),
+        "RoadType should have function (inherited from TransportationComplexType)"
+    );
+    assert!(
+        road_type_cache.constraints.contains_key("usage"),
+        "RoadType should have usage (inherited from TransportationComplexType)"
+    );
+}

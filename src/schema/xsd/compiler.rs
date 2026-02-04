@@ -201,6 +201,10 @@ impl XsdCompiler {
                 let qname = self.make_qname(name);
                 result.types.insert(qname.clone(), compiled.clone());
 
+                // Also store with just the local name for same-namespace lookups
+                // (e.g., when RoadType extends TransportationComplexType without prefix)
+                result.types.entry(name.to_string()).or_insert(compiled.clone());
+
                 // Also update cache with full definition
                 self.type_cache.insert(qname, compiled);
             }
