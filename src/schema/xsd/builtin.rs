@@ -472,9 +472,10 @@ fn create_measure_type() -> ComplexType {
 
 fn create_measure_type_variant(name: &str) -> ComplexType {
     let mut ct = ComplexType::new(name);
-    ct.content = ContentModel::ComplexExtension {
+    // These types use simpleContent/restriction on MeasureType
+    // so they should be SimpleContent, not ComplexExtension
+    ct.content = ContentModel::SimpleContent {
         base_type: gml::MEASURE_TYPE.to_string(),
-        elements: Vec::new(),
     };
     ct
 }

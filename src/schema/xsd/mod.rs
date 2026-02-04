@@ -403,6 +403,60 @@ mod tests {
         assert!(schema.types.contains_key("gml:LengthType"));
         assert!(schema.types.contains_key("gml:AbstractFeatureType"));
     }
+
+    #[test]
+    fn test_simple_content_restriction_should_be_simple_content() {
+        // This tests that simpleContent/restriction is correctly parsed as SimpleContent,
+        // not ComplexExtension. This is the pattern used by gml:LengthType.
+        let xsd = r#"<?xml version="1.0"?>
+        <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                   xmlns:test="http://test.example.com"
+                   targetNamespace="http://test.example.com">
+
+            <!-- Base type with simpleContent/extension -->
+            <xs:complexType name="MeasureType">
+                <xs:simpleContent>
+                    <xs:extension base="xs:double">
+                        <xs:attribute name="uom" type="xs:anyURI" use="required"/>
+                    </xs:extension>
+                </xs:simpleContent>
+            </xs:complexType>
+
+            <!-- Derived type with simpleContent/restriction -->
+            <xs:complexType name="LengthType">
+                <xs:simpleContent>
+                    <xs:restriction base="test:MeasureType"/>
+                </xs:simpleContent>
+            </xs:complexType>
+
+        </xs:schema>"#;
+
+        let schema = parse_xsd(xsd.as_bytes()).unwrap();
+
+        // MeasureType should be SimpleContent
+        let measure_type = schema.types.get("MeasureType").expect("MeasureType not found");
+        if let crate::schema::types::TypeDef::Complex(ct) = measure_type {
+            assert!(
+                matches!(ct.content, crate::schema::types::ContentModel::SimpleContent { .. }),
+                "MeasureType should be SimpleContent, got {:?}",
+                ct.content
+            );
+        } else {
+            panic!("MeasureType should be ComplexType");
+        }
+
+        // LengthType should also be SimpleContent (not ComplexExtension!)
+        let length_type = schema.types.get("LengthType").expect("LengthType not found");
+        if let crate::schema::types::TypeDef::Complex(ct) = length_type {
+            assert!(
+                matches!(ct.content, crate::schema::types::ContentModel::SimpleContent { .. }),
+                "LengthType should be SimpleContent, got {:?}",
+                ct.content
+            );
+        } else {
+            panic!("LengthType should be ComplexType");
+        }
+    }
 }
 
 #[cfg(all(test, feature = "tokio"))]
