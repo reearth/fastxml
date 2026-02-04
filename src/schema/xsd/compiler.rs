@@ -110,10 +110,13 @@ impl XsdCompiler {
         for type_def in schema.types {
             let compiled = self.compile_type(&type_def)?;
             if let Some(name) = type_def.name() {
-                result.types.insert(name.to_string(), compiled.clone());
+                // Store with namespace-qualified name to avoid collisions
+                // between types with same local name in different namespaces
+                // (e.g., gml:TrackType vs tran:TrackType)
+                let qname = self.make_qname(name);
+                result.types.insert(qname.clone(), compiled.clone());
 
                 // Also update cache with full definition
-                let qname = self.make_qname(name);
                 self.type_cache.insert(qname, compiled);
             }
         }
@@ -121,14 +124,18 @@ impl XsdCompiler {
         // Compile elements
         for element in schema.elements {
             let compiled = self.compile_element(&element)?;
-            result.elements.insert(element.name.clone(), compiled);
+            // Store with namespace-qualified name to avoid collisions
+            let qname = self.make_qname(&element.name);
+            result.elements.insert(qname, compiled);
         }
 
         // Compile top-level attributes
         for attr in schema.attributes {
             if let Some(name) = &attr.name {
                 let compiled = self.compile_attribute(&attr)?;
-                result.attributes.insert(name.clone(), compiled);
+                // Store with namespace-qualified name to avoid collisions
+                let qname = self.make_qname(name);
+                result.attributes.insert(qname, compiled);
             }
         }
 

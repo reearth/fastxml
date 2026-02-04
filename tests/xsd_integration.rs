@@ -175,13 +175,15 @@ fn test_plateau_building_pattern() {
 
     let schema = xsd::parse_xsd(building_xsd.as_bytes()).unwrap();
 
-    // Check that Building element exists
-    assert!(schema.elements.contains_key("Building"));
+    // Check that Building element exists (now stored with namespace prefix)
+    assert!(schema.elements.contains_key("bldg:Building"));
 
-    // Check that BuildingType exists and has correct structure
-    assert!(schema.types.contains_key("BuildingType"));
+    // Check that BuildingType exists and has correct structure (now stored with namespace prefix)
+    assert!(schema.types.contains_key("bldg:BuildingType"));
 
-    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.types.get("BuildingType") {
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
+        schema.types.get("bldg:BuildingType")
+    {
         // Check that it's a sequence with elements
         if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
             // Find specific elements
@@ -247,18 +249,18 @@ fn test_plateau_iur_extension_pattern() {
 
     let schema = xsd::parse_xsd(uro_xsd.as_bytes()).unwrap();
 
-    // Check elements
-    assert!(schema.elements.contains_key("buildingDetails"));
-    assert!(schema.elements.contains_key("BuildingDetails"));
+    // Check elements (now stored with namespace prefix)
+    assert!(schema.elements.contains_key("uro:buildingDetails"));
+    assert!(schema.elements.contains_key("uro:BuildingDetails"));
 
-    // Check types
-    assert!(schema.types.contains_key("BuildingDetailsType"));
-    assert!(schema.types.contains_key("BuildingDetailsPropertyType"));
-    assert!(schema.types.contains_key("BuildingIDAttributeType"));
+    // Check types (now stored with namespace prefix)
+    assert!(schema.types.contains_key("uro:BuildingDetailsType"));
+    assert!(schema.types.contains_key("uro:BuildingDetailsPropertyType"));
+    assert!(schema.types.contains_key("uro:BuildingIDAttributeType"));
 
     // Check simple type restriction
     if let Some(fastxml::schema::types::TypeDef::Simple(st)) =
-        schema.types.get("BuildingIDAttributeType")
+        schema.types.get("uro:BuildingIDAttributeType")
     {
         assert_eq!(st.base_type.as_deref(), Some("xs:string"));
         assert!(st.pattern.is_some());
