@@ -413,10 +413,27 @@ impl OnePassSchemaValidator {
 
         let schema_has_elements = !self.schema.elements.is_empty();
 
-        if let Some(elem) = elem_def {
-            // Global element found - get type information from cache
-            let type_ref = elem.type_ref.clone();
-            let flattened_children = self.get_flattened_children_for_element(elem);
+        // Priority: inline element definition > global element definition
+        // This is important when the same element name exists both as a global element
+        // and as an inline element in the parent's content model with different types.
+        // For example, gml:exterior in Solid (SurfacePropertyType) vs Polygon (AbstractRingPropertyType)
+        if is_expected_by_parent {
+            // Try inline element first - declared in parent's type definition
+            let (inline_type_ref, inline_flattened) = self.get_inline_element_info(name);
+
+            // Use inline type if available, otherwise fall back to global element
+            let (type_ref, flattened_children) =
+                if inline_type_ref.is_some() || inline_flattened.is_some() {
+                    (inline_type_ref, inline_flattened)
+                } else if let Some(elem) = elem_def {
+                    // Fall back to global element
+                    (
+                        elem.type_ref.clone(),
+                        self.get_flattened_children_for_element(elem),
+                    )
+                } else {
+                    (None, None)
+                };
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -430,10 +447,10 @@ impl OnePassSchemaValidator {
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
             }
-        } else if is_expected_by_parent {
-            // Inline element - declared in parent's type definition
-            // Get type info from parent's content model if available
-            let (type_ref, flattened_children) = self.get_inline_element_info(name);
+        } else if let Some(elem) = elem_def {
+            // Global element found - get type information from cache
+            let type_ref = elem.type_ref.clone();
+            let flattened_children = self.get_flattened_children_for_element(elem);
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);

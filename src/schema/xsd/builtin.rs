@@ -120,6 +120,7 @@ pub mod gml {
     pub const ABSTRACT_GML_TYPE: &str = "gml:AbstractGMLType";
     pub const ABSTRACT_FEATURE_TYPE: &str = "gml:AbstractFeatureType";
     pub const ABSTRACT_GEOMETRY_TYPE: &str = "gml:AbstractGeometryType";
+    pub const ABSTRACT_SOLID_TYPE: &str = "gml:AbstractSolidType";
 }
 
 /// Creates XSD primitive type definitions.
@@ -358,6 +359,10 @@ pub fn create_gml_types() -> Vec<(String, TypeDef)> {
             gml::ABSTRACT_GEOMETRY_TYPE.to_string(),
             TypeDef::Complex(create_abstract_geometry_type()),
         ),
+        (
+            gml::ABSTRACT_SOLID_TYPE.to_string(),
+            TypeDef::Complex(create_abstract_solid_type()),
+        ),
         // Geometry types
         (
             gml::POINT_TYPE.to_string(),
@@ -389,7 +394,7 @@ pub fn create_gml_types() -> Vec<(String, TypeDef)> {
         ),
         (
             gml::SOLID_TYPE.to_string(),
-            TypeDef::Complex(create_geometry_type("SolidType")),
+            TypeDef::Complex(create_solid_type()),
         ),
         (
             gml::COMPOSITE_SOLID_TYPE.to_string(),
@@ -539,11 +544,41 @@ fn create_abstract_geometry_type() -> ComplexType {
     ct
 }
 
+fn create_abstract_solid_type() -> ComplexType {
+    let mut ct = ComplexType::new("AbstractSolidType");
+    ct.is_abstract = true;
+    ct.content = ContentModel::ComplexExtension {
+        base_type: gml::ABSTRACT_GEOMETRY_TYPE.to_string(),
+        elements: Vec::new(),
+    };
+    ct
+}
+
 fn create_geometry_type(name: &str) -> ComplexType {
     let mut ct = ComplexType::new(name);
     ct.content = ContentModel::ComplexExtension {
         base_type: gml::ABSTRACT_GEOMETRY_TYPE.to_string(),
         elements: Vec::new(),
+    };
+    ct
+}
+
+/// Creates SolidType with exterior and interior elements.
+/// SolidType extends AbstractSolidType (not AbstractGeometryType directly)
+/// and has exterior (SurfacePropertyType) and interior (SurfacePropertyType) elements.
+fn create_solid_type() -> ComplexType {
+    let mut ct = ComplexType::new("SolidType");
+    ct.content = ContentModel::ComplexExtension {
+        base_type: gml::ABSTRACT_SOLID_TYPE.to_string(),
+        elements: vec![
+            ElementDef::new("exterior")
+                .with_type(gml::SURFACE_PROPERTY_TYPE)
+                .optional(),
+            ElementDef::new("interior")
+                .with_type(gml::SURFACE_PROPERTY_TYPE)
+                .optional()
+                .unbounded(),
+        ],
     };
     ct
 }
