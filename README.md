@@ -74,6 +74,10 @@ fastxml = { version = "0.6", features = ["tokio"] }
 | `ReqwestFetcher` | Async HTTP (requires `tokio`) |
 | `DefaultFetcher` | File + sync HTTP combined (requires `ureq` for HTTP) |
 | `AsyncDefaultFetcher` | File + async HTTP combined (requires `tokio`) |
+| `CachingFetcher` | Wraps any sync fetcher with in-memory caching |
+| `AsyncCachingFetcher` | Wraps any async fetcher with in-memory caching (requires `tokio`) |
+| `FileCachingFetcher` | Wraps any sync fetcher with file-based caching (temp directory) |
+| `AsyncFileCachingFetcher` | Wraps any async fetcher with file-based caching (requires `tokio`) |
 
 **Traits:**
 
@@ -258,7 +262,7 @@ Parse XSD schemas with async import/include resolution (requires `tokio` feature
 
 ```rust
 use fastxml::schema::{
-    AsyncDefaultFetcher, InMemoryStore,
+    AsyncDefaultFetcher,
     parse_xsd_with_imports_async,
 };
 
@@ -266,16 +270,14 @@ use fastxml::schema::{
 async fn main() -> fastxml::error::Result<()> {
     let xsd_content = std::fs::read("schema.xsd")?;
 
-    // Create async fetcher and cache store
+    // Create async fetcher
     let fetcher = AsyncDefaultFetcher::new()?;
-    let store = InMemoryStore::new();
 
     // Parse schema with async import resolution
     let schema = parse_xsd_with_imports_async(
         &xsd_content,
         "http://example.com/schema.xsd",
         &fetcher,
-        &store,
     ).await?;
 
     println!("Parsed {} types", schema.types.len());
@@ -285,7 +287,6 @@ async fn main() -> fastxml::error::Result<()> {
 
 The async resolver:
 - Fetches imported schemas asynchronously via HTTP
-- Caches fetched schemas in the provided store
 - Resolves nested imports (A → B → C)
 - Detects circular dependencies
 

@@ -15,7 +15,7 @@
 //!
 //! ```ignore
 //! use fastxml::schema::xsd::{parse_xsd, parse_xsd_with_imports};
-//! use fastxml::schema::{UreqFetcher, TempDirStore};
+//! use fastxml::schema::UreqFetcher;
 //!
 //! // Simple parsing (no import resolution)
 //! let xsd_content = r#"
@@ -27,12 +27,10 @@
 //!
 //! // With import resolution
 //! let fetcher = UreqFetcher::new();
-//! let store = TempDirStore::new()?;
 //! let schema = parse_xsd_with_imports(
 //!     xsd_content.as_bytes(),
 //!     "http://example.com/schema.xsd",
 //!     &fetcher,
-//!     &store,
 //! )?;
 //! ```
 //!
@@ -55,13 +53,10 @@ pub mod types;
 
 use crate::error::Result;
 use crate::schema::fetcher::SchemaFetcher;
-use crate::schema::store::SchemaStore;
 use crate::schema::types::CompiledSchema;
 
 #[cfg(feature = "tokio")]
 use crate::schema::fetcher::AsyncSchemaFetcher;
-#[cfg(feature = "tokio")]
-use crate::schema::store::AsyncSchemaStore;
 
 pub use builtin::{gml, register_builtin_types, xs};
 pub use compiler::{XsdCompiler, compile_schemas};
@@ -112,14 +107,14 @@ pub fn parse_xsd(content: &[u8]) -> Result<CompiledSchema> {
 /// Parses XSD content with import/include resolution.
 ///
 /// This function resolves all xs:import and xs:include dependencies,
-/// fetching remote schemas as needed and caching them in the store.
+/// fetching remote schemas as needed. Caching is handled by the fetcher
+/// (use `CachingFetcher` to add caching to any fetcher).
 ///
 /// # Arguments
 ///
 /// * `content` - The entry XSD file content as bytes
 /// * `base_uri` - Base URI for resolving relative imports
 /// * `fetcher` - Schema fetcher for downloading remote schemas
-/// * `store` - Schema store for caching downloaded schemas
 ///
 /// # Returns
 ///
@@ -128,26 +123,23 @@ pub fn parse_xsd(content: &[u8]) -> Result<CompiledSchema> {
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{UreqFetcher, TempDirStore};
+/// use fastxml::schema::UreqFetcher;
 ///
 /// let fetcher = UreqFetcher::new();
-/// let store = TempDirStore::new()?;
 ///
 /// let schema = parse_xsd_with_imports(
 ///     xsd_content.as_bytes(),
 ///     "http://example.com/schemas/main.xsd",
 ///     &fetcher,
-///     &store,
 /// )?;
 /// ```
-pub fn parse_xsd_with_imports<F: SchemaFetcher, S: SchemaStore>(
+pub fn parse_xsd_with_imports<F: SchemaFetcher>(
     content: &[u8],
     base_uri: &str,
     fetcher: &F,
-    store: &S,
 ) -> Result<CompiledSchema> {
     // Create resolver and resolve all dependencies
-    let mut resolver = SchemaResolver::new(fetcher, store);
+    let mut resolver = SchemaResolver::new(fetcher);
     let schemas = resolver.resolve_all(content, base_uri)?;
 
     // Compile all schemas
@@ -162,15 +154,14 @@ pub fn parse_xsd_with_imports<F: SchemaFetcher, S: SchemaStore>(
 /// Parses XSD content with import/include resolution asynchronously.
 ///
 /// This is the async version of [`parse_xsd_with_imports`]. It resolves all
-/// xs:import and xs:include dependencies, fetching remote schemas as needed
-/// and caching them in the store.
+/// xs:import and xs:include dependencies, fetching remote schemas as needed.
+/// Caching is handled by the fetcher (use `AsyncCachingFetcher` to add caching).
 ///
 /// # Arguments
 ///
 /// * `content` - The entry XSD file content as bytes
 /// * `base_uri` - Base URI for resolving relative imports
 /// * `fetcher` - Async schema fetcher for downloading remote schemas
-/// * `store` - Async schema store for caching downloaded schemas
 ///
 /// # Returns
 ///
@@ -179,27 +170,24 @@ pub fn parse_xsd_with_imports<F: SchemaFetcher, S: SchemaStore>(
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore, parse_xsd_with_imports_async};
+/// use fastxml::schema::{AsyncDefaultFetcher, parse_xsd_with_imports_async};
 ///
 /// let fetcher = AsyncDefaultFetcher::new()?;
-/// let store = InMemoryStore::new();
 ///
 /// let schema = parse_xsd_with_imports_async(
 ///     xsd_content.as_bytes(),
 ///     "http://example.com/schemas/main.xsd",
 ///     &fetcher,
-///     &store,
 /// ).await?;
 /// ```
 #[cfg(feature = "tokio")]
-pub async fn parse_xsd_with_imports_async<F: AsyncSchemaFetcher, S: AsyncSchemaStore>(
+pub async fn parse_xsd_with_imports_async<F: AsyncSchemaFetcher>(
     content: &[u8],
     base_uri: &str,
     fetcher: &F,
-    store: &S,
 ) -> Result<CompiledSchema> {
     // Create async resolver and resolve all dependencies
-    let mut resolver = AsyncSchemaResolver::new(fetcher, store);
+    let mut resolver = AsyncSchemaResolver::new(fetcher);
     let schemas = resolver.resolve_all(content, base_uri).await?;
 
     // Compile all schemas
@@ -251,7 +239,6 @@ pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> 
 ///
 /// * `entries` - List of (URI, content) pairs for entry schemas
 /// * `fetcher` - Schema fetcher for downloading remote schemas
-/// * `store` - Schema store for caching downloaded schemas
 ///
 /// # Returns
 ///
@@ -260,10 +247,9 @@ pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> 
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{UreqFetcher, TempDirStore, parse_xsd_with_imports_multiple};
+/// use fastxml::schema::{UreqFetcher, parse_xsd_with_imports_multiple};
 ///
 /// let fetcher = UreqFetcher::new();
-/// let store = TempDirStore::new()?;
 ///
 /// let schema = parse_xsd_with_imports_multiple(
 ///     &[
@@ -271,15 +257,13 @@ pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> 
 ///         ("http://example.com/b.xsd", b_content),
 ///     ],
 ///     &fetcher,
-///     &store,
 /// )?;
 /// ```
-pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher, S: SchemaStore>(
+pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
-    store: &S,
 ) -> Result<CompiledSchema> {
-    let mut resolver = SchemaResolver::new(fetcher, store);
+    let mut resolver = SchemaResolver::new(fetcher);
     for (uri, content) in entries {
         resolver.resolve_entry(content, uri)?;
     }
@@ -297,18 +281,16 @@ pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher, S: SchemaStore>(
 ///
 /// * `entries` - List of (URI, content) pairs for entry schemas
 /// * `fetcher` - Async schema fetcher for downloading remote schemas
-/// * `store` - Async schema store for caching downloaded schemas
 ///
 /// # Returns
 ///
 /// A compiled schema with all entries and their dependencies resolved
 #[cfg(feature = "tokio")]
-pub async fn parse_xsd_with_imports_multiple_async<F: AsyncSchemaFetcher, S: AsyncSchemaStore>(
+pub async fn parse_xsd_with_imports_multiple_async<F: AsyncSchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
-    store: &S,
 ) -> Result<CompiledSchema> {
-    let mut resolver = AsyncSchemaResolver::new(fetcher, store);
+    let mut resolver = AsyncSchemaResolver::new(fetcher);
     for (uri, content) in entries {
         resolver.resolve_entry(content, uri).await?;
     }
@@ -554,7 +536,6 @@ mod async_tests {
     use super::*;
     use crate::error::Result;
     use crate::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
-    use crate::schema::memory::InMemoryStore;
     use parking_lot::RwLock;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -607,16 +588,11 @@ mod async_tests {
         </xs:schema>"#;
 
         let fetcher = MockAsyncFetcher::new();
-        let store = InMemoryStore::new();
 
-        let schema = parse_xsd_with_imports_async(
-            xsd.as_bytes(),
-            "http://example.com/test.xsd",
-            &fetcher,
-            &store,
-        )
-        .await
-        .unwrap();
+        let schema =
+            parse_xsd_with_imports_async(xsd.as_bytes(), "http://example.com/test.xsd", &fetcher)
+                .await
+                .unwrap();
 
         assert!(schema.elements.contains_key("root"));
         assert_eq!(
@@ -658,13 +634,10 @@ mod async_tests {
         let fetcher = MockAsyncFetcher::new();
         fetcher.add_response("http://example.com/types.xsd", types_xsd.as_bytes());
 
-        let store = InMemoryStore::new();
-
         let schema = parse_xsd_with_imports_async(
             main_xsd.as_bytes(),
             "http://example.com/main.xsd",
             &fetcher,
-            &store,
         )
         .await
         .unwrap();
@@ -674,12 +647,6 @@ mod async_tests {
 
         // Imported type should be available (stored with namespace prefix)
         assert!(schema.types.contains_key("t:EmailType"));
-
-        // Store should have cached the imported schema
-        assert!(crate::schema::store::SchemaStore::contains(
-            &store,
-            "http://example.com/types.xsd"
-        ));
     }
 
     #[tokio::test]
@@ -718,13 +685,10 @@ mod async_tests {
         fetcher.add_response("http://example.com/base.xsd", base_xsd.as_bytes());
         fetcher.add_response("http://example.com/types.xsd", types_xsd.as_bytes());
 
-        let store = InMemoryStore::new();
-
         let schema = parse_xsd_with_imports_async(
             main_xsd.as_bytes(),
             "http://example.com/main.xsd",
             &fetcher,
-            &store,
         )
         .await
         .unwrap();
@@ -733,15 +697,5 @@ mod async_tests {
         assert!(schema.elements.contains_key("entity"));
         assert!(schema.types.contains_key("t:EntityType"));
         assert!(schema.types.contains_key("b:IDType"));
-
-        // Both imported schemas should be cached
-        assert!(crate::schema::store::SchemaStore::contains(
-            &store,
-            "http://example.com/base.xsd"
-        ));
-        assert!(crate::schema::store::SchemaStore::contains(
-            &store,
-            "http://example.com/types.xsd"
-        ));
     }
 }

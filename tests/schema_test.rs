@@ -1,55 +1,6 @@
 //! Integration tests for schema validation.
 
-use fastxml::schema::{
-    CompiledSchema, ComplexType, ContentModel, ElementDef, InMemoryStore, SchemaStore,
-    TempDirStore, types::TypeDef,
-};
-
-#[test]
-fn test_tempdir_store() {
-    let store = TempDirStore::new().unwrap();
-
-    let uri = "http://example.com/schema.xsd";
-    let content = b"<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"/>";
-
-    // Store schema
-    store.put(uri, content).unwrap();
-    assert!(store.contains(uri));
-
-    // Retrieve schema
-    let retrieved = store.get(uri).unwrap().unwrap();
-    assert_eq!(retrieved, content);
-
-    // Get path
-    let path = store.resolve_path(uri).unwrap();
-    assert!(path.exists());
-
-    // List schemas
-    let list = store.list().unwrap();
-    assert_eq!(list.len(), 1);
-
-    // Remove schema
-    assert!(store.remove(uri).unwrap());
-    assert!(!store.contains(uri));
-}
-
-#[test]
-fn test_memory_store() {
-    let store = InMemoryStore::new();
-
-    let uri = "http://example.com/schema.xsd";
-    let content = b"<schema/>";
-
-    store.put(uri, content).unwrap();
-    assert!(store.contains(uri));
-    assert_eq!(store.len(), 1);
-
-    let retrieved = store.get(uri).unwrap().unwrap();
-    assert_eq!(retrieved, content);
-
-    store.clear().unwrap();
-    assert!(store.is_empty());
-}
+use fastxml::schema::{CompiledSchema, ComplexType, ContentModel, ElementDef, types::TypeDef};
 
 #[test]
 fn test_compiled_schema() {
@@ -106,28 +57,6 @@ fn test_schema_with_namespace() {
         schema.target_namespace,
         Some("http://example.com/ns".to_string())
     );
-}
-
-#[test]
-fn test_store_multiple_schemas() {
-    let store = TempDirStore::new().unwrap();
-
-    let schemas = vec![
-        ("http://a.com/1.xsd", "schema1"),
-        ("http://b.com/2.xsd", "schema2"),
-        ("http://c.com/3.xsd", "schema3"),
-    ];
-
-    for (uri, content) in &schemas {
-        store.put(uri, content.as_bytes()).unwrap();
-    }
-
-    assert_eq!(store.list().unwrap().len(), 3);
-
-    for (uri, content) in &schemas {
-        let retrieved = store.get(uri).unwrap().unwrap();
-        assert_eq!(String::from_utf8(retrieved).unwrap(), *content);
-    }
 }
 
 /// Tests that types with the same local name but different namespace prefixes
@@ -2624,7 +2553,7 @@ fn test_gml_elements_accessible_by_local_name() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_shared_dependency() {
     use fastxml::schema::fetcher::{FetchResult, SchemaFetcher};
-    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+    use fastxml::schema::parse_xsd_with_imports_multiple;
     use std::collections::HashMap;
     use std::sync::RwLock;
 
@@ -2719,7 +2648,6 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
 
     let mut fetcher = CountingFetcher::new();
     fetcher.add("http://example.com/common.xsd", common_xsd.as_bytes());
-    let store = InMemoryStore::new();
 
     let schema = parse_xsd_with_imports_multiple(
         &[
@@ -2727,7 +2655,6 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
             ("http://example.com/b.xsd", schema_b.as_bytes()),
         ],
         &fetcher,
-        &store,
     )
     .unwrap();
 
@@ -2752,12 +2679,11 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_no_entries() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+    use fastxml::schema::parse_xsd_with_imports_multiple;
 
     let fetcher = NoopFetcher;
-    let store = InMemoryStore::new();
 
-    let schema = parse_xsd_with_imports_multiple(&[], &fetcher, &store).unwrap();
+    let schema = parse_xsd_with_imports_multiple(&[], &fetcher).unwrap();
 
     // Should have built-in types
     assert!(schema.types.contains_key("xs:string"));
@@ -2766,7 +2692,7 @@ fn test_parse_xsd_with_imports_multiple_no_entries() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_single_entry() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+    use fastxml::schema::parse_xsd_with_imports_multiple;
 
     let xsd = r#"<?xml version="1.0"?>
     <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
@@ -2775,12 +2701,10 @@ fn test_parse_xsd_with_imports_multiple_single_entry() {
     </xs:schema>"#;
 
     let fetcher = NoopFetcher;
-    let store = InMemoryStore::new();
 
     let schema = parse_xsd_with_imports_multiple(
         &[("http://example.com/test.xsd", xsd.as_bytes())],
         &fetcher,
-        &store,
     )
     .unwrap();
 
@@ -2790,7 +2714,7 @@ fn test_parse_xsd_with_imports_multiple_single_entry() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+    use fastxml::schema::parse_xsd_with_imports_multiple;
 
     let xsd = r#"<?xml version="1.0"?>
     <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -2798,7 +2722,6 @@ fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
     </xs:schema>"#;
 
     let fetcher = NoopFetcher;
-    let store = InMemoryStore::new();
 
     // Same schema passed twice - should not error
     let schema = parse_xsd_with_imports_multiple(
@@ -2807,7 +2730,6 @@ fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
             ("http://example.com/test.xsd", xsd.as_bytes()),
         ],
         &fetcher,
-        &store,
     )
     .unwrap();
 

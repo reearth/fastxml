@@ -7,7 +7,6 @@ use compact_str::CompactString;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::event::{XmlEvent, XmlEventHandler};
 use crate::schema::fetcher::SchemaFetcher;
-use crate::schema::store::SchemaStore;
 
 use super::streaming::OnePassSchemaValidator;
 
@@ -57,8 +56,7 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let store = crate::schema::memory::InMemoryStore::new();
-            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher, &store);
+            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher);
             let mut loaded_any = false;
 
             // Fetch and resolve all schemaLocation entries with a single resolver
@@ -67,8 +65,6 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                     let location = chunk[1];
                     match self.fetcher.fetch(location) {
                         Ok(result) => {
-                            let _ = SchemaStore::put(&store, &result.final_url, &result.content);
-
                             match resolver.resolve_entry(&result.content, &result.final_url) {
                                 Ok(()) => {
                                     loaded_any = true;
@@ -185,8 +181,7 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let store = crate::schema::memory::InMemoryStore::new();
-            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher, &store);
+            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher);
             let mut loaded_any = false;
 
             // Fetch and resolve all schemaLocation entries with a single resolver
@@ -195,8 +190,6 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                     let location = chunk[1];
                     match self.fetcher.fetch(location) {
                         Ok(result) => {
-                            let _ = SchemaStore::put(&store, &result.final_url, &result.content);
-
                             match resolver.resolve_entry(&result.content, &result.final_url) {
                                 Ok(()) => {
                                     loaded_any = true;

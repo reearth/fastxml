@@ -20,9 +20,6 @@ thiserror = "2"
 # Thread safety
 parking_lot = "0.12"
 
-# Temporary files for schema store
-tempfile = "3"
-
 # Concurrent collections
 dashmap = "6"
 
@@ -37,6 +34,9 @@ compact_str = "0.8"
 
 # Hashing
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
+# Temp file/directory management
+tempfile = "3"
 
 # Regular expressions (for XSD pattern facet validation)
 regex = "1"

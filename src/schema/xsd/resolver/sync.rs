@@ -6,29 +6,26 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::Result;
-use crate::schema::fetcher::{FetchResult, SchemaFetcher};
-use crate::schema::store::SchemaStore;
+use crate::schema::fetcher::SchemaFetcher;
 
 use super::super::parser::parse_xsd_ast;
 use super::super::types::XsdSchema;
 use super::common::resolve_uri;
 
 /// Schema resolver that handles import/include chains.
-pub struct SchemaResolver<'a, F: SchemaFetcher, S: SchemaStore> {
+pub struct SchemaResolver<'a, F: SchemaFetcher> {
     fetcher: &'a F,
-    store: &'a S,
     /// Resolved schemas by URI
     schemas: HashMap<String, XsdSchema>,
     /// URIs currently being resolved (for cycle detection)
     resolving: HashSet<String>,
 }
 
-impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
+impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
     /// Creates a new schema resolver.
-    pub fn new(fetcher: &'a F, store: &'a S) -> Self {
+    pub fn new(fetcher: &'a F) -> Self {
         Self {
             fetcher,
-            store,
             schemas: HashMap::new(),
             resolving: HashSet::new(),
         }
@@ -114,26 +111,10 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
         Ok(result)
     }
 
-    /// Fetches a schema, first checking the store cache.
+    /// Fetches a schema via the fetcher (caching is handled by the fetcher).
     fn fetch_schema(&self, uri: &str) -> Result<Vec<u8>> {
-        // Check store first
-        if let Some(content) = self.store.get(uri)? {
-            return Ok(content);
-        }
-
-        // Fetch from network
-        let FetchResult {
-            content, final_url, ..
-        } = self.fetcher.fetch(uri)?;
-
-        // Store in cache
-        self.store.put(&final_url, &content)?;
-        if final_url != uri {
-            // Also cache under original URI
-            self.store.put(uri, &content)?;
-        }
-
-        Ok(content)
+        let result = self.fetcher.fetch(uri)?;
+        Ok(result.content)
     }
 
     /// Resolves an entry schema and accumulates it along with its dependencies.

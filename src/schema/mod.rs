@@ -1,8 +1,7 @@
 //! XSD schema handling and validation.
 //!
 //! This module provides support for:
-//! - Schema storage abstraction (memory, temp files, etc.)
-//! - Schema fetching with redirect support
+//! - Schema fetching with redirect support and caching
 //! - Schema compilation and type definitions
 //! - Streaming validation
 //!
@@ -22,58 +21,37 @@
 //! Both the document builder and schema validator receive the same events,
 //! allowing single-pass parsing with validation.
 //!
-//! # Schema Store
-//!
-//! The [`SchemaStore`] trait allows flexible schema storage:
-//!
-//! - [`TempDirStore`] - Temporary directory (auto-cleanup)
-//! - [`InMemoryStore`] - In-memory storage (testing)
-//!
 //! # Fetching
 //!
 //! The [`SchemaFetcher`] trait handles schema downloads:
 //!
-//! - `UreqFetcher` - Sync HTTP client (requires `sync` feature)
-//! - `ReqwestFetcher` - Async HTTP client (requires `async` feature)
+//! - `UreqFetcher` - Sync HTTP client (requires `ureq` feature)
+//! - `ReqwestFetcher` - Async HTTP client (requires `tokio` feature)
 //! - `NoopFetcher` - No network access (testing)
+//! - [`CachingFetcher`] - Wraps any fetcher with in-memory caching
 //!
 //! # Example
 //!
 //! ```ignore
-//! use fastxml::schema::{TempDirStore, create_xml_schema_validation_context};
+//! use fastxml::schema::{DefaultFetcher, CachingFetcher};
 //!
-//! // Create a schema store
-//! let store = TempDirStore::new()?;
-//!
-//! // Create validation context
-//! let ctx = create_xml_schema_validation_context("schema.xsd")?;
-//!
-//! // Validate a document
-//! let errors = ctx.validate(&document)?;
+//! let fetcher = CachingFetcher::new(DefaultFetcher::new());
 //! ```
 
 pub mod error;
 pub mod export;
 pub mod fetch_error;
 pub mod fetcher;
-pub mod memory;
 pub mod resolve;
-pub mod store;
-pub mod tempdir;
 pub mod types;
 pub mod validator;
 pub mod xsd;
 
-#[cfg(feature = "tokio")]
-pub mod async_tempdir;
-
 // Re-export main types
 pub use fetcher::{
-    CombinedFetcher, DefaultFetcher, FetchResult, FileFetcher, NoopFetcher, SchemaFetcher,
+    CachingFetcher, CombinedFetcher, DefaultFetcher, FetchResult, FileCachingFetcher, FileFetcher,
+    NoopFetcher, SchemaFetcher,
 };
-pub use memory::InMemoryStore;
-pub use store::SchemaStore;
-pub use tempdir::TempDirStore;
 pub use types::{
     AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
     SimpleType, TypeDef,
@@ -102,13 +80,10 @@ pub use validator::{
 pub use fetcher::UreqFetcher;
 
 #[cfg(feature = "tokio")]
-pub use fetcher::{AsyncDefaultFetcher, AsyncFileFetcher, AsyncSchemaFetcher, ReqwestFetcher};
-
-#[cfg(feature = "tokio")]
-pub use async_tempdir::AsyncTempDirStore;
-
-#[cfg(feature = "async-trait")]
-pub use store::AsyncSchemaStore;
+pub use fetcher::{
+    AsyncCachingFetcher, AsyncDefaultFetcher, AsyncFileCachingFetcher, AsyncFileFetcher,
+    AsyncSchemaFetcher, ReqwestFetcher,
+};
 
 // Re-export XSD parsing functions
 pub use xsd::{

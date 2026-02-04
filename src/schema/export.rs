@@ -11,8 +11,6 @@ use std::path::Path;
 
 use crate::error::Result;
 use crate::schema::fetcher::{FetchResult, SchemaFetcher};
-use crate::schema::memory::InMemoryStore;
-use crate::schema::store::SchemaStore;
 
 /// Result of schema export operation.
 #[derive(Debug, Clone)]
@@ -76,8 +74,8 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
     // Create output directory if it doesn't exist
     std::fs::create_dir_all(output_dir)?;
 
-    // Use InMemoryStore to collect all schemas
-    let store = InMemoryStore::new();
+    // Use HashMap to collect all schemas
+    let mut schemas: HashMap<String, Vec<u8>> = HashMap::new();
     let mut entry_uri = None;
 
     // Fetch and resolve all schemas
@@ -89,11 +87,15 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
                     entry_uri = Some(result.final_url.clone());
                 }
 
-                let _ = store.put(&result.final_url, &result.content);
+                schemas.insert(result.final_url.clone(), result.content.clone());
 
                 // Parse and resolve imports recursively
-                let _ =
-                    resolve_imports_recursive(&result.final_url, &result.content, fetcher, &store);
+                let _ = resolve_imports_recursive(
+                    &result.final_url,
+                    &result.content,
+                    fetcher,
+                    &mut schemas,
+                );
             }
             Err(_) => {
                 // Skip schemas that can't be fetched
@@ -106,7 +108,7 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
     let mut uri_to_filename: HashMap<String, String> = HashMap::new();
     let mut existing_filenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
-    let uris = store.list()?;
+    let uris: Vec<String> = schemas.keys().cloned().collect();
 
     for uri in &uris {
         let filename = uri_to_safe_filename(uri, &existing_filenames);
@@ -116,9 +118,9 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
 
     // Rewrite and export each schema
     for uri in &uris {
-        if let Some(content) = store.get(uri)? {
+        if let Some(content) = schemas.get(uri) {
             let filename = uri_to_filename.get(uri).unwrap();
-            let rewritten = rewrite_schema_locations(&content, uri, &uri_to_filename)?;
+            let rewritten = rewrite_schema_locations(content, uri, &uri_to_filename)?;
             let output_path = output_dir.join(filename);
             std::fs::write(&output_path, rewritten)?;
         }
@@ -134,11 +136,11 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
 }
 
 /// Recursively resolves imports and includes from a schema.
-fn resolve_imports_recursive<F: SchemaFetcher, S: SchemaStore>(
+fn resolve_imports_recursive<F: SchemaFetcher>(
     base_uri: &str,
     content: &[u8],
     fetcher: &F,
-    store: &S,
+    schemas: &mut HashMap<String, Vec<u8>>,
 ) -> Result<()> {
     // Parse schema to find imports/includes
     let content_str = std::str::from_utf8(content).unwrap_or("");
@@ -147,19 +149,19 @@ fn resolve_imports_recursive<F: SchemaFetcher, S: SchemaStore>(
     for location in extract_schema_locations(content_str) {
         let resolved_uri = resolve_uri(base_uri, &location)?;
 
-        if !store.contains(&resolved_uri) {
+        if !schemas.contains_key(&resolved_uri) {
             match fetcher.fetch(&resolved_uri) {
                 Ok(FetchResult {
                     content: fetched_content,
                     final_url,
                     ..
                 }) => {
-                    let _ = store.put(&final_url, &fetched_content);
+                    schemas.insert(final_url.clone(), fetched_content.clone());
                     if final_url != resolved_uri {
-                        let _ = store.put(&resolved_uri, &fetched_content);
+                        schemas.insert(resolved_uri, fetched_content.clone());
                     }
                     // Recurse
-                    resolve_imports_recursive(&final_url, &fetched_content, fetcher, store)?;
+                    resolve_imports_recursive(&final_url, &fetched_content, fetcher, schemas)?;
                 }
                 Err(_) => {
                     // Skip schemas that can't be fetched

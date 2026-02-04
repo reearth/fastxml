@@ -6,29 +6,26 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::Result;
-use crate::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
-use crate::schema::store::AsyncSchemaStore;
+use crate::schema::fetcher::AsyncSchemaFetcher;
 
 use super::super::parser::parse_xsd_ast;
 use super::super::types::XsdSchema;
 use super::common::resolve_uri;
 
 /// Async schema resolver that handles import/include chains.
-pub struct AsyncSchemaResolver<'a, F: AsyncSchemaFetcher, S: AsyncSchemaStore> {
+pub struct AsyncSchemaResolver<'a, F: AsyncSchemaFetcher> {
     fetcher: &'a F,
-    store: &'a S,
     /// Resolved schemas by URI
     schemas: HashMap<String, XsdSchema>,
     /// URIs currently being resolved (for cycle detection)
     resolving: HashSet<String>,
 }
 
-impl<'a, F: AsyncSchemaFetcher, S: AsyncSchemaStore> AsyncSchemaResolver<'a, F, S> {
+impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
     /// Creates a new async schema resolver.
-    pub fn new(fetcher: &'a F, store: &'a S) -> Self {
+    pub fn new(fetcher: &'a F) -> Self {
         Self {
             fetcher,
-            store,
             schemas: HashMap::new(),
             resolving: HashSet::new(),
         }
@@ -118,26 +115,10 @@ impl<'a, F: AsyncSchemaFetcher, S: AsyncSchemaStore> AsyncSchemaResolver<'a, F, 
         Ok(result)
     }
 
-    /// Fetches a schema, first checking the store cache.
+    /// Fetches a schema via the fetcher (caching is handled by the fetcher).
     async fn fetch_schema(&self, uri: &str) -> Result<Vec<u8>> {
-        // Check store first
-        if let Some(content) = self.store.get(uri).await? {
-            return Ok(content);
-        }
-
-        // Fetch from network
-        let FetchResult {
-            content, final_url, ..
-        } = self.fetcher.fetch(uri).await?;
-
-        // Store in cache
-        self.store.put(&final_url, &content).await?;
-        if final_url != uri {
-            // Also cache under original URI
-            self.store.put(uri, &content).await?;
-        }
-
-        Ok(content)
+        let result = self.fetcher.fetch(uri).await?;
+        Ok(result.content)
     }
 
     /// Resolves an entry schema and accumulates it along with its dependencies.
@@ -237,7 +218,6 @@ impl<'a, F: AsyncSchemaFetcher, S: AsyncSchemaStore> AsyncSchemaResolver<'a, F, 
 mod tests {
     use super::*;
     use crate::schema::fetcher::FetchResult;
-    use crate::schema::memory::InMemoryStore;
     use parking_lot::RwLock;
     use std::collections::HashMap as StdHashMap;
     use std::sync::Arc;
@@ -289,9 +269,8 @@ mod tests {
         </xs:schema>"#;
 
         let fetcher = MockAsyncFetcher::new();
-        let store = InMemoryStore::new();
 
-        let mut resolver = AsyncSchemaResolver::new(&fetcher, &store);
+        let mut resolver = AsyncSchemaResolver::new(&fetcher);
         let schemas = resolver
             .resolve_all(xsd.as_bytes(), "http://example.com/test.xsd")
             .await
@@ -330,9 +309,7 @@ mod tests {
         let fetcher = MockAsyncFetcher::new();
         fetcher.add_response("http://example.com/types.xsd", types_xsd.as_bytes());
 
-        let store = InMemoryStore::new();
-
-        let mut resolver = AsyncSchemaResolver::new(&fetcher, &store);
+        let mut resolver = AsyncSchemaResolver::new(&fetcher);
         let schemas = resolver
             .resolve_all(main_xsd.as_bytes(), "http://example.com/main.xsd")
             .await
@@ -340,12 +317,6 @@ mod tests {
 
         // Should have 2 schemas: types.xsd and main.xsd
         assert_eq!(schemas.len(), 2);
-
-        // The store should have cached types.xsd
-        assert!(crate::schema::store::SchemaStore::contains(
-            &store,
-            "http://example.com/types.xsd"
-        ));
     }
 
     #[tokio::test]
@@ -374,9 +345,7 @@ mod tests {
         let fetcher = MockAsyncFetcher::new();
         fetcher.add_response("http://example.com/common.xsd", common_xsd.as_bytes());
 
-        let store = InMemoryStore::new();
-
-        let mut resolver = AsyncSchemaResolver::new(&fetcher, &store);
+        let mut resolver = AsyncSchemaResolver::new(&fetcher);
         let schemas = resolver
             .resolve_all(main_xsd.as_bytes(), "http://example.com/main.xsd")
             .await
@@ -387,6 +356,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_async_resolve_uses_cache() {
+        use crate::schema::fetcher::AsyncCachingFetcher;
+
         let types_xsd = r#"<?xml version="1.0"?>
         <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
             <xs:simpleType name="CachedType">
@@ -401,24 +372,22 @@ mod tests {
         </xs:schema>"#;
 
         let fetcher = MockAsyncFetcher::new();
-        // Don't add to fetcher - it should be fetched from store
+        // Don't add to fetcher - it should be fetched from caching fetcher's seed
 
-        let store = InMemoryStore::new();
-        // Pre-populate the store (use sync method)
-        crate::schema::store::SchemaStore::put(
-            &store,
+        let caching = AsyncCachingFetcher::new(fetcher);
+        // Pre-populate the cache
+        caching.seed(
             "http://example.com/types.xsd",
-            types_xsd.as_bytes(),
-        )
-        .unwrap();
+            types_xsd.as_bytes().to_vec(),
+        );
 
-        let mut resolver = AsyncSchemaResolver::new(&fetcher, &store);
+        let mut resolver = AsyncSchemaResolver::new(&caching);
         let schemas = resolver
             .resolve_all(main_xsd.as_bytes(), "http://example.com/main.xsd")
             .await
             .unwrap();
 
-        // Should succeed even though fetcher doesn't have types.xsd
+        // Should succeed even though inner fetcher doesn't have types.xsd
         assert_eq!(schemas.len(), 2);
     }
 }

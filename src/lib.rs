@@ -102,7 +102,7 @@
 //!
 //! ```ignore
 //! use fastxml::schema::{
-//!     AsyncDefaultFetcher, InMemoryStore,
+//!     AsyncDefaultFetcher,
 //!     parse_xsd_with_imports_async,
 //! };
 //!
@@ -110,13 +110,11 @@
 //! async fn main() -> fastxml::error::Result<()> {
 //!     let xsd_content = std::fs::read("schema.xsd")?;
 //!     let fetcher = AsyncDefaultFetcher::new()?;
-//!     let store = InMemoryStore::new();
 //!
 //!     let schema = parse_xsd_with_imports_async(
 //!         &xsd_content,
 //!         "http://example.com/schema.xsd",
 //!         &fetcher,
-//!         &store,
 //!     ).await?;
 //!
 //!     Ok(())
@@ -322,14 +320,12 @@ pub fn parse_xsd(content: &[u8]) -> Result<schema::types::CompiledSchema> {
 }
 
 /// Parses XSD content with import resolution.
-#[cfg(feature = "ureq")]
-pub fn parse_xsd_with_imports(
+pub fn parse_xsd_with_imports<F: schema::SchemaFetcher>(
     content: &[u8],
     base_uri: &str,
-    fetcher: &schema::UreqFetcher,
-    store: &impl schema::store::SchemaStore,
+    fetcher: &F,
 ) -> Result<schema::types::CompiledSchema> {
-    schema::parse_xsd_with_imports(content, base_uri, fetcher, store)
+    schema::parse_xsd_with_imports(content, base_uri, fetcher)
 }
 
 /// Parses multiple XSD entry schemas with shared import/include resolution.
@@ -341,11 +337,10 @@ pub fn parse_xsd_with_imports(
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{UreqFetcher, TempDirStore};
+/// use fastxml::schema::UreqFetcher;
 /// use fastxml::parse_xsd_with_imports_multiple;
 ///
 /// let fetcher = UreqFetcher::new();
-/// let store = TempDirStore::new()?;
 ///
 /// let schema = parse_xsd_with_imports_multiple(
 ///     &[
@@ -353,15 +348,13 @@ pub fn parse_xsd_with_imports(
 ///         ("http://example.com/b.xsd", &b_content),
 ///     ],
 ///     &fetcher,
-///     &store,
 /// )?;
 /// ```
-pub fn parse_xsd_with_imports_multiple<F: schema::SchemaFetcher, S: schema::store::SchemaStore>(
+pub fn parse_xsd_with_imports_multiple<F: schema::SchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
-    store: &S,
 ) -> Result<schema::types::CompiledSchema> {
-    schema::parse_xsd_with_imports_multiple(entries, fetcher, store)
+    schema::parse_xsd_with_imports_multiple(entries, fetcher)
 }
 
 /// Parses multiple XSD entry schemas with shared import/include resolution (async).
@@ -371,11 +364,10 @@ pub fn parse_xsd_with_imports_multiple<F: schema::SchemaFetcher, S: schema::stor
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+/// use fastxml::schema::AsyncDefaultFetcher;
 /// use fastxml::parse_xsd_with_imports_multiple_async;
 ///
 /// let fetcher = AsyncDefaultFetcher::new()?;
-/// let store = InMemoryStore::new();
 ///
 /// let schema = parse_xsd_with_imports_multiple_async(
 ///     &[
@@ -383,19 +375,14 @@ pub fn parse_xsd_with_imports_multiple<F: schema::SchemaFetcher, S: schema::stor
 ///         ("http://example.com/b.xsd", &b_content),
 ///     ],
 ///     &fetcher,
-///     &store,
 /// ).await?;
 /// ```
 #[cfg(feature = "tokio")]
-pub async fn parse_xsd_with_imports_multiple_async<
-    F: schema::AsyncSchemaFetcher,
-    S: schema::AsyncSchemaStore,
->(
+pub async fn parse_xsd_with_imports_multiple_async<F: schema::AsyncSchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
-    store: &S,
 ) -> Result<schema::types::CompiledSchema> {
-    schema::parse_xsd_with_imports_multiple_async(entries, fetcher, store).await
+    schema::parse_xsd_with_imports_multiple_async(entries, fetcher).await
 }
 
 /// Parses XSD content with async import resolution.
@@ -406,30 +393,24 @@ pub async fn parse_xsd_with_imports_multiple_async<
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+/// use fastxml::schema::AsyncDefaultFetcher;
 /// use fastxml::parse_xsd_with_imports_async;
 ///
 /// let fetcher = AsyncDefaultFetcher::new()?;
-/// let store = InMemoryStore::new();
 ///
 /// let schema = parse_xsd_with_imports_async(
 ///     &xsd_content,
 ///     "http://example.com/schema.xsd",
 ///     &fetcher,
-///     &store,
 /// ).await?;
 /// ```
 #[cfg(feature = "tokio")]
-pub async fn parse_xsd_with_imports_async<
-    F: schema::AsyncSchemaFetcher,
-    S: schema::AsyncSchemaStore,
->(
+pub async fn parse_xsd_with_imports_async<F: schema::AsyncSchemaFetcher>(
     content: &[u8],
     base_uri: &str,
     fetcher: &F,
-    store: &S,
 ) -> Result<schema::types::CompiledSchema> {
-    schema::parse_xsd_with_imports_async(content, base_uri, fetcher, store).await
+    schema::parse_xsd_with_imports_async(content, base_uri, fetcher).await
 }
 
 /// Validates a document using schemas referenced in xsi:schemaLocation.
@@ -568,15 +549,11 @@ pub async fn validate_with_schema_location_async(
 /// This is the async version of [`validate_with_schema_location_and_fetcher`].
 /// It fetches schemas asynchronously using the provided fetcher.
 #[cfg(feature = "tokio")]
-pub async fn validate_with_schema_location_with_async_fetcher<
-    F: schema::AsyncSchemaFetcher,
-    S: schema::AsyncSchemaStore,
->(
+pub async fn validate_with_schema_location_with_async_fetcher<F: schema::AsyncSchemaFetcher>(
     document: &XmlDocument,
     fetcher: &F,
-    store: &S,
 ) -> Result<Vec<StructuredError>> {
-    schema::validate_with_schema_location_with_async_fetcher(document, fetcher, store).await
+    schema::validate_with_schema_location_with_async_fetcher(document, fetcher).await
 }
 
 /// Gets a compiled schema from xsi:schemaLocation asynchronously.
@@ -606,15 +583,11 @@ pub async fn get_schema_from_schema_location_async(
 /// This is the async version of [`get_schema_from_schema_location_with_fetcher`].
 /// It fetches schemas asynchronously using the provided fetcher.
 #[cfg(feature = "tokio")]
-pub async fn get_schema_from_schema_location_with_async_fetcher<
-    F: schema::AsyncSchemaFetcher,
-    S: schema::AsyncSchemaStore,
->(
+pub async fn get_schema_from_schema_location_with_async_fetcher<F: schema::AsyncSchemaFetcher>(
     xml_content: &[u8],
     fetcher: &F,
-    store: &S,
 ) -> Result<schema::types::CompiledSchema> {
-    schema::get_schema_from_schema_location_with_async_fetcher(xml_content, fetcher, store).await
+    schema::get_schema_from_schema_location_with_async_fetcher(xml_content, fetcher).await
 }
 
 #[cfg(test)]

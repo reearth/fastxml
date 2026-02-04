@@ -12,7 +12,6 @@ use parking_lot::RwLock;
 
 use fastxml::error::Result;
 use fastxml::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
-use fastxml::schema::memory::InMemoryStore;
 use fastxml::schema::parse_xsd_with_imports_async;
 
 /// A mock async fetcher that serves schemas from an in-memory map.
@@ -94,15 +93,10 @@ async fn example_simple_schema() -> Result<()> {
 </xs:schema>"#;
 
     let fetcher = MockAsyncFetcher::new();
-    let store = InMemoryStore::new();
 
-    let schema = parse_xsd_with_imports_async(
-        xsd.as_bytes(),
-        "http://example.com/simple.xsd",
-        &fetcher,
-        &store,
-    )
-    .await?;
+    let schema =
+        parse_xsd_with_imports_async(xsd.as_bytes(), "http://example.com/simple.xsd", &fetcher)
+            .await?;
 
     println!("Parsed schema:");
     println!("  Target namespace: {:?}", schema.target_namespace);
@@ -156,14 +150,11 @@ async fn example_with_imports() -> Result<()> {
     let fetcher = MockAsyncFetcher::new();
     fetcher.add_schema("http://example.com/types.xsd", types_xsd);
 
-    let store = InMemoryStore::new();
-
     println!("Resolving schema with imports...");
     let schema = parse_xsd_with_imports_async(
         main_xsd.as_bytes(),
         "http://example.com/contact.xsd",
         &fetcher,
-        &store,
     )
     .await?;
 
@@ -182,11 +173,6 @@ async fn example_with_imports() -> Result<()> {
             .collect::<Vec<_>>()
     );
 
-    // Check that the store cached the imported schema
-    println!(
-        "  Cached schemas: {}",
-        fastxml::schema::store::SchemaStore::list(&store)?.len()
-    );
     println!();
 
     Ok(())
@@ -259,8 +245,6 @@ async fn example_nested_imports() -> Result<()> {
     fetcher.add_schema("http://example.com/base.xsd", base_xsd);
     fetcher.add_schema("http://example.com/common.xsd", common_xsd);
 
-    let store = InMemoryStore::new();
-
     println!("Resolving schema with nested imports...");
     println!("  order.xsd -> common.xsd -> base.xsd\n");
 
@@ -268,7 +252,6 @@ async fn example_nested_imports() -> Result<()> {
         main_xsd.as_bytes(),
         "http://example.com/order.xsd",
         &fetcher,
-        &store,
     )
     .await?;
 
@@ -286,12 +269,6 @@ async fn example_nested_imports() -> Result<()> {
         .collect();
     println!("  Custom types: {:?}", custom_types);
 
-    // Check all schemas were cached
-    let cached = fastxml::schema::store::SchemaStore::list(&store)?;
-    println!("  Cached schemas:");
-    for uri in &cached {
-        println!("    - {}", uri);
-    }
     println!();
 
     Ok(())
@@ -313,26 +290,21 @@ async fn example_real_fetcher() -> Result<()> {
     // // Or with a base directory for relative paths:
     // // let fetcher = AsyncDefaultFetcher::with_base_dir("/path/to/schemas")?;
     //
-    // let store = InMemoryStore::new();
-    //
     // let schema = parse_xsd_with_imports_async(
     //     xsd_content.as_bytes(),
     //     "http://example.com/schema.xsd",
     //     &fetcher,
-    //     &store,
     // ).await?;
     //
     // This fetcher will:
     // 1. Try to read local files first (for file:// URLs or relative paths)
     // 2. Fall back to async HTTP requests using reqwest
     // 3. Follow redirects automatically
-    // 4. Cache fetched schemas in the store
 
     println!("AsyncDefaultFetcher provides:");
     println!("  - Local file access (file:// URLs and relative paths)");
     println!("  - Async HTTP fetching via reqwest");
     println!("  - Automatic redirect following");
-    println!("  - Schema caching in the provided store");
     println!();
 
     Ok(())

@@ -47,8 +47,10 @@
 //! # }
 //! ```
 
+mod cache;
 mod combined;
 mod file;
+mod file_cache;
 mod noop;
 mod result;
 mod traits;
@@ -65,11 +67,18 @@ mod reqwest;
 #[cfg(feature = "ureq")]
 mod ureq;
 
+#[cfg(feature = "tokio")]
+pub use cache::AsyncCachingFetcher;
+pub use cache::CachingFetcher;
 pub use combined::CombinedFetcher;
 pub use file::FileFetcher;
+pub use file_cache::FileCachingFetcher;
 pub use noop::NoopFetcher;
 pub use result::FetchResult;
 pub use traits::SchemaFetcher;
+
+#[cfg(feature = "tokio")]
+pub use file_cache::AsyncFileCachingFetcher;
 
 #[cfg(feature = "tokio")]
 pub use traits::AsyncSchemaFetcher;

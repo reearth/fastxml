@@ -4,10 +4,7 @@
 
 use fastxml::node_error::NodeError;
 use fastxml::parse_error::ParseError;
-use fastxml::schema::{
-    InMemoryStore, SchemaStore, TempDirStore, create_xml_schema_validation_context,
-    validate_document_by_schema,
-};
+use fastxml::schema::{create_xml_schema_validation_context, validate_document_by_schema};
 use fastxml::xpath::collect_text_values;
 use fastxml::xpath::error::XPathEvalError;
 use fastxml::{
@@ -340,54 +337,6 @@ fn test_api_validate_document() {
 
     // Currently returns empty errors (placeholder implementation)
     assert!(errors.is_empty());
-}
-
-// =============================================================================
-// SchemaStore Tests
-// =============================================================================
-
-/// Test: TempDirStore operations
-#[test]
-fn test_schema_store_tempdir() {
-    let store = TempDirStore::new().unwrap();
-
-    // Test put and get
-    let content = b"<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>";
-    store.put("http://example.com/schema.xsd", content).unwrap();
-
-    assert!(store.contains("http://example.com/schema.xsd"));
-
-    let retrieved = store.get("http://example.com/schema.xsd").unwrap().unwrap();
-    assert_eq!(retrieved, content);
-
-    // Test resolve_path
-    let path = store.resolve_path("http://example.com/schema.xsd").unwrap();
-    assert!(path.exists());
-
-    // Test list
-    let list = store.list().unwrap();
-    assert!(list.contains(&"http://example.com/schema.xsd".to_string()));
-
-    // Test remove
-    store.remove("http://example.com/schema.xsd").unwrap();
-    assert!(!store.contains("http://example.com/schema.xsd"));
-}
-
-/// Test: InMemoryStore operations
-#[test]
-fn test_schema_store_memory() {
-    let store = InMemoryStore::new();
-
-    let content = b"<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'/>";
-    store.put("http://example.com/test.xsd", content).unwrap();
-
-    assert!(store.contains("http://example.com/test.xsd"));
-
-    let retrieved = store.get("http://example.com/test.xsd").unwrap().unwrap();
-    assert_eq!(retrieved, content);
-
-    store.clear().unwrap();
-    assert!(!store.contains("http://example.com/test.xsd"));
 }
 
 // =============================================================================
