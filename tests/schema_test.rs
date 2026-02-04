@@ -2307,7 +2307,10 @@ fn test_same_namespace_inheritance_without_prefix() {
     eprintln!("=== Same-namespace inheritance test ===");
 
     // Check that types are stored
-    eprintln!("Types in schema: {:?}", compiled.types.keys().collect::<Vec<_>>());
+    eprintln!(
+        "Types in schema: {:?}",
+        compiled.types.keys().collect::<Vec<_>>()
+    );
 
     // RoadType should inherit elements from TransportationComplexType
     let road_type_cache = compiled.type_children_cache.get("RoadType");
@@ -2337,6 +2340,207 @@ fn test_same_namespace_inheritance_without_prefix() {
         road_type_cache.constraints.contains_key("usage"),
         "RoadType should have usage (inherited from TransportationComplexType)"
     );
+}
+
+/// Test that GML elements from xs:include chain are properly compiled.
+///
+/// GML 3.1.1 splits elements across multiple XSD files:
+/// - gml.xsd (root) includes feature.xsd, geometry*.xsd, etc.
+/// - boundedBy → feature.xsd
+/// - Envelope, lowerCorner, upperCorner, posList → geometryBasic0d1d.xsd
+/// - Polygon, LinearRing, exterior → geometryBasic2d.xsd
+/// - MultiSurface, surfaceMember → geometryAggregates.xsd
+///
+/// This test verifies that elements from included schemas are all available
+/// after compilation.
+#[test]
+fn test_gml_elements_from_include_chain() {
+    use fastxml::schema::xsd::{compile_schemas, parser::parse_xsd_ast, register_builtin_types};
+
+    // Simulating GML 3.1.1 structure with xs:include chain
+
+    // geometryBasic0d1d.xsd - Envelope, lowerCorner, upperCorner, posList
+    let geometry_basic_0d1d_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:gml="http://www.opengis.net/gml"
+               targetNamespace="http://www.opengis.net/gml"
+               elementFormDefault="qualified">
+
+        <xs:element name="Envelope" type="gml:EnvelopeType"/>
+        <xs:element name="lowerCorner" type="gml:DirectPositionType"/>
+        <xs:element name="upperCorner" type="gml:DirectPositionType"/>
+        <xs:element name="posList" type="gml:DirectPositionListType"/>
+
+        <xs:complexType name="EnvelopeType">
+            <xs:sequence>
+                <xs:element ref="gml:lowerCorner"/>
+                <xs:element ref="gml:upperCorner"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <xs:complexType name="DirectPositionType">
+            <xs:simpleContent>
+                <xs:extension base="xs:string"/>
+            </xs:simpleContent>
+        </xs:complexType>
+
+        <xs:complexType name="DirectPositionListType">
+            <xs:simpleContent>
+                <xs:extension base="xs:string"/>
+            </xs:simpleContent>
+        </xs:complexType>
+    </xs:schema>"#;
+
+    // geometryBasic2d.xsd - Polygon, LinearRing, exterior
+    let geometry_basic_2d_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:gml="http://www.opengis.net/gml"
+               targetNamespace="http://www.opengis.net/gml"
+               elementFormDefault="qualified">
+
+        <xs:element name="Polygon" type="gml:PolygonType"/>
+        <xs:element name="LinearRing" type="gml:LinearRingType"/>
+        <xs:element name="exterior" type="gml:AbstractRingPropertyType"/>
+
+        <xs:complexType name="PolygonType">
+            <xs:sequence>
+                <xs:element ref="gml:exterior" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <xs:complexType name="LinearRingType">
+            <xs:sequence>
+                <xs:element ref="gml:posList" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <xs:complexType name="AbstractRingPropertyType">
+            <xs:sequence>
+                <xs:element ref="gml:LinearRing" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:schema>"#;
+
+    // geometryAggregates.xsd - MultiSurface, surfaceMember
+    let geometry_aggregates_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:gml="http://www.opengis.net/gml"
+               targetNamespace="http://www.opengis.net/gml"
+               elementFormDefault="qualified">
+
+        <xs:element name="MultiSurface" type="gml:MultiSurfaceType"/>
+        <xs:element name="surfaceMember" type="gml:SurfacePropertyType"/>
+
+        <xs:complexType name="MultiSurfaceType">
+            <xs:sequence>
+                <xs:element ref="gml:surfaceMember" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <xs:complexType name="SurfacePropertyType">
+            <xs:sequence>
+                <xs:element ref="gml:Polygon" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:schema>"#;
+
+    // feature.xsd - boundedBy
+    let feature_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:gml="http://www.opengis.net/gml"
+               targetNamespace="http://www.opengis.net/gml"
+               elementFormDefault="qualified">
+
+        <xs:element name="boundedBy" type="gml:BoundingShapeType"/>
+
+        <xs:complexType name="BoundingShapeType">
+            <xs:sequence>
+                <xs:element ref="gml:Envelope" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+
+        <xs:complexType name="AbstractFeatureType" abstract="true">
+            <xs:sequence>
+                <xs:element ref="gml:boundedBy" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:schema>"#;
+
+    // Parse all schemas (simulating include chain resolution)
+    let geo_0d1d_ast = parse_xsd_ast(geometry_basic_0d1d_xsd.as_bytes()).unwrap();
+    let geo_2d_ast = parse_xsd_ast(geometry_basic_2d_xsd.as_bytes()).unwrap();
+    let geo_agg_ast = parse_xsd_ast(geometry_aggregates_xsd.as_bytes()).unwrap();
+    let feature_ast = parse_xsd_ast(feature_xsd.as_bytes()).unwrap();
+
+    // Compile all schemas together (as if gml.xsd included them all)
+    let all_schemas = vec![geo_0d1d_ast, geo_2d_ast, geo_agg_ast, feature_ast];
+
+    let mut compiled = compile_schemas(all_schemas).expect("Failed to compile schemas");
+    register_builtin_types(&mut compiled);
+
+    eprintln!("=== GML include chain test ===");
+    eprintln!(
+        "Elements in schema: {:?}",
+        compiled.elements.keys().collect::<Vec<_>>()
+    );
+
+    // All GML elements should be accessible
+    let expected_elements = [
+        "boundedBy",
+        "Envelope",
+        "lowerCorner",
+        "upperCorner",
+        "posList",
+        "Polygon",
+        "LinearRing",
+        "exterior",
+        "MultiSurface",
+        "surfaceMember",
+    ];
+
+    for elem_name in &expected_elements {
+        // Should be accessible by local name
+        assert!(
+            compiled.get_element(elem_name).is_some(),
+            "Should find {} by local name",
+            elem_name
+        );
+        // Should also be accessible by prefixed name
+        let prefixed = format!("gml:{}", elem_name);
+        assert!(
+            compiled.get_element(&prefixed).is_some(),
+            "Should find {} with prefix",
+            prefixed
+        );
+    }
+
+    // All GML types should also be accessible
+    let expected_types = [
+        "EnvelopeType",
+        "DirectPositionType",
+        "DirectPositionListType",
+        "PolygonType",
+        "LinearRingType",
+        "AbstractRingPropertyType",
+        "MultiSurfaceType",
+        "SurfacePropertyType",
+        "BoundingShapeType",
+        "AbstractFeatureType",
+    ];
+
+    for type_name in &expected_types {
+        assert!(
+            compiled.get_type(type_name).is_some(),
+            "Should find {} type by local name",
+            type_name
+        );
+        let prefixed = format!("gml:{}", type_name);
+        assert!(
+            compiled.get_type(&prefixed).is_some(),
+            "Should find {} type with prefix",
+            prefixed
+        );
+    }
 }
 
 /// Test that GML elements are accessible with both prefixed and local names.
@@ -2371,7 +2575,10 @@ fn test_gml_elements_accessible_by_local_name() {
     register_builtin_types(&mut compiled);
 
     eprintln!("=== GML elements accessibility test ===");
-    eprintln!("Elements in schema: {:?}", compiled.elements.keys().collect::<Vec<_>>());
+    eprintln!(
+        "Elements in schema: {:?}",
+        compiled.elements.keys().collect::<Vec<_>>()
+    );
 
     // Elements should be accessible with prefix
     assert!(

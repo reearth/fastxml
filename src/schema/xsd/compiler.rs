@@ -43,27 +43,22 @@ impl XsdCompiler {
     /// Compiles multiple XSD schemas into a single CompiledSchema.
     ///
     /// Schemas should be provided in dependency order (dependencies first).
-    /// Duplicate schemas (same targetNamespace) are automatically deduplicated,
-    /// keeping only the first occurrence of each namespace.
+    /// Multiple schemas with the same targetNamespace (e.g., via xs:include) are all
+    /// compiled and their types/elements are merged. If the same type/element is
+    /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
         let mut result = CompiledSchema::new();
 
-        // Deduplicate schemas by targetNamespace to avoid issues when the same schema
-        // is resolved multiple times (e.g., when compile_schema_for_streaming calls
-        // resolve_all for each schema location and dependencies overlap).
-        let mut seen_namespaces: HashSet<Option<String>> = HashSet::new();
-        let deduplicated_schemas: Vec<XsdSchema> = schemas
-            .into_iter()
-            .filter(|schema| {
-                // Keep schemas with unique targetNamespace (or None)
-                // For schemas without targetNamespace (chameleon schemas), always keep them
-                if schema.target_namespace.is_none() {
-                    true
-                } else {
-                    seen_namespaces.insert(schema.target_namespace.clone())
-                }
-            })
-            .collect();
+        // Note: We intentionally do NOT deduplicate by targetNamespace here.
+        //
+        // XSD allows multiple schema files to share the same targetNamespace via xs:include.
+        // For example, GML 3.1.1 has gml.xsd which includes feature.xsd, geometryBasic0d1d.xsd,
+        // geometryBasic2d.xsd, etc. - all with targetNamespace="http://www.opengis.net/gml".
+        //
+        // If the same schema is resolved multiple times (e.g., through overlapping dependencies),
+        // its types/elements will simply be registered again (last definition wins), which is
+        // harmless since they're identical content.
+        let deduplicated_schemas = schemas;
 
         // First pass: accumulate ALL namespace bindings from ALL schemas
         // This must happen before type registration so that cross-referenced
@@ -203,7 +198,10 @@ impl XsdCompiler {
 
                 // Also store with just the local name for same-namespace lookups
                 // (e.g., when RoadType extends TransportationComplexType without prefix)
-                result.types.entry(name.to_string()).or_insert(compiled.clone());
+                result
+                    .types
+                    .entry(name.to_string())
+                    .or_insert(compiled.clone());
 
                 // Also update cache with full definition
                 self.type_cache.insert(qname, compiled);
