@@ -238,11 +238,11 @@ fn test_type_fallback_with_same_local_name() {
     // Only tran:TrackType should exist now (it was inserted last)
     let found = schema.get_type("TrackType");
     assert!(found.is_some());
-    if let Some(TypeDef::Complex(complex)) = found {
-        if let ContentModel::Sequence(elements) = &complex.content {
-            // Should be tran's "class", not gml's "MovingObjectStatus"
-            assert_eq!(elements[0].name, "class");
-        }
+    if let Some(TypeDef::Complex(complex)) = found
+        && let ContentModel::Sequence(elements) = &complex.content
+    {
+        // Should be tran's "class", not gml's "MovingObjectStatus"
+        assert_eq!(elements[0].name, "class");
     }
 
     // This demonstrates the problem - if we want gml:TrackType, we can't get it!

@@ -594,8 +594,8 @@ mod async_tests {
         // Main schema elements
         assert!(schema.elements.contains_key("user"));
 
-        // Imported type should be available
-        assert!(schema.types.contains_key("EmailType"));
+        // Imported type should be available (stored with namespace prefix)
+        assert!(schema.types.contains_key("t:EmailType"));
 
         // Store should have cached the imported schema
         assert!(crate::schema::store::SchemaStore::contains(
@@ -651,10 +651,10 @@ mod async_tests {
         .await
         .unwrap();
 
-        // All types should be available
+        // All types should be available (stored with namespace prefixes)
         assert!(schema.elements.contains_key("entity"));
-        assert!(schema.types.contains_key("EntityType"));
-        assert!(schema.types.contains_key("IDType"));
+        assert!(schema.types.contains_key("t:EntityType"));
+        assert!(schema.types.contains_key("b:IDType"));
 
         // Both imported schemas should be cached
         assert!(crate::schema::store::SchemaStore::contains(
