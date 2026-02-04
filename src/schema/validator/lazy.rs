@@ -57,11 +57,11 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let mut merged_schema = crate::schema::xsd::create_builtin_schema();
             let store = crate::schema::memory::InMemoryStore::new();
+            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher, &store);
             let mut loaded_any = false;
 
-            // Process all schemaLocation entries and merge them
+            // Fetch and resolve all schemaLocation entries with a single resolver
             for chunk in parts.chunks(2) {
                 if chunk.len() == 2 {
                     let location = chunk[1];
@@ -69,38 +69,11 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                         Ok(result) => {
                             let _ = SchemaStore::put(&store, &result.final_url, &result.content);
 
-                            match crate::schema::xsd::parse_xsd_with_imports(
-                                &result.content,
-                                &result.final_url,
-                                &self.fetcher,
-                                &store,
-                            ) {
-                                Ok(schema) => {
-                                    // Merge into combined schema
-                                    merged_schema.types.extend(schema.types);
-                                    merged_schema.elements.extend(schema.elements);
-                                    merged_schema.attributes.extend(schema.attributes);
-                                    // Merge substitution groups and caches
-                                    for (head, members) in schema.substitution_groups {
-                                        merged_schema
-                                            .substitution_groups
-                                            .entry(head)
-                                            .or_default()
-                                            .extend(members);
-                                    }
-                                    merged_schema
-                                        .substitution_group_heads
-                                        .extend(schema.substitution_group_heads);
-                                    merged_schema
-                                        .transitive_substitution_groups
-                                        .extend(schema.transitive_substitution_groups);
-                                    if merged_schema.target_namespace.is_none() {
-                                        merged_schema.target_namespace = schema.target_namespace;
-                                    }
+                            match resolver.resolve_entry(&result.content, &result.final_url) {
+                                Ok(()) => {
                                     loaded_any = true;
                                 }
                                 Err(e) => {
-                                    // Log warning but continue with other schemas
                                     self.errors.push(
                                         StructuredError::new(
                                             format!(
@@ -116,7 +89,6 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                         }
                         Err(_e) => {
                             // Skip schemas that can't be fetched (may be local paths)
-                            // Don't log error for local paths that don't exist
                         }
                     }
                 }
@@ -130,9 +102,26 @@ impl<F: SchemaFetcher> LazySchemaValidator<F> {
                     )
                     .with_level(ErrorLevel::Warning),
                 );
+                crate::schema::xsd::create_builtin_schema()
+            } else {
+                let schemas = resolver.take_all_schemas();
+                match crate::schema::xsd::compile_schemas(schemas) {
+                    Ok(mut compiled) => {
+                        crate::schema::xsd::register_builtin_types(&mut compiled);
+                        compiled
+                    }
+                    Err(e) => {
+                        self.errors.push(
+                            StructuredError::new(
+                                format!("Warning: Failed to compile schemas: {}", e),
+                                ValidationErrorType::SchemaNotFound,
+                            )
+                            .with_level(ErrorLevel::Warning),
+                        );
+                        crate::schema::xsd::create_builtin_schema()
+                    }
+                }
             }
-
-            merged_schema
         } else {
             crate::schema::xsd::create_builtin_schema()
         };
@@ -196,11 +185,11 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
             let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let mut merged_schema = crate::schema::xsd::create_builtin_schema();
             let store = crate::schema::memory::InMemoryStore::new();
+            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher, &store);
             let mut loaded_any = false;
 
-            // Process all schemaLocation entries and merge them
+            // Fetch and resolve all schemaLocation entries with a single resolver
             for chunk in parts.chunks(2) {
                 if chunk.len() == 2 {
                     let location = chunk[1];
@@ -208,38 +197,11 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                         Ok(result) => {
                             let _ = SchemaStore::put(&store, &result.final_url, &result.content);
 
-                            match crate::schema::xsd::parse_xsd_with_imports(
-                                &result.content,
-                                &result.final_url,
-                                &self.fetcher,
-                                &store,
-                            ) {
-                                Ok(schema) => {
-                                    // Merge into combined schema
-                                    merged_schema.types.extend(schema.types);
-                                    merged_schema.elements.extend(schema.elements);
-                                    merged_schema.attributes.extend(schema.attributes);
-                                    // Merge substitution groups and caches
-                                    for (head, members) in schema.substitution_groups {
-                                        merged_schema
-                                            .substitution_groups
-                                            .entry(head)
-                                            .or_default()
-                                            .extend(members);
-                                    }
-                                    merged_schema
-                                        .substitution_group_heads
-                                        .extend(schema.substitution_group_heads);
-                                    merged_schema
-                                        .transitive_substitution_groups
-                                        .extend(schema.transitive_substitution_groups);
-                                    if merged_schema.target_namespace.is_none() {
-                                        merged_schema.target_namespace = schema.target_namespace;
-                                    }
+                            match resolver.resolve_entry(&result.content, &result.final_url) {
+                                Ok(()) => {
                                     loaded_any = true;
                                 }
                                 Err(e) => {
-                                    // Log warning but continue with other schemas
                                     self.shared_errors.lock().unwrap().push(
                                         StructuredError::new(
                                             format!(
@@ -255,7 +217,6 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                         }
                         Err(_e) => {
                             // Skip schemas that can't be fetched (may be local paths)
-                            // Don't log error for local paths that don't exist
                         }
                     }
                 }
@@ -269,9 +230,26 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
                     )
                     .with_level(ErrorLevel::Warning),
                 );
+                crate::schema::xsd::create_builtin_schema()
+            } else {
+                let schemas = resolver.take_all_schemas();
+                match crate::schema::xsd::compile_schemas(schemas) {
+                    Ok(mut compiled) => {
+                        crate::schema::xsd::register_builtin_types(&mut compiled);
+                        compiled
+                    }
+                    Err(e) => {
+                        self.shared_errors.lock().unwrap().push(
+                            StructuredError::new(
+                                format!("Warning: Failed to compile schemas: {}", e),
+                                ValidationErrorType::SchemaNotFound,
+                            )
+                            .with_level(ErrorLevel::Warning),
+                        );
+                        crate::schema::xsd::create_builtin_schema()
+                    }
+                }
             }
-
-            merged_schema
         } else {
             crate::schema::xsd::create_builtin_schema()
         };

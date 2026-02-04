@@ -2620,3 +2620,196 @@ fn test_gml_elements_accessible_by_local_name() {
         "Should find posList by local name"
     );
 }
+
+#[test]
+fn test_parse_xsd_with_imports_multiple_shared_dependency() {
+    use fastxml::schema::fetcher::{FetchResult, SchemaFetcher};
+    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
+    // Common dependency schema
+    let common_xsd = r#"<?xml version="1.0"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               targetNamespace="http://example.com/common">
+        <xs:simpleType name="IDType">
+            <xs:restriction base="xs:string">
+                <xs:pattern value="[A-Z0-9]+"/>
+            </xs:restriction>
+        </xs:simpleType>
+    </xs:schema>"#;
+
+    // Schema A imports common
+    let schema_a = r#"<?xml version="1.0"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:c="http://example.com/common"
+               targetNamespace="http://example.com/a">
+        <xs:import namespace="http://example.com/common" schemaLocation="http://example.com/common.xsd"/>
+        <xs:element name="itemA">
+            <xs:complexType>
+                <xs:sequence>
+                    <xs:element name="id" type="c:IDType"/>
+                </xs:sequence>
+            </xs:complexType>
+        </xs:element>
+    </xs:schema>"#;
+
+    // Schema B also imports common
+    let schema_b = r#"<?xml version="1.0"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               xmlns:c="http://example.com/common"
+               targetNamespace="http://example.com/b">
+        <xs:import namespace="http://example.com/common" schemaLocation="http://example.com/common.xsd"/>
+        <xs:element name="itemB">
+            <xs:complexType>
+                <xs:sequence>
+                    <xs:element name="id" type="c:IDType"/>
+                </xs:sequence>
+            </xs:complexType>
+        </xs:element>
+    </xs:schema>"#;
+
+    // Track fetch count to verify deduplication
+    struct CountingFetcher {
+        responses: HashMap<String, Vec<u8>>,
+        fetch_count: RwLock<HashMap<String, usize>>,
+    }
+
+    impl CountingFetcher {
+        fn new() -> Self {
+            Self {
+                responses: HashMap::new(),
+                fetch_count: RwLock::new(HashMap::new()),
+            }
+        }
+
+        fn add(&mut self, url: &str, content: &[u8]) {
+            self.responses.insert(url.to_string(), content.to_vec());
+        }
+
+        fn get_fetch_count(&self, url: &str) -> usize {
+            *self.fetch_count.read().unwrap().get(url).unwrap_or(&0)
+        }
+    }
+
+    impl SchemaFetcher for CountingFetcher {
+        fn fetch(&self, url: &str) -> fastxml::error::Result<FetchResult> {
+            *self
+                .fetch_count
+                .write()
+                .unwrap()
+                .entry(url.to_string())
+                .or_insert(0) += 1;
+
+            if let Some(content) = self.responses.get(url) {
+                Ok(FetchResult {
+                    content: content.clone(),
+                    final_url: url.to_string(),
+                    redirected: false,
+                })
+            } else {
+                Err(fastxml::error::Error::Schema(
+                    fastxml::schema::error::SchemaError::SchemaNotFound {
+                        uri: url.to_string(),
+                    },
+                ))
+            }
+        }
+    }
+
+    let mut fetcher = CountingFetcher::new();
+    fetcher.add("http://example.com/common.xsd", common_xsd.as_bytes());
+    let store = InMemoryStore::new();
+
+    let schema = parse_xsd_with_imports_multiple(
+        &[
+            ("http://example.com/a.xsd", schema_a.as_bytes()),
+            ("http://example.com/b.xsd", schema_b.as_bytes()),
+        ],
+        &fetcher,
+        &store,
+    )
+    .unwrap();
+
+    // Both entry schemas' elements should be present
+    assert!(
+        schema.elements.contains_key("itemA"),
+        "Should contain itemA from schema A"
+    );
+    assert!(
+        schema.elements.contains_key("itemB"),
+        "Should contain itemB from schema B"
+    );
+
+    // Common dependency should be fetched only once
+    assert_eq!(
+        fetcher.get_fetch_count("http://example.com/common.xsd"),
+        1,
+        "Common dependency should be fetched only once"
+    );
+}
+
+#[test]
+fn test_parse_xsd_with_imports_multiple_no_entries() {
+    use fastxml::schema::fetcher::NoopFetcher;
+    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+
+    let fetcher = NoopFetcher;
+    let store = InMemoryStore::new();
+
+    let schema = parse_xsd_with_imports_multiple(&[], &fetcher, &store).unwrap();
+
+    // Should have built-in types
+    assert!(schema.types.contains_key("xs:string"));
+}
+
+#[test]
+fn test_parse_xsd_with_imports_multiple_single_entry() {
+    use fastxml::schema::fetcher::NoopFetcher;
+    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+
+    let xsd = r#"<?xml version="1.0"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+               targetNamespace="http://example.com/test">
+        <xs:element name="root" type="xs:string"/>
+    </xs:schema>"#;
+
+    let fetcher = NoopFetcher;
+    let store = InMemoryStore::new();
+
+    let schema = parse_xsd_with_imports_multiple(
+        &[("http://example.com/test.xsd", xsd.as_bytes())],
+        &fetcher,
+        &store,
+    )
+    .unwrap();
+
+    assert!(schema.elements.contains_key("root"));
+}
+
+#[test]
+fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
+    use fastxml::schema::fetcher::NoopFetcher;
+    use fastxml::schema::{InMemoryStore, parse_xsd_with_imports_multiple};
+
+    let xsd = r#"<?xml version="1.0"?>
+    <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+        <xs:element name="root" type="xs:string"/>
+    </xs:schema>"#;
+
+    let fetcher = NoopFetcher;
+    let store = InMemoryStore::new();
+
+    // Same schema passed twice - should not error
+    let schema = parse_xsd_with_imports_multiple(
+        &[
+            ("http://example.com/test.xsd", xsd.as_bytes()),
+            ("http://example.com/test.xsd", xsd.as_bytes()),
+        ],
+        &fetcher,
+        &store,
+    )
+    .unwrap();
+
+    assert!(schema.elements.contains_key("root"));
+}

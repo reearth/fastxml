@@ -240,6 +240,84 @@ pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> 
     Ok(schema)
 }
 
+/// Parses multiple XSD entry schemas with shared import/include resolution.
+///
+/// This function uses a single resolver to resolve all entries, so shared
+/// dependencies (e.g., GML base schemas) are only fetched and parsed once.
+/// This is the recommended approach when `xsi:schemaLocation` specifies
+/// multiple schema entries.
+///
+/// # Arguments
+///
+/// * `entries` - List of (URI, content) pairs for entry schemas
+/// * `fetcher` - Schema fetcher for downloading remote schemas
+/// * `store` - Schema store for caching downloaded schemas
+///
+/// # Returns
+///
+/// A compiled schema with all entries and their dependencies resolved
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::schema::{UreqFetcher, TempDirStore, parse_xsd_with_imports_multiple};
+///
+/// let fetcher = UreqFetcher::new();
+/// let store = TempDirStore::new()?;
+///
+/// let schema = parse_xsd_with_imports_multiple(
+///     &[
+///         ("http://example.com/a.xsd", a_content),
+///         ("http://example.com/b.xsd", b_content),
+///     ],
+///     &fetcher,
+///     &store,
+/// )?;
+/// ```
+pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher, S: SchemaStore>(
+    entries: &[(&str, &[u8])],
+    fetcher: &F,
+    store: &S,
+) -> Result<CompiledSchema> {
+    let mut resolver = SchemaResolver::new(fetcher, store);
+    for (uri, content) in entries {
+        resolver.resolve_entry(content, uri)?;
+    }
+    let schemas = resolver.take_all_schemas();
+    let mut schema = compile_schemas(schemas)?;
+    register_builtin_types(&mut schema);
+    Ok(schema)
+}
+
+/// Parses multiple XSD entry schemas with shared import/include resolution (async).
+///
+/// This is the async version of [`parse_xsd_with_imports_multiple`].
+///
+/// # Arguments
+///
+/// * `entries` - List of (URI, content) pairs for entry schemas
+/// * `fetcher` - Async schema fetcher for downloading remote schemas
+/// * `store` - Async schema store for caching downloaded schemas
+///
+/// # Returns
+///
+/// A compiled schema with all entries and their dependencies resolved
+#[cfg(feature = "tokio")]
+pub async fn parse_xsd_with_imports_multiple_async<F: AsyncSchemaFetcher, S: AsyncSchemaStore>(
+    entries: &[(&str, &[u8])],
+    fetcher: &F,
+    store: &S,
+) -> Result<CompiledSchema> {
+    let mut resolver = AsyncSchemaResolver::new(fetcher, store);
+    for (uri, content) in entries {
+        resolver.resolve_entry(content, uri).await?;
+    }
+    let schemas = resolver.take_all_schemas();
+    let mut schema = compile_schemas(schemas)?;
+    register_builtin_types(&mut schema);
+    Ok(schema)
+}
+
 /// Creates a CompiledSchema with only built-in types registered.
 ///
 /// This is useful for validation that only needs primitive XSD and GML types

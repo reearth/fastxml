@@ -111,10 +111,13 @@ pub use async_tempdir::AsyncTempDirStore;
 pub use store::AsyncSchemaStore;
 
 // Re-export XSD parsing functions
-pub use xsd::{create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports};
+pub use xsd::{
+    create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports,
+    parse_xsd_with_imports_multiple,
+};
 
 #[cfg(feature = "tokio")]
-pub use xsd::parse_xsd_with_imports_async;
+pub use xsd::{parse_xsd_with_imports_async, parse_xsd_with_imports_multiple_async};
 
 // Re-export schema resolution functions
 pub use resolve::{

@@ -332,6 +332,72 @@ pub fn parse_xsd_with_imports(
     schema::parse_xsd_with_imports(content, base_uri, fetcher, store)
 }
 
+/// Parses multiple XSD entry schemas with shared import/include resolution.
+///
+/// Uses a single resolver so shared dependencies are only fetched once.
+/// This is the recommended approach when `xsi:schemaLocation` specifies
+/// multiple schema entries.
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::schema::{UreqFetcher, TempDirStore};
+/// use fastxml::parse_xsd_with_imports_multiple;
+///
+/// let fetcher = UreqFetcher::new();
+/// let store = TempDirStore::new()?;
+///
+/// let schema = parse_xsd_with_imports_multiple(
+///     &[
+///         ("http://example.com/a.xsd", &a_content),
+///         ("http://example.com/b.xsd", &b_content),
+///     ],
+///     &fetcher,
+///     &store,
+/// )?;
+/// ```
+pub fn parse_xsd_with_imports_multiple<F: schema::SchemaFetcher, S: schema::store::SchemaStore>(
+    entries: &[(&str, &[u8])],
+    fetcher: &F,
+    store: &S,
+) -> Result<schema::types::CompiledSchema> {
+    schema::parse_xsd_with_imports_multiple(entries, fetcher, store)
+}
+
+/// Parses multiple XSD entry schemas with shared import/include resolution (async).
+///
+/// This is the async version of [`parse_xsd_with_imports_multiple`].
+///
+/// # Example
+///
+/// ```ignore
+/// use fastxml::schema::{AsyncDefaultFetcher, InMemoryStore};
+/// use fastxml::parse_xsd_with_imports_multiple_async;
+///
+/// let fetcher = AsyncDefaultFetcher::new()?;
+/// let store = InMemoryStore::new();
+///
+/// let schema = parse_xsd_with_imports_multiple_async(
+///     &[
+///         ("http://example.com/a.xsd", &a_content),
+///         ("http://example.com/b.xsd", &b_content),
+///     ],
+///     &fetcher,
+///     &store,
+/// ).await?;
+/// ```
+#[cfg(feature = "tokio")]
+pub async fn parse_xsd_with_imports_multiple_async<
+    F: schema::AsyncSchemaFetcher,
+    S: schema::AsyncSchemaStore,
+>(
+    entries: &[(&str, &[u8])],
+    fetcher: &F,
+    store: &S,
+) -> Result<schema::types::CompiledSchema> {
+    schema::parse_xsd_with_imports_multiple_async(entries, fetcher, store).await
+}
+
 /// Parses XSD content with async import resolution.
 ///
 /// This is the async version of [`parse_xsd_with_imports`]. It resolves all

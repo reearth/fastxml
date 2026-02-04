@@ -136,6 +136,93 @@ impl<'a, F: SchemaFetcher, S: SchemaStore> SchemaResolver<'a, F, S> {
         Ok(content)
     }
 
+    /// Resolves an entry schema and accumulates it along with its dependencies.
+    ///
+    /// Unlike [`Self::resolve_all`], this method does not return schemas immediately.
+    /// Instead, it accumulates them internally so that multiple entry schemas
+    /// can share resolved dependencies (avoiding duplicate fetches).
+    ///
+    /// Call [`Self::take_all_schemas`] after all entries have been resolved.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry_content` - The entry XSD file content as bytes
+    /// * `entry_uri` - URI for the entry schema (used for resolving relative imports)
+    pub fn resolve_entry(&mut self, entry_content: &[u8], entry_uri: &str) -> Result<()> {
+        // Skip if already resolved
+        if self.schemas.contains_key(entry_uri) {
+            return Ok(());
+        }
+
+        // Parse the entry schema
+        let entry_schema = parse_xsd_ast(entry_content)?;
+
+        // Store and track the entry
+        self.schemas.insert(entry_uri.to_string(), entry_schema);
+
+        // Use BFS to resolve all dependencies
+        let mut queue: VecDeque<String> = VecDeque::new();
+        queue.push_back(entry_uri.to_string());
+
+        while let Some(current_uri) = queue.pop_front() {
+            if self.resolving.contains(&current_uri) {
+                return Err(crate::schema::error::SchemaError::CircularDependency {
+                    uri: current_uri,
+                }
+                .into());
+            }
+            self.resolving.insert(current_uri.clone());
+
+            // Get imports and includes from the current schema
+            let (imports, includes) = {
+                let schema = self.schemas.get(&current_uri).ok_or_else(|| {
+                    crate::schema::error::SchemaError::SchemaNotFound {
+                        uri: current_uri.clone(),
+                    }
+                })?;
+                (schema.imports.clone(), schema.includes.clone())
+            };
+
+            // Process imports
+            for import in imports {
+                if let Some(location) = &import.schema_location {
+                    let resolved_uri = resolve_uri(&current_uri, location)?;
+
+                    if !self.schemas.contains_key(&resolved_uri) {
+                        let content = self.fetch_schema(&resolved_uri)?;
+                        let schema = parse_xsd_ast(&content)?;
+                        self.schemas.insert(resolved_uri.clone(), schema);
+                        queue.push_back(resolved_uri);
+                    }
+                }
+            }
+
+            // Process includes
+            for include in includes {
+                let resolved_uri = resolve_uri(&current_uri, &include.schema_location)?;
+
+                if !self.schemas.contains_key(&resolved_uri) {
+                    let content = self.fetch_schema(&resolved_uri)?;
+                    let schema = parse_xsd_ast(&content)?;
+                    self.schemas.insert(resolved_uri.clone(), schema);
+                    queue.push_back(resolved_uri);
+                }
+            }
+
+            self.resolving.remove(&current_uri);
+        }
+
+        Ok(())
+    }
+
+    /// Consumes the resolver and returns all accumulated schemas as a Vec.
+    ///
+    /// Use this after calling [`Self::resolve_entry`] one or more times to get
+    /// all resolved schemas for compilation.
+    pub fn take_all_schemas(self) -> Vec<XsdSchema> {
+        self.schemas.into_values().collect()
+    }
+
     /// Consumes the resolver and returns the resolved schemas.
     pub fn into_schemas(self) -> HashMap<String, XsdSchema> {
         self.schemas

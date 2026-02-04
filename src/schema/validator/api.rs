@@ -139,41 +139,20 @@ pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
         return ctx.validate(doc);
     }
 
-    // Fetch and parse all schemas
-    let mut all_errors = Vec::new();
+    // Use a single resolver to avoid duplicate dependency fetches
     let store = crate::schema::memory::InMemoryStore::new();
+    let mut resolver = crate::schema::xsd::SchemaResolver::new(fetcher, &store);
+    let mut all_errors = Vec::new();
+    let mut loaded_any = false;
 
     for (_namespace, location) in &locations {
-        // Try to fetch the schema
         match fetcher.fetch(location) {
             Ok(fetch_result) => {
-                // Store the fetched schema
-                let schema_key = fetch_result.final_url.clone();
-                if !store.contains(&schema_key) {
-                    let _ = store.put(&schema_key, &fetch_result.content);
-                }
+                let _ = store.put(&fetch_result.final_url, &fetch_result.content);
 
-                // Parse the schema with import resolution
-                match crate::schema::xsd::parse_xsd_with_imports(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    fetcher,
-                    &store,
-                ) {
-                    Ok(schema) => {
-                        let ctx = XmlSchemaValidationContext::new(schema);
-                        match ctx.validate(doc) {
-                            Ok(errors) => all_errors.extend(errors),
-                            Err(e) => {
-                                all_errors.push(
-                                    StructuredError::new(
-                                        format!("Validation error: {}", e),
-                                        ValidationErrorType::Other,
-                                    )
-                                    .with_level(ErrorLevel::Error),
-                                );
-                            }
-                        }
+                match resolver.resolve_entry(&fetch_result.content, &fetch_result.final_url) {
+                    Ok(()) => {
+                        loaded_any = true;
                     }
                     Err(e) => {
                         all_errors.push(
@@ -196,7 +175,33 @@ pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
         }
     }
 
-    Ok(all_errors)
+    if !loaded_any {
+        let schema = crate::schema::xsd::create_builtin_schema();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        return ctx.validate(doc);
+    }
+
+    let schemas = resolver.take_all_schemas();
+    let mut schema = crate::schema::xsd::compile_schemas(schemas)?;
+    crate::schema::xsd::register_builtin_types(&mut schema);
+
+    let ctx = XmlSchemaValidationContext::new(schema);
+    match ctx.validate(doc) {
+        Ok(errors) => {
+            all_errors.extend(errors);
+            Ok(all_errors)
+        }
+        Err(e) => {
+            all_errors.push(
+                StructuredError::new(
+                    format!("Validation error: {}", e),
+                    ValidationErrorType::Other,
+                )
+                .with_level(ErrorLevel::Error),
+            );
+            Ok(all_errors)
+        }
+    }
 }
 
 /// Gets a compiled schema from xsi:schemaLocation in the document.
@@ -251,22 +256,20 @@ pub fn get_schema_from_schema_location_with_fetcher<F: SchemaFetcher>(
         return Ok(crate::schema::xsd::create_builtin_schema());
     }
 
+    // Use a single resolver to handle all schema locations
     let store = crate::schema::memory::InMemoryStore::new();
+    let mut resolver = crate::schema::xsd::SchemaResolver::new(fetcher, &store);
+    let mut loaded_any = false;
 
-    // Try to fetch and compile the first schema
-    // (schemaLocation typically has only one relevant schema per namespace)
-    if let Some((_namespace, location)) = locations.first() {
+    for (_namespace, location) in &locations {
         match fetcher.fetch(location) {
             Ok(fetch_result) => {
                 let _ = store.put(&fetch_result.final_url, &fetch_result.content);
 
-                match crate::schema::xsd::parse_xsd_with_imports(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    fetcher,
-                    &store,
-                ) {
-                    Ok(schema) => return Ok(schema),
+                match resolver.resolve_entry(&fetch_result.content, &fetch_result.final_url) {
+                    Ok(()) => {
+                        loaded_any = true;
+                    }
                     Err(_) => {
                         return Err(crate::error::Error::Schema(
                             crate::schema::error::SchemaError::SchemaNotFound {
@@ -286,12 +289,14 @@ pub fn get_schema_from_schema_location_with_fetcher<F: SchemaFetcher>(
         }
     }
 
-    // This shouldn't be reached if locations is not empty
-    Err(crate::error::Error::Schema(
-        crate::schema::error::SchemaError::SchemaNotFound {
-            uri: "no schema locations".to_string(),
-        },
-    ))
+    if !loaded_any {
+        return Ok(crate::schema::xsd::create_builtin_schema());
+    }
+
+    let schemas = resolver.take_all_schemas();
+    let mut schema = crate::schema::xsd::compile_schemas(schemas)?;
+    crate::schema::xsd::register_builtin_types(&mut schema);
+    Ok(schema)
 }
 
 /// Validates XML from a reader using streaming parser with schemas from xsi:schemaLocation.
@@ -432,30 +437,21 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
         return TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader);
     }
 
+    // Use a single resolver to handle all schema locations
     let store = crate::schema::memory::InMemoryStore::new();
+    let mut resolver = crate::schema::xsd::SchemaResolver::new(fetcher, &store);
+    let mut loaded_any = false;
 
-    // Try to fetch and compile the first schema
-    if let Some((_namespace, location)) = locations.first() {
+    for (_namespace, location) in &locations {
         match fetcher.fetch(location) {
             Ok(fetch_result) => {
                 let _ = store.put(&fetch_result.final_url, &fetch_result.content);
 
-                match crate::schema::xsd::parse_xsd_with_imports(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    fetcher,
-                    &store,
-                ) {
-                    Ok(schema) => {
-                        return TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader);
-                    }
-                    Err(_) => {
-                        return Err(crate::error::Error::Schema(
-                            crate::schema::error::SchemaError::SchemaNotFound {
-                                uri: location.clone(),
-                            },
-                        ));
-                    }
+                if resolver
+                    .resolve_entry(&fetch_result.content, &fetch_result.final_url)
+                    .is_ok()
+                {
+                    loaded_any = true;
                 }
             }
             Err(_) => {
@@ -468,8 +464,14 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
         }
     }
 
-    // Fallback to builtin schema
-    let schema = crate::schema::xsd::create_builtin_schema();
+    if !loaded_any {
+        let schema = crate::schema::xsd::create_builtin_schema();
+        return TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader);
+    }
+
+    let schemas = resolver.take_all_schemas();
+    let mut schema = crate::schema::xsd::compile_schemas(schemas)?;
+    crate::schema::xsd::register_builtin_types(&mut schema);
     TwoPassSchemaValidator::new(Arc::new(schema)).validate(reader)
 }
 
@@ -515,42 +517,24 @@ pub async fn validate_with_schema_location_with_async_fetcher<
         return ctx.validate(doc);
     }
 
-    // Fetch and parse all schemas
+    // Use a single async resolver to avoid duplicate dependency fetches
+    let mut resolver = crate::schema::xsd::AsyncSchemaResolver::new(fetcher, store);
     let mut all_errors = Vec::new();
+    let mut loaded_any = false;
 
     for (_namespace, location) in &locations {
-        // Try to fetch the schema
         match fetcher.fetch(location).await {
             Ok(fetch_result) => {
-                // Store the fetched schema
-                let schema_key = fetch_result.final_url.clone();
-                if !store.contains(&schema_key).await {
-                    let _ = store.put(&schema_key, &fetch_result.content).await;
-                }
+                let _ = store
+                    .put(&fetch_result.final_url, &fetch_result.content)
+                    .await;
 
-                // Parse the schema with async import resolution
-                match crate::schema::xsd::parse_xsd_with_imports_async(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    fetcher,
-                    store,
-                )
-                .await
+                match resolver
+                    .resolve_entry(&fetch_result.content, &fetch_result.final_url)
+                    .await
                 {
-                    Ok(schema) => {
-                        let ctx = XmlSchemaValidationContext::new(schema);
-                        match ctx.validate(doc) {
-                            Ok(errors) => all_errors.extend(errors),
-                            Err(e) => {
-                                all_errors.push(
-                                    StructuredError::new(
-                                        format!("Validation error: {}", e),
-                                        ValidationErrorType::Other,
-                                    )
-                                    .with_level(ErrorLevel::Error),
-                                );
-                            }
-                        }
+                    Ok(()) => {
+                        loaded_any = true;
                     }
                     Err(e) => {
                         all_errors.push(
@@ -573,7 +557,33 @@ pub async fn validate_with_schema_location_with_async_fetcher<
         }
     }
 
-    Ok(all_errors)
+    if !loaded_any {
+        let schema = crate::schema::xsd::create_builtin_schema();
+        let ctx = XmlSchemaValidationContext::new(schema);
+        return ctx.validate(doc);
+    }
+
+    let schemas = resolver.take_all_schemas();
+    let mut schema = crate::schema::xsd::compile_schemas(schemas)?;
+    crate::schema::xsd::register_builtin_types(&mut schema);
+
+    let ctx = XmlSchemaValidationContext::new(schema);
+    match ctx.validate(doc) {
+        Ok(errors) => {
+            all_errors.extend(errors);
+            Ok(all_errors)
+        }
+        Err(e) => {
+            all_errors.push(
+                StructuredError::new(
+                    format!("Validation error: {}", e),
+                    ValidationErrorType::Other,
+                )
+                .with_level(ErrorLevel::Error),
+            );
+            Ok(all_errors)
+        }
+    }
 }
 
 /// Validates a document using schemas referenced in xsi:schemaLocation asynchronously.
@@ -638,16 +648,38 @@ pub async fn get_schema_from_schema_location_with_async_fetcher<
         return Ok(crate::schema::xsd::create_builtin_schema());
     }
 
-    // Try to fetch and compile the first schema
-    if let Some((_namespace, location)) = locations.first() {
+    // Use a single async resolver to handle all schema locations
+    let mut resolver = crate::schema::xsd::AsyncSchemaResolver::new(fetcher, store);
+    let mut loaded_any = false;
+
+    for (_namespace, location) in &locations {
         // Check store first
-        if let Some(content) = store.get(location).await? {
-            match crate::schema::xsd::parse_xsd_with_imports_async(
-                &content, location, fetcher, store,
-            )
-            .await
-            {
-                Ok(schema) => return Ok(schema),
+        let content = if let Some(content) = store.get(location).await? {
+            Some((content, location.clone()))
+        } else {
+            // Fetch from network
+            match fetcher.fetch(location).await {
+                Ok(fetch_result) => {
+                    let _ = store
+                        .put(&fetch_result.final_url, &fetch_result.content)
+                        .await;
+                    Some((fetch_result.content, fetch_result.final_url))
+                }
+                Err(_) => {
+                    return Err(crate::error::Error::Schema(
+                        crate::schema::error::SchemaError::SchemaNotFound {
+                            uri: location.clone(),
+                        },
+                    ));
+                }
+            }
+        };
+
+        if let Some((content, uri)) = content {
+            match resolver.resolve_entry(&content, &uri).await {
+                Ok(()) => {
+                    loaded_any = true;
+                }
                 Err(_) => {
                     return Err(crate::error::Error::Schema(
                         crate::schema::error::SchemaError::SchemaNotFound {
@@ -657,48 +689,16 @@ pub async fn get_schema_from_schema_location_with_async_fetcher<
                 }
             }
         }
-
-        // Fetch from network
-        match fetcher.fetch(location).await {
-            Ok(fetch_result) => {
-                let _ = store
-                    .put(&fetch_result.final_url, &fetch_result.content)
-                    .await;
-
-                match crate::schema::xsd::parse_xsd_with_imports_async(
-                    &fetch_result.content,
-                    &fetch_result.final_url,
-                    fetcher,
-                    store,
-                )
-                .await
-                {
-                    Ok(schema) => return Ok(schema),
-                    Err(_) => {
-                        return Err(crate::error::Error::Schema(
-                            crate::schema::error::SchemaError::SchemaNotFound {
-                                uri: location.clone(),
-                            },
-                        ));
-                    }
-                }
-            }
-            Err(_) => {
-                return Err(crate::error::Error::Schema(
-                    crate::schema::error::SchemaError::SchemaNotFound {
-                        uri: location.clone(),
-                    },
-                ));
-            }
-        }
     }
 
-    // This shouldn't be reached if locations is not empty
-    Err(crate::error::Error::Schema(
-        crate::schema::error::SchemaError::SchemaNotFound {
-            uri: "no schema locations".to_string(),
-        },
-    ))
+    if !loaded_any {
+        return Ok(crate::schema::xsd::create_builtin_schema());
+    }
+
+    let schemas = resolver.take_all_schemas();
+    let mut schema = crate::schema::xsd::compile_schemas(schemas)?;
+    crate::schema::xsd::register_builtin_types(&mut schema);
+    Ok(schema)
 }
 
 /// Gets a compiled schema from xsi:schemaLocation asynchronously.
