@@ -48,6 +48,13 @@ cargo doc --no-deps --all-features
 
 Note: `clippy` and `doc` with `--all-features` require `libxml2-dev` system package.
 
+## Version Bump Checklist
+
+When bumping the version, update these files:
+
+- `Cargo.toml` - `version = "x.y.z"`
+- `README.md` - All `fastxml = "x.y"` references in installation examples
+
 ## Manual Testing Tools
 
 ```bash
