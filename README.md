@@ -72,8 +72,8 @@ fastxml = { version = "0.6", features = ["tokio"] }
 | `FileFetcher` | Local filesystem |
 | `UreqFetcher` | Sync HTTP (requires `ureq`) |
 | `ReqwestFetcher` | Async HTTP (requires `tokio`) |
-| `DefaultFetcher` | File + sync HTTP combined (requires `ureq` for HTTP) |
-| `AsyncDefaultFetcher` | File + async HTTP combined (requires `tokio`) |
+| `DefaultFetcher` | File + sync HTTP combined with built-in caching (requires `ureq` for HTTP) |
+| `AsyncDefaultFetcher` | File + async HTTP combined with built-in caching (requires `tokio`) |
 | `CachingFetcher` | Wraps any sync fetcher with in-memory caching |
 | `AsyncCachingFetcher` | Wraps any async fetcher with in-memory caching (requires `tokio`) |
 | `FileCachingFetcher` | Wraps any sync fetcher with file-based caching (temp directory) |

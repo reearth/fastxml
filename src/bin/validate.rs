@@ -17,8 +17,7 @@ use serde::Serialize;
 
 use fastxml::error::StructuredError;
 use fastxml::schema::{
-    CachingFetcher, DefaultFetcher, FetchResult, SchemaFetcher,
-    streaming_validate_with_schema_location_and_fetcher,
+    DefaultFetcher, FetchResult, SchemaFetcher, streaming_validate_with_schema_location_and_fetcher,
 };
 
 /// XML Schema Validator CLI
@@ -112,7 +111,7 @@ fn main() {
 
 fn run(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
     let mut results = Vec::new();
-    let cache = Arc::new(CachingFetcher::new(DefaultFetcher::new()));
+    let cache = Arc::new(DefaultFetcher::new());
     let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
 
     for file_path in &args.files {
@@ -158,7 +157,7 @@ fn run(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
 fn validate_file(
     file_path: &str,
     args: &Args,
-    cache: Arc<CachingFetcher<DefaultFetcher>>,
+    cache: Arc<DefaultFetcher>,
     global_downloaded_urls: Arc<Mutex<Vec<String>>>,
 ) -> Result<FileResult, Box<dyn std::error::Error>> {
     let start = Instant::now();
@@ -381,13 +380,13 @@ fn fetch_url(url: &str, args: &Args) -> Result<(Vec<u8>, u64), Box<dyn std::erro
     Ok((final_content, size))
 }
 
-/// A fetcher wrapper that tracks downloaded URLs and delegates to a shared CachingFetcher.
+/// A fetcher wrapper that tracks downloaded URLs and delegates to a shared DefaultFetcher.
 ///
 /// This struct adds URL tracking (recording which URLs were freshly downloaded) and
 /// base URL resolution (for resolving relative schema paths when the XML source is an HTTP URL)
-/// on top of the library's `CachingFetcher` which handles the actual caching.
+/// on top of `DefaultFetcher` which handles the actual caching.
 struct UrlTrackingFetcher {
-    inner: Arc<CachingFetcher<DefaultFetcher>>,
+    inner: Arc<DefaultFetcher>,
     downloaded_urls: Arc<Mutex<Vec<String>>>,
     /// Base URL for resolving relative paths (used for HTTP XML sources)
     base_url: Option<String>,
@@ -395,7 +394,7 @@ struct UrlTrackingFetcher {
 
 impl UrlTrackingFetcher {
     fn new(
-        inner: Arc<CachingFetcher<DefaultFetcher>>,
+        inner: Arc<DefaultFetcher>,
         downloaded_urls: Arc<Mutex<Vec<String>>>,
         base_url: Option<String>,
     ) -> Self {
@@ -518,7 +517,7 @@ mod tests {
     fn test_url_tracking_fetcher_resolve_url_with_different_base_urls() {
         // This test verifies that the same relative path resolves to different
         // absolute URLs when the base URL changes
-        let cache = Arc::new(CachingFetcher::new(DefaultFetcher::new()));
+        let cache = Arc::new(DefaultFetcher::new());
         let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
 
         // Create fetcher with first base URL
@@ -556,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_url_tracking_fetcher_resolve_url_deep_relative_path() {
-        let cache = Arc::new(CachingFetcher::new(DefaultFetcher::new()));
+        let cache = Arc::new(DefaultFetcher::new());
         let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
 
         let fetcher = UrlTrackingFetcher::new(

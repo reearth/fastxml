@@ -21,12 +21,12 @@ use super::traits::SchemaFetcher;
 /// # Example
 ///
 /// ```ignore
-/// use fastxml::schema::fetcher::{CachingFetcher, DefaultFetcher};
+/// use fastxml::schema::fetcher::{CachingFetcher, NoopFetcher};
 ///
-/// let fetcher = CachingFetcher::new(DefaultFetcher::new());
+/// // Wrap any SchemaFetcher with caching (note: DefaultFetcher already has built-in caching)
+/// let fetcher = CachingFetcher::new(NoopFetcher);
+/// fetcher.seed("http://example.com/schema.xsd", b"<schema/>".to_vec());
 /// let result = fetcher.fetch("http://example.com/schema.xsd")?;
-/// // Second call returns from cache
-/// let cached = fetcher.fetch("http://example.com/schema.xsd")?;
 /// ```
 pub struct CachingFetcher<F: SchemaFetcher> {
     inner: F,

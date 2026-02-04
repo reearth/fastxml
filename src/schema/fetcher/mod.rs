@@ -95,11 +95,14 @@ pub use self::reqwest::ReqwestFetcher;
 #[cfg(feature = "ureq")]
 pub use self::ureq::UreqFetcher;
 
+use dashmap::DashMap;
 use std::path::Path;
 
-/// Default schema fetcher with sensible defaults.
+/// Default schema fetcher with sensible defaults and built-in caching.
 ///
-/// This fetcher combines local file support with HTTP fetching (when available).
+/// This fetcher combines local file support with HTTP fetching (when available)
+/// and includes an in-memory cache backed by `DashMap` so each URL is fetched
+/// at most once.
 ///
 /// # Configuration
 ///
@@ -117,12 +120,15 @@ use std::path::Path;
 /// // Create with a base directory for relative paths
 /// let fetcher = DefaultFetcher::with_base_dir("/path/to/schemas");
 ///
-/// // Fetch a schema
+/// // Fetch a schema (results are cached automatically)
 /// let result = fetcher.fetch("schema.xsd")?;
+/// // Second call returns from cache
+/// let cached = fetcher.fetch("schema.xsd")?;
 /// # Ok::<(), fastxml::error::Error>(())
 /// ```
 pub struct DefaultFetcher {
     inner: CombinedFetcher,
+    cache: DashMap<String, FetchResult>,
 }
 
 impl DefaultFetcher {
@@ -133,6 +139,8 @@ impl DefaultFetcher {
     /// 2. [`UreqFetcher`] - for HTTP/HTTPS URLs
     ///
     /// Without `ureq` feature, only local files are supported.
+    ///
+    /// Results are cached in memory so the same URL is never fetched twice.
     pub fn new() -> Self {
         Self::with_base_dir_option(None)
     }
@@ -156,7 +164,10 @@ impl DefaultFetcher {
         #[cfg(not(feature = "ureq"))]
         let inner = CombinedFetcher::new().with_fetcher(file_fetcher);
 
-        Self { inner }
+        Self {
+            inner,
+            cache: DashMap::new(),
+        }
     }
 
     /// Sets the timeout for HTTP requests (only effective with `ureq` feature).
@@ -166,7 +177,20 @@ impl DefaultFetcher {
         let inner = CombinedFetcher::new()
             .with_fetcher(file_fetcher)
             .with_fetcher(UreqFetcher::new().timeout(secs));
-        Self { inner }
+        Self {
+            inner,
+            cache: self.cache,
+        }
+    }
+
+    /// Returns the number of cached entries.
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Returns `true` if the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
     }
 }
 
@@ -178,7 +202,21 @@ impl Default for DefaultFetcher {
 
 impl SchemaFetcher for DefaultFetcher {
     fn fetch(&self, url: &str) -> crate::error::Result<FetchResult> {
-        self.inner.fetch(url)
+        // Check cache
+        if let Some(entry) = self.cache.get(url) {
+            return Ok(entry.value().clone());
+        }
+
+        // Delegate to inner
+        let result = self.inner.fetch(url)?;
+
+        // Cache under both requested URL and final URL
+        self.cache.insert(url.to_string(), result.clone());
+        if result.final_url != url {
+            self.cache.insert(result.final_url.clone(), result.clone());
+        }
+
+        Ok(result)
     }
 }
 

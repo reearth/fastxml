@@ -33,9 +33,10 @@
 //! # Example
 //!
 //! ```ignore
-//! use fastxml::schema::{DefaultFetcher, CachingFetcher};
+//! use fastxml::schema::DefaultFetcher;
 //!
-//! let fetcher = CachingFetcher::new(DefaultFetcher::new());
+//! // DefaultFetcher has built-in caching
+//! let fetcher = DefaultFetcher::new();
 //! ```
 
 pub mod error;
