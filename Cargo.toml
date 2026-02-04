@@ -1,6 +1,6 @@
 [package]
 name = "fastxml"
-version = "0.6.6"
+version = "0.7.0"
 edition = "2024"
 description = "A fast, memory-efficient XML library with XPath and XSD validation support"
 license = "MIT OR Apache-2.0"
