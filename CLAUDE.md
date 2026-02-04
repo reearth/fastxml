@@ -40,7 +40,7 @@ cargo run --release --example bench -- ./file.xml
 Before committing, always run all CI checks:
 
 ```bash
-cargo fmt --all -- --check
+cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib --all-features
 cargo doc --no-deps --all-features
@@ -129,3 +129,23 @@ XML Data → StreamingParser → [DocumentBuilder, OnePassSchemaValidator]
 - Integration tests in `tests/` cover XSD validation, XPath, transforms
 - `tests/common/mod.rs` contains shared test utilities
 - libxml comparison tests require `libxml2-dev` system package
+
+## Development Guidelines
+
+### TDD (Test-Driven Development)
+
+When fixing bugs or adding features, follow the TDD approach:
+
+1. **Write a failing test first** - Create a test that reproduces the bug or specifies the new behavior
+2. **Verify the test fails** - Run the test to confirm it fails as expected
+3. **Implement the fix/feature** - Write the minimum code to make the test pass
+4. **Verify the test passes** - Run the test to confirm the fix works
+5. **Refactor if needed** - Clean up the code while keeping tests green
+
+### File Size Guidelines
+
+Keep individual `.rs` files under **1000 lines**. When a file grows beyond this threshold:
+
+- Split it into submodules (e.g., `foo.rs` → `foo/mod.rs` + `foo/bar.rs`)
+- Group related functionality together
+- Use `pub use` in `mod.rs` to maintain the public API
