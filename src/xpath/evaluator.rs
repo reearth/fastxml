@@ -313,12 +313,21 @@ impl<'a> XPathEvaluator<'a> {
     ) -> Result<Vec<XmlNode>> {
         // Handle attribute axis specially
         if matches!(step.axis, Axis::Attribute) {
-            return self.eval_attribute_step(step, context);
+            let mut filtered = self.eval_attribute_step(step, context)?;
+            // Apply predicates to attribute nodes (same as for other axes)
+            for predicate in &step.predicates {
+                filtered = self.apply_predicate(predicate, filtered, ctx)?;
+            }
+            return Ok(filtered);
         }
 
         // Handle namespace axis specially
         if matches!(step.axis, Axis::Namespace) {
-            return self.eval_namespace_step(step, context);
+            let mut filtered = self.eval_namespace_step(step, context)?;
+            for predicate in &step.predicates {
+                filtered = self.apply_predicate(predicate, filtered, ctx)?;
+            }
+            return Ok(filtered);
         }
 
         // Select nodes based on axis using the axes module
@@ -353,7 +362,18 @@ impl<'a> XPathEvaluator<'a> {
                 // @* - return all attributes as pseudo-nodes
                 let mut result = Vec::new();
                 for (name, value) in attributes {
-                    let attr_node = self.doc.create_attribute_node(&name, &value);
+                    let (prefix, ns_uri) =
+                        if let Some((p, u)) = context.get_attribute_ns_info(&name) {
+                            (Some(p), Some(u))
+                        } else {
+                            (None, None)
+                        };
+                    let attr_node = self.doc.create_attribute_node(
+                        &name,
+                        &value,
+                        prefix.as_deref(),
+                        ns_uri.as_deref(),
+                    );
                     result.push(attr_node);
                 }
                 Ok(result)
@@ -361,7 +381,18 @@ impl<'a> XPathEvaluator<'a> {
             NodeTest::Name(name) => {
                 // @name - return specific attribute
                 if let Some(value) = attributes.get(name) {
-                    let attr_node = self.doc.create_attribute_node(name, value);
+                    let (prefix, ns_uri) = if let Some((p, u)) = context.get_attribute_ns_info(name)
+                    {
+                        (Some(p), Some(u))
+                    } else {
+                        (None, None)
+                    };
+                    let attr_node = self.doc.create_attribute_node(
+                        name,
+                        value,
+                        prefix.as_deref(),
+                        ns_uri.as_deref(),
+                    );
                     Ok(vec![attr_node])
                 } else {
                     Ok(Vec::new())
@@ -371,10 +402,21 @@ impl<'a> XPathEvaluator<'a> {
                 // @prefix:name - return namespaced attribute
                 let qname = format!("{}:{}", prefix, local);
                 if let Some(value) = attributes.get(&qname) {
-                    let attr_node = self.doc.create_attribute_node(&qname, value);
+                    let attr_node = self.doc.create_attribute_node(&qname, value, None, None);
                     Ok(vec![attr_node])
                 } else if let Some(value) = attributes.get(local) {
-                    let attr_node = self.doc.create_attribute_node(local, value);
+                    let (ns_prefix, ns_uri) =
+                        if let Some((p, u)) = context.get_attribute_ns_info(local) {
+                            (Some(p), Some(u))
+                        } else {
+                            (None, None)
+                        };
+                    let attr_node = self.doc.create_attribute_node(
+                        local,
+                        value,
+                        ns_prefix.as_deref(),
+                        ns_uri.as_deref(),
+                    );
                     Ok(vec![attr_node])
                 } else {
                     Ok(Vec::new())

@@ -148,6 +148,67 @@ mod attribute_axis {
 
         compare_with_libxml!(xpath: xml, "//item[not(@status='active')]", &doc);
     }
+
+    /// Regression test: @*[predicate] must apply the inner predicate to filter attributes.
+    /// Previously, the predicate on @* was completely ignored, so any element with
+    /// any attribute would match regardless of the predicate condition.
+    #[test]
+    fn test_attribute_wildcard_with_predicate() {
+        let xml = r#"<root>
+            <item id="1" name="first"/>
+            <item name="second"/>
+            <item id="3" type="B"/>
+        </root>"#;
+        let doc = parse(xml).unwrap();
+
+        // @*[local-name()='id'] should only select attributes whose local-name is 'id'
+        // So .//*[@*[local-name()='id']] should match elements that have an 'id' attribute
+        let result = evaluate(&doc, ".//*[@*[local-name()='id']]").unwrap();
+        let nodes = result.into_nodes();
+        // Only item[0] (id="1") and item[2] (id="3") have 'id' attribute
+        assert_eq!(
+            nodes.len(),
+            2,
+            "Only elements with an 'id' attribute should match, got {} matches",
+            nodes.len()
+        );
+
+        // Verify the matched elements are the correct ones
+        assert_eq!(nodes[0].get_attribute("id"), Some("1".to_string()));
+        assert_eq!(nodes[1].get_attribute("id"), Some("3".to_string()));
+    }
+
+    /// Regression test: @*[namespace-uri()='...' and local-name()='...'] must filter
+    /// by both namespace URI and local name on attribute nodes.
+    #[test]
+    fn test_attribute_wildcard_with_namespace_predicate() {
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"
+                          xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
+            <bldg:Building gml:id="building1">
+                <bldg:class codeSpace="http://example.com/code">1000</bldg:class>
+                <bldg:usage codeSpace="http://example.com/code">1010</bldg:usage>
+                <bldg:measuredHeight uom="m">10.5</bldg:measuredHeight>
+            </bldg:Building>
+        </root>"#;
+        let doc = parse(xml).unwrap();
+
+        // Should only match elements that have an attribute with
+        // namespace-uri='http://www.opengis.net/gml' and local-name='id'
+        // Only bldg:Building has gml:id, the others have non-gml attributes
+        let result = evaluate(
+            &doc,
+            ".//*[@*[namespace-uri()='http://www.opengis.net/gml' and local-name()='id']]",
+        )
+        .unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(
+            nodes.len(),
+            1,
+            "Only the Building element with gml:id should match, got {} matches",
+            nodes.len()
+        );
+        assert_eq!(nodes[0].get_name(), "Building");
+    }
 }
 
 // =============================================================================

@@ -285,15 +285,20 @@ fn process_start_element<R: BufRead>(
     // Second pass: process attributes and resolve their namespaces
     // Store attributes with local names as keys (libxml compatible)
     let mut attributes = Vec::new();
+    let mut attr_ns_info = Vec::new();
     for (key, value) in &raw_attributes {
         let (attr_prefix, attr_local_name) = split_qname(key);
 
         // Only use local name as key (libxml compatible behavior)
         // Attributes with different namespace prefixes but same local name
         // will overwrite each other, but this matches libxml behavior
-        if attr_prefix.is_some() {
+        if let Some(ap) = attr_prefix {
             // Namespaced attribute: store with local name only
             attributes.push((attr_local_name.to_string(), value.clone()));
+            // Resolve and store the namespace URI for this attribute
+            if let Some(uri) = ns_stack.resolve(ap) {
+                attr_ns_info.push((attr_local_name.to_string(), ap.to_string(), uri.to_string()));
+            }
         } else {
             // Non-namespaced attribute
             attributes.push((key.clone(), value.clone()));
@@ -305,12 +310,17 @@ fn process_start_element<R: BufRead>(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    let attr_ns_refs: Vec<(&str, &str, &str)> = attr_ns_info
+        .iter()
+        .map(|(l, p, u)| (l.as_str(), p.as_str(), u.as_str()))
+        .collect();
 
     builder.start_element(
         local_name,
         prefix,
         namespace_uri.as_deref(),
         attr_refs,
+        attr_ns_refs,
         namespace_decls,
         Some(line),
         Some(column),

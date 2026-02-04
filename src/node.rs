@@ -57,6 +57,9 @@ pub(crate) struct NodeData {
     /// Attributes (for element nodes)
     /// Uses IndexMap to preserve insertion order (XML source order)
     pub attributes: IndexMap<String, String>,
+    /// Namespace info for attributes: local_name → (prefix, namespace_uri)
+    /// Only populated for element nodes with namespaced attributes.
+    pub attribute_ns_info: IndexMap<String, (String, String)>,
     /// Namespace declarations on this element
     pub namespace_decls: Vec<Namespace>,
     /// Parent node ID
@@ -80,6 +83,7 @@ impl NodeData {
             namespace_uri: None,
             content: None,
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -103,6 +107,7 @@ impl NodeData {
             namespace_uri,
             content: None,
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -121,6 +126,7 @@ impl NodeData {
             namespace_uri: None,
             content: Some(content),
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -139,6 +145,7 @@ impl NodeData {
             namespace_uri: None,
             content: Some(content),
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -157,6 +164,7 @@ impl NodeData {
             namespace_uri: None,
             content: Some(content),
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -175,6 +183,7 @@ impl NodeData {
             namespace_uri: None,
             content,
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -184,15 +193,22 @@ impl NodeData {
     }
 
     /// Creates a new attribute node (for XPath evaluation).
-    pub fn attribute(id: NodeId, name: String, value: String) -> Self {
+    pub fn attribute(
+        id: NodeId,
+        name: String,
+        value: String,
+        prefix: Option<String>,
+        namespace_uri: Option<String>,
+    ) -> Self {
         Self {
             id,
             node_type: NodeType::Attribute,
             name,
-            prefix: None,
-            namespace_uri: None,
+            prefix,
+            namespace_uri,
             content: Some(value),
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -215,6 +231,7 @@ impl NodeData {
             namespace_uri: None,
             content: Some(uri),
             attributes: IndexMap::new(),
+            attribute_ns_info: IndexMap::new(),
             namespace_decls: Vec::new(),
             parent: None,
             children: SmallVec::new(),
@@ -384,6 +401,15 @@ impl XmlNode {
             .get(self.id)
             .map(|n| n.attributes.clone())
             .unwrap_or_default()
+    }
+
+    /// Returns namespace info for a specific attribute by local name.
+    /// Returns (prefix, namespace_uri) if the attribute is namespaced.
+    pub fn get_attribute_ns_info(&self, local_name: &str) -> Option<(String, String)> {
+        let nodes = self.nodes.read();
+        nodes
+            .get(self.id)
+            .and_then(|n| n.attribute_ns_info.get(local_name).cloned())
     }
 
     /// Returns namespace declarations on this element.
@@ -864,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_node_data_attribute() {
-        let node = NodeData::attribute(7, "id".to_string(), "123".to_string());
+        let node = NodeData::attribute(7, "id".to_string(), "123".to_string(), None, None);
         assert_eq!(node.id, 7);
         assert_eq!(node.node_type, NodeType::Attribute);
         assert_eq!(node.name, "id");

@@ -584,6 +584,7 @@ impl EditableNodeBuilder {
             prefix,
             namespace_uri,
             attributes,
+            vec![],
             namespace_decls,
             None,
             None,

@@ -167,10 +167,22 @@ impl XmlDocument {
     ///
     /// These nodes are added to the document's node list and can be used
     /// in XPath results. They store the attribute name and value.
-    pub fn create_attribute_node(&self, name: &str, value: &str) -> XmlNode {
+    pub fn create_attribute_node(
+        &self,
+        name: &str,
+        value: &str,
+        prefix: Option<&str>,
+        namespace_uri: Option<&str>,
+    ) -> XmlNode {
         let mut nodes = self.nodes.write();
         let id = nodes.len();
-        nodes.push(NodeData::attribute(id, name.to_string(), value.to_string()));
+        nodes.push(NodeData::attribute(
+            id,
+            name.to_string(),
+            value.to_string(),
+            prefix.map(|s| s.to_string()),
+            namespace_uri.map(|s| s.to_string()),
+        ));
         XmlNode {
             id,
             nodes: Arc::clone(&self.nodes),
@@ -252,6 +264,7 @@ impl DocumentBuilder {
         prefix: Option<&str>,
         namespace_uri: Option<&str>,
         attributes: Vec<(&str, &str)>,
+        attribute_ns_info: Vec<(&str, &str, &str)>,
         namespace_decls: Vec<Namespace>,
         line: Option<usize>,
         column: Option<usize>,
@@ -268,6 +281,13 @@ impl DocumentBuilder {
 
         for (key, value) in attributes {
             node.attributes.insert(key.to_string(), value.to_string());
+        }
+
+        for (local_name, attr_prefix, attr_ns_uri) in attribute_ns_info {
+            node.attribute_ns_info.insert(
+                local_name.to_string(),
+                (attr_prefix.to_string(), attr_ns_uri.to_string()),
+            );
         }
 
         node.namespace_decls = namespace_decls;
@@ -410,12 +430,13 @@ mod tests {
             None,
             None,
             vec![("attr", "value")],
+            vec![],
             vec![Namespace::new("ns", "http://example.com")],
             Some(1),
             Some(1),
         );
         builder.text("Hello, ");
-        builder.start_element("child", None, None, vec![], vec![], None, None);
+        builder.start_element("child", None, None, vec![], vec![], vec![], None, None);
         builder.text("World");
         builder.end_element();
         builder.end_element();
