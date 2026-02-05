@@ -274,7 +274,7 @@ fn add_event_to_builder(
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
 
-            builder.start_element(name, prefix, None, attr_refs, ns_decls);
+            builder.start_element(name, prefix, None, attr_refs, vec![], ns_decls);
         }
 
         Event::Empty(e) => {

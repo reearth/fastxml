@@ -259,7 +259,7 @@ impl EditableNode {
     /// ```rust
     /// # use fastxml::transform::EditableNodeBuilder;
     /// let mut builder = EditableNodeBuilder::new();
-    /// builder.start_element("item", None, None, vec![("id", "1")], vec![]);
+    /// builder.start_element("item", None, None, vec![("id", "1")], vec![], vec![]);
     /// builder.text("Hello");
     /// builder.end_element();
     /// let node = builder.build().unwrap();
@@ -280,7 +280,7 @@ impl EditableNode {
     /// # use fastxml::transform::EditableNodeBuilder;
     /// # use fastxml::serialize::SerializeOptions;
     /// let mut builder = EditableNodeBuilder::new();
-    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.start_element("item", None, None, vec![], vec![], vec![]);
     /// builder.end_element();
     /// let node = builder.build().unwrap();
     ///
@@ -380,6 +380,14 @@ impl EditableNode {
                     prefixes.push(prefix);
                 }
             }
+            // Also collect namespace prefixes from attributes
+            for (local_name, _value) in node.get_attributes() {
+                if let Some((attr_prefix, _uri)) = node.get_attribute_ns_info(&local_name) {
+                    if !attr_prefix.is_empty() && !prefixes.contains(&attr_prefix) {
+                        prefixes.push(attr_prefix);
+                    }
+                }
+            }
         }
 
         for child in node.get_child_nodes() {
@@ -452,7 +460,7 @@ impl TryFrom<&EditableNode> for String {
     /// ```rust
     /// # use fastxml::transform::EditableNodeBuilder;
     /// let mut builder = EditableNodeBuilder::new();
-    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.start_element("item", None, None, vec![], vec![], vec![]);
     /// builder.end_element();
     /// let node = builder.build().unwrap();
     ///
@@ -474,7 +482,7 @@ impl TryFrom<EditableNode> for String {
     /// ```rust
     /// # use fastxml::transform::EditableNodeBuilder;
     /// let mut builder = EditableNodeBuilder::new();
-    /// builder.start_element("item", None, None, vec![], vec![]);
+    /// builder.start_element("item", None, None, vec![], vec![], vec![]);
     /// builder.end_element();
     /// let node = builder.build().unwrap();
     ///
@@ -577,6 +585,7 @@ impl EditableNodeBuilder {
         prefix: Option<&str>,
         namespace_uri: Option<&str>,
         attributes: Vec<(&str, &str)>,
+        attribute_ns_info: Vec<(&str, &str, &str)>,
         namespace_decls: Vec<Namespace>,
     ) {
         self.builder.start_element(
@@ -584,7 +593,7 @@ impl EditableNodeBuilder {
             prefix,
             namespace_uri,
             attributes,
-            vec![],
+            attribute_ns_info,
             namespace_decls,
             None,
             None,
@@ -649,7 +658,7 @@ mod tests {
 
     fn create_test_node() -> EditableNode {
         let mut builder = EditableNodeBuilder::new();
-        builder.start_element("item", None, None, vec![("id", "1")], vec![]);
+        builder.start_element("item", None, None, vec![("id", "1")], vec![], vec![]);
         builder.text("Hello");
         builder.end_element();
         builder.build().unwrap()
@@ -663,6 +672,7 @@ mod tests {
             Some("ns"),
             Some("http://example.com"),
             vec![("id", "1")],
+            vec![],
             vec![ns],
         );
         builder.text("Hello");
@@ -672,11 +682,25 @@ mod tests {
 
     fn create_nested_node() -> EditableNode {
         let mut builder = EditableNodeBuilder::new();
-        builder.start_element("root", None, None, vec![], vec![]);
-        builder.start_element("child1", None, None, vec![("name", "first")], vec![]);
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
+        builder.start_element(
+            "child1",
+            None,
+            None,
+            vec![("name", "first")],
+            vec![],
+            vec![],
+        );
         builder.text("Child 1 text");
         builder.end_element();
-        builder.start_element("child2", None, None, vec![("name", "second")], vec![]);
+        builder.start_element(
+            "child2",
+            None,
+            None,
+            vec![("name", "second")],
+            vec![],
+            vec![],
+        );
         builder.text("Child 2 text");
         builder.end_element();
         builder.end_element();
@@ -917,9 +941,9 @@ mod tests {
     fn test_builder_depth_tracking() {
         let mut builder = EditableNodeBuilder::new();
         assert_eq!(builder.depth(), 0);
-        builder.start_element("root", None, None, vec![], vec![]);
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
         assert_eq!(builder.depth(), 1);
-        builder.start_element("child", None, None, vec![], vec![]);
+        builder.start_element("child", None, None, vec![], vec![], vec![]);
         assert_eq!(builder.depth(), 2);
         builder.end_element();
         assert_eq!(builder.depth(), 1);
@@ -931,7 +955,7 @@ mod tests {
     fn test_builder_is_complete() {
         let mut builder = EditableNodeBuilder::new();
         assert!(builder.is_complete());
-        builder.start_element("root", None, None, vec![], vec![]);
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
         assert!(!builder.is_complete());
         builder.end_element();
         assert!(builder.is_complete());
@@ -940,7 +964,7 @@ mod tests {
     #[test]
     fn test_builder_cdata() {
         let mut builder = EditableNodeBuilder::new();
-        builder.start_element("root", None, None, vec![], vec![]);
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
         builder.cdata("<special>");
         builder.end_element();
         let node = builder.build().unwrap();
@@ -952,7 +976,7 @@ mod tests {
     #[test]
     fn test_builder_comment() {
         let mut builder = EditableNodeBuilder::new();
-        builder.start_element("root", None, None, vec![], vec![]);
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
         builder.comment("This is a comment");
         builder.end_element();
         let node = builder.build().unwrap();

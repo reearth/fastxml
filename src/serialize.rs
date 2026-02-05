@@ -182,7 +182,21 @@ impl<W: Write> XmlSerializer<W> {
 
         // Attributes
         for (name, value) in &attributes {
-            write!(self.writer, " {}=\"{}\"", name, escape_attribute(value))?;
+            let attr_qname = if let Some((prefix, _uri)) = node.get_attribute_ns_info(name) {
+                if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}:{}", prefix, name)
+                }
+            } else {
+                name.clone()
+            };
+            write!(
+                self.writer,
+                " {}=\"{}\"",
+                attr_qname,
+                escape_attribute(value)
+            )?;
         }
 
         if children.is_empty() {

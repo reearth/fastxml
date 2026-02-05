@@ -1440,3 +1440,139 @@ fn test_collect_multi_three_xpaths() {
     assert_eq!(b_vals, vec!["2", "5"]);
     assert_eq!(c_vals, vec!["3", "6"]);
 }
+
+// =============================================================================
+// Attribute Namespace Preservation Tests
+// =============================================================================
+
+mod attribute_namespace_tests {
+    use super::*;
+
+    /// Test that xlink:href is serialized as xlink:href (not just href)
+    #[test]
+    fn test_attribute_prefix_preserved_in_serialization() {
+        let xml = r#"<root xmlns:xlink="http://www.w3.org/1999/xlink">
+            <item xlink:href="http://example.com"/>
+        </root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .namespace("xlink", "http://www.w3.org/1999/xlink")
+            .on("//item", |node: &mut EditableNode| {
+                node.set_attribute("found", "yes");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        // The attribute should keep its xlink: prefix
+        assert!(
+            result.contains("xlink:href"),
+            "Expected 'xlink:href' in output, got: {}",
+            result
+        );
+    }
+
+    /// Test that namespace-uri() works on attributes via XPath
+    #[test]
+    fn test_attribute_namespace_uri_xpath_match() {
+        let xml = r#"<root xmlns:xlink="http://www.w3.org/1999/xlink">
+            <item xlink:href="http://example.com">text</item>
+        </root>"#;
+
+        let mut matched = false;
+
+        StreamTransformer::new(xml)
+            .namespace("xlink", "http://www.w3.org/1999/xlink")
+            .allow_fallback()
+            .on(
+                "//*[@*[namespace-uri()='http://www.w3.org/1999/xlink' and local-name()='href']]",
+                |_node: &mut EditableNode| {
+                    matched = true;
+                },
+            )
+            .for_each()
+            .unwrap();
+
+        assert!(
+            matched,
+            "XPath with namespace-uri() on attribute should match"
+        );
+    }
+
+    /// Test that to_xml_with_namespaces() includes xmlns:xlink when attribute uses xlink prefix
+    #[test]
+    fn test_to_xml_with_namespaces_includes_attribute_prefix() {
+        let xml = r#"<root xmlns:xlink="http://www.w3.org/1999/xlink">
+            <item xlink:href="http://example.com"/>
+        </root>"#;
+
+        let mut fragment_xml = String::new();
+        StreamTransformer::new(xml)
+            .with_root_namespaces()
+            .unwrap()
+            .on("//item", |node: &mut EditableNode| {
+                fragment_xml = node.to_xml_with_namespaces().unwrap();
+            })
+            .for_each()
+            .unwrap();
+
+        // The fragment should include xmlns:xlink because the attribute uses the xlink prefix
+        assert!(
+            fragment_xml.contains("xmlns:xlink"),
+            "Expected 'xmlns:xlink' in fragment, got: {}",
+            fragment_xml
+        );
+        assert!(
+            fragment_xml.contains("xlink:href"),
+            "Expected 'xlink:href' in fragment, got: {}",
+            fragment_xml
+        );
+    }
+
+    /// Test that self-closing elements also preserve attribute prefixes
+    /// (add_empty_to_builder delegates to add_start_to_builder)
+    #[test]
+    fn test_attribute_prefix_preserved_self_closing() {
+        let xml =
+            r#"<root xmlns:xlink="http://www.w3.org/1999/xlink"><item xlink:href="http://example.com"/></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .namespace("xlink", "http://www.w3.org/1999/xlink")
+            .on("//item", |node: &mut EditableNode| {
+                node.set_attribute("found", "yes");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(
+            result.contains("xlink:href"),
+            "Self-closing element should preserve attribute prefix, got: {}",
+            result
+        );
+    }
+
+    /// Test with gml:id (common in CityGML/PLATEAU)
+    #[test]
+    fn test_gml_id_attribute_prefix_preserved() {
+        let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:Point gml:id="p1"><gml:pos>1.0 2.0</gml:pos></gml:Point></root>"#;
+
+        let result = StreamTransformer::new(xml)
+            .namespace("gml", "http://www.opengis.net/gml")
+            .on("//gml:Point", |node: &mut EditableNode| {
+                node.set_attribute("found", "yes");
+            })
+            .run()
+            .unwrap()
+            .to_string()
+            .unwrap();
+
+        assert!(
+            result.contains("gml:id"),
+            "Expected 'gml:id' in output, got: {}",
+            result
+        );
+    }
+}

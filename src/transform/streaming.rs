@@ -519,6 +519,7 @@ fn add_start_to_builder(
     let namespace_uri = prefix.and_then(|p| namespaces.get(p).map(|s| s.as_str()));
 
     let mut attributes = Vec::new();
+    let mut attr_ns_info = Vec::new();
     let mut ns_decls = Vec::new();
 
     for attr in e.attributes().filter_map(|a| a.ok()) {
@@ -533,11 +534,16 @@ fn add_start_to_builder(
             ns_decls.push(Namespace::new("", value.as_ref()));
         } else {
             // Store attributes with local names only (libxml compatible)
-            let local_name = match key.split_once(':') {
-                Some((_, local)) => local,
-                None => key,
+            let (attr_prefix, local_name) = match key.split_once(':') {
+                Some((p, local)) => (Some(p), local),
+                None => (None, key),
             };
             attributes.push((local_name.to_string(), value.to_string()));
+            if let Some(p) = attr_prefix {
+                if let Some(uri) = namespaces.get(p) {
+                    attr_ns_info.push((local_name.to_string(), p.to_string(), uri.clone()));
+                }
+            }
         }
     }
 
@@ -546,8 +552,19 @@ fn add_start_to_builder(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+    let attr_ns_refs: Vec<(&str, &str, &str)> = attr_ns_info
+        .iter()
+        .map(|(l, p, u)| (l.as_str(), p.as_str(), u.as_str()))
+        .collect();
 
-    builder.start_element(name, prefix, namespace_uri, attr_refs, ns_decls);
+    builder.start_element(
+        name,
+        prefix,
+        namespace_uri,
+        attr_refs,
+        attr_ns_refs,
+        ns_decls,
+    );
 
     Ok(())
 }
