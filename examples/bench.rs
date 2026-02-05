@@ -42,6 +42,7 @@ use fastxml::schema::validator::OnePassSchemaValidator;
 use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
 use fastxml::schema::{DefaultFetcher, ResolveOptions, resolve_schema_from_xml};
+use fastxml::transform::{StreamTransformer, StreamTransformerReader};
 use fastxml::{evaluate, parse};
 
 // =============================================================================
@@ -96,6 +97,8 @@ enum Pattern {
 enum ProcessingMode {
     Dom,
     Streaming,
+    Transform,
+    TransformReader,
     Both,
 }
 
@@ -106,6 +109,8 @@ enum InternalMode {
     DomValidate,
     Streaming,
     StreamingValidate,
+    Transform,
+    TransformReader,
     #[cfg(feature = "compare-libxml")]
     Libxml,
     #[cfg(feature = "compare-libxml")]
@@ -293,6 +298,8 @@ fn run_subprocess(
         InternalMode::DomValidate => "dom-validate",
         InternalMode::Streaming => "streaming",
         InternalMode::StreamingValidate => "streaming-validate",
+        InternalMode::Transform => "transform",
+        InternalMode::TransformReader => "transform-reader",
         #[cfg(feature = "compare-libxml")]
         InternalMode::Libxml => "libxml",
         #[cfg(feature = "compare-libxml")]
@@ -820,6 +827,124 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
     }));
 }
 
+/// Run transform benchmark in subprocess mode (outputs JSON)
+fn run_transform_subprocess(content: &[u8], iterations: usize) {
+    // Convert to string since StreamTransformer requires &str
+    let input = match std::str::from_utf8(content) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to convert to UTF-8: {}", e);
+            return;
+        }
+    };
+
+    let mem_before = get_memory_usage();
+    let mut total_time = Duration::ZERO;
+    let mut transform_count = 0usize;
+    let mut output_size = 0usize;
+
+    for i in 0..iterations {
+        let start = Instant::now();
+
+        // Use a simple identity transform on all elements (worst case for memory)
+        let result = StreamTransformer::new(input)
+            .with_root_namespaces()
+            .ok()
+            .map(|t| {
+                t.on("//*", |_node| {
+                    // no-op: just measure the overhead of building DOM subtrees
+                })
+                .run()
+            });
+
+        total_time += start.elapsed();
+
+        if i == 0 {
+            if let Some(Ok(output)) = result {
+                transform_count = output.count();
+                output_size = output.into_bytes().len();
+            }
+        }
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_time = total_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+    let memory_delta = match (mem_before, mem_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+
+    output_json_result(&json!({
+        "mode": "transform",
+        "parse_time_ms": avg_time.as_secs_f64() * 1000.0,
+        "throughput_mb_s": throughput,
+        "memory_delta_bytes": memory_delta,
+        "transform_count": transform_count,
+        "output_size": output_size,
+    }));
+}
+
+/// Run reader-based transform benchmark in subprocess mode (outputs JSON)
+///
+/// Reads directly from the file via BufReader and writes to sink to
+/// properly measure the memory-efficient reader-based approach.
+fn run_transform_reader_subprocess(content: &[u8], iterations: usize, file_path: &str) {
+    // Extract namespaces from the content (lightweight - only reads root element)
+    let ns_map = match std::str::from_utf8(content) {
+        Ok(s) => fastxml::namespace::extract_root_namespaces(s).unwrap_or_default(),
+        Err(_) => std::collections::HashMap::new(),
+    };
+    let file_size = content.len();
+
+    let mem_before = get_memory_usage();
+    let mut total_time = Duration::ZERO;
+    let mut transform_count = 0usize;
+
+    for i in 0..iterations {
+        let start = Instant::now();
+
+        // Read directly from file, write to sink - the true streaming path
+        let file = std::fs::File::open(file_path).unwrap();
+        let reader = std::io::BufReader::with_capacity(64 * 1024, file);
+
+        let mut transformer = StreamTransformerReader::new(reader);
+        for (prefix, uri) in &ns_map {
+            transformer = transformer.namespace(prefix, uri);
+        }
+
+        let result = transformer
+            .on("//*", |_node| {})
+            .run_to_writer(&mut std::io::sink());
+
+        total_time += start.elapsed();
+
+        if i == 0 {
+            if let Ok(count) = result {
+                transform_count = count;
+            }
+        }
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_time = total_time / iterations as u32;
+    let throughput = file_size as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+    let memory_delta = match (mem_before, mem_after) {
+        (Some(before), Some(after)) => Some(after.saturating_sub(before)),
+        _ => None,
+    };
+
+    output_json_result(&json!({
+        "mode": "transform-reader",
+        "parse_time_ms": avg_time.as_secs_f64() * 1000.0,
+        "throughput_mb_s": throughput,
+        "memory_delta_bytes": memory_delta,
+        "transform_count": transform_count,
+    }));
+}
+
 // =============================================================================
 // Normal Mode Benchmarks (print to console)
 // =============================================================================
@@ -846,6 +971,18 @@ fn print_json_result(result: &JsonValue, prefix: &str) {
 
     if let Some(mem) = result["memory_delta_bytes"].as_u64() {
         println!("    {} mem: Δ {}", prefix, format_bytes(mem as usize));
+    }
+
+    if let Some(transform_count) = result["transform_count"].as_u64() {
+        println!("    {} transforms: {}", prefix, transform_count);
+    }
+
+    if let Some(output_size) = result["output_size"].as_u64() {
+        println!(
+            "    {} output: {}",
+            prefix,
+            format_bytes(output_size as usize)
+        );
     }
 
     if let Some(errors) = result["validation_errors"].as_u64()
@@ -1116,6 +1253,109 @@ fn run_streaming_benchmark(
     }
 }
 
+fn run_transform_benchmark(content: &[u8], iterations: usize) {
+    println!("\n  [Transform]");
+    let input = match std::str::from_utf8(content) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("    Skipped: UTF-8 error: {}", e);
+            return;
+        }
+    };
+
+    let mem_before = get_memory_usage();
+    let mut total_time = Duration::ZERO;
+    let mut transform_count = 0usize;
+
+    for i in 0..iterations {
+        let start = Instant::now();
+
+        let result = StreamTransformer::new(input)
+            .with_root_namespaces()
+            .ok()
+            .map(|t| {
+                t.on("//*", |_node| {
+                    // no-op: measure overhead of building DOM subtrees
+                })
+                .run()
+            });
+
+        total_time += start.elapsed();
+
+        if i == 0 {
+            if let Some(Ok(ref output)) = result {
+                transform_count = output.count();
+            }
+        }
+    }
+
+    let mem_after = get_memory_usage();
+    let avg_time = total_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+    println!(
+        "    Time:       {} ({:.2} MB/s)",
+        format_duration(avg_time),
+        throughput
+    );
+    println!("    Transforms: {}", transform_count);
+
+    if let (Some(before), Some(after)) = (mem_before, mem_after) {
+        println!(
+            "    Memory:     Δ {}",
+            format_bytes(after.saturating_sub(before))
+        );
+    }
+}
+
+fn run_transform_reader_benchmark(content: &[u8], iterations: usize) {
+    println!("\n  [Transform Reader]");
+    let ns_map = match std::str::from_utf8(content) {
+        Ok(s) => fastxml::namespace::extract_root_namespaces(s).unwrap_or_default(),
+        Err(_) => std::collections::HashMap::new(),
+    };
+
+    let mem_before = get_memory_usage();
+    let mut total_time = Duration::ZERO;
+    let mut transform_count = 0usize;
+
+    for i in 0..iterations {
+        let start = Instant::now();
+
+        let reader = std::io::BufReader::with_capacity(64 * 1024, std::io::Cursor::new(content));
+        let mut output = Vec::new();
+
+        let mut transformer = StreamTransformerReader::new(reader);
+        for (prefix, uri) in &ns_map {
+            transformer = transformer.namespace(prefix, uri);
+        }
+
+        let result = transformer.on("//*", |_node| {}).run_to_writer(&mut output);
+
+        total_time += start.elapsed();
+
+        if i == 0 && let Ok(count) = result {
+            transform_count = count;
+        }
+    let mem_after = get_memory_usage();
+    let avg_time = total_time / iterations as u32;
+    let throughput = content.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);
+
+    println!(
+        "    Time:       {} ({:.2} MB/s)",
+        format_duration(avg_time),
+        throughput
+    );
+    println!("    Transforms: {}", transform_count);
+
+    if let (Some(before), Some(after)) = (mem_before, mem_after) {
+        println!(
+            "    Memory:     Δ {}",
+            format_bytes(after.saturating_sub(before))
+        );
+    }
+}
+
 fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: usize) {
     println!();
     print_separator();
@@ -1268,6 +1508,26 @@ fn run_file_benchmark(
                 );
             }
 
+            // Run Transform in subprocess for clean memory measurement
+            println!("\n  [Transform] (subprocess)");
+            if let Some(result) =
+                run_subprocess(InternalMode::Transform, inputs, iterations, cache_dir)
+            {
+                print_json_result(&result, "");
+            } else {
+                run_transform_benchmark(content, iterations);
+            }
+
+            // Run Transform Reader in subprocess for clean memory measurement
+            println!("\n  [Transform Reader] (subprocess)");
+            if let Some(result) =
+                run_subprocess(InternalMode::TransformReader, inputs, iterations, cache_dir)
+            {
+                print_json_result(&result, "");
+            } else {
+                run_transform_reader_benchmark(content, iterations);
+            }
+
             // Validation benchmarks
             if validate {
                 println!("\n  [DOM + Validate] (subprocess)");
@@ -1315,6 +1575,12 @@ fn run_file_benchmark(
                 iterations,
                 schema_info.as_ref().map(|s| &s.compiled),
             );
+        }
+        ProcessingMode::Transform => {
+            run_transform_benchmark(content, iterations);
+        }
+        ProcessingMode::TransformReader => {
+            run_transform_reader_benchmark(content, iterations);
         }
     }
 }
@@ -1373,6 +1639,10 @@ fn main() {
             InternalMode::Streaming => run_streaming_subprocess(&content, args.iterations),
             InternalMode::StreamingValidate => {
                 run_streaming_validate_subprocess(&content, args.iterations, file_path)
+            }
+            InternalMode::Transform => run_transform_subprocess(&content, args.iterations),
+            InternalMode::TransformReader => {
+                run_transform_reader_subprocess(&content, args.iterations, file_path.unwrap_or(""))
             }
             #[cfg(feature = "compare-libxml")]
             InternalMode::Libxml => libxml_bench::run_libxml_subprocess(&content, args.iterations),

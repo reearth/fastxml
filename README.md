@@ -170,6 +170,35 @@ StreamTransformer::new(xml)
     .for_each()?;
 ```
 
+#### Reader-based Transform (Large Files)
+
+For large XML files, use `StreamTransformerReader` to avoid loading the entire file into memory. It reads from any `BufRead` source and writes results incrementally:
+
+```rust
+use fastxml::transform::StreamTransformerReader;
+use std::io::{BufReader, BufWriter};
+use std::fs::File;
+
+let reader = BufReader::new(File::open("large_file.xml")?);
+let mut output = BufWriter::new(File::create("output.xml")?);
+
+// Transform and write to output
+let count = StreamTransformerReader::new(reader)
+    .on("//item[@id='2']", |node| node.set_attribute("modified", "true"))
+    .run_to_writer(&mut output)?;
+
+println!("Transformed {} elements", count);
+
+// Or iterate for side effects only (no output)
+let reader = BufReader::new(File::open("large_file.xml")?);
+let mut ids = Vec::new();
+StreamTransformerReader::new(reader)
+    .on("//item", |node| {
+        ids.push(node.get_attribute("id").unwrap_or_default());
+    })
+    .for_each()?;
+```
+
 #### Auto-detect Namespaces
 
 Extract namespace declarations from the root element without DOM parsing:

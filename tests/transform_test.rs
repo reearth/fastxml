@@ -1534,8 +1534,7 @@ mod attribute_namespace_tests {
     /// (add_empty_to_builder delegates to add_start_to_builder)
     #[test]
     fn test_attribute_prefix_preserved_self_closing() {
-        let xml =
-            r#"<root xmlns:xlink="http://www.w3.org/1999/xlink"><item xlink:href="http://example.com"/></root>"#;
+        let xml = r#"<root xmlns:xlink="http://www.w3.org/1999/xlink"><item xlink:href="http://example.com"/></root>"#;
 
         let result = StreamTransformer::new(xml)
             .namespace("xlink", "http://www.w3.org/1999/xlink")
