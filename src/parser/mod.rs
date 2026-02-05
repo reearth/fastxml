@@ -337,6 +337,52 @@ fn extract_name_parts(qname_bytes: &[u8]) -> Result<(Option<&str>, &str)> {
     Ok((prefix, local_name))
 }
 
+/// Parses xsi:schemaLocation from the root element of an XML stream without building a DOM.
+///
+/// Reads only until the first `Start` or `Empty` element event, extracts the
+/// `xsi:schemaLocation` (or `schemaLocation`) attribute, and returns
+/// (namespace, location) pairs. This avoids allocating a full DOM tree and is
+/// suitable for large XML files where only the schema locations are needed.
+pub fn parse_schema_locations_from_reader<R: BufRead>(reader: R) -> Result<Vec<(String, String)>> {
+    let mut xml_reader = Reader::from_reader(reader);
+    xml_reader.config_mut().trim_text(false);
+
+    let mut buf = Vec::with_capacity(8 * 1024);
+
+    loop {
+        match xml_reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
+                for attr in e.attributes().flatten() {
+                    let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                    // Match the prefixed form (xsi:schemaLocation) or bare form
+                    if key == "xsi:schemaLocation" || key == "schemaLocation" {
+                        let value = attr.unescape_value().map_err(|e| {
+                            crate::parser::error::ParseError::AttributeDecodeError {
+                                message: e.to_string(),
+                            }
+                        })?;
+                        return parse_schema_location_value(&value);
+                    }
+                }
+                // Root element had no schemaLocation attribute
+                return Ok(Vec::new());
+            }
+            Ok(Event::Eof) => return Ok(Vec::new()),
+            Ok(_) => {
+                // Skip declarations, PIs, comments, etc.
+            }
+            Err(e) => {
+                return Err(crate::parser::error::ParseError::AtPosition {
+                    position: xml_reader.buffer_position(),
+                    message: e.to_string(),
+                }
+                .into());
+            }
+        }
+        buf.clear();
+    }
+}
+
 /// Parses xsi:schemaLocation attribute and returns (namespace, location) pairs.
 ///
 /// The schemaLocation attribute value is a whitespace-separated list of
@@ -441,5 +487,37 @@ mod tests {
 
         let result = parse_with_options(&xml, &options);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_schema_locations_from_reader() {
+        let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                          xsi:schemaLocation="http://ns1 schema1.xsd http://ns2 schema2.xsd">
+            <child/>
+        </root>"#;
+        let locations = parse_schema_locations_from_reader(xml.as_bytes()).unwrap();
+
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0], ("http://ns1".into(), "schema1.xsd".into()));
+        assert_eq!(locations[1], ("http://ns2".into(), "schema2.xsd".into()));
+    }
+
+    #[test]
+    fn test_parse_schema_locations_from_reader_no_attribute() {
+        let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <child/>
+        </root>"#;
+        let locations = parse_schema_locations_from_reader(xml.as_bytes()).unwrap();
+        assert!(locations.is_empty());
+    }
+
+    #[test]
+    fn test_parse_schema_locations_from_reader_empty_element() {
+        let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                          xsi:schemaLocation="http://ns1 schema1.xsd" />"#;
+        let locations = parse_schema_locations_from_reader(xml.as_bytes()).unwrap();
+
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0], ("http://ns1".into(), "schema1.xsd".into()));
     }
 }

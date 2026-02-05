@@ -57,11 +57,8 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
     output_dir: &Path,
     fetcher: &F,
 ) -> Result<ExportResult> {
-    use crate::parser::parse_schema_locations;
-
-    // Parse XML to get schema locations
-    let doc = crate::parse(xml_content)?;
-    let locations = parse_schema_locations(&doc)?;
+    // Stream only the root element to extract schema locations (no full DOM parse)
+    let locations = crate::parser::parse_schema_locations_from_reader(xml_content)?;
 
     if locations.is_empty() {
         return Ok(ExportResult {

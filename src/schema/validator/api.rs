@@ -242,11 +242,8 @@ pub fn get_schema_from_schema_location_with_fetcher<F: SchemaFetcher>(
     xml_content: &[u8],
     fetcher: &F,
 ) -> Result<CompiledSchema> {
-    use crate::parser::parse_schema_locations;
-
-    // Parse to extract schema locations
-    let doc = crate::parse(xml_content)?;
-    let locations = parse_schema_locations(&doc)?;
+    // Stream only the root element to extract schema locations (no full DOM parse)
+    let locations = crate::parser::parse_schema_locations_from_reader(xml_content)?;
 
     if locations.is_empty() {
         return Ok(crate::schema::xsd::create_builtin_schema());

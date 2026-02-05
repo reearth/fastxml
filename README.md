@@ -27,19 +27,19 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/b
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM | 7.11s | 128 MB/s | 4.19 GB |
-| fastxml DOM | 11.50s | 79 MB/s | 951 MB |
-| fastxml Streaming | 9.86s | 92 MB/s | **~1 MB** |
+| fastxml DOM | 8.0s | 114 MB/s | 805 MB |
+| fastxml Streaming | 4.75s | 191 MB/s | **~1 MB** |
 
 **Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM + validate | 11.10s | 82 MB/s | 3.64 GB |
-| fastxml DOM + validate | 57.20s | 16 MB/s | 1.96 GB |
-| fastxml Streaming | 22.33s | 41 MB/s | **~1 MB** |
+| fastxml DOM + validate | 38.2s | 24 MB/s | 1.96 GB |
+| fastxml Streaming + validate | 15.9s | 57 MB/s | **~25 MB** |
 
-- **DOM**: 4.4x less memory than libxml
-- **Streaming**: ~41 MB/s consistent throughput with minimal memory (~1 MB regardless of file size)
+- **DOM**: 5.2x less memory than libxml
+- **Streaming parse + validate**: 57 MB/s throughput with ~25 MB memory regardless of file size
 
 ## Installation
 
