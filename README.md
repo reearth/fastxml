@@ -45,7 +45,7 @@ Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/b
 
 ```toml
 [dependencies]
-fastxml = "0.7"
+fastxml = "0.8"
 ```
 
 ### Cargo Features
