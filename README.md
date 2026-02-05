@@ -59,10 +59,10 @@ fastxml = "0.7"
 
 ```toml
 # Recommended: sync schema fetching
-fastxml = { version = "0.6", features = ["ureq"] }
+fastxml = { version = "0.7", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.6", features = ["tokio"] }
+fastxml = { version = "0.7", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
