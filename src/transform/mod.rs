@@ -114,7 +114,7 @@ pub use xpath_analyze::{
 };
 
 // Re-export XPath types for convenience
-pub use crate::xpath::{Expr, XPathSource};
+pub use crate::xpath::{Expr, XPathResult, XPathSource};
 
 /// Controls how non-streamable XPath expressions are handled.
 ///
@@ -3118,7 +3118,8 @@ mod tests {
 
     #[test]
     fn test_reader_namespaces_method() {
-        let xml = r#"<root xmlns:a="http://a.com" xmlns:b="http://b.com"><a:item/><b:item/></root>"#;
+        let xml =
+            r#"<root xmlns:a="http://a.com" xmlns:b="http://b.com"><a:item/><b:item/></root>"#;
 
         let found = Rc::new(RefCell::new(Vec::new()));
         let found_a = found.clone();

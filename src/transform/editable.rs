@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 
 use crate::document::{DocumentBuilder, XmlDocument};
-use crate::namespace::Namespace;
+use crate::namespace::{Namespace, NamespaceResolver};
 use crate::node::{NodeId, NodeType, XmlNode};
 use crate::serialize::{SerializeOptions, node_to_xml_string_with_options};
+use crate::xpath::evaluator::{XPathEvaluator, XPathResult};
 
 use super::error::{TransformError, TransformResult};
 
@@ -164,6 +165,116 @@ impl EditableNode {
                 doc: &self.doc,
             })
             .collect()
+    }
+
+    // =========================================================================
+    // XPath Evaluation API
+    // =========================================================================
+
+    /// Evaluates an XPath expression against this node's subtree.
+    ///
+    /// This uses the internal `XmlDocument` directly, avoiding the need to
+    /// serialize to XML string and re-parse for XPath evaluation.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("root", None, None, vec![], vec![], vec![]);
+    /// builder.start_element("child", None, None, vec![("id", "1")], vec![], vec![]);
+    /// builder.text("Hello");
+    /// builder.end_element();
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let result = node.evaluate_xpath("//child[@id='1']").unwrap();
+    /// assert_eq!(result.into_nodes().len(), 1);
+    /// ```
+    pub fn evaluate_xpath(&self, xpath: &str) -> TransformResult<XPathResult> {
+        let resolver = self.build_namespace_resolver();
+        let evaluator = XPathEvaluator::with_resolver(&self.doc, resolver);
+        let root = self.root_node();
+        Ok(evaluator.evaluate_from(xpath, &root)?)
+    }
+
+    /// Finds all nodes matching an XPath expression and returns them as `EditableNodeRef`s.
+    ///
+    /// This is a convenience wrapper around `evaluate_xpath()` that filters
+    /// to element nodes only.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// builder.start_element("root", None, None, vec![], vec![], vec![]);
+    /// builder.start_element("item", None, None, vec![("id", "1")], vec![], vec![]);
+    /// builder.text("A");
+    /// builder.end_element();
+    /// builder.start_element("item", None, None, vec![("id", "2")], vec![], vec![]);
+    /// builder.text("B");
+    /// builder.end_element();
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// let items = node.find_by_xpath("//item").unwrap();
+    /// assert_eq!(items.len(), 2);
+    /// assert_eq!(items[0].get_attribute("id"), Some("1".to_string()));
+    /// ```
+    pub fn find_by_xpath(&self, xpath: &str) -> TransformResult<Vec<EditableNodeRef<'_>>> {
+        let result = self.evaluate_xpath(xpath)?;
+        Ok(result
+            .into_nodes()
+            .into_iter()
+            .map(|node| EditableNodeRef {
+                node,
+                doc: &self.doc,
+            })
+            .collect())
+    }
+
+    /// Gets an attribute value by namespace URI and local name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fastxml::transform::EditableNodeBuilder;
+    /// # use fastxml::namespace::Namespace;
+    /// let mut builder = EditableNodeBuilder::new();
+    /// let ns = Namespace::new("gml", "http://www.opengis.net/gml");
+    /// builder.start_element(
+    ///     "Feature", None, None,
+    ///     vec![("id", "f1")],
+    ///     vec![("id", "gml", "http://www.opengis.net/gml")],
+    ///     vec![ns],
+    /// );
+    /// builder.end_element();
+    /// let node = builder.build().unwrap();
+    ///
+    /// assert_eq!(
+    ///     node.get_attribute_ns("http://www.opengis.net/gml", "id"),
+    ///     Some("f1".to_string()),
+    /// );
+    /// ```
+    pub fn get_attribute_ns(&self, namespace_uri: &str, local_name: &str) -> Option<String> {
+        let root = self.root_node();
+        if let Some((_prefix, uri)) = root.get_attribute_ns_info(local_name) {
+            if uri == namespace_uri {
+                return root.get_attribute(local_name);
+            }
+        }
+        None
+    }
+
+    /// Builds a namespace resolver that combines the document's own namespaces
+    /// with the externally registered namespaces (from StreamTransformer).
+    fn build_namespace_resolver(&self) -> NamespaceResolver {
+        let mut resolver = self.doc.namespace_resolver().read().clone();
+        for (prefix, uri) in &self.namespaces {
+            resolver.register(prefix, uri);
+        }
+        resolver
     }
 
     // =========================================================================
@@ -497,7 +608,6 @@ impl TryFrom<EditableNode> for String {
 /// A read-only reference to a child node within an EditableNode.
 pub struct EditableNodeRef<'a> {
     node: XmlNode,
-    #[allow(dead_code)]
     doc: &'a XmlDocument,
 }
 
@@ -522,6 +632,11 @@ impl<'a> EditableNodeRef<'a> {
         self.node.get_prefix()
     }
 
+    /// Returns the namespace URI.
+    pub fn namespace_uri(&self) -> Option<String> {
+        self.node.get_namespace_uri()
+    }
+
     /// Returns the text content.
     pub fn get_content(&self) -> Option<String> {
         self.node.get_content()
@@ -532,9 +647,43 @@ impl<'a> EditableNodeRef<'a> {
         self.node.get_attribute(name)
     }
 
+    /// Gets an attribute value by namespace URI and local name.
+    pub fn get_attribute_ns(&self, namespace_uri: &str, local_name: &str) -> Option<String> {
+        if let Some((_prefix, uri)) = self.node.get_attribute_ns_info(local_name) {
+            if uri == namespace_uri {
+                return self.node.get_attribute(local_name);
+            }
+        }
+        None
+    }
+
     /// Returns all attributes.
     pub fn get_attributes(&self) -> IndexMap<String, String> {
         self.node.get_attributes()
+    }
+
+    /// Returns child element nodes.
+    pub fn children(&self) -> Vec<EditableNodeRef<'a>> {
+        self.node
+            .get_child_elements()
+            .into_iter()
+            .map(|node| EditableNodeRef {
+                node,
+                doc: self.doc,
+            })
+            .collect()
+    }
+
+    /// Returns all child nodes (including text, comments, etc.).
+    pub fn child_nodes(&self) -> Vec<EditableNodeRef<'a>> {
+        self.node
+            .get_child_nodes()
+            .into_iter()
+            .map(|node| EditableNodeRef {
+                node,
+                doc: self.doc,
+            })
+            .collect()
     }
 
     /// Returns true if this is an element node.
@@ -1130,5 +1279,271 @@ mod tests {
         let xml: String = node.try_into().unwrap();
         assert!(xml.contains("<item"));
         assert!(xml.contains("Hello"));
+    }
+
+    // =========================================================================
+    // XPath Evaluation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_evaluate_xpath_simple() {
+        let node = create_nested_node();
+        let result = node.evaluate_xpath("//child1").unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].get_name(), "child1");
+    }
+
+    #[test]
+    fn test_evaluate_xpath_with_predicate() {
+        let node = create_nested_node();
+        let result = node.evaluate_xpath("//*[@name='second']").unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].get_name(), "child2");
+    }
+
+    #[test]
+    fn test_find_by_xpath() {
+        let node = create_nested_node();
+        let refs = node.find_by_xpath("/root/*").unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].name(), "child1");
+        assert_eq!(refs[1].name(), "child2");
+    }
+
+    #[test]
+    fn test_evaluate_xpath_text_content() {
+        let node = create_nested_node();
+        let result = node.evaluate_xpath("//child1/text()").unwrap();
+        assert_eq!(result.to_string_value(), "Child 1 text");
+    }
+
+    #[test]
+    fn test_evaluate_xpath_with_namespaces() {
+        let mut namespaces = HashMap::new();
+        namespaces.insert("ns".to_string(), "http://example.com".to_string());
+
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("ns", "http://example.com");
+        builder.set_namespaces(namespaces.clone());
+        builder.start_element(
+            "root",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![],
+            vec![],
+            vec![ns.clone()],
+        );
+        builder.start_element(
+            "child",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![],
+            vec![],
+            vec![],
+        );
+        builder.text("Hello");
+        builder.end_element();
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        let result = node.evaluate_xpath("//ns:child").unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].get_name(), "child");
+    }
+
+    #[test]
+    fn test_evaluate_xpath_no_match() {
+        let node = create_nested_node();
+        let refs = node.find_by_xpath("//nonexistent").unwrap();
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_evaluate_xpath_invalid() {
+        let node = create_nested_node();
+        let result = node.evaluate_xpath("[[[invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_evaluate_xpath_local_name() {
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("ns", "http://example.com");
+        builder.start_element(
+            "root",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![],
+            vec![],
+            vec![ns.clone()],
+        );
+        builder.start_element(
+            "item",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![("id", "1")],
+            vec![],
+            vec![],
+        );
+        builder.text("A");
+        builder.end_element();
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        let result = node.evaluate_xpath("//*[local-name()='item']").unwrap();
+        let nodes = result.into_nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].get_attribute("id"), Some("1".to_string()));
+    }
+
+    // =========================================================================
+    // get_attribute_ns Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_attribute_ns_found() {
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("gml", "http://www.opengis.net/gml");
+        builder.start_element(
+            "Feature",
+            None,
+            None,
+            vec![("id", "f1")],
+            vec![("id", "gml", "http://www.opengis.net/gml")],
+            vec![ns],
+        );
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        assert_eq!(
+            node.get_attribute_ns("http://www.opengis.net/gml", "id"),
+            Some("f1".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_get_attribute_ns_not_found() {
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("gml", "http://www.opengis.net/gml");
+        builder.start_element(
+            "Feature",
+            None,
+            None,
+            vec![("id", "f1")],
+            vec![("id", "gml", "http://www.opengis.net/gml")],
+            vec![ns],
+        );
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        // Wrong URI should return None
+        assert_eq!(node.get_attribute_ns("http://wrong.uri", "id"), None,);
+    }
+
+    // =========================================================================
+    // EditableNodeRef children / namespace_uri Tests
+    // =========================================================================
+
+    #[test]
+    fn test_editable_node_ref_children() {
+        let mut builder = EditableNodeBuilder::new();
+        builder.start_element("root", None, None, vec![], vec![], vec![]);
+        builder.start_element("parent", None, None, vec![], vec![], vec![]);
+        builder.start_element("grandchild1", None, None, vec![], vec![], vec![]);
+        builder.text("gc1");
+        builder.end_element();
+        builder.start_element("grandchild2", None, None, vec![], vec![], vec![]);
+        builder.text("gc2");
+        builder.end_element();
+        builder.end_element();
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        // Get children of root → parent
+        let children = node.children();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name(), "parent");
+
+        // Recursive: get children of parent → grandchild1, grandchild2
+        let grandchildren = children[0].children();
+        assert_eq!(grandchildren.len(), 2);
+        assert_eq!(grandchildren[0].name(), "grandchild1");
+        assert_eq!(grandchildren[1].name(), "grandchild2");
+        assert_eq!(grandchildren[0].get_content(), Some("gc1".to_string()),);
+    }
+
+    #[test]
+    fn test_editable_node_ref_child_nodes() {
+        let node = create_nested_node();
+        let children = node.children();
+        // child1 should have a text child node
+        let child_nodes = children[0].child_nodes();
+        assert!(!child_nodes.is_empty());
+        let text_node = child_nodes.iter().find(|n| n.is_text());
+        assert!(text_node.is_some());
+        assert_eq!(
+            text_node.unwrap().get_content(),
+            Some("Child 1 text".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_editable_node_ref_namespace_uri() {
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("ns", "http://example.com");
+        builder.start_element(
+            "root",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![],
+            vec![],
+            vec![ns.clone()],
+        );
+        builder.start_element(
+            "child",
+            Some("ns"),
+            Some("http://example.com"),
+            vec![],
+            vec![],
+            vec![],
+        );
+        builder.end_element();
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        let children = node.children();
+        assert_eq!(children.len(), 1);
+        assert_eq!(
+            children[0].namespace_uri(),
+            Some("http://example.com".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_editable_node_ref_get_attribute_ns() {
+        let mut builder = EditableNodeBuilder::new();
+        let ns = Namespace::new("gml", "http://www.opengis.net/gml");
+        builder.start_element("root", None, None, vec![], vec![], vec![ns.clone()]);
+        builder.start_element(
+            "child",
+            None,
+            None,
+            vec![("id", "c1")],
+            vec![("id", "gml", "http://www.opengis.net/gml")],
+            vec![],
+        );
+        builder.end_element();
+        builder.end_element();
+        let node = builder.build().unwrap();
+
+        let children = node.children();
+        assert_eq!(
+            children[0].get_attribute_ns("http://www.opengis.net/gml", "id"),
+            Some("c1".to_string()),
+        );
+        assert_eq!(children[0].get_attribute_ns("http://wrong.uri", "id"), None,);
     }
 }

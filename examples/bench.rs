@@ -859,11 +859,11 @@ fn run_transform_subprocess(content: &[u8], iterations: usize) {
 
         total_time += start.elapsed();
 
-        if i == 0 {
-            if let Some(Ok(output)) = result {
-                transform_count = output.count();
-                output_size = output.into_bytes().len();
-            }
+        if i == 0
+            && let Some(Ok(output)) = result
+        {
+            transform_count = output.count();
+            output_size = output.into_bytes().len();
         }
     }
 
@@ -920,10 +920,10 @@ fn run_transform_reader_subprocess(content: &[u8], iterations: usize, file_path:
 
         total_time += start.elapsed();
 
-        if i == 0 {
-            if let Ok(count) = result {
-                transform_count = count;
-            }
+        if i == 0
+            && let Ok(count) = result
+        {
+            transform_count = count;
         }
     }
 
@@ -1282,10 +1282,10 @@ fn run_transform_benchmark(content: &[u8], iterations: usize) {
 
         total_time += start.elapsed();
 
-        if i == 0 {
-            if let Some(Ok(ref output)) = result {
-                transform_count = output.count();
-            }
+        if i == 0
+            && let Some(Ok(ref output)) = result
+        {
+            transform_count = output.count();
         }
     }
 
@@ -1334,9 +1334,12 @@ fn run_transform_reader_benchmark(content: &[u8], iterations: usize) {
 
         total_time += start.elapsed();
 
-        if i == 0 && let Ok(count) = result {
+        if i == 0
+            && let Ok(count) = result
+        {
             transform_count = count;
         }
+    }
     let mem_after = get_memory_usage();
     let avg_time = total_time / iterations as u32;
     let throughput = content.len() as f64 / avg_time.as_secs_f64() / (1024.0 * 1024.0);

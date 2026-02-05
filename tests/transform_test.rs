@@ -1575,3 +1575,74 @@ mod attribute_namespace_tests {
         );
     }
 }
+
+// =============================================================================
+// XPath Evaluation on EditableNode Tests
+// =============================================================================
+
+mod xpath_evaluation_tests {
+    use fastxml::transform::{EditableNode, StreamTransformer};
+
+    #[test]
+    fn test_stream_transformer_with_xpath_evaluation() {
+        let xml = r#"<root>
+            <item id="1"><name>Alice</name><age>30</age></item>
+            <item id="2"><name>Bob</name><age>25</age></item>
+        </root>"#;
+
+        let mut names = Vec::new();
+        StreamTransformer::new(xml)
+            .on("//item", |node: &mut EditableNode| {
+                let found = node.find_by_xpath(".//name").unwrap();
+                if let Some(name_node) = found.first()
+                    && let Some(content) = name_node.get_content()
+                {
+                    names.push(content);
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(names, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn test_stream_transformer_with_namespaced_xpath() {
+        let xml = r#"<root xmlns:ns="http://example.com">
+            <ns:item id="1"><ns:name>Alice</ns:name></ns:item>
+            <ns:item id="2"><ns:name>Bob</ns:name></ns:item>
+        </root>"#;
+
+        let mut names = Vec::new();
+        StreamTransformer::new(xml)
+            .namespace("ns", "http://example.com")
+            .on("//ns:item", |node: &mut EditableNode| {
+                let found = node.find_by_xpath(".//*[local-name()='name']").unwrap();
+                if let Some(name_node) = found.first()
+                    && let Some(content) = name_node.get_content()
+                {
+                    names.push(content);
+                }
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(names, vec!["Alice", "Bob"]);
+    }
+
+    #[test]
+    fn test_stream_transformer_evaluate_xpath_result_types() {
+        let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+
+        let mut count = 0.0;
+        StreamTransformer::new(xml)
+            .on("//root", |node: &mut EditableNode| {
+                let result = node.evaluate_xpath("count(//item)").unwrap();
+                count = result.to_number();
+            })
+            .for_each()
+            .unwrap();
+
+        assert_eq!(count, 2.0);
+    }
+}
