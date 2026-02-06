@@ -12,4 +12,4 @@ mod tests;
 pub use ast::{Axis, ComparisonOp, Expr, NodeTest, PathExpr, Predicate, Step};
 
 // Re-export parser
-pub use impl_::{parse_xpath, Parser};
+pub use impl_::{Parser, parse_xpath};
