@@ -131,6 +131,55 @@ XML Data → StreamingParser → [DocumentBuilder, OnePassSchemaValidator]
 - `tests/common/mod.rs` contains shared test utilities
 - libxml comparison tests require `libxml2-dev` system package
 
+## Conformance Testing
+
+The `conformance/` workspace member provides W3C/OASIS standard compliance testing:
+
+### Test Suites
+
+| Test Suite | Tests | Target |
+|-----------|-------|--------|
+| W3C XML Conformance | 2,000+ | XML Parsing (DOM & Streaming) |
+| W3C XML Schema | ~40,000 | XSD Validation (DOM & Streaming) |
+| OASIS XPath 1.0 | Hundreds | XPath Evaluation |
+
+### Running Conformance Tests
+
+```bash
+# Run tests (skips if data not available)
+cargo test -p fastxml-conformance
+
+# Download test data and run tests
+FASTXML_DOWNLOAD_TESTS=1 cargo test -p fastxml-conformance
+
+# Run specific test suite
+cargo test -p fastxml-conformance w3c_xml_conformance_dom       # DOM parsing
+cargo test -p fastxml-conformance w3c_xml_conformance_streaming # Streaming parsing
+cargo test -p fastxml-conformance w3c_xsd_conformance_dom       # DOM validation
+cargo test -p fastxml-conformance w3c_xsd_conformance_streaming # Streaming validation
+cargo test -p fastxml-conformance oasis_xpath                   # XPath evaluation
+
+# Download test data manually
+cargo run -p fastxml-conformance --bin download
+```
+
+### Conformance Test Structure
+
+```
+conformance/
+├── src/
+│   ├── lib.rs              # Common utilities and macros
+│   ├── downloader.rs       # Test data download/extraction
+│   ├── reporter.rs         # Conformance report generation
+│   └── catalog/            # Test catalog parsers
+└── tests/
+    ├── w3c_xml.rs          # W3C XML tests (DOM & Streaming)
+    ├── w3c_xsd.rs          # W3C XSD tests (DomValidator & OnePassSchemaValidator)
+    └── oasis_xpath.rs      # OASIS XPath tests
+```
+
+Test data is downloaded to `conformance/data/` (gitignored).
+
 ## Development Guidelines
 
 ### TDD (Test-Driven Development)

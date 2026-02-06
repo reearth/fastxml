@@ -20,7 +20,7 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ## Performance
 
-Benchmark on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/bench.rs):
+Benchmark results as of v0.8.0 on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/bench.rs):
 
 **Parse only:**
 
@@ -476,6 +476,23 @@ let buildings = evaluate(&doc, "//bldg:Building")?;
 - Catalog support
 - Full entity expansion
 
+## Conformance
+
+Conformance test results as of v0.8.0. See [conformance/](conformance/) for details.
+
+| Test Suite | Category | Pass Rate |
+|------------|----------|-----------|
+| W3C XML | valid documents | 89.9% |
+| W3C XML | invalid documents | 91.2% |
+| W3C XSD | schema compilation | 96.8% |
+| W3C XSD | instance validation | 70.3% |
+
+```bash
+# Run conformance tests (requires test data download)
+cargo run -p fastxml-conformance --bin download
+cargo test -p fastxml-conformance
+```
+
 ## Development
 
 ```bash
@@ -483,18 +500,11 @@ cargo test                              # Run tests
 cargo test --features tokio             # With async tests
 cargo test --features compare-libxml    # With libxml comparison
 cargo bench                             # Benchmarks
-```
 
-### Examples
+# Validate XML files against XSD schema
+cargo run --release --features ureq --bin fastxml-validate -- ./file.xml
 
-```bash
-# Async schema resolution
-cargo run --example async_schema_resolution --features tokio
-
-# Schema validation
-cargo run --example schema_validation --features ureq
-
-# Benchmark CLI
+# Benchmarks with an external xml file
 cargo run --release --example bench -- ./file.xml
 cargo run --release --features ureq --example bench -- ./file.xml --validate
 ```

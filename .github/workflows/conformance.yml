@@ -1,0 +1,96 @@
+name: Conformance Tests
+
+on:
+  # Allow manual trigger
+  workflow_dispatch:
+  # Run on PRs that touch conformance tests
+  pull_request:
+    paths:
+      - 'conformance/**'
+      - '.github/workflows/conformance.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  conformance:
+    name: Run Conformance Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-conformance-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-conformance-
+
+      - name: Cache conformance test data
+        uses: actions/cache@v4
+        with:
+          path: conformance/data
+          key: conformance-data-v1
+
+      - name: Download test data
+        run: |
+          mkdir -p conformance/data
+          # Download W3C XML Conformance Test Suite
+          if [ ! -d "conformance/data/w3c-xml" ]; then
+            echo "Downloading W3C XML test suite..."
+            curl -sL https://www.w3.org/XML/Test/xmlts20130923.tar.gz -o /tmp/xmlts.tar.gz
+            mkdir -p conformance/data/w3c-xml
+            tar -xzf /tmp/xmlts.tar.gz -C conformance/data/w3c-xml
+          fi
+          # Clone W3C XSD Test Suite (shallow)
+          if [ ! -d "conformance/data/w3c-xsd" ]; then
+            echo "Cloning W3C XSD test suite..."
+            git clone --depth 1 https://github.com/w3c/xsdtests.git conformance/data/w3c-xsd/xsdtests
+          fi
+
+      - name: Build conformance tests
+        run: cargo build -p fastxml-conformance --tests
+
+      - name: Run W3C XML conformance tests (DOM)
+        run: cargo test -p fastxml-conformance w3c_xml_conformance_dom -- --nocapture
+        continue-on-error: true
+
+      - name: Run W3C XML conformance tests (Streaming)
+        run: cargo test -p fastxml-conformance w3c_xml_conformance_streaming -- --nocapture
+        continue-on-error: true
+
+      - name: Run W3C XSD conformance tests (DOM)
+        run: cargo test -p fastxml-conformance w3c_xsd_conformance_dom -- --nocapture
+        continue-on-error: true
+
+      - name: Run W3C XSD conformance tests (Streaming)
+        run: cargo test -p fastxml-conformance w3c_xsd_conformance_streaming -- --nocapture
+        continue-on-error: true
+
+      - name: Run basic validation tests
+        run: |
+          cargo test -p fastxml-conformance basic_xsd_validation -- --nocapture
+          cargo test -p fastxml-conformance dom_streaming_consistency -- --nocapture
+          cargo test -p fastxml-conformance basic_xpath -- --nocapture
+          cargo test -p fastxml-conformance xpath_axes -- --nocapture
+          cargo test -p fastxml-conformance xpath_string_functions -- --nocapture
+          cargo test -p fastxml-conformance xpath_number_functions -- --nocapture
+
+      - name: Generate report
+        run: cargo run -p fastxml-conformance --bin report -- --json > conformance-report.json
+        continue-on-error: true
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conformance-report
+          path: conformance-report.json
+          retention-days: 30

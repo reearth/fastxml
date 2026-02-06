@@ -115,3 +115,6 @@ required-features = ["tokio"]
 name = "fastxml-validate"
 path = "src/bin/validate.rs"
 required-features = ["ureq"]
+
+[workspace]
+members = ["conformance"]
