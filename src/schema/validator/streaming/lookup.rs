@@ -10,20 +10,17 @@ use crate::schema::xsd::facets::FacetConstraints;
 use super::OnePassSchemaValidator;
 
 impl OnePassSchemaValidator {
-    /// Optimized element lookup: tries local name first, then qname, then namespace URI.
-    /// Avoids constructing qname string unless necessary.
+    /// Optimized element lookup: tries qname first (when prefix present), then local name,
+    /// then namespace URI.
     pub(crate) fn lookup_element_optimized(
         &self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
         namespace_uri: Option<&str>,
     ) -> Option<&ElementDef> {
-        // Try local name first (most common case for elements without prefix)
-        if let Some(elem) = self.schema.get_element(name.as_ref()) {
-            return Some(elem);
-        }
-
-        // If prefix exists, try qname
+        // If prefix exists, try qname FIRST to ensure correct namespace resolution.
+        // This is critical when multiple namespaces define elements with the same local name
+        // (e.g., bldg:WallSurface vs tun:WallSurface vs brid:WallSurface).
         if let Some(p) = prefix {
             if !p.is_empty() {
                 let qname = format!("{}:{}", p.as_ref(), name.as_ref());
@@ -31,6 +28,11 @@ impl OnePassSchemaValidator {
                     return Some(elem);
                 }
             }
+        }
+
+        // Try local name (for elements without prefix or as fallback)
+        if let Some(elem) = self.schema.get_element(name.as_ref()) {
+            return Some(elem);
         }
 
         // If namespace URI exists, try lookup by namespace URI + local name
@@ -47,28 +49,35 @@ impl OnePassSchemaValidator {
 
     /// Gets the pre-computed flattened children for an element from the schema cache.
     ///
-    /// This uses the pre-computed type_children_cache to avoid traversing
-    /// the inheritance chain at validation time. Falls back to computing at runtime
-    /// if the cache is not populated (e.g., for manually-created schemas in tests).
+    /// This uses the namespace-aware `ns_type_children_cache` as the primary lookup,
+    /// which uses (namespace_uri, local_name) keys to avoid cross-namespace collisions.
+    /// Falls back to legacy prefix-based cache and runtime computation.
     pub(crate) fn get_flattened_children_for_element(
         &self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
         // Try to get from type reference first
         if let Some(ref type_ref) = elem.type_ref {
-            // Try cache first - should hit since we pre-populate all common prefixes
+            // Primary: namespace-aware cache lookup
+            if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref) {
+                if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
+                    return Some(Arc::clone(cached));
+                }
+            }
+
+            // Legacy: prefix-based cache lookup
             if let Some(cached) = self.schema.type_children_cache.get(type_ref) {
                 return Some(Arc::clone(cached));
             }
 
-            // Fall back: try without prefix (for manually-created schemas in tests)
+            // Legacy fallback: try without prefix
             if let Some((_prefix, local)) = type_ref.split_once(':') {
                 if let Some(cached) = self.schema.type_children_cache.get(local) {
                     return Some(Arc::clone(cached));
                 }
             }
 
-            // Fall back to computing at runtime if cache is not populated
+            // Last resort: compute at runtime
             if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
                 return Some(Arc::new(self.compute_flattened_children(complex)));
             }
@@ -260,7 +269,13 @@ impl OnePassSchemaValidator {
 
                 // Get flattened children for this inline element
                 let flattened_children = if let Some(ref tr) = type_ref {
-                    // Try cache first
+                    // Try namespace-aware cache first
+                    if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(tr) {
+                        if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
+                            return (type_ref, Some(Arc::clone(cached)));
+                        }
+                    }
+                    // Try legacy cache
                     if let Some(cached) = self.schema.type_children_cache.get(tr) {
                         Some(Arc::clone(cached))
                     } else if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
