@@ -51,33 +51,21 @@ impl OnePassSchemaValidator {
     ///
     /// This uses the namespace-aware `ns_type_children_cache` as the primary lookup,
     /// which uses (namespace_uri, local_name) keys to avoid cross-namespace collisions.
-    /// Falls back to legacy prefix-based cache and runtime computation.
+    /// Falls back to runtime computation if not cached.
     pub(crate) fn get_flattened_children_for_element(
         &self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
         // Try to get from type reference first
         if let Some(ref type_ref) = elem.type_ref {
-            // Primary: namespace-aware cache lookup
+            // Namespace-aware cache lookup
             if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref) {
                 if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
                     return Some(Arc::clone(cached));
                 }
             }
 
-            // Legacy: prefix-based cache lookup
-            if let Some(cached) = self.schema.type_children_cache.get(type_ref) {
-                return Some(Arc::clone(cached));
-            }
-
-            // Legacy fallback: try without prefix
-            if let Some((_prefix, local)) = type_ref.split_once(':') {
-                if let Some(cached) = self.schema.type_children_cache.get(local) {
-                    return Some(Arc::clone(cached));
-                }
-            }
-
-            // Last resort: compute at runtime
+            // Fallback: compute at runtime
             if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
                 return Some(Arc::new(self.compute_flattened_children(complex)));
             }
@@ -275,10 +263,8 @@ impl OnePassSchemaValidator {
                             return (type_ref, Some(Arc::clone(cached)));
                         }
                     }
-                    // Try legacy cache
-                    if let Some(cached) = self.schema.type_children_cache.get(tr) {
-                        Some(Arc::clone(cached))
-                    } else if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
+                    // Fallback: compute at runtime
+                    if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
                         Some(Arc::new(self.compute_flattened_children(child_complex)))
                     } else {
                         None

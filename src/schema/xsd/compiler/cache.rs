@@ -26,11 +26,10 @@ impl XsdCompiler {
         // Build cache for main schema types
         for type_name in &type_names {
             if let Some(TypeDef::Complex(complex)) = schema.types.get(type_name) {
-                let flattened =
-                    Arc::new(self.flatten_type_children_ns(complex, schema, type_name));
+                let flattened = Arc::new(self.flatten_type_children_ns(complex, schema));
 
                 // --- Namespace-aware cache (primary) ---
-                if let Some(ns_name) = self.resolve_type_key_to_ns(type_name) {
+                if let Some(ns_name) = self.resolve_to_ns(type_name) {
                     schema
                         .ns_type_children_cache
                         .insert(ns_name, Arc::clone(&flattened));
@@ -60,7 +59,7 @@ impl XsdCompiler {
             .flat_map(|imported| {
                 imported.types.iter().filter_map(|(type_name, type_def)| {
                     if let TypeDef::Complex(complex) = type_def {
-                        let flattened = self.flatten_type_children_ns(complex, schema, type_name);
+                        let flattened = self.flatten_type_children_ns(complex, schema);
                         Some((type_name.clone(), flattened))
                     } else {
                         None
@@ -73,7 +72,7 @@ impl XsdCompiler {
             let flattened = Arc::new(flattened);
 
             // --- Namespace-aware cache ---
-            if let Some(ns_name) = self.resolve_type_key_to_ns(&type_name) {
+            if let Some(ns_name) = self.resolve_to_ns(&type_name) {
                 schema
                     .ns_type_children_cache
                     .insert(ns_name, Arc::clone(&flattened));
@@ -95,57 +94,15 @@ impl XsdCompiler {
         }
     }
 
-    /// Resolves a type key like "bldg:WallSurfaceType" to NsName using namespace_bindings.
-    fn resolve_type_key_to_ns(&self, type_key: &str) -> Option<NsName> {
-        if let Some((prefix, local)) = type_key.split_once(':') {
+    /// Resolves a prefixed or unprefixed type/base-type key to NsName using namespace_bindings.
+    fn resolve_to_ns(&self, key: &str) -> Option<NsName> {
+        if let Some((prefix, local)) = key.split_once(':') {
             let ns_uri = self.namespace_bindings.get(prefix)?;
             Some(NsName::new(ns_uri.clone(), local))
         } else {
-            // No prefix - try current target namespace, then empty namespace
-            let ns = self
-                .current_target_ns
-                .as_deref()
-                .unwrap_or("")
-                .to_string();
-            Some(NsName::new(ns, type_key))
+            let ns = self.current_target_ns.as_deref().unwrap_or("").to_string();
+            Some(NsName::new(ns, key))
         }
-    }
-
-    /// Resolves a base_type reference to a namespace URI and local name.
-    /// Used during flattening to find the correct base type across namespaces.
-    fn resolve_base_type_ns(&self, base_type: &str) -> Option<NsName> {
-        if let Some((prefix, local)) = base_type.split_once(':') {
-            let ns_uri = self.namespace_bindings.get(prefix)?;
-            Some(NsName::new(ns_uri.clone(), local))
-        } else {
-            // No prefix - could be from the current target namespace
-            if let Some(ref ns) = self.current_target_ns {
-                Some(NsName::new(ns.clone(), base_type))
-            } else {
-                Some(NsName::new("", base_type))
-            }
-        }
-    }
-
-    /// Looks up a type by namespace URI and local name.
-    fn get_type_by_ns<'a>(
-        &self,
-        schema: &'a CompiledSchema,
-        ns_name: &NsName,
-    ) -> Option<&'a TypeDef> {
-        // Use namespace_prefixes (uri → prefix) to construct the qualified key
-        if let Some(prefix) = schema.namespace_prefixes.get(&ns_name.namespace_uri) {
-            let qname = if prefix.is_empty() {
-                ns_name.local_name.clone()
-            } else {
-                format!("{}:{}", prefix, ns_name.local_name)
-            };
-            if let Some(typ) = schema.types.get(&qname) {
-                return Some(typ);
-            }
-        }
-        // Fallback: try local name directly
-        schema.types.get(&ns_name.local_name)
     }
 
     /// Flattens the child element constraints for a complex type.
@@ -154,7 +111,6 @@ impl XsdCompiler {
         &self,
         complex: &ComplexType,
         schema: &CompiledSchema,
-        _type_key: &str,
     ) -> FlattenedChildren {
         let mut visited = HashSet::new();
         let elements = self.collect_elements_with_inheritance_ns(complex, schema, &mut visited);
@@ -204,15 +160,13 @@ impl XsdCompiler {
                     visited.insert(base_type.clone());
 
                     // Resolve base type using namespace URI for correct cross-namespace lookup
-                    let base_complex =
-                        if let Some(ns_name) = self.resolve_base_type_ns(base_type) {
-                            self.get_type_by_ns(schema, &ns_name)
-                        } else {
-                            None
-                        };
+                    let base_complex = if let Some(ns_name) = self.resolve_to_ns(base_type) {
+                        schema.get_type_by_ns(&ns_name.namespace_uri, &ns_name.local_name)
+                    } else {
+                        None
+                    };
                     // Fallback to legacy prefix-based lookup
-                    let base_complex =
-                        base_complex.or_else(|| schema.get_type(base_type.as_str()));
+                    let base_complex = base_complex.or_else(|| schema.get_type(base_type.as_str()));
 
                     if let Some(TypeDef::Complex(base_complex)) = base_complex {
                         let base_elements = self.collect_elements_with_inheritance_ns(

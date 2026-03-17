@@ -189,9 +189,7 @@ impl XsdCompiler {
                     .entry(uri.clone())
                     .or_insert_with(|| prefix.clone());
                 // prefix -> uri (always overwrite to latest)
-                result
-                    .prefix_namespaces
-                    .insert(prefix.clone(), uri.clone());
+                result.prefix_namespaces.insert(prefix.clone(), uri.clone());
             }
         }
 
