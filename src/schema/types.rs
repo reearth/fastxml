@@ -5,6 +5,29 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 
+/// A namespace-qualified name for collision-free lookups.
+///
+/// Uses (namespace_uri, local_name) instead of "prefix:local_name"
+/// to avoid non-deterministic prefix collisions when multiple namespaces
+/// define types/elements with the same local name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NsName {
+    /// Namespace URI (empty string for no-namespace)
+    pub namespace_uri: String,
+    /// Local name
+    pub local_name: String,
+}
+
+impl NsName {
+    /// Creates a new NsName.
+    pub fn new(namespace_uri: impl Into<String>, local_name: impl Into<String>) -> Self {
+        Self {
+            namespace_uri: namespace_uri.into(),
+            local_name: local_name.into(),
+        }
+    }
+}
+
 /// Content model type for an element (used in caches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContentModelType {
@@ -81,7 +104,17 @@ pub struct CompiledSchema {
     /// Used to resolve element lookups when XML uses different prefix than schema.
     pub namespace_prefixes: HashMap<String, String>,
 
-    // === Performance optimization caches ===
+    // === Namespace-aware indices ===
+    /// Prefix to namespace URI mapping (prefix -> uri).
+    pub prefix_namespaces: HashMap<String, String>,
+
+    /// Namespace-aware type children cache: (namespace_uri, local_name) -> FlattenedChildren.
+    ///
+    /// This is the primary cache for type children lookups. It uses namespace URIs
+    /// instead of prefixes to avoid cross-namespace collisions.
+    pub ns_type_children_cache: HashMap<NsName, Arc<FlattenedChildren>>,
+
+    // === Performance optimization caches (legacy, prefix-based) ===
     /// Pre-computed flattened child elements per type (type_name -> `Arc<FlattenedChildren>`).
     ///
     /// This cache stores the inheritance-flattened child element constraints for each type,
@@ -113,7 +146,10 @@ impl CompiledSchema {
             substitution_groups: HashMap::new(),
             // Namespace resolution
             namespace_prefixes: HashMap::new(),
-            // Performance optimization caches
+            prefix_namespaces: HashMap::new(),
+            // Namespace-aware caches
+            ns_type_children_cache: HashMap::new(),
+            // Legacy prefix-based caches
             type_children_cache: HashMap::new(),
             transitive_substitution_groups: HashMap::new(),
             substitution_group_heads: HashMap::new(),
@@ -226,6 +262,48 @@ impl CompiledSchema {
         }
 
         None
+    }
+
+    /// Resolves a prefixed type reference to a NsName using prefix_namespaces.
+    ///
+    /// "bldg:WallSurfaceType" → NsName("http://...building...", "WallSurfaceType")
+    /// "WallSurfaceType" (no prefix) → NsName(target_namespace, "WallSurfaceType")
+    pub fn resolve_type_ref_to_ns(&self, type_ref: &str) -> Option<NsName> {
+        if let Some((prefix, local)) = type_ref.split_once(':') {
+            let ns_uri = self.prefix_namespaces.get(prefix)?;
+            Some(NsName::new(ns_uri.clone(), local))
+        } else {
+            // No prefix - use target namespace
+            let ns = self.target_namespace.as_deref().unwrap_or("");
+            Some(NsName::new(ns, type_ref))
+        }
+    }
+
+    /// Looks up type children cache by namespace URI and local name.
+    pub fn get_ns_type_children(
+        &self,
+        namespace_uri: &str,
+        local_name: &str,
+    ) -> Option<&Arc<FlattenedChildren>> {
+        self.ns_type_children_cache
+            .get(&NsName::new(namespace_uri, local_name))
+    }
+
+    /// Looks up a type by namespace URI and local name.
+    pub fn get_type_by_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&TypeDef> {
+        // Use namespace_prefixes (uri → prefix) to construct the canonical key
+        if let Some(prefix) = self.namespace_prefixes.get(namespace_uri) {
+            let qname = if prefix.is_empty() {
+                local_name.to_string()
+            } else {
+                format!("{}:{}", prefix, local_name)
+            };
+            if let Some(typ) = self.types.get(&qname) {
+                return Some(typ);
+            }
+        }
+        // Fallback: try local name
+        self.types.get(local_name)
     }
 }
 

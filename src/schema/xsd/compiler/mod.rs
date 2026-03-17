@@ -104,20 +104,18 @@ impl XsdCompiler {
         // then fall back to accumulated bindings if needed (for schemas that don't
         // define a prefix for their own namespace, e.g., imported schemas)
         let ns_prefix = schema.target_namespace.as_ref().and_then(|ns| {
-            // First: try schema's own bindings
+            // First: try schema's own bindings (non-empty prefix only)
             schema
                 .namespace_bindings
                 .iter()
-                .find(|(_, v)| *v == ns)
+                .find(|(k, v)| !k.is_empty() && *v == ns)
                 .map(|(k, _)| k.clone())
-                .filter(|k| !k.is_empty())
                 // Second: fall back to accumulated bindings (already populated)
                 .or_else(|| {
                     self.namespace_bindings
                         .iter()
-                        .find(|(_, v)| *v == ns)
+                        .find(|(k, v)| !k.is_empty() && *v == ns)
                         .map(|(k, _)| k.clone())
-                        .filter(|k| !k.is_empty())
                 })
         });
 
@@ -162,20 +160,18 @@ impl XsdCompiler {
         // then fall back to accumulated bindings if needed (for schemas that don't
         // define a prefix for their own namespace, e.g., imported schemas)
         self.current_target_prefix = schema.target_namespace.as_ref().and_then(|ns| {
-            // First: try schema's own bindings
+            // First: try schema's own bindings (non-empty prefix only)
             schema
                 .namespace_bindings
                 .iter()
-                .find(|(_, v)| *v == ns)
+                .find(|(k, v)| !k.is_empty() && *v == ns)
                 .map(|(k, _)| k.clone())
-                .filter(|k| !k.is_empty())
                 // Second: fall back to accumulated bindings
                 .or_else(|| {
                     self.namespace_bindings
                         .iter()
-                        .find(|(_, v)| *v == ns)
+                        .find(|(k, v)| !k.is_empty() && *v == ns)
                         .map(|(k, _)| k.clone())
-                        .filter(|k| !k.is_empty())
                 })
         });
 
@@ -184,15 +180,16 @@ impl XsdCompiler {
             result.target_namespace = schema.target_namespace.clone();
         }
 
-        // Store namespace bindings in result for runtime lookup (uri -> prefix)
-        // This allows the validator to resolve elements by namespace URI
+        // Store namespace bindings in result for runtime lookup
         for (prefix, uri) in &self.namespace_bindings {
             if !prefix.is_empty() {
-                // Only add if not already present (first prefix wins)
+                // uri -> prefix (first prefix wins)
                 result
                     .namespace_prefixes
                     .entry(uri.clone())
                     .or_insert_with(|| prefix.clone());
+                // prefix -> uri (always overwrite to latest)
+                result.prefix_namespaces.insert(prefix.clone(), uri.clone());
             }
         }
 
@@ -256,7 +253,21 @@ impl XsdCompiler {
     }
 
     /// Resolves a QName to its full qualified name.
+    ///
+    /// When the QName has no prefix (e.g., from a schema that uses default namespace),
+    /// this method tries to qualify it using the current target namespace prefix.
+    /// This ensures that type references like `base="AbstractBoundarySurfaceType"`
+    /// in building.xsd are resolved to `"bldg:AbstractBoundarySurfaceType"` when
+    /// the `bldg` prefix is available from accumulated namespace bindings.
     pub(crate) fn resolve_qname(&self, qname: &QName) -> String {
+        if qname.prefix.is_none() {
+            if let Some(ref prefix) = self.current_target_prefix {
+                let qualified = format!("{}:{}", prefix, qname.local);
+                if self.type_cache.contains_key(&qualified) {
+                    return qualified;
+                }
+            }
+        }
         qname.to_string_full()
     }
 
