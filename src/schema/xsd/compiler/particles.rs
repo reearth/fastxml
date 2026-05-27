@@ -220,14 +220,16 @@ impl XsdCompiler {
         self.group_expansion.remove(&key);
         let mut elements = result?;
 
-        // Apply the occurrence bounds declared at the reference site.
+        // Apply the occurrence bounds declared at the reference site. The group
+        // is repeated [min, max] times, so each member's own bounds multiply by
+        // the ref-site bounds: a member with min=j repeated N times needs j*N,
+        // one with max=k repeated M times allows k*M. (minOccurs is never
+        // "unbounded" in XSD; unwrap_or(1) is purely defensive.)
+        let group_min = group_ref.min_occurs.to_option().unwrap_or(1);
         let group_max = group_ref.max_occurs.to_option();
-        let group_min_zero = group_ref.min_occurs == Occurs::Count(0);
         for e in &mut elements {
+            e.min_occurs = e.min_occurs.saturating_mul(group_min);
             e.max_occurs = Self::multiply_occurs(e.max_occurs, group_max);
-            if group_min_zero {
-                e.min_occurs = 0;
-            }
         }
 
         Ok(elements)
