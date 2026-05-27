@@ -282,23 +282,30 @@ impl XsdParser {
         // If it's a reference, add it to the parent particle
         if grp.ref_.is_some() {
             if let Some(ref_qname) = grp.ref_.clone() {
+                // Preserve the occurrence bounds declared at the ref site so they
+                // can be propagated to the referenced group's members.
+                let group_ref = XsdGroupRef {
+                    name: ref_qname,
+                    min_occurs: grp.min_occurs,
+                    max_occurs: grp.max_occurs,
+                };
                 if let Some(parent) = self.stack.last_mut() {
                     match parent {
                         StackFrame::Sequence(seq) => {
-                            seq.particles.push(XsdParticleItem::GroupRef(ref_qname));
+                            seq.particles.push(XsdParticleItem::GroupRef(group_ref));
                         }
                         StackFrame::Choice(choice) => {
-                            choice.particles.push(XsdParticleItem::GroupRef(ref_qname));
+                            choice.particles.push(XsdParticleItem::GroupRef(group_ref));
                         }
                         StackFrame::ComplexType(ct) => {
                             ct.content =
-                                XsdComplexContent::Particle(XsdParticle::GroupRef(ref_qname));
+                                XsdComplexContent::Particle(XsdParticle::GroupRef(group_ref));
                         }
                         StackFrame::ComplexContentExtension(ext) => {
-                            ext.particle = Some(XsdParticle::GroupRef(ref_qname));
+                            ext.particle = Some(XsdParticle::GroupRef(group_ref));
                         }
                         StackFrame::ComplexContentRestriction(r) => {
-                            r.particle = Some(XsdParticle::GroupRef(ref_qname));
+                            r.particle = Some(XsdParticle::GroupRef(group_ref));
                         }
                         _ => {}
                     }
