@@ -48,6 +48,7 @@ pub mod content_model;
 pub mod error;
 pub mod facets;
 pub mod parser;
+pub mod primitive;
 pub mod resolver;
 pub mod types;
 

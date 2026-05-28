@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ContentModel, TypeDef};
+use crate::schema::types::{ContentModel, SimpleType, TypeDef};
 use crate::schema::xsd::facets::FacetValidator;
+use crate::schema::xsd::primitive::PrimitiveKind;
 
 use super::super::ValidationMode;
 use super::super::state::ElementContext;
@@ -140,10 +141,10 @@ impl OnePassSchemaValidator {
     pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
-            // Validate text content if element has a type
-            if !ctx.text_content.is_empty() {
-                self.validate_text_content_against_type(&ctx);
-            }
+            // Always run type validation — primitive types (e.g., xs:integer)
+            // need to reject empty content, while types whose lexical space
+            // allows empty (xs:string and derivatives) pass through cheaply.
+            self.validate_text_content_against_type(&ctx);
 
             // Validate required children were present (minOccurs)
             self.validate_min_occurs(&ctx);
@@ -176,41 +177,15 @@ impl OnePassSchemaValidator {
     ) {
         match type_def {
             TypeDef::Simple(simple) => {
-                let constraints = self.create_facet_constraints(simple);
-                let validator = FacetValidator::new(&constraints);
-                if let Err(facet_error) = validator.validate(&ctx.text_content) {
-                    let error = self
-                        .make_error(
-                            ValidationErrorType::InvalidContent,
-                            format!(
-                                "invalid content for element '{}': {}",
-                                ctx.name, facet_error
-                            ),
-                        )
-                        .with_node_name(ctx.name.as_ref())
-                        .with_level(ErrorLevel::Error);
-                    self.add_error(error);
-                }
+                self.validate_text_against_simple_type(ctx, simple);
             }
             TypeDef::Complex(complex) => {
                 // For complex types with simple content, validate the base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
-                        let constraints = self.create_facet_constraints(simple);
-                        let validator = FacetValidator::new(&constraints);
-                        if let Err(facet_error) = validator.validate(&ctx.text_content) {
-                            let error = self
-                                .make_error(
-                                    ValidationErrorType::InvalidContent,
-                                    format!(
-                                        "invalid content for element '{}': {}",
-                                        ctx.name, facet_error
-                                    ),
-                                )
-                                .with_node_name(ctx.name.as_ref())
-                                .with_level(ErrorLevel::Error);
-                            self.add_error(error);
-                        }
+                    if let Some(TypeDef::Simple(simple)) =
+                        self.schema.get_type(base_type).cloned().as_ref()
+                    {
+                        self.validate_text_against_simple_type(ctx, simple);
                     }
                 } else if !complex.mixed {
                     // Non-mixed complex types shouldn't have text content
@@ -230,6 +205,45 @@ impl OnePassSchemaValidator {
                     }
                 }
             }
+        }
+    }
+
+    /// Validates the accumulated text content of `ctx` against a `SimpleType`:
+    /// runs both user-declared facet constraints and (when applicable) the
+    /// built-in primitive lexical/value-space check.
+    fn validate_text_against_simple_type(&mut self, ctx: &ElementContext, simple: &SimpleType) {
+        // User-declared facets. Skip on empty content so we don't double up
+        // on top of any primitive-level "empty value" error.
+        if !ctx.text_content.is_empty() {
+            let constraints = self.create_facet_constraints(simple);
+            let validator = FacetValidator::new(&constraints);
+            if let Err(facet_error) = validator.validate(&ctx.text_content) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "invalid content for element '{}': {}",
+                            ctx.name, facet_error
+                        ),
+                    )
+                    .with_node_name(ctx.name.as_ref())
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+        }
+
+        // Built-in primitive lexical/value-space check.
+        if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
+            && let Err(prim_error) = kind.validate(&ctx.text_content)
+        {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidTextContent,
+                    format!("element '{}': {}", ctx.name, prim_error),
+                )
+                .with_node_name(ctx.name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
         }
     }
 }
