@@ -267,7 +267,7 @@ pub fn union(left: XPathValue, right: XPathValue) -> XPathValue {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
 
-    for node in left_nodes.into_iter().chain(right_nodes.into_iter()) {
+    for node in left_nodes.into_iter().chain(right_nodes) {
         if seen.insert(node.id()) {
             result.push(node);
         }
