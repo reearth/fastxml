@@ -123,28 +123,24 @@ for event in Parser::from(xml).events()? {
 }
 ```
 
-To process large files with **constant memory**, drive a push-based handler with `StreamingParser` (events are dispatched as they are read, nothing is buffered):
+To process large files with **constant memory**, use `for_each_event` — the callback is invoked as each event is read, nothing is buffered, and it may capture and mutate local state:
 
 ```rust
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
+use fastxml::Parser;
+use fastxml::event::XmlEvent;
 use std::io::BufReader;
 use std::fs::File;
 
-struct Counter { count: usize }
-
-impl XmlEventHandler for Counter {
-    fn handle(&mut self, event: &XmlEvent) -> fastxml::error::Result<()> {
-        if let XmlEvent::StartElement { .. } = event {
-            self.count += 1;
-        }
-        Ok(())
-    }
-}
-
 let file = File::open("large_file.xml")?;
-let mut parser = StreamingParser::new(BufReader::new(file));
-parser.add_handler(Box::new(Counter { count: 0 }));
-parser.parse()?;
+
+let mut elements = 0;
+Parser::from_reader(BufReader::new(file)).for_each_event(|event| {
+    if let XmlEvent::StartElement { .. } = event {
+        elements += 1;
+    }
+    Ok(())
+})?;
+println!("{elements} elements");
 ```
 
 ### Stream Transform
@@ -203,19 +199,19 @@ Transformer::from_reader(reader)
 
 #### Advanced transforms
 
-Richer in-memory operations live on `StreamTransformer` (which `Transformer::from` wraps): single-pass data extraction, multi-XPath collection, parent-context access, root-namespace auto-detection, and fallback for non-streamable XPath.
+These richer operations are available for in-memory input (`Transformer::from`): single-pass data extraction, multi-XPath collection, parent-context access, root-namespace auto-detection, and fallback for non-streamable XPath. (On `Transformer::from_reader` they return an error, since they need random access.)
 
 ```rust
-use fastxml::transform::StreamTransformer;
+use fastxml::transform::Transformer;
 
 let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
 // Extract data (single XPath)
-let ids: Vec<String> = StreamTransformer::new(xml)
+let ids: Vec<String> = Transformer::from(xml)
     .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
 
 // Extract from multiple XPaths in a single pass
-let (ids, contents): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+let (ids, contents): (Vec<String>, Vec<String>) = Transformer::from(xml)
     .collect_multi((
         ("//item", |node| node.get_attribute("id").unwrap_or_default()),
         ("//item", |node| node.get_content().unwrap_or_default()),
@@ -229,10 +225,10 @@ Extract namespace declarations from the root element without DOM parsing:
 ```rust
 let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
 
-StreamTransformer::new(xml)
+Transformer::from(xml)
     .with_root_namespaces()?  // Auto-registers namespaces from root element
     .on("//gml:point", |node| node.set_attribute("found", "true"))
-    .run()?;
+    .to_string()?;
 ```
 
 #### Namespace URI Matching
@@ -241,12 +237,12 @@ Match elements by namespace URI instead of prefix (useful when different prefixe
 
 ```rust
 // Matches both gml:feature and g:feature if they have the same namespace URI
-StreamTransformer::new(xml)
+Transformer::from(xml)
     .namespace("gml", "http://www.opengis.net/gml")
     .on("//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']", |node| {
         // Matches any prefix that maps to this URI
     })
-    .run()?;
+    .to_string()?;
 ```
 
 #### Parent Context Access
@@ -254,7 +250,7 @@ StreamTransformer::new(xml)
 Access ancestor elements' information during streaming transformation:
 
 ```rust
-StreamTransformer::new(xml)
+Transformer::from(xml)
     .on_with_context("//item", |node, ctx| {
         // Get parent element info
         if let Some(parent) = ctx.parent() {
@@ -265,7 +261,7 @@ StreamTransformer::new(xml)
         let path = ctx.path_id();
         node.set_attribute("path", &format!("{}/item[{}]", path, ctx.position()));
     })
-    .run()?;
+    .to_string()?;
 ```
 
 #### XPath Streamability Check
@@ -296,16 +292,16 @@ By default, non-streamable XPath expressions return an error. Enable fallback fo
 
 ```rust
 // Default: error on non-streamable XPath
-let result = StreamTransformer::new(xml)
+let result = Transformer::from(xml)
     .on("//item[last()]", |_| {})
-    .run();
+    .to_string();
 // => Err(NotStreamable { ... })
 
 // Enable fallback (loads entire document into memory)
-let result = StreamTransformer::new(xml)
+let result = Transformer::from(xml)
     .allow_fallback()
     .on("//item[last()]", |_| {})
-    .run()?;
+    .to_string()?;
 ```
 
 ## Async Schema Resolution
