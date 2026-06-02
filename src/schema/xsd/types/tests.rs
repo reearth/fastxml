@@ -555,7 +555,11 @@ fn test_xsd_particle_variants() {
     let seq = XsdParticle::Sequence(XsdSequence::default());
     let choice = XsdParticle::Choice(XsdChoice::default());
     let all = XsdParticle::All(XsdAll::default());
-    let group_ref = XsdParticle::GroupRef(QName::new("myGroup"));
+    let group_ref = XsdParticle::GroupRef(XsdGroupRef {
+        name: QName::new("myGroup"),
+        min_occurs: Occurs::Count(1),
+        max_occurs: Occurs::Count(1),
+    });
     let any = XsdParticle::Any(XsdAny::default());
 
     assert!(matches!(seq, XsdParticle::Sequence(_)));
@@ -574,7 +578,11 @@ fn test_xsd_particle_item_variants() {
     let elem = XsdParticleItem::Element(XsdElement::new("e"));
     let seq = XsdParticleItem::Sequence(XsdSequence::default());
     let choice = XsdParticleItem::Choice(XsdChoice::default());
-    let group_ref = XsdParticleItem::GroupRef(QName::new("g"));
+    let group_ref = XsdParticleItem::GroupRef(XsdGroupRef {
+        name: QName::new("g"),
+        min_occurs: Occurs::Count(1),
+        max_occurs: Occurs::Count(1),
+    });
     let any = XsdParticleItem::Any(XsdAny::default());
 
     assert!(matches!(elem, XsdParticleItem::Element(_)));

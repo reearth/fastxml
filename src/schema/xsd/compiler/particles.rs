@@ -1,7 +1,7 @@
 //! Particle compilation - sequences, choices, all, and elements.
 
 use crate::error::Result;
-use crate::schema::types::{ContentModel, ElementDef, ProcessContents};
+use crate::schema::types::{ContentModel, ElementDef, NsName, ProcessContents};
 
 use super::super::types::*;
 use super::XsdCompiler;
@@ -22,10 +22,16 @@ impl XsdCompiler {
                 let elements = self.compile_all(all)?;
                 Ok(ContentModel::All(elements))
             }
-            XsdParticle::GroupRef(qname) => {
-                // Group references would need resolution
-                tracing::debug!("Group reference: {}", qname);
-                Ok(ContentModel::Empty)
+            XsdParticle::GroupRef(group_ref) => {
+                // Expand the referenced named group inline. Reflect the group's
+                // top-level compositor so sequence-order validation behaves like
+                // the group had been declared directly.
+                let elements = self.expand_group_ref_to_elements(group_ref)?;
+                match self.resolve_group_particle(&group_ref.name) {
+                    Some(XsdParticle::Choice(_)) => Ok(ContentModel::Choice(elements)),
+                    Some(XsdParticle::All(_)) => Ok(ContentModel::All(elements)),
+                    _ => Ok(ContentModel::Sequence(elements)),
+                }
             }
             XsdParticle::Any(any) => Ok(ContentModel::Any {
                 namespace: match &any.namespace {
@@ -53,7 +59,7 @@ impl XsdCompiler {
             XsdParticle::Sequence(seq) => self.compile_sequence(seq),
             XsdParticle::Choice(choice) => self.compile_choice(choice),
             XsdParticle::All(all) => self.compile_all(all),
-            XsdParticle::GroupRef(_) => Ok(Vec::new()),
+            XsdParticle::GroupRef(group_ref) => self.expand_group_ref_to_elements(group_ref),
             XsdParticle::Any(_) => Ok(Vec::new()),
         }
     }
@@ -98,8 +104,16 @@ impl XsdCompiler {
                     }
                     elements.extend(nested_elems);
                 }
-                XsdParticleItem::GroupRef(_) => {
-                    // Group references would need resolution
+                XsdParticleItem::GroupRef(group_ref) => {
+                    let mut group_elems = self.expand_group_ref_to_elements(group_ref)?;
+                    // Propagate this sequence's occurs to the group's members.
+                    for e in &mut group_elems {
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
+                        if seq_min_zero {
+                            e.min_occurs = 0;
+                        }
+                    }
+                    elements.extend(group_elems);
                 }
                 XsdParticleItem::Any(_) => {
                     // Any elements are handled elsewhere
@@ -150,9 +164,72 @@ impl XsdCompiler {
                     }
                     elements.extend(nested_elems);
                 }
-                XsdParticleItem::GroupRef(_) => {}
+                XsdParticleItem::GroupRef(group_ref) => {
+                    let mut group_elems = self.expand_group_ref_to_elements(group_ref)?;
+                    for e in &mut group_elems {
+                        // Choice members are implicitly optional.
+                        e.min_occurs = 0;
+                        e.max_occurs = Self::multiply_occurs(e.max_occurs, choice_max);
+                    }
+                    elements.extend(group_elems);
+                }
                 XsdParticleItem::Any(_) => {}
             }
+        }
+
+        Ok(elements)
+    }
+
+    /// Resolves a group-ref QName to the referenced group's particle.
+    ///
+    /// The reference is resolved by namespace URI: an explicit prefix is mapped
+    /// through the accumulated namespace bindings, otherwise the current target
+    /// namespace is used. Returns a clone of the group's particle, if found.
+    fn resolve_group_particle(&self, name: &QName) -> Option<XsdParticle> {
+        let ns_uri = match &name.prefix {
+            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
+            None => self.current_target_ns.clone(),
+        }
+        .unwrap_or_default();
+        self.groups
+            .get(&NsName::new(ns_uri, name.local.clone()))
+            .cloned()
+    }
+
+    /// Expands a `<xs:group ref>` into its member element definitions,
+    /// propagating the reference site's own occurrence bounds and guarding
+    /// against cyclic group references.
+    fn expand_group_ref_to_elements(&mut self, group_ref: &XsdGroupRef) -> Result<Vec<ElementDef>> {
+        let ns_uri = match &group_ref.name.prefix {
+            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
+            None => self.current_target_ns.clone(),
+        }
+        .unwrap_or_default();
+        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+
+        let Some(particle) = self.groups.get(&key).cloned() else {
+            tracing::debug!("Unresolved group reference: {}", group_ref.name);
+            return Ok(Vec::new());
+        };
+
+        // Break cycles: a group that (transitively) references itself.
+        if !self.group_expansion.insert(key.clone()) {
+            return Ok(Vec::new());
+        }
+        let result = self.compile_particle_to_elements(&particle);
+        self.group_expansion.remove(&key);
+        let mut elements = result?;
+
+        // Apply the occurrence bounds declared at the reference site. The group
+        // is repeated [min, max] times, so each member's own bounds multiply by
+        // the ref-site bounds: a member with min=j repeated N times needs j*N,
+        // one with max=k repeated M times allows k*M. (minOccurs is never
+        // "unbounded" in XSD; unwrap_or(1) is purely defensive.)
+        let group_min = group_ref.min_occurs.to_option().unwrap_or(1);
+        let group_max = group_ref.max_occurs.to_option();
+        for e in &mut elements {
+            e.min_occurs = e.min_occurs.saturating_mul(group_min);
+            e.max_occurs = Self::multiply_occurs(e.max_occurs, group_max);
         }
 
         Ok(elements)
