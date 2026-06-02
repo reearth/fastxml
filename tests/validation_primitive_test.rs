@@ -629,3 +629,49 @@ test_validation!(
     XSD_DATETIME,
     false
 );
+
+// ===========================================================================
+// xsi:nil on nillable elements
+// ===========================================================================
+// Per XSD 1.0 §3.3.4 / §2.6.2, an element declared `nillable="true"` carrying
+// `xsi:nil="true"` is valid even though its content is empty — the empty
+// content must NOT be checked against the element's (primitive) type. This is
+// a regression guard: primitive lexical/value-space validation must be skipped
+// for nilled elements, otherwise `xsi:nil` on an `xs:int` would be rejected as
+// an invalid integer. CityGML/PLATEAU data relies on this for measure/date
+// fields.
+
+const XSD_NILLABLE_INT: &str = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="value" type="xs:int" nillable="true"/>
+</xs:schema>"#;
+
+test_validation!(
+    nillable_int_xsi_nil_empty_valid,
+    r#"<?xml version="1.0"?>
+<value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"></value>"#,
+    XSD_NILLABLE_INT,
+    true
+);
+test_validation!(
+    nillable_int_xsi_nil_self_closed_valid,
+    r#"<?xml version="1.0"?>
+<value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#,
+    XSD_NILLABLE_INT,
+    true
+);
+// A nillable element that DOES carry a value is still validated normally.
+test_validation!(
+    nillable_int_with_value_valid,
+    r#"<?xml version="1.0"?>
+<value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">42</value>"#,
+    XSD_NILLABLE_INT,
+    true
+);
+test_validation!(
+    nillable_int_with_invalid_value_invalid,
+    r#"<?xml version="1.0"?>
+<value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">abc</value>"#,
+    XSD_NILLABLE_INT,
+    false
+);

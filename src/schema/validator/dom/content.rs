@@ -47,14 +47,26 @@ impl DomSchemaValidator {
                 // We do not skip on empty text — primitives like xs:integer
                 // must reject empty content, while xs:string-derived types
                 // resolve to no PrimitiveKind and pass through unchanged.
-                self.validate_simple_type_facets(node, &simple, &text_content, errors);
+                self.validate_simple_type_facets(
+                    node,
+                    &simple,
+                    &text_content,
+                    elem.nillable,
+                    errors,
+                );
             }
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
                     if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
                         let simple = simple.clone();
-                        self.validate_simple_type_facets(node, &simple, &text_content, errors);
+                        self.validate_simple_type_facets(
+                            node,
+                            &simple,
+                            &text_content,
+                            elem.nillable,
+                            errors,
+                        );
                     }
                 } else if !complex.mixed && !text_content.is_empty() {
                     // Non-mixed complex types shouldn't have text content
@@ -96,6 +108,7 @@ impl DomSchemaValidator {
         node: &XmlNode,
         simple: &SimpleType,
         text_content: &str,
+        nillable: bool,
         errors: &mut Vec<StructuredError>,
     ) {
         // User-declared facets (minLength, pattern, enumeration, …).
@@ -123,7 +136,12 @@ impl DomSchemaValidator {
         }
 
         // Built-in primitive lexical/value-space check (e.g., xs:integer
-        // rejecting "1.5" or "", xs:int rejecting 2147483648).
+        // rejecting "1.5" or "", xs:int rejecting 2147483648). Skip for an
+        // empty, nillable element: `xsi:nil="true"` legitimately leaves the
+        // content empty and it must not be checked against the primitive type.
+        if text_content.is_empty() && nillable {
+            return;
+        }
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(text_content)
         {

@@ -24,6 +24,7 @@ impl OnePassSchemaValidator {
         // Only construct qname if local lookup fails AND prefix exists
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
         let elem_def = self.lookup_element_optimized(name, prefix, namespace);
+        let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
 
         // Construct qname only when needed for error messages or when prefix exists
         let qname_owned: Option<String> = match prefix {
@@ -70,6 +71,7 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
@@ -87,6 +89,7 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.nillable = elem_nillable;
             }
         } else {
             // Element not found in schema
@@ -232,7 +235,12 @@ impl OnePassSchemaValidator {
             }
         }
 
-        // Built-in primitive lexical/value-space check.
+        // Built-in primitive lexical/value-space check. Skip for an empty,
+        // nillable element: `xsi:nil="true"` legitimately leaves the content
+        // empty and it must not be checked against the primitive type.
+        if ctx.text_content.is_empty() && ctx.nillable {
+            return;
+        }
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(&ctx.text_content)
         {

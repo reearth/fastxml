@@ -476,14 +476,14 @@ impl TwoPassSchemaValidator {
         match type_def {
             Some(TypeDef::Simple(simple)) => {
                 // Validate against simple type facets
-                self.validate_simple_type_facets(node, &simple, errors);
+                self.validate_simple_type_facets(node, &simple, elem.nillable, errors);
             }
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
                     if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
                         let simple = simple.clone();
-                        self.validate_simple_type_facets(node, &simple, errors);
+                        self.validate_simple_type_facets(node, &simple, elem.nillable, errors);
                     }
                 } else if !complex.mixed && !node.text_content.is_empty() {
                     // Non-mixed complex types shouldn't have text content
@@ -523,6 +523,7 @@ impl TwoPassSchemaValidator {
         &self,
         node: &ElementSkeleton,
         simple: &SimpleType,
+        nillable: bool,
         errors: &mut Vec<StructuredError>,
     ) {
         // User-declared facets. Skip on empty content so we don't pile a
@@ -546,7 +547,12 @@ impl TwoPassSchemaValidator {
             }
         }
 
-        // Built-in primitive lexical/value-space check.
+        // Built-in primitive lexical/value-space check. Skip for an empty,
+        // nillable element: `xsi:nil="true"` legitimately leaves the content
+        // empty and it must not be checked against the primitive type.
+        if node.text_content.is_empty() && nillable {
+            return;
+        }
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(&node.text_content)
         {
