@@ -20,7 +20,6 @@ use fastxml::Parser;
 use fastxml::error::Result;
 use fastxml::event::XmlEvent;
 use fastxml::schema::{Schema, Validator};
-use std::io::BufReader;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -96,6 +95,7 @@ fn run_demo() -> Result<()> {
 fn validate_file(file_path: &str) -> Result<()> {
     use fastxml::schema::DefaultFetcher;
     use std::fs::File;
+    use std::io::BufReader;
     use std::path::Path;
 
     println!("=== Streaming Validation: {} ===\n", file_path);
