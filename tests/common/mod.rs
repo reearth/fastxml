@@ -477,18 +477,16 @@ pub mod libxml_compare {
 
     /// Compare XSD validation results between fastxml and libxml
     pub fn compare_xsd_validation(xml: &str, xsd: &str) -> CompareResult {
-        use fastxml::schema::validator::XmlSchemaValidationContext;
-        use fastxml::schema::xsd::parse_xsd;
+        use fastxml::schema::{Schema, Validator};
 
         // fastxml validation
-        let fastxml_valid = match fastxml::parse(xml.as_bytes()) {
-            Ok(doc) => match parse_xsd(xsd.as_bytes()) {
-                Ok(schema) => {
-                    let ctx = XmlSchemaValidationContext::new(schema);
-                    ctx.validate(&doc)
-                        .map(|errors| errors.iter().all(|e| !e.is_error()))
-                        .unwrap_or(false)
-                }
+        let fastxml_valid = match fastxml::Parser::from(xml).parse() {
+            Ok(doc) => match Schema::from_xsd(xsd) {
+                Ok(schema) => Validator::from(&doc)
+                    .schema(schema)
+                    .run()
+                    .map(|report| report.is_valid())
+                    .unwrap_or(false),
                 Err(_) => return CompareResult::diff("fastxml: Failed to parse XSD"),
             },
             Err(_) => return CompareResult::diff("fastxml: Failed to parse XML"),
@@ -552,12 +550,11 @@ macro_rules! compare_with_libxml {
 
 use std::sync::Arc;
 
+use fastxml::Parser;
 use fastxml::StructuredError;
 #[allow(deprecated)]
-use fastxml::schema::validator::{
-    DomSchemaValidator, OnePassSchemaValidator, TwoPassSchemaValidator,
-};
-use fastxml::schema::xsd::parse_xsd;
+use fastxml::schema::validator::TwoPassSchemaValidator;
+use fastxml::schema::{Schema, Validator};
 
 // Note: The following types and functions use `#[allow(dead_code)]` because
 // they are called through the `test_validation!` macro. The compiler doesn't
@@ -656,19 +653,26 @@ impl ValidationResult {
 /// Validate XML against XSD using DOM validator.
 #[allow(dead_code)]
 pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
-    let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
-    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
-    let validator = DomSchemaValidator::new(Arc::new(schema));
-    let errors = validator.validate(&doc).expect("Validation failed");
-    let valid = errors.iter().all(|e| !e.is_error());
-    ValidationResult { valid, errors }
+    let doc = Parser::from(xml).parse().expect("Failed to parse XML");
+    let schema = Schema::from_xsd(xsd).expect("Failed to parse XSD");
+    let report = Validator::from(&doc)
+        .schema(Arc::new(schema))
+        .run()
+        .expect("Validation failed");
+    let valid = report.is_valid();
+    ValidationResult {
+        valid,
+        errors: report.into_entries(),
+    }
 }
 
 /// Validate XML against XSD using TwoPass validator.
 #[allow(dead_code, deprecated)]
 pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
     use std::io::Cursor;
-    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
+    // The two-pass engine has no front-door equivalent (it is being retired),
+    // so this helper drives it directly to keep cross-validator consistency.
+    let schema = Schema::from_xsd(xsd).expect("Failed to parse XSD");
     let reader = Cursor::new(xml.as_bytes().to_vec());
     let errors = TwoPassSchemaValidator::new(Arc::new(schema))
         .validate(reader)
@@ -680,14 +684,16 @@ pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
 /// Validate XML against XSD using OnePass (streaming) validator.
 #[allow(dead_code)]
 pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
-    use std::io::BufReader;
-    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
-    let reader = BufReader::new(xml.as_bytes());
-    let errors = OnePassSchemaValidator::new(Arc::new(schema))
-        .validate(reader)
+    let schema = Schema::from_xsd(xsd).expect("Failed to parse XSD");
+    let report = Validator::from(xml)
+        .schema(Arc::new(schema))
+        .run()
         .expect("Validation failed");
-    let valid = errors.iter().all(|e| !e.is_error());
-    ValidationResult { valid, errors }
+    let valid = report.is_valid();
+    ValidationResult {
+        valid,
+        errors: report.into_entries(),
+    }
 }
 
 /// Validate with all validators and check consistency.
