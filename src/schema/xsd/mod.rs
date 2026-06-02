@@ -92,6 +92,7 @@ pub use types::*;
 /// let schema = parse_xsd(xsd.as_bytes())?;
 /// assert!(schema.elements.contains_key("root"));
 /// ```
+#[doc(hidden)]
 pub fn parse_xsd(content: &[u8]) -> Result<CompiledSchema> {
     // Parse AST
     let ast = parse_xsd_ast(content)?;
@@ -134,6 +135,7 @@ pub fn parse_xsd(content: &[u8]) -> Result<CompiledSchema> {
 ///     &fetcher,
 /// )?;
 /// ```
+#[doc(hidden)]
 pub fn parse_xsd_with_imports<F: SchemaFetcher>(
     content: &[u8],
     base_uri: &str,
@@ -182,6 +184,7 @@ pub fn parse_xsd_with_imports<F: SchemaFetcher>(
 /// ).await?;
 /// ```
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn parse_xsd_with_imports_async<F: AsyncSchemaFetcher>(
     content: &[u8],
     base_uri: &str,
@@ -222,6 +225,7 @@ pub async fn parse_xsd_with_imports_async<F: AsyncSchemaFetcher>(
 /// ];
 /// let compiled = parse_xsd_multiple(&schemas)?;
 /// ```
+#[doc(hidden)]
 pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> {
     let schemas = resolver::resolve_schemas_from_content(contents)?;
     let mut schema = compile_schemas(schemas)?;
@@ -260,6 +264,7 @@ pub fn parse_xsd_multiple(contents: &[(&str, &[u8])]) -> Result<CompiledSchema> 
 ///     &fetcher,
 /// )?;
 /// ```
+#[doc(hidden)]
 pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
@@ -287,6 +292,7 @@ pub fn parse_xsd_with_imports_multiple<F: SchemaFetcher>(
 ///
 /// A compiled schema with all entries and their dependencies resolved
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn parse_xsd_with_imports_multiple_async<F: AsyncSchemaFetcher>(
     entries: &[(&str, &[u8])],
     fetcher: &F,
@@ -305,6 +311,7 @@ pub async fn parse_xsd_with_imports_multiple_async<F: AsyncSchemaFetcher>(
 ///
 /// This is useful for validation that only needs primitive XSD and GML types
 /// without parsing any custom schemas.
+#[doc(hidden)]
 pub fn create_builtin_schema() -> CompiledSchema {
     let mut schema = CompiledSchema::new();
     register_builtin_types(&mut schema);

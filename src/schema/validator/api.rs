@@ -20,6 +20,7 @@ use super::two_pass::TwoPassSchemaValidator;
 ///
 /// Note: This currently creates a schema with built-in types only.
 /// For full import resolution, use `create_xml_schema_validation_context_with_fetcher`.
+#[doc(hidden)]
 pub fn create_xml_schema_validation_context(
     schema_location: &str,
 ) -> Result<XmlSchemaValidationContext> {
@@ -49,6 +50,7 @@ pub fn create_xml_schema_validation_context(
 ///
 /// Parses the provided XSD content and creates a validation context.
 /// Built-in XSD and GML types are automatically registered.
+#[doc(hidden)]
 pub fn create_xml_schema_validation_context_from_buffer(
     schema_content: &[u8],
 ) -> Result<XmlSchemaValidationContext> {
@@ -57,6 +59,7 @@ pub fn create_xml_schema_validation_context_from_buffer(
 }
 
 /// Validates a document against a schema.
+#[doc(hidden)]
 pub fn validate_document_by_schema(
     doc: &XmlDocument,
     schema_location: &str,
@@ -66,6 +69,7 @@ pub fn validate_document_by_schema(
 }
 
 /// Validates a document using an existing validation context.
+#[doc(hidden)]
 pub fn validate_document_by_schema_context(
     doc: &XmlDocument,
     ctx: &XmlSchemaValidationContext,
@@ -92,6 +96,7 @@ pub fn validate_document_by_schema_context(
 /// let errors = validate_with_schema_location(&doc)?;
 /// ```
 #[cfg(feature = "ureq")]
+#[doc(hidden)]
 pub fn validate_with_schema_location(doc: &XmlDocument) -> Result<Vec<StructuredError>> {
     validate_with_schema_location_and_fetcher(doc, &crate::schema::fetcher::DefaultFetcher::new())
 }
@@ -122,6 +127,7 @@ pub fn validate_with_schema_location(doc: &XmlDocument) -> Result<Vec<Structured
 /// let fetcher = UreqFetcher::new().timeout(60);
 /// let errors = validate_with_schema_location_and_fetcher(&doc, &fetcher)?;
 /// ```
+#[doc(hidden)]
 pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
     doc: &XmlDocument,
     fetcher: &F,
@@ -226,6 +232,7 @@ pub fn validate_with_schema_location_and_fetcher<F: SchemaFetcher>(
 /// parser.parse()?;
 /// ```
 #[cfg(feature = "ureq")]
+#[doc(hidden)]
 pub fn get_schema_from_schema_location(xml_content: &[u8]) -> Result<CompiledSchema> {
     get_schema_from_schema_location_with_fetcher(
         xml_content,
@@ -238,6 +245,7 @@ pub fn get_schema_from_schema_location(xml_content: &[u8]) -> Result<CompiledSch
 /// This function reads the `xsi:schemaLocation` attribute from the document's
 /// root element, fetches the referenced schemas using the provided fetcher,
 /// and returns a compiled schema suitable for streaming validation.
+#[doc(hidden)]
 pub fn get_schema_from_schema_location_with_fetcher<F: SchemaFetcher>(
     xml_content: &[u8],
     fetcher: &F,
@@ -311,6 +319,7 @@ pub fn get_schema_from_schema_location_with_fetcher<F: SchemaFetcher>(
 /// }
 /// ```
 #[cfg(feature = "ureq")]
+#[doc(hidden)]
 pub fn streaming_validate_with_schema_location<R: std::io::BufRead>(
     reader: R,
 ) -> Result<Vec<StructuredError>> {
@@ -323,6 +332,7 @@ pub fn streaming_validate_with_schema_location<R: std::io::BufRead>(
 /// Validates XML from a reader using streaming parser with a custom fetcher.
 ///
 /// This performs true single-pass streaming validation.
+#[doc(hidden)]
 pub fn streaming_validate_with_schema_location_and_fetcher<
     R: std::io::BufRead,
     F: SchemaFetcher + 'static,
@@ -369,6 +379,7 @@ pub fn streaming_validate_with_schema_location_and_fetcher<
 )]
 #[allow(deprecated)]
 #[cfg(feature = "ureq")]
+#[doc(hidden)]
 pub fn two_pass_validate_with_schema_location<R: BufRead + Seek>(
     reader: R,
 ) -> Result<Vec<StructuredError>> {
@@ -403,6 +414,7 @@ pub fn two_pass_validate_with_schema_location<R: BufRead + Seek>(
     note = "Use streaming_validate_with_schema_location_and_fetcher instead for better performance"
 )]
 #[allow(deprecated)]
+#[doc(hidden)]
 pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: SchemaFetcher>(
     mut reader: R,
     fetcher: &F,
@@ -483,6 +495,7 @@ pub fn two_pass_validate_with_schema_location_and_fetcher<R: BufRead + Seek, F: 
 /// let errors = validate_with_schema_location_with_async_fetcher(&doc, &fetcher).await?;
 /// ```
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn validate_with_schema_location_with_async_fetcher<
     F: crate::schema::fetcher::AsyncSchemaFetcher,
 >(
@@ -585,6 +598,7 @@ pub async fn validate_with_schema_location_with_async_fetcher<
 /// let errors = validate_with_schema_location_async(&doc).await?;
 /// ```
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn validate_with_schema_location_async(
     doc: &XmlDocument,
 ) -> Result<Vec<StructuredError>> {
@@ -608,6 +622,7 @@ pub async fn validate_with_schema_location_async(
 /// let schema = get_schema_from_schema_location_with_async_fetcher(&xml_bytes, &fetcher).await?;
 /// ```
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn get_schema_from_schema_location_with_async_fetcher<
     F: crate::schema::fetcher::AsyncSchemaFetcher,
 >(
@@ -681,6 +696,7 @@ pub async fn get_schema_from_schema_location_with_async_fetcher<
 /// let schema = get_schema_from_schema_location_async(&xml_bytes).await?;
 /// ```
 #[cfg(feature = "tokio")]
+#[doc(hidden)]
 pub async fn get_schema_from_schema_location_async(xml_content: &[u8]) -> Result<CompiledSchema> {
     let fetcher = crate::schema::fetcher::AsyncDefaultFetcher::new()?;
     get_schema_from_schema_location_with_async_fetcher(xml_content, &fetcher).await

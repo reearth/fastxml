@@ -33,17 +33,13 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use serde_json::{Value as JsonValue, json};
 
-use fastxml::error::Result;
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
+use fastxml::evaluate;
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
-use fastxml::schema::XmlSchemaValidationContext;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::schema::xsd::create_builtin_schema;
 #[cfg(feature = "ureq")]
 use fastxml::schema::{DefaultFetcher, ResolveOptions, resolve_schema_from_xml};
-use fastxml::transform::{StreamTransformer, StreamTransformerReader};
-use fastxml::{evaluate, parse};
+use fastxml::schema::{Schema, Validator};
+use fastxml::transform::Transformer;
 
 // =============================================================================
 // CLI Arguments
@@ -120,51 +116,6 @@ enum InternalMode {
 // =============================================================================
 // Handlers
 // =============================================================================
-
-struct StatsHandler {
-    element_count: usize,
-    max_depth: usize,
-    current_depth: usize,
-    text_bytes: usize,
-    attr_count: usize,
-}
-
-impl StatsHandler {
-    fn new() -> Self {
-        Self {
-            element_count: 0,
-            max_depth: 0,
-            current_depth: 0,
-            text_bytes: 0,
-            attr_count: 0,
-        }
-    }
-}
-
-impl XmlEventHandler for StatsHandler {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        match event {
-            XmlEvent::StartElement { attributes, .. } => {
-                self.element_count += 1;
-                self.attr_count += attributes.len();
-                self.current_depth += 1;
-                self.max_depth = self.max_depth.max(self.current_depth);
-            }
-            XmlEvent::EndElement { .. } => {
-                self.current_depth = self.current_depth.saturating_sub(1);
-            }
-            XmlEvent::Text(s) | XmlEvent::CData(s) => {
-                self.text_bytes += s.len();
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-        self
-    }
-}
 
 struct CountingReader<R> {
     inner: R,
@@ -615,7 +566,7 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
             eprintln!("FAILED: {}", e);
             println!("  Falling back to built-in schema");
             Some(SchemaInfo {
-                compiled: Arc::new(create_builtin_schema()),
+                compiled: Arc::new(Schema::builtin()),
                 export_dir: None,
                 entry_filename: None,
             })
@@ -627,7 +578,7 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
 fn get_schema_from_content(_content: &[u8], _xml_file_path: Option<&str>) -> Option<SchemaInfo> {
     println!("  Note: Schema fetching requires 'ureq' feature, using built-in schema");
     Some(SchemaInfo {
-        compiled: Arc::new(create_builtin_schema()),
+        compiled: Arc::new(Schema::builtin()),
         export_dir: None,
         entry_filename: None,
     })
@@ -648,7 +599,7 @@ fn run_dom_subprocess(content: &[u8], iterations: usize) {
             // Measure memory only on first iteration, while doc is still alive
             let mem_before = get_memory_usage();
             let start = Instant::now();
-            let doc = parse(content).unwrap();
+            let doc = fastxml::Parser::from(content).parse().unwrap();
             total_parse_time += start.elapsed();
             let mem_after = get_memory_usage();
 
@@ -658,7 +609,7 @@ fn run_dom_subprocess(content: &[u8], iterations: usize) {
             }
         } else {
             let start = Instant::now();
-            let _doc = parse(content).unwrap();
+            let _doc = fastxml::Parser::from(content).parse().unwrap();
             total_parse_time += start.elapsed();
         }
     }
@@ -682,7 +633,6 @@ fn run_dom_validate_subprocess(content: &[u8], iterations: usize, file_path: Opt
         return;
     };
 
-    let ctx = XmlSchemaValidationContext::from_arc(Arc::clone(&info.compiled));
     let mut total_time = Duration::ZERO;
     let mut validation_errors = 0usize;
     let mut node_count = 0usize;
@@ -693,8 +643,12 @@ fn run_dom_validate_subprocess(content: &[u8], iterations: usize, file_path: Opt
             // Measure memory only on first iteration, while doc is still alive
             let mem_before = get_memory_usage();
             let start = Instant::now();
-            let doc = parse(content).unwrap();
-            let errors = ctx.validate(&doc).unwrap_or_default();
+            let doc = fastxml::Parser::from(content).parse().unwrap();
+            let errors = Validator::from(&doc)
+                .schema(Arc::clone(&info.compiled))
+                .run()
+                .map(|r| r.into_entries())
+                .unwrap_or_default();
             total_time += start.elapsed();
             let mem_after = get_memory_usage();
 
@@ -705,8 +659,12 @@ fn run_dom_validate_subprocess(content: &[u8], iterations: usize, file_path: Opt
             }
         } else {
             let start = Instant::now();
-            let doc = parse(content).unwrap();
-            let _errors = ctx.validate(&doc).unwrap_or_default();
+            let doc = fastxml::Parser::from(content).parse().unwrap();
+            let _errors = Validator::from(&doc)
+                .schema(Arc::clone(&info.compiled))
+                .run()
+                .map(|r| r.into_entries())
+                .unwrap_or_default();
             total_time += start.elapsed();
         }
     }
@@ -732,10 +690,7 @@ fn run_streaming_subprocess(content: &[u8], iterations: usize) {
     for _ in 0..iterations {
         let reader = BufReader::new(std::io::Cursor::new(content));
         let start = Instant::now();
-        let mut parser = StreamingParser::new(reader);
-        let handler = StatsHandler::new();
-        parser.add_handler(Box::new(handler));
-        let _ = parser.parse();
+        let _ = fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(()));
         total_parse_time += start.elapsed();
     }
 
@@ -772,10 +727,7 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
     for _ in 0..iterations {
         let reader = BufReader::new(std::io::Cursor::new(content));
         let start = Instant::now();
-        let mut parser = StreamingParser::new(reader);
-        let handler = StatsHandler::new();
-        parser.add_handler(Box::new(handler));
-        let _ = parser.parse();
+        let _ = fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(()));
         total_parse_time += start.elapsed();
     }
 
@@ -783,25 +735,15 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
     for i in 0..iterations {
         let reader = BufReader::new(std::io::Cursor::new(content));
         let start = Instant::now();
-        let mut parser = StreamingParser::new(reader);
-        let handler = StatsHandler::new();
-        parser.add_handler(Box::new(handler));
-        let validator = OnePassSchemaValidator::new(Arc::clone(&info.compiled));
-        parser.add_handler(Box::new(validator));
-        let result = parser.parse();
+        let report = Validator::from_reader(reader)
+            .schema(Arc::clone(&info.compiled))
+            .run();
         total_validate_time += start.elapsed();
 
-        if i == 0 && result.is_ok() {
-            let mut handlers = parser.into_handlers();
-            if handlers.len() > 1
-                && let Some(validator) = handlers
-                    .pop()
-                    .map(|h| h.as_any())
-                    .and_then(|h| h.downcast::<OnePassSchemaValidator>().ok())
-            {
-                let errors = validator.into_errors();
-                validation_errors = errors.iter().filter(|e| e.is_error()).count();
-            }
+        if i == 0
+            && let Ok(report) = report
+        {
+            validation_errors = report.error_count();
         }
     }
 
@@ -847,23 +789,24 @@ fn run_transform_subprocess(content: &[u8], iterations: usize) {
         let start = Instant::now();
 
         // Use a simple identity transform on all elements (worst case for memory)
-        let result = StreamTransformer::new(input)
+        let mut out_bytes = Vec::new();
+        let result = Transformer::from(input)
             .with_root_namespaces()
             .ok()
             .map(|t| {
                 t.on("//*", |_node| {
                     // no-op: just measure the overhead of building DOM subtrees
                 })
-                .run()
+                .write_to(&mut out_bytes)
             });
 
         total_time += start.elapsed();
 
         if i == 0
-            && let Some(Ok(output)) = result
+            && let Some(Ok(count)) = result
         {
-            transform_count = output.count();
-            output_size = output.into_bytes().len();
+            transform_count = count;
+            output_size = out_bytes.len();
         }
     }
 
@@ -909,14 +852,14 @@ fn run_transform_reader_subprocess(content: &[u8], iterations: usize, file_path:
         let file = std::fs::File::open(file_path).unwrap();
         let reader = std::io::BufReader::with_capacity(64 * 1024, file);
 
-        let mut transformer = StreamTransformerReader::new(reader);
+        let mut transformer = Transformer::from_reader(reader);
         for (prefix, uri) in &ns_map {
             transformer = transformer.namespace(prefix, uri);
         }
 
         let result = transformer
             .on("//*", |_node| {})
-            .run_to_writer(&mut std::io::sink());
+            .write_to(&mut std::io::sink());
 
         total_time += start.elapsed();
 
@@ -1016,7 +959,7 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
         if i == 0 {
             let mem_before = get_memory_usage();
             let start = Instant::now();
-            let doc = parse(content).unwrap();
+            let doc = fastxml::Parser::from(content).parse().unwrap();
             total_parse_time += start.elapsed();
             let mem_after = get_memory_usage();
 
@@ -1027,7 +970,7 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
             }
         } else {
             let start = Instant::now();
-            let _doc = parse(content).unwrap();
+            let _doc = fastxml::Parser::from(content).parse().unwrap();
             total_parse_time += start.elapsed();
         }
     }
@@ -1047,7 +990,6 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
 
     // fastxml DOM + validation benchmark
     if let Some(info) = schema_info {
-        let ctx = XmlSchemaValidationContext::from_arc(Arc::clone(&info.compiled));
         let mut total_validate_time = Duration::ZERO;
         let mut fastxml_val_mem_delta: Option<usize> = None;
         let mut fastxml_validation_errors = 0usize;
@@ -1056,8 +998,12 @@ fn run_dom_benchmark(content: &[u8], iterations: usize, schema_info: Option<&Sch
             let mem_before = if i == 0 { get_memory_usage() } else { None };
 
             let start = Instant::now();
-            let doc = parse(content).unwrap();
-            let errors = ctx.validate(&doc).unwrap_or_default();
+            let doc = fastxml::Parser::from(content).parse().unwrap();
+            let errors = Validator::from(&doc)
+                .schema(Arc::clone(&info.compiled))
+                .run()
+                .map(|r| r.into_entries())
+                .unwrap_or_default();
             total_validate_time += start.elapsed();
 
             if i == 0 {
@@ -1174,10 +1120,7 @@ fn run_streaming_benchmark(
     for _ in 0..iterations {
         let reader = BufReader::new(std::io::Cursor::new(content));
         let start = Instant::now();
-        let mut parser = StreamingParser::new(reader);
-        let handler = StatsHandler::new();
-        parser.add_handler(Box::new(handler));
-        let _ = parser.parse();
+        let _ = fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(()));
         total_parse_time += start.elapsed();
     }
 
@@ -1195,24 +1138,13 @@ fn run_streaming_benchmark(
         for i in 0..iterations {
             let reader = BufReader::new(std::io::Cursor::new(content));
             let start = Instant::now();
-            let mut parser = StreamingParser::new(reader);
-            let handler = StatsHandler::new();
-            parser.add_handler(Box::new(handler));
-            let validator = OnePassSchemaValidator::new(Arc::clone(s));
-            parser.add_handler(Box::new(validator));
-            let result = parser.parse();
+            let report = Validator::from_reader(reader).schema(Arc::clone(s)).run();
             total_validate_time += start.elapsed();
 
-            if i == 0 && result.is_ok() {
-                let mut handlers = parser.into_handlers();
-                if handlers.len() > 1
-                    && let Some(validator) = handlers
-                        .pop()
-                        .map(|h| h.as_any())
-                        .and_then(|h| h.downcast::<OnePassSchemaValidator>().ok())
-                {
-                    validation_errors = validator.into_errors();
-                }
+            if i == 0
+                && let Ok(report) = report
+            {
+                validation_errors = report.into_entries();
             }
         }
 
@@ -1270,22 +1202,23 @@ fn run_transform_benchmark(content: &[u8], iterations: usize) {
     for i in 0..iterations {
         let start = Instant::now();
 
-        let result = StreamTransformer::new(input)
+        let mut out_bytes = Vec::new();
+        let result = Transformer::from(input)
             .with_root_namespaces()
             .ok()
             .map(|t| {
                 t.on("//*", |_node| {
                     // no-op: measure overhead of building DOM subtrees
                 })
-                .run()
+                .write_to(&mut out_bytes)
             });
 
         total_time += start.elapsed();
 
         if i == 0
-            && let Some(Ok(ref output)) = result
+            && let Some(Ok(count)) = result
         {
-            transform_count = output.count();
+            transform_count = count;
         }
     }
 
@@ -1325,12 +1258,12 @@ fn run_transform_reader_benchmark(content: &[u8], iterations: usize) {
         let reader = std::io::BufReader::with_capacity(64 * 1024, std::io::Cursor::new(content));
         let mut output = Vec::new();
 
-        let mut transformer = StreamTransformerReader::new(reader);
+        let mut transformer = Transformer::from_reader(reader);
         for (prefix, uri) in &ns_map {
             transformer = transformer.namespace(prefix, uri);
         }
 
-        let result = transformer.on("//*", |_node| {}).run_to_writer(&mut output);
+        let result = transformer.on("//*", |_node| {}).write_to(&mut output);
 
         total_time += start.elapsed();
 
@@ -1394,7 +1327,7 @@ fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: u
         run_dom_benchmark(&xml_bytes, iterations, None);
 
         println!("\n--- XPath Evaluation ---");
-        let doc = parse(&xml_bytes).unwrap();
+        let doc = fastxml::Parser::from(xml_bytes.as_slice()).parse().unwrap();
 
         let start = Instant::now();
         let result = evaluate(&doc, "//*").unwrap();
@@ -1430,10 +1363,7 @@ fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: u
 
             let start = Instant::now();
             let mut counting_reader = CountingReader::new(reader);
-            let mut parser = StreamingParser::new(&mut counting_reader);
-            let handler = StatsHandler::new();
-            parser.add_handler(Box::new(handler));
-            let _ = parser.parse();
+            let _ = fastxml::Parser::from_reader(&mut counting_reader).for_each_event(|_| Ok(()));
 
             total_time += start.elapsed();
             total_bytes = counting_reader.bytes_read;

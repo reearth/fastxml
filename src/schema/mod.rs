@@ -39,7 +39,7 @@
 //! let fetcher = DefaultFetcher::new();
 //! ```
 
-pub mod builder;
+mod builder;
 pub mod error;
 pub mod export;
 pub mod fetcher;

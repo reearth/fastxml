@@ -110,6 +110,9 @@ pub enum XmlEvent {
 ///
 /// Implement this trait to process XML events during streaming parsing.
 /// Multiple handlers can be attached to a single parser.
+///
+/// Lower-level engine API; prefer [`Parser`](crate::Parser).
+#[doc(hidden)]
 pub trait XmlEventHandler: Send + Any {
     /// Called for each XML event.
     ///
@@ -129,6 +132,10 @@ pub trait XmlEventHandler: Send + Any {
 }
 
 /// A streaming XML parser that dispatches events to handlers.
+///
+/// Lower-level engine API; prefer [`Parser`](crate::Parser)
+/// (`Parser::from(..).events()` / `.for_each_event(..)`).
+#[doc(hidden)]
 pub struct StreamingParser<R: BufRead> {
     reader: Reader<PositionTrackingReader<R>>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
@@ -372,6 +379,7 @@ fn convert_start_event(
 }
 
 /// A simple handler that collects all events.
+#[doc(hidden)]
 pub struct EventCollector {
     events: Vec<XmlEvent>,
 }

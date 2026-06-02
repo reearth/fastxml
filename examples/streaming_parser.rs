@@ -4,75 +4,9 @@
 //!
 //! Run with: cargo run --example streaming_parser
 
+use fastxml::Parser;
 use fastxml::error::Result;
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
-use std::io::BufReader;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Custom handler that prints events and collects statistics.
-struct EventPrinter {
-    element_count: Arc<AtomicUsize>,
-    current_depth: usize,
-}
-
-impl EventPrinter {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
-        Self {
-            element_count: counter,
-            current_depth: 0,
-        }
-    }
-
-    fn indent(&self) -> String {
-        "  ".repeat(self.current_depth)
-    }
-}
-
-impl XmlEventHandler for EventPrinter {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        match event {
-            XmlEvent::StartElement {
-                name, attributes, ..
-            } => {
-                self.element_count.fetch_add(1, Ordering::SeqCst);
-                self.current_depth += 1;
-
-                if !attributes.is_empty() {
-                    let attr_names: Vec<_> = attributes.iter().map(|(k, _)| k.as_str()).collect();
-                    println!("{}Start: {} (attrs: {:?})", self.indent(), name, attr_names);
-                } else {
-                    println!("{}Start: {}", self.indent(), name);
-                }
-            }
-            XmlEvent::EndElement { name, .. } => {
-                println!("{}End: {}", self.indent(), name);
-                self.current_depth = self.current_depth.saturating_sub(1);
-            }
-            XmlEvent::Text(text) => {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    println!("{}Text: {:?}", self.indent(), trimmed);
-                }
-            }
-            XmlEvent::CData(data) => {
-                println!("{}CDATA: {:?}", self.indent(), data);
-            }
-            XmlEvent::Comment(comment) => {
-                println!("{}Comment: {:?}", self.indent(), comment);
-            }
-            XmlEvent::ProcessingInstruction { target, content } => {
-                println!("{}PI: {} {:?}", self.indent(), target, content);
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-        self
-    }
-}
+use fastxml::event::XmlEvent;
 
 fn main() -> Result<()> {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -94,18 +28,52 @@ fn main() -> Result<()> {
 
     println!("=== Streaming Parse Events ===\n");
 
-    // Use Arc<AtomicUsize> to share counter between main and handler
-    let element_count = Arc::new(AtomicUsize::new(0));
+    // The callback streams every event with constant memory and can mutate
+    // local state directly — no shared counters or custom handler types needed.
+    let mut element_count = 0usize;
+    let mut depth = 0usize;
 
-    let reader = BufReader::new(xml.as_bytes());
-    let mut parser = StreamingParser::new(reader);
-
-    parser.add_handler(Box::new(EventPrinter::new(Arc::clone(&element_count))));
-
-    parser.parse()?;
+    Parser::from(xml).for_each_event(|event| {
+        match event {
+            XmlEvent::StartElement {
+                name, attributes, ..
+            } => {
+                element_count += 1;
+                let indent = "  ".repeat(depth);
+                depth += 1;
+                if attributes.is_empty() {
+                    println!("{indent}Start: {name}");
+                } else {
+                    let attr_names: Vec<_> = attributes.iter().map(|(k, _)| k.as_str()).collect();
+                    println!("{indent}Start: {name} (attrs: {attr_names:?})");
+                }
+            }
+            XmlEvent::EndElement { name, .. } => {
+                depth = depth.saturating_sub(1);
+                println!("{}End: {}", "  ".repeat(depth), name);
+            }
+            XmlEvent::Text(text) => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    println!("{}Text: {:?}", "  ".repeat(depth), trimmed);
+                }
+            }
+            XmlEvent::CData(data) => {
+                println!("{}CDATA: {:?}", "  ".repeat(depth), data);
+            }
+            XmlEvent::Comment(comment) => {
+                println!("{}Comment: {:?}", "  ".repeat(depth), comment);
+            }
+            XmlEvent::ProcessingInstruction { target, content } => {
+                println!("{}PI: {} {:?}", "  ".repeat(depth), target, content);
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
 
     println!("\n=== Statistics ===");
-    println!("Total elements: {}", element_count.load(Ordering::SeqCst));
+    println!("Total elements: {element_count}");
 
     Ok(())
 }

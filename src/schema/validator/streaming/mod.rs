@@ -21,6 +21,7 @@ use super::state::ValidationState;
 /// By default, all validations are enabled. Disabling specific validations
 /// can significantly improve performance for large documents.
 #[derive(Debug, Clone, Default)]
+#[doc(hidden)]
 pub struct ValidationOptions {
     /// Skip minOccurs validation (required child element checks).
     /// Disabling this can improve performance but may miss missing required elements.
@@ -41,6 +42,7 @@ pub struct ValidationOptions {
 ///
 /// Validates XML documents against an XSD schema during streaming parsing
 /// in a single pass. Best for memory-constrained environments or non-seekable streams.
+#[doc(hidden)]
 pub struct OnePassSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
     pub(crate) state: ValidationState,
@@ -235,6 +237,7 @@ impl OnePassSchemaValidator {
 /// Alias for [`OnePassSchemaValidator`].
 ///
 /// This provides a convenient name for the recommended streaming validator.
+#[doc(hidden)]
 pub type StreamValidator = OnePassSchemaValidator;
 
 #[cfg(test)]

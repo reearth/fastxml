@@ -5,9 +5,8 @@
 //! Run with: cargo run --example schema_validation
 //! Run with schema fetching: cargo run --example schema_validation --features ureq
 
+use fastxml::Parser;
 use fastxml::error::{ErrorLevel, StructuredError, ValidationErrorType};
-use fastxml::parse;
-use fastxml::schema::validator::XmlSchemaValidationContext;
 use fastxml::schema::{Schema, Validator};
 
 fn main() -> fastxml::error::Result<()> {
@@ -22,34 +21,20 @@ fn main() -> fastxml::error::Result<()> {
 </root>
 "#;
 
-    let doc = parse(xml.as_bytes())?;
+    let doc = Parser::from(xml).parse()?;
     println!("Parsed document with {} nodes", doc.node_count());
 
-    // Create validation context with built-in schema
-    let schema = Schema::builtin();
-    let ctx = XmlSchemaValidationContext::new(schema);
-
-    let errors = ctx.validate(&doc)?;
-    if errors.is_empty() {
+    // Validate against the built-in schema via the `Validator` front door.
+    let report = Validator::from(&doc).schema(Schema::builtin()).run()?;
+    if report.is_valid() {
         println!("Document is valid!\n");
     } else {
         println!("Validation errors:");
-        for error in &errors {
+        for error in report.errors() {
             println!("  - {}", error);
         }
         println!();
     }
-
-    // The same check through the redesigned `Validator` front door.
-    let report = Validator::from(&doc).schema(Schema::builtin()).run()?;
-    println!(
-        "Validator::from(&doc): document is {}\n",
-        if report.is_valid() {
-            "valid"
-        } else {
-            "invalid"
-        }
-    );
 
     // Example 2: Validate using xsi:schemaLocation (auto-fetch schemas)
     #[cfg(feature = "ureq")]
@@ -143,8 +128,6 @@ fn demonstrate_error_handling() {
 /// fetching schemas referenced in the xsi:schemaLocation attribute.
 #[cfg(feature = "ureq")]
 fn demonstrate_schema_location_validation() -> fastxml::error::Result<()> {
-    use fastxml::validate_with_schema_location;
-
     // Example XML with schemaLocation pointing to a real schema
     // In practice, this would reference actual schema URLs
     let xml = r#"<?xml version="1.0"?>
@@ -154,21 +137,19 @@ fn demonstrate_schema_location_validation() -> fastxml::error::Result<()> {
 </root>
 "#;
 
-    let doc = parse(xml.as_bytes())?;
+    let doc = Parser::from(xml).parse()?;
     println!("Parsed document with {} nodes", doc.node_count());
     println!("Validating with schemas from xsi:schemaLocation...\n");
 
-    // This will:
-    // 1. Read xsi:schemaLocation from the document
-    // 2. Fetch the referenced schemas
-    // 3. Validate the document against them
-    let errors = validate_with_schema_location(&doc)?;
+    // Without .schema(..), the schema is resolved from the document's
+    // xsi:schemaLocation and fetched with the default fetcher.
+    let report = Validator::from(&doc).run()?;
 
-    if errors.is_empty() {
+    if report.is_clean() {
         println!("Document is valid!\n");
     } else {
         println!("Validation results:");
-        for error in &errors {
+        for error in report.entries() {
             let prefix = match error.level {
                 ErrorLevel::Warning => "[WARN]",
                 ErrorLevel::Error => "[ERROR]",

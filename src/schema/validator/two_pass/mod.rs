@@ -48,6 +48,7 @@ use super::streaming::ValidationOptions;
     since = "0.5.0",
     note = "TwoPassSchemaValidator is no longer recommended. Use OnePassSchemaValidator (or StreamValidator) instead for better performance."
 )]
+#[doc(hidden)]
 pub struct TwoPassSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
     pub(crate) options: ValidationOptions,

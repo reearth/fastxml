@@ -59,6 +59,7 @@ impl<'a> StreamTransformer<'a> {
 
 /// A consuming builder that captures the transform function.
 #[deprecated(since = "0.4.0", note = "use StreamTransformer::on().run() instead")]
+#[doc(hidden)]
 pub struct StreamTransformBuilder<'a, F> {
     input: &'a str,
     xpath_source: XPathSource,

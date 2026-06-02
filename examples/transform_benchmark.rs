@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
 use fastxml::profile::get_memory_usage;
-use fastxml::transform::StreamTransformer;
+use fastxml::transform::Transformer;
 
 fn main() {
     println!("=== Streaming XML Transform Benchmark ===\n");
@@ -69,14 +69,13 @@ fn run_benchmark(element_count: usize) {
     println!("\n[1] Streaming Transform - ALL 'item' nodes:");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let output1 = StreamTransformer::new(&xml)
+    let mut output1_bytes = Vec::new();
+    let count1 = Transformer::from(xml.as_str())
         .on("//item", |node| {
             node.set_attribute("transformed", "true");
         })
-        .run()
+        .write_to(&mut output1_bytes)
         .unwrap();
-    let count1 = output1.count();
-    let output1_bytes = output1.into_bytes();
     let time1 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -98,14 +97,13 @@ fn run_benchmark(element_count: usize) {
     println!("\n[2] Streaming Transform - 'item' nodes with attr0='value1':");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let output2 = StreamTransformer::new(&xml)
+    let mut output2_bytes = Vec::new();
+    let count2 = Transformer::from(xml.as_str())
         .on("//item[@attr0='value1']", |node| {
             node.set_attribute("special", "true");
         })
-        .run()
+        .write_to(&mut output2_bytes)
         .unwrap();
-    let count2 = output2.count();
-    let output2_bytes = output2.into_bytes();
     let time2 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -127,14 +125,13 @@ fn run_benchmark(element_count: usize) {
     println!("\n[3] Streaming Transform - Remove all 'data' nodes:");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let output3 = StreamTransformer::new(&xml)
+    let mut output3_bytes = Vec::new();
+    let count3 = Transformer::from(xml.as_str())
         .on("//data", |node| {
             node.remove();
         })
-        .run()
+        .write_to(&mut output3_bytes)
         .unwrap();
-    let count3 = output3.count();
-    let output3_bytes = output3.into_bytes();
     let time3 = start.elapsed();
     let mem_after = get_memory_usage();
 
@@ -157,7 +154,7 @@ fn run_benchmark(element_count: usize) {
     println!("\n[4] Full DOM Parse + XPath (same query as [2]):");
     let mem_before = get_memory_usage();
     let start = Instant::now();
-    let doc = fastxml::parse(&xml).unwrap();
+    let doc = fastxml::Parser::from(xml.as_str()).parse().unwrap();
     let parse_time = start.elapsed();
     let mem_after_parse = get_memory_usage();
 

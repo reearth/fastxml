@@ -14,6 +14,7 @@ use super::streaming::OnePassSchemaValidator;
 ///
 /// On the first StartElement event, this validator extracts xsi:schemaLocation,
 /// fetches and compiles the schema, then delegates to [`OnePassSchemaValidator`].
+#[doc(hidden)]
 pub struct LazySchemaValidator<F: SchemaFetcher> {
     fetcher: F,
     validator: Option<OnePassSchemaValidator>,
