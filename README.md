@@ -98,20 +98,32 @@ let result = fetcher.fetch("schema.xsd")?;
 ### DOM Parsing
 
 ```rust
-use fastxml::{parse, evaluate};
+use fastxml::{Parser, evaluate};
 
 let xml = r#"<root><item id="1">Hello</item><item id="2">World</item></root>"#;
 
-let doc = parse(xml.as_bytes())?;
+let doc = Parser::from(xml).parse()?;
 let result = evaluate(&doc, "//item")?;
 for node in result.into_nodes() {
     println!("{}: {}", node.get_attribute("id").unwrap(), node.get_content().unwrap());
 }
 ```
 
+`Parser::from` accepts `&str` or `&[u8]`; use `Parser::from_reader(reader)` to parse from any `BufRead`, and `.options(ParserOptions { .. })` to configure parsing.
+
 ### Streaming Parser
 
-Process large files with minimal memory:
+For a quick, buffered list of events:
+
+```rust
+use fastxml::Parser;
+
+for event in Parser::from(xml).events()? {
+    // inspect each XmlEvent
+}
+```
+
+To process large files with **constant memory**, drive a push-based handler with `StreamingParser` (events are dispatched as they are read, nothing is buffered):
 
 ```rust
 use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
@@ -140,63 +152,74 @@ parser.parse()?;
 Transform XML with XPath-based element selection:
 
 ```rust
-use fastxml::transform::StreamTransformer;
+use fastxml::transform::Transformer;
 
 let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
-// Modify elements (supports multiple handlers)
-let result = StreamTransformer::new(xml)
+// Modify elements (supports multiple handlers), render the result as a String
+let result = Transformer::from(xml)
     .on("//item[@id='2']", |node| node.set_attribute("modified", "true"))
-    .run()?
     .to_string()?;
-
-// Extract data (single XPath)
-let ids: Vec<String> = StreamTransformer::new(xml)
-    .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
-
-// Extract data from multiple XPaths in a single pass
-let (ids, contents): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
-    .collect_multi((
-        ("//item", |node| node.get_attribute("id").unwrap_or_default()),
-        ("//item", |node| node.get_content().unwrap_or_default()),
-    ))?;
 
 // Iterate for side effects (no output transformation)
 let mut ids = Vec::new();
-StreamTransformer::new(xml)
+Transformer::from(xml)
     .on("//item", |node| {
         ids.push(node.get_attribute("id").unwrap_or_default());
     })
     .for_each()?;
 ```
 
+Terminals: `to_string()`, `into_bytes()`, `write_to(&mut writer)`, and `for_each()`.
+
 #### Reader-based Transform (Large Files)
 
-For large XML files, use `StreamTransformerReader` to avoid loading the entire file into memory. It reads from any `BufRead` source and writes results incrementally:
+For large XML files, use `Transformer::from_reader` to avoid loading the entire file into memory. It reads from any `BufRead` source and writes results incrementally:
 
 ```rust
-use fastxml::transform::StreamTransformerReader;
+use fastxml::transform::Transformer;
 use std::io::{BufReader, BufWriter};
 use std::fs::File;
 
 let reader = BufReader::new(File::open("large_file.xml")?);
 let mut output = BufWriter::new(File::create("output.xml")?);
 
-// Transform and write to output
-let count = StreamTransformerReader::new(reader)
+// Transform and write to output (returns the number of matched elements)
+let count = Transformer::from_reader(reader)
     .on("//item[@id='2']", |node| node.set_attribute("modified", "true"))
-    .run_to_writer(&mut output)?;
+    .write_to(&mut output)?;
 
 println!("Transformed {} elements", count);
 
 // Or iterate for side effects only (no output)
 let reader = BufReader::new(File::open("large_file.xml")?);
 let mut ids = Vec::new();
-StreamTransformerReader::new(reader)
+Transformer::from_reader(reader)
     .on("//item", |node| {
         ids.push(node.get_attribute("id").unwrap_or_default());
     })
     .for_each()?;
+```
+
+#### Advanced transforms
+
+Richer in-memory operations live on `StreamTransformer` (which `Transformer::from` wraps): single-pass data extraction, multi-XPath collection, parent-context access, root-namespace auto-detection, and fallback for non-streamable XPath.
+
+```rust
+use fastxml::transform::StreamTransformer;
+
+let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
+
+// Extract data (single XPath)
+let ids: Vec<String> = StreamTransformer::new(xml)
+    .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
+
+// Extract from multiple XPaths in a single pass
+let (ids, contents): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+    .collect_multi((
+        ("//item", |node| node.get_attribute("id").unwrap_or_default()),
+        ("//item", |node| node.get_content().unwrap_or_default()),
+    ))?;
 ```
 
 #### Auto-detect Namespaces
@@ -290,10 +313,7 @@ let result = StreamTransformer::new(xml)
 Parse XSD schemas with async import/include resolution (requires `tokio` feature):
 
 ```rust
-use fastxml::schema::{
-    AsyncDefaultFetcher,
-    parse_xsd_with_imports_async,
-};
+use fastxml::schema::{AsyncDefaultFetcher, Schema};
 
 #[tokio::main]
 async fn main() -> fastxml::error::Result<()> {
@@ -302,17 +322,18 @@ async fn main() -> fastxml::error::Result<()> {
     // Create async fetcher
     let fetcher = AsyncDefaultFetcher::new()?;
 
-    // Parse schema with async import resolution
-    let schema = parse_xsd_with_imports_async(
-        &xsd_content,
-        "http://example.com/schema.xsd",
-        &fetcher,
-    ).await?;
+    // Build the schema, resolving imports asynchronously
+    let schema = Schema::builder()
+        .add("http://example.com/schema.xsd", xsd_content)
+        .resolve_with_async(&fetcher)
+        .await?;
 
     println!("Parsed {} types", schema.types.len());
     Ok(())
 }
 ```
+
+`Schema::builder()` takes one or more `.add(uri, bytes)` sources; finish with `.resolve()` (no network), `.resolve_with(&fetcher)`, or `.resolve_with_async(&fetcher)`.
 
 The async resolver:
 - Fetches imported schemas asynchronously via HTTP
@@ -323,15 +344,22 @@ See [examples/async_schema_resolution.rs](examples/async_schema_resolution.rs) f
 
 ## Schema Validation
 
+All validation goes through one `Validator` front door: the input type selects the engine (`&XmlDocument` → DOM, `&str`/`&[u8]`/reader → streaming), `.schema(..)` supplies an explicit schema (or it is resolved from `xsi:schemaLocation`), and `run()` returns a `Report`.
+
+A `Schema` is built with `Schema::from_xsd(bytes)`, `Schema::builtin()`, or `Schema::builder().add(uri, bytes).resolve()?`.
+
 ### DOM Validation
 
 ```rust
-use fastxml::{parse, validate_document_by_schema};
+use fastxml::Parser;
+use fastxml::schema::{Schema, Validator};
 
-let doc = parse(std::fs::read("document.xml")?.as_slice())?;
-let errors = validate_document_by_schema(&doc, "schema.xsd".to_string())?;
+let doc = Parser::from(std::fs::read("document.xml")?.as_slice()).parse()?;
+let schema = Schema::from_xsd(std::fs::read("schema.xsd")?)?;
 
-if errors.is_empty() {
+let report = Validator::from(&doc).schema(schema).run()?;
+
+if report.is_valid() {
     println!("Valid!");
 }
 ```
@@ -341,57 +369,52 @@ if errors.is_empty() {
 Validate during parsing with minimal memory:
 
 ```rust
-use fastxml::schema::StreamValidator;
+use fastxml::schema::{Schema, Validator};
 use std::sync::Arc;
 
-let schema = Arc::new(fastxml::schema::parse_xsd(&std::fs::read("schema.xsd")?)?);
+let schema = Arc::new(Schema::from_xsd(std::fs::read("schema.xsd")?)?);
 let reader = std::io::BufReader::new(file);
 
-let errors = StreamValidator::new(schema)
-    .with_max_errors(100)
-    .validate(reader)?;
+let report = Validator::from_reader(reader)
+    .schema(Arc::clone(&schema))   // share one schema across many validations
+    .max_errors(100)
+    .run()?;
 ```
 
 ### Auto-detect Schema
 
-Fetch schemas from `xsi:schemaLocation` automatically (requires `ureq` feature):
+Omit `.schema(..)` and the schema is resolved from the document's `xsi:schemaLocation`, using the default fetcher (requires the `ureq` feature):
 
 ```rust
-use fastxml::{parse, validate_with_schema_location};
+use fastxml::{Parser, schema::Validator};
 
-let doc = parse(xml_bytes)?;
-let errors = validate_with_schema_location(&doc)?;
+let doc = Parser::from(xml_bytes).parse()?;
+let report = Validator::from(&doc).run()?;
 ```
 
-For streaming:
+For streaming, the schema is fetched lazily on the first element:
 
 ```rust
-use fastxml::streaming_validate_with_schema_location;
+use fastxml::schema::Validator;
 
-let errors = streaming_validate_with_schema_location(reader)?;
+let report = Validator::from_reader(reader).run()?;
 ```
+
+To supply a custom fetcher, use `.run_with(fetcher)` instead of `.run()`.
 
 ### Async Validation
 
-Validate with async schema fetching (requires `tokio` feature):
+Validate with async schema fetching (requires `tokio` feature) via `run_async()` (default fetcher) or `run_async_with(&fetcher)`:
 
 ```rust
-use fastxml::{parse, validate_with_schema_location_async};
+use fastxml::{Parser, schema::Validator};
 
 #[tokio::main]
 async fn main() -> fastxml::error::Result<()> {
-    let doc = parse(xml_bytes)?;
-    let errors = validate_with_schema_location_async(&doc).await?;
+    let doc = Parser::from(xml_bytes).parse()?;
+    let report = Validator::from(&doc).run_async().await?;
     Ok(())
 }
-```
-
-Or get the compiled schema for reuse:
-
-```rust
-use fastxml::get_schema_from_schema_location_async;
-
-let schema = get_schema_from_schema_location_async(&xml_bytes).await?;
 ```
 
 ### Validation Errors
@@ -399,7 +422,8 @@ let schema = get_schema_from_schema_location_async(&xml_bytes).await?;
 ```rust
 use fastxml::ErrorLevel;
 
-for error in &errors {
+// `report` is the value returned by `Validator::…::run()`
+for error in report.errors() {
     match error.level {
         ErrorLevel::Warning => print!("[WARN] "),
         ErrorLevel::Error => print!("[ERROR] "),
@@ -417,9 +441,9 @@ for error in &errors {
 ### Basic Usage
 
 ```rust
-use fastxml::{parse, evaluate};
+use fastxml::{Parser, evaluate};
 
-let doc = parse(xml)?;
+let doc = Parser::from(xml).parse()?;
 let result = evaluate(&doc, "//item[@id='1']/text()")?;
 ```
 
@@ -434,7 +458,7 @@ let xml = r#"
     </bldg:Building>
 </core:CityModel>"#;
 
-let doc = parse(xml.as_bytes())?;
+let doc = Parser::from(xml).parse()?;
 let buildings = evaluate(&doc, "//bldg:Building")?;
 ```
 

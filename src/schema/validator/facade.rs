@@ -6,13 +6,16 @@
 //! types and the family of `validate_*` free functions behind one surface:
 //!
 //! ```ignore
+//! use std::sync::Arc;
 //! use fastxml::schema::{Schema, Validator};
 //!
+//! let schema = Arc::new(Schema::from_xsd(xsd_bytes)?);
+//!
 //! // Streaming validation against an explicit schema.
-//! let report = Validator::from(xml).schema(&schema).run()?;
+//! let report = Validator::from(xml).schema(Arc::clone(&schema)).run()?;
 //!
 //! // DOM validation (the input is just an `&XmlDocument`).
-//! let report = Validator::from(&doc).schema(&schema).run()?;
+//! let report = Validator::from(&doc).schema(Arc::clone(&schema)).run()?;
 //!
 //! // Resolve the schema from the document's `xsi:schemaLocation`.
 //! let report = Validator::from_reader(file).run()?;            // default fetcher (needs `ureq`)
