@@ -7,6 +7,7 @@ use crate::schema::types::{
     ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren, SimpleType, TypeDef,
 };
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
+use crate::schema::xsd::primitive::PrimitiveKind;
 
 use super::super::ValidationMode;
 #[allow(deprecated)]
@@ -460,9 +461,10 @@ impl TwoPassSchemaValidator {
         elem: &ElementDef,
         errors: &mut Vec<StructuredError>,
     ) {
-        if node.text_content.is_empty() {
-            return;
-        }
+        // Note: we deliberately do NOT skip empty text here. Primitive types
+        // (e.g., xs:integer, xs:double) must reject empty content; types whose
+        // lexical space allows empty (xs:string and its derivatives) resolve
+        // to no PrimitiveKind and pass through with no extra check.
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -474,15 +476,16 @@ impl TwoPassSchemaValidator {
         match type_def {
             Some(TypeDef::Simple(simple)) => {
                 // Validate against simple type facets
-                self.validate_simple_type_facets(node, &simple, errors);
+                self.validate_simple_type_facets(node, &simple, elem.nillable, errors);
             }
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
                     if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
-                        self.validate_simple_type_facets(node, simple, errors);
+                        let simple = simple.clone();
+                        self.validate_simple_type_facets(node, &simple, elem.nillable, errors);
                     }
-                } else if !complex.mixed {
+                } else if !complex.mixed && !node.text_content.is_empty() {
                     // Non-mixed complex types shouldn't have text content
                     if let ContentModel::Sequence(_)
                     | ContentModel::Choice(_)
@@ -514,21 +517,49 @@ impl TwoPassSchemaValidator {
         }
     }
 
-    /// Validates text content against simple type facets.
+    /// Validates text content against simple type facets and (where the
+    /// type resolves to a built-in XSD primitive) its lexical/value space.
     pub(crate) fn validate_simple_type_facets(
         &self,
         node: &ElementSkeleton,
         simple: &SimpleType,
+        nillable: bool,
         errors: &mut Vec<StructuredError>,
     ) {
-        let constraints = self.create_facet_constraints(simple);
-        let validator = FacetValidator::new(&constraints);
+        // User-declared facets. Skip on empty content so we don't pile a
+        // facet error on top of any primitive "empty value" error.
+        if !node.text_content.is_empty() {
+            let constraints = self.create_facet_constraints(simple);
+            let validator = FacetValidator::new(&constraints);
+            if let Err(facet_error) = validator.validate(&node.text_content) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidTextContent,
+                        format!("element '{}': {}", node.name, facet_error),
+                        node,
+                    )
+                    .with_node_name(node.name.as_ref())
+                    .with_level(ErrorLevel::Error);
 
-        if let Err(facet_error) = validator.validate(&node.text_content) {
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
+        }
+
+        // Built-in primitive lexical/value-space check. Skip for an empty,
+        // nillable element: `xsi:nil="true"` legitimately leaves the content
+        // empty and it must not be checked against the primitive type.
+        if node.text_content.is_empty() && nillable {
+            return;
+        }
+        if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
+            && let Err(prim_error) = kind.validate(&node.text_content)
+        {
             let error = self
                 .make_error(
                     ValidationErrorType::InvalidTextContent,
-                    format!("element '{}': {}", node.name, facet_error),
+                    format!("element '{}': {}", node.name, prim_error),
                     node,
                 )
                 .with_node_name(node.name.as_ref())

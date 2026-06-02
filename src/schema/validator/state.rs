@@ -41,6 +41,10 @@ pub(crate) struct ElementContext {
     pub flattened_children: Option<Arc<FlattenedChildren>>,
     /// Current position in expected sequence for sequence order validation.
     pub sequence_index: usize,
+    /// Whether the element's declaration is `nillable="true"`. When true and the
+    /// element is empty, primitive lexical/value-space checks are skipped so an
+    /// `xsi:nil` element (e.g. an empty `xs:int`) is not rejected as invalid.
+    pub nillable: bool,
 }
 
 impl ElementContext {
@@ -55,6 +59,7 @@ impl ElementContext {
             type_ref: None,
             flattened_children: None,
             sequence_index: 0,
+            nillable: false,
         }
     }
 
