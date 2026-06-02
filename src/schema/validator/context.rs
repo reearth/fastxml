@@ -12,6 +12,7 @@ use super::streaming::OnePassSchemaValidator;
 /// Schema validation context.
 ///
 /// Thread-safe wrapper for schema validation.
+#[doc(hidden)]
 pub struct XmlSchemaValidationContext {
     schema: Arc<CompiledSchema>,
 }

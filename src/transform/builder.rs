@@ -54,6 +54,7 @@ pub(crate) enum HandlerCallback<'a> {
 ///     .to_string()?;
 /// # Ok::<(), fastxml::transform::TransformError>(())
 /// ```
+#[doc(hidden)]
 pub struct StreamTransformer<'a> {
     pub(crate) input: &'a str,
     pub(crate) handlers: Vec<Handler<'a>>,

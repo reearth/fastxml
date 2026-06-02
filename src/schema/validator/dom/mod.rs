@@ -34,6 +34,7 @@ use super::streaming::ValidationOptions;
 ///     .with_max_errors(100)
 ///     .validate(&doc)?;
 /// ```
+#[doc(hidden)]
 pub struct DomSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
     pub(crate) mode: ValidationMode,

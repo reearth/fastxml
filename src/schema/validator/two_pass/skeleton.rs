@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 /// A lightweight skeleton of an element for batch validation.
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct ElementSkeleton {
     /// Element name (local name)
     pub name: Arc<str>,
@@ -56,6 +57,7 @@ impl ElementSkeleton {
 
 /// A document skeleton containing all element skeletons in a flat structure.
 #[derive(Debug, Default)]
+#[doc(hidden)]
 pub struct DocumentSkeleton {
     /// Flat storage of all element skeletons
     pub nodes: Vec<ElementSkeleton>,

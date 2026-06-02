@@ -36,6 +36,7 @@ use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
 /// assert!(result.contains(r#"processed="true""#));
 /// # Ok::<(), fastxml::transform::TransformError>(())
 /// ```
+#[doc(hidden)]
 pub struct StreamTransformerReader<'a, R: BufRead> {
     reader: R,
     handlers: Vec<Handler<'a>>,

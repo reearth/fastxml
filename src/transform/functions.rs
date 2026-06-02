@@ -42,6 +42,7 @@ use super::xpath_analyze::{self, XPathAnalysis};
 ///
 /// assert_eq!(count, 1);
 /// ```
+#[doc(hidden)]
 pub fn stream_transform<W, F>(
     input: &str,
     xpath: &str,
@@ -64,6 +65,7 @@ where
 }
 
 /// Streaming transform with namespace support.
+#[doc(hidden)]
 pub fn stream_transform_with_namespaces<W, F>(
     input: &str,
     xpath: &str,
@@ -90,6 +92,7 @@ where
 ///
 /// **Warning**: This may load the entire document into memory for
 /// non-streamable XPath expressions.
+#[doc(hidden)]
 pub fn stream_transform_with_fallback<W, F>(
     input: &str,
     xpath: &str,
