@@ -60,3 +60,32 @@ fn events_from_reader() {
     // root, a, b
     assert_eq!(starts, 3);
 }
+
+#[test]
+fn for_each_event_borrows_local_state() {
+    // The closure captures and mutates a local — constant memory, no Arc needed.
+    let mut starts = 0;
+    Parser::from(XML)
+        .for_each_event(|event| {
+            if matches!(event, XmlEvent::StartElement { .. }) {
+                starts += 1;
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(starts, 3); // root, a, b
+}
+
+#[test]
+fn for_each_event_from_reader() {
+    let mut texts = Vec::new();
+    Parser::from_reader(BufReader::new(XML.as_bytes()))
+        .for_each_event(|event| {
+            if let XmlEvent::Text(t) = event {
+                texts.push(t.clone());
+            }
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(texts, vec!["1".to_string(), "2".to_string()]);
+}

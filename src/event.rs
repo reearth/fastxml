@@ -171,7 +171,10 @@ impl<R: BufRead> StreamingParser<R> {
     }
 
     /// Parses the document, dispatching events to all handlers.
-    pub fn parse(&mut self) -> Result<()> {
+    fn drive_loop<F>(&mut self, mut on_event: F) -> Result<()>
+    where
+        F: FnMut(&XmlEvent) -> Result<()>,
+    {
         let mut buffer = Vec::with_capacity(8 * 1024);
 
         loop {
@@ -182,11 +185,11 @@ impl<R: BufRead> StreamingParser<R> {
             match event_result {
                 Ok(Event::Start(ref e)) => {
                     let event = convert_start_event(e, line, column, &mut self.interner)?;
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::Empty(ref e)) => {
                     let start_event = convert_start_event(e, line, column, &mut self.interner)?;
-                    self.dispatch_event(&start_event)?;
+                    on_event(&start_event)?;
 
                     // For empty elements, also dispatch end event
                     if let XmlEvent::StartElement {
@@ -199,7 +202,7 @@ impl<R: BufRead> StreamingParser<R> {
                             name: name.clone(),
                             prefix: prefix.clone(),
                         };
-                        self.dispatch_event(&end_event)?;
+                        on_event(&end_event)?;
                     }
                 }
                 Ok(Event::End(ref e)) => {
@@ -210,7 +213,7 @@ impl<R: BufRead> StreamingParser<R> {
                         name: self.interner.intern(name),
                         prefix: prefix.map(|p| self.interner.intern(p)),
                     };
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::Text(ref e)) => {
                     let text = e.unescape().map_err(|e| {
@@ -220,18 +223,18 @@ impl<R: BufRead> StreamingParser<R> {
                     })?;
                     if !text.is_empty() {
                         let event = XmlEvent::Text(text.into_owned());
-                        self.dispatch_event(&event)?;
+                        on_event(&event)?;
                     }
                 }
                 Ok(Event::CData(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
                     let event = XmlEvent::CData(text.to_string());
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::Comment(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
                     let event = XmlEvent::Comment(text.to_string());
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::PI(ref e)) => {
                     let content = std::str::from_utf8(e.as_ref())?;
@@ -242,7 +245,7 @@ impl<R: BufRead> StreamingParser<R> {
                         target,
                         content: pi_content,
                     };
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::Decl(ref e)) => {
                     let version = e
@@ -262,14 +265,14 @@ impl<R: BufRead> StreamingParser<R> {
                         encoding,
                         standalone,
                     };
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                 }
                 Ok(Event::DocType(_)) => {
                     // Skip DOCTYPE
                 }
                 Ok(Event::Eof) => {
                     let event = XmlEvent::Eof;
-                    self.dispatch_event(&event)?;
+                    on_event(&event)?;
                     break;
                 }
                 Err(e) => {
@@ -283,19 +286,43 @@ impl<R: BufRead> StreamingParser<R> {
             buffer.clear();
         }
 
-        // Call finish on all handlers
-        for handler in &mut self.handlers {
-            handler.finish()?;
-        }
-
         Ok(())
     }
 
-    fn dispatch_event(&mut self, event: &XmlEvent) -> Result<()> {
-        for handler in &mut self.handlers {
-            handler.handle(event)?;
-        }
-        Ok(())
+    /// Parses the document, dispatching every event to all registered handlers,
+    /// then calling `finish` on each handler.
+    pub fn parse(&mut self) -> Result<()> {
+        // Move the handlers out so the drive loop's callback can borrow them
+        // without conflicting with the `&mut self` the loop needs.
+        let mut handlers = std::mem::take(&mut self.handlers);
+        let result = self
+            .drive_loop(|event| {
+                for handler in handlers.iter_mut() {
+                    handler.handle(event)?;
+                }
+                Ok(())
+            })
+            .and_then(|()| {
+                for handler in handlers.iter_mut() {
+                    handler.finish()?;
+                }
+                Ok(())
+            });
+        self.handlers = handlers;
+        result
+    }
+
+    /// Drives the parser, invoking `on_event` for every event as it is read.
+    ///
+    /// Unlike [`parse`](Self::parse), the callback is borrowed only for the
+    /// duration of the call, so it may capture and mutate local state (e.g.
+    /// accumulate into a `Vec` or counter). Registered handlers are not invoked
+    /// by this method.
+    pub fn for_each_event<F>(&mut self, on_event: F) -> Result<()>
+    where
+        F: FnMut(&XmlEvent) -> Result<()>,
+    {
+        self.drive_loop(on_event)
     }
 }
 
