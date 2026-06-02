@@ -100,6 +100,37 @@ impl<'a> Parser<'a> {
             Source::Reader(reader) => collect_events(reader),
         }
     }
+
+    /// Streams the input, invoking `on_event` for every event as it is read,
+    /// with **constant memory** (nothing is buffered).
+    ///
+    /// The callback is borrowed for the duration of the call, so it may capture
+    /// and mutate local state. Return `Err(..)` to stop early.
+    ///
+    /// ```ignore
+    /// let mut elements = 0;
+    /// Parser::from_reader(file).for_each_event(|event| {
+    ///     if matches!(event, XmlEvent::StartElement { .. }) {
+    ///         elements += 1;
+    ///     }
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn for_each_event<F>(self, on_event: F) -> Result<()>
+    where
+        F: FnMut(&XmlEvent) -> Result<()>,
+    {
+        match self.source {
+            Source::Bytes(bytes) => {
+                let mut parser = StreamingParser::new(bytes);
+                parser.for_each_event(on_event)
+            }
+            Source::Reader(reader) => {
+                let mut parser = StreamingParser::new(reader);
+                parser.for_each_event(on_event)
+            }
+        }
+    }
 }
 
 fn collect_events<R: BufRead>(reader: R) -> Result<Vec<XmlEvent>> {
