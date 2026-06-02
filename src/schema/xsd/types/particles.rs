@@ -4,6 +4,19 @@ use super::elements::XsdElement;
 use super::occurs::Occurs;
 use super::qname::QName;
 
+/// Reference to a named model group (`<xs:group ref="...">`), carrying the
+/// occurrence bounds declared at the reference site so they can be propagated
+/// to the referenced group's members during compilation.
+#[derive(Debug, Clone)]
+pub struct XsdGroupRef {
+    /// Referenced group name
+    pub name: QName,
+    /// Minimum occurrences (from the ref site)
+    pub min_occurs: Occurs,
+    /// Maximum occurrences (from the ref site)
+    pub max_occurs: Occurs,
+}
+
 /// Model group particle.
 #[derive(Debug, Clone)]
 pub enum XsdParticle {
@@ -14,7 +27,7 @@ pub enum XsdParticle {
     /// All (unordered set)
     All(XsdAll),
     /// Group reference
-    GroupRef(QName),
+    GroupRef(XsdGroupRef),
     /// Any element wildcard
     Any(XsdAny),
 }
@@ -62,7 +75,7 @@ pub enum XsdParticleItem {
     /// Nested choice
     Choice(XsdChoice),
     /// Group reference
-    GroupRef(QName),
+    GroupRef(XsdGroupRef),
     /// Any wildcard
     Any(XsdAny),
 }

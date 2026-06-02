@@ -11,10 +11,10 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::error::Result;
-use crate::schema::types::CompiledSchema;
+use crate::schema::types::{CompiledSchema, NsName};
 
 use super::types::*;
 
@@ -26,6 +26,11 @@ pub struct XsdCompiler {
     pub(crate) substitution_groups: HashMap<String, Vec<String>>,
     /// Namespace bindings for resolving prefixes
     pub(crate) namespace_bindings: HashMap<String, String>,
+    /// Named model group definitions, keyed by (namespace URI, local name), for
+    /// resolving `<xs:group ref="...">` during particle compilation.
+    pub(crate) groups: HashMap<NsName, XsdParticle>,
+    /// Group names currently being expanded, used to break cyclic group refs.
+    pub(crate) group_expansion: HashSet<NsName>,
     /// Current target namespace
     pub(crate) current_target_ns: Option<String>,
     /// Current target namespace prefix (from the schema being processed)
@@ -39,6 +44,8 @@ impl XsdCompiler {
             type_cache: HashMap::new(),
             substitution_groups: HashMap::new(),
             namespace_bindings: HashMap::new(),
+            groups: HashMap::new(),
+            group_expansion: HashSet::new(),
             current_target_ns: None,
             current_target_prefix: None,
         }
@@ -76,6 +83,12 @@ impl XsdCompiler {
         // Second pass: register all types for forward reference resolution
         for schema in &deduplicated_schemas {
             self.register_types(schema)?;
+        }
+
+        // Register named model groups so `<xs:group ref>` can be expanded while
+        // compiling particles in the next pass.
+        for schema in &deduplicated_schemas {
+            self.register_groups(schema);
         }
 
         // Third pass: compile each schema
@@ -149,6 +162,20 @@ impl XsdCompiler {
         }
 
         Ok(())
+    }
+
+    /// Registers named model group definitions for `<xs:group ref>` resolution.
+    ///
+    /// Groups are keyed by (namespace URI, local name) so that references across
+    /// namespaces resolve unambiguously, mirroring the namespace-aware type cache.
+    fn register_groups(&mut self, schema: &XsdSchema) {
+        let ns = schema.target_namespace.clone().unwrap_or_default();
+        for grp in &schema.groups {
+            if let (Some(name), Some(particle)) = (&grp.name, &grp.particle) {
+                let key = NsName::new(ns.clone(), name.clone());
+                self.groups.insert(key, particle.clone());
+            }
+        }
     }
 
     /// Compiles a single schema into the result.
