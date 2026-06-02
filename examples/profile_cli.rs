@@ -48,7 +48,7 @@ fn main() {
                 println!("Running XPath: {}", xpath_expr);
 
                 let content = std::fs::read(file_path).unwrap();
-                let doc = fastxml::parse(&content).unwrap();
+                let doc = fastxml::Parser::from(content.as_slice()).parse().unwrap();
 
                 let start = std::time::Instant::now();
                 match fastxml::xpath::evaluate(&doc, xpath_expr) {

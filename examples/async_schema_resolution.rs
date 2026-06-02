@@ -11,8 +11,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use fastxml::error::Result;
+use fastxml::schema::Schema;
 use fastxml::schema::fetcher::{AsyncSchemaFetcher, FetchResult};
-use fastxml::schema::parse_xsd_with_imports_async;
 
 /// A mock async fetcher that serves schemas from an in-memory map.
 ///
@@ -94,9 +94,10 @@ async fn example_simple_schema() -> Result<()> {
 
     let fetcher = MockAsyncFetcher::new();
 
-    let schema =
-        parse_xsd_with_imports_async(xsd.as_bytes(), "http://example.com/simple.xsd", &fetcher)
-            .await?;
+    let schema = Schema::builder()
+        .add("http://example.com/simple.xsd", xsd.as_bytes())
+        .resolve_with_async(&fetcher)
+        .await?;
 
     println!("Parsed schema:");
     println!("  Target namespace: {:?}", schema.target_namespace);
@@ -151,12 +152,10 @@ async fn example_with_imports() -> Result<()> {
     fetcher.add_schema("http://example.com/types.xsd", types_xsd);
 
     println!("Resolving schema with imports...");
-    let schema = parse_xsd_with_imports_async(
-        main_xsd.as_bytes(),
-        "http://example.com/contact.xsd",
-        &fetcher,
-    )
-    .await?;
+    let schema = Schema::builder()
+        .add("http://example.com/contact.xsd", main_xsd.as_bytes())
+        .resolve_with_async(&fetcher)
+        .await?;
 
     println!("\nParsed schema:");
     println!("  Target namespace: {:?}", schema.target_namespace);
@@ -248,12 +247,10 @@ async fn example_nested_imports() -> Result<()> {
     println!("Resolving schema with nested imports...");
     println!("  order.xsd -> common.xsd -> base.xsd\n");
 
-    let schema = parse_xsd_with_imports_async(
-        main_xsd.as_bytes(),
-        "http://example.com/order.xsd",
-        &fetcher,
-    )
-    .await?;
+    let schema = Schema::builder()
+        .add("http://example.com/order.xsd", main_xsd.as_bytes())
+        .resolve_with_async(&fetcher)
+        .await?;
 
     println!("\nParsed schema:");
     println!("  Target namespace: {:?}", schema.target_namespace);

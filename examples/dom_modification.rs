@@ -59,8 +59,8 @@ fn main() -> fastxml::error::Result<()> {
     println!("\nModified document:");
     println!("{}", node_to_xml_string(&doc, &mut root)?);
 
-    // 5. For element removal, use StreamTransformer
-    println!("\n5. For element removal, use StreamTransformer API:");
+    // 5. For element removal, use the Transformer API
+    println!("\n5. For element removal, use the Transformer API:");
     println!("   See transform_example.rs for examples.");
 
     Ok(())

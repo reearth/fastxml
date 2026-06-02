@@ -3,64 +3,24 @@
 //! Demonstrates validating large XML files while parsing in a single pass.
 //! This is memory-efficient as it doesn't build a full DOM tree.
 //!
-//! # Simple API
-//!
-//! For basic validation without custom handlers, use the simple API:
-//!
 //! ```ignore
-//! let errors = OnePassSchemaValidator::new(schema)
-//!     .with_max_errors(100)
-//!     .validate(reader)?;
+//! use fastxml::schema::{Schema, Validator};
+//!
+//! let report = Validator::from_reader(reader)
+//!     .schema(Schema::builtin())
+//!     .max_errors(100)
+//!     .run()?;
 //! ```
-//!
-//! # Advanced: Multiple Handlers
-//!
-//! This example shows how to combine validation with custom handlers
-//! (e.g., counting elements while validating).
 //!
 //! Run with: cargo run --example streaming_validation
 //! Run with file: cargo run --example streaming_validation -- path/to/file.xml
 //! Run with schema fetching: cargo run --example streaming_validation --features ureq -- path/to/file.xml
 
+use fastxml::Parser;
 use fastxml::error::Result;
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
-use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::schema::xsd::create_builtin_schema;
+use fastxml::event::XmlEvent;
+use fastxml::schema::{Schema, Validator};
 use std::io::BufReader;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Custom handler that counts elements while validation happens
-struct CountingHandler {
-    element_count: Arc<AtomicUsize>,
-}
-
-impl CountingHandler {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
-        Self {
-            element_count: counter,
-        }
-    }
-}
-
-impl XmlEventHandler for CountingHandler {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        if let XmlEvent::StartElement { .. } = event {
-            self.element_count.fetch_add(1, Ordering::SeqCst);
-
-            // Progress indicator for large files
-            let count = self.element_count.load(Ordering::SeqCst);
-            if count.is_multiple_of(1000) {
-                println!("Processed {} elements...", count);
-            }
-        }
-        Ok(())
-    }
-
-    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-        self
-    }
-}
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -95,46 +55,35 @@ fn run_demo() -> Result<()> {
             <bldg:yearOfConstruction>2005</bldg:yearOfConstruction>
         </bldg:Building>
     </cityObjectMember>
-    <cityObjectMember>
-        <bldg:Building gml:id="BLDG_003">
-            <bldg:measuredHeight uom="m">18.0</bldg:measuredHeight>
-            <bldg:storeysAboveGround>5</bldg:storeysAboveGround>
-            <bldg:yearOfConstruction>2010</bldg:yearOfConstruction>
-        </bldg:Building>
-    </cityObjectMember>
 </CityModel>
 "#;
 
     println!("=== Streaming Validation Example (Demo) ===\n");
-
-    // Create schema (in real usage, load from XSD file)
-    let schema = Arc::new(create_builtin_schema());
-
-    // Shared counter for element count
-    let element_count = Arc::new(AtomicUsize::new(0));
-
-    // Create streaming parser
-    let reader = BufReader::new(xml.as_bytes());
-    let mut parser = StreamingParser::new(reader);
-
-    // Add counting handler
-    parser.add_handler(Box::new(CountingHandler::new(Arc::clone(&element_count))));
-
-    // Add streaming validator
-    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-    parser.add_handler(Box::new(validator));
-
     println!("Starting streaming parse with validation...\n");
 
-    // Parse and validate in single pass
-    parser.parse()?;
+    // Validate in a single streaming pass against the built-in schema.
+    // (In real usage, load a schema with Schema::from_xsd / Schema::builder.)
+    let report = Validator::from(xml).schema(Schema::builtin()).run()?;
+
+    // Separately, stream the events to count elements with constant memory.
+    let mut element_count = 0usize;
+    Parser::from(xml).for_each_event(|event| {
+        if matches!(event, XmlEvent::StartElement { .. }) {
+            element_count += 1;
+        }
+        Ok(())
+    })?;
 
     println!("\n=== Results ===\n");
+    println!("Total elements processed: {element_count}");
     println!(
-        "Total elements processed: {}",
-        element_count.load(Ordering::SeqCst)
+        "Validation: {} (using built-in schema)",
+        if report.is_valid() {
+            "PASSED"
+        } else {
+            "FAILED"
+        }
     );
-    println!("Validation: PASSED (using built-in schema)");
 
     println!("\nStreaming validation complete!");
     println!("Note: Memory usage stays constant regardless of file size.");
@@ -146,7 +95,6 @@ fn run_demo() -> Result<()> {
 #[cfg(feature = "ureq")]
 fn validate_file(file_path: &str) -> Result<()> {
     use fastxml::schema::DefaultFetcher;
-    use fastxml::schema::validator::streaming_validate_with_schema_location_and_fetcher;
     use std::fs::File;
     use std::path::Path;
 
@@ -163,25 +111,21 @@ fn validate_file(file_path: &str) -> Result<()> {
     let reader = BufReader::new(file);
 
     // Use DefaultFetcher with base directory from the XML file's location
-    // This allows resolving relative schema paths
+    // so relative schema paths resolve.
     let base_dir = Path::new(file_path)
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
     let fetcher = DefaultFetcher::with_base_dir(base_dir);
 
-    let errors = streaming_validate_with_schema_location_and_fetcher(reader, fetcher)?;
+    // No .schema(..) => the schema is resolved from xsi:schemaLocation.
+    let report = Validator::from_reader(reader).run_with(fetcher)?;
     let elapsed = start.elapsed();
 
-    let mut error_count = 0;
-    let mut warning_count = 0;
-
-    for err in &errors {
+    for err in report.entries() {
         if err.is_error() {
-            error_count += 1;
             println!("[ERROR] {}", err.message);
         } else {
-            warning_count += 1;
             println!("[WARN] {}", err.message);
         }
     }
@@ -192,9 +136,13 @@ fn validate_file(file_path: &str) -> Result<()> {
         "Throughput: {:.2} MB/s",
         file_size as f64 / 1024.0 / 1024.0 / elapsed.as_secs_f64()
     );
-    println!("Errors: {}, Warnings: {}", error_count, warning_count);
+    println!(
+        "Errors: {}, Warnings: {}",
+        report.error_count(),
+        report.warning_count()
+    );
 
-    if error_count == 0 {
+    if report.is_valid() {
         println!("\nValidation: PASSED");
     } else {
         println!("\nValidation: FAILED");
