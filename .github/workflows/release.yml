@@ -1,0 +1,60 @@
+name: Release
+
+# Publish to crates.io via Trusted Publishing (OIDC) when a version tag is pushed.
+#
+# Prerequisites (one-time, on crates.io):
+#   Settings → Trusted Publishing → add a GitHub publisher with
+#     Repository:  reearth/fastxml
+#     Workflow:    release.yml
+#     Environment: crates-io
+#   No CARGO_REGISTRY_TOKEN secret is needed — the token is minted per-run via OIDC.
+#
+# To cut a release:
+#   1. Bump the version (Cargo.toml, Cargo.lock, README) and merge to main.
+#   2. git tag v<x.y.z> && git push origin v<x.y.z>
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    # The Trusted Publishing config on crates.io is scoped to this environment.
+    environment: crates-io
+    permissions:
+      # Required to mint the OIDC token exchanged for a crates.io access token.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          # This is a workspace (fastxml + fastxml-conformance); select by name.
+          crate=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='fastxml'))")
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::Tag v$tag does not match fastxml Cargo.toml version $crate"
+            exit 1
+          fi
+          echo "Releasing fastxml $crate"
+
+      - name: Authenticate with crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        run: cargo publish -p fastxml
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
