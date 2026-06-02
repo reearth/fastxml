@@ -105,6 +105,7 @@ mod multi;
 mod reader;
 pub mod span;
 pub mod streaming;
+mod unified;
 pub mod xpath_analyze;
 
 // Re-export main types
@@ -114,6 +115,7 @@ pub use editable::{EditableNode, EditableNodeBuilder, EditableNodeRef, Modificat
 pub use error::{ErrorLocation, TransformError, TransformResult};
 pub use reader::StreamTransformerReader;
 pub use span::ByteSpan;
+pub use unified::Transformer;
 pub use xpath_analyze::{
     AttributePredicate, NotStreamableReason, PositionPredicate, StreamableStep, StreamableXPath,
     XPathAnalysis,

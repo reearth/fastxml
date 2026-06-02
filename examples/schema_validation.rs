@@ -8,7 +8,7 @@
 use fastxml::error::{ErrorLevel, StructuredError, ValidationErrorType};
 use fastxml::parse;
 use fastxml::schema::validator::XmlSchemaValidationContext;
-use fastxml::schema::xsd::create_builtin_schema;
+use fastxml::schema::{Schema, Validator};
 
 fn main() -> fastxml::error::Result<()> {
     // Example 1: Validate with built-in types
@@ -26,7 +26,7 @@ fn main() -> fastxml::error::Result<()> {
     println!("Parsed document with {} nodes", doc.node_count());
 
     // Create validation context with built-in schema
-    let schema = create_builtin_schema();
+    let schema = Schema::builtin();
     let ctx = XmlSchemaValidationContext::new(schema);
 
     let errors = ctx.validate(&doc)?;
@@ -39,6 +39,17 @@ fn main() -> fastxml::error::Result<()> {
         }
         println!();
     }
+
+    // The same check through the redesigned `Validator` front door.
+    let report = Validator::from(&doc).schema(Schema::builtin()).run()?;
+    println!(
+        "Validator::from(&doc): document is {}\n",
+        if report.is_valid() {
+            "valid"
+        } else {
+            "invalid"
+        }
+    );
 
     // Example 2: Validate using xsi:schemaLocation (auto-fetch schemas)
     #[cfg(feature = "ureq")]

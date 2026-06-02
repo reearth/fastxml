@@ -160,7 +160,7 @@ pub use compact_str::CompactString;
 
 // Re-export parser functions
 pub use parser::{
-    ParserOptions, parse, parse_from_bufread, parse_schema_locations, parse_with_options,
+    Parser, ParserOptions, parse, parse_from_bufread, parse_schema_locations, parse_with_options,
 };
 
 // Re-export position tracking
