@@ -7,7 +7,7 @@
 
 use fastxml::error::Error;
 use fastxml::schema::error::SchemaError;
-use fastxml::schema::xsd::parse_xsd;
+use fastxml::schema::Schema;
 
 // =============================================================================
 // Facet Constraint Errors in Schema
@@ -27,7 +27,7 @@ mod facet_schema_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             matches!(
                 &result,
@@ -54,7 +54,7 @@ mod facet_schema_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Valid totalDigits/fractionDigits should parse successfully, got: {:?}",
@@ -73,7 +73,7 @@ mod facet_schema_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Equal totalDigits and fractionDigits should be valid, got: {:?}",
@@ -101,7 +101,7 @@ mod occurrence_errors {
             </xs:element>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             matches!(
                 &result,
@@ -124,7 +124,7 @@ mod occurrence_errors {
             </xs:element>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "maxOccurs='unbounded' should be valid, got: {:?}",
@@ -144,7 +144,7 @@ mod occurrence_errors {
             </xs:element>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "minOccurs='0' should be valid, got: {:?}",
@@ -173,7 +173,7 @@ mod length_facet_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         // The parser may accept this or reject it
         // Document the actual behavior
         if result.is_ok() {
@@ -193,7 +193,7 @@ mod length_facet_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "length='0' should be valid, got: {:?}",
@@ -211,7 +211,7 @@ mod length_facet_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Large maxLength should be valid, got: {:?}",
@@ -237,7 +237,7 @@ mod complex_type_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         // Parser may accept this (lazy type resolution) or reject it
         // This documents the current behavior
         let _ = result;
@@ -255,7 +255,7 @@ mod complex_type_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Self-referencing types should be valid (tree structures), got: {:?}",
@@ -271,7 +271,7 @@ mod complex_type_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Empty sequence should be valid, got: {:?}",
@@ -294,7 +294,7 @@ mod complex_type_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Nested compositors should be valid, got: {:?}",
@@ -322,7 +322,7 @@ mod attribute_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Required attribute should be valid, got: {:?}",
@@ -342,7 +342,7 @@ mod attribute_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Attribute with default should be valid, got: {:?}",
@@ -362,7 +362,7 @@ mod attribute_errors {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Attribute with fixed value should be valid, got: {:?}",
@@ -388,7 +388,7 @@ mod enumeration_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Empty restriction should be valid, got: {:?}",
@@ -406,7 +406,7 @@ mod enumeration_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Single enumeration value should be valid, got: {:?}",
@@ -426,7 +426,7 @@ mod enumeration_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         // Duplicate enumeration values may be accepted or rejected
         // Document the actual behavior
         let _ = result;
@@ -449,7 +449,7 @@ mod namespace_errors {
             <xs:element name="root" type="xs:string"/>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Schema with targetNamespace should be valid, got: {:?}",
@@ -469,7 +469,7 @@ mod namespace_errors {
             <xs:element name="root" type="xs:string"/>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(result.is_ok());
         if let Ok(schema) = result {
             assert!(
@@ -497,7 +497,7 @@ mod pattern_schema_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Valid pattern should be accepted, got: {:?}",
@@ -516,7 +516,7 @@ mod pattern_schema_errors {
             </xs:simpleType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "Multiple patterns should be accepted, got: {:?}",
@@ -544,7 +544,7 @@ mod any_element_tests {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(result.is_ok(), "xs:any should be valid, got: {:?}", result);
     }
 
@@ -562,7 +562,7 @@ mod any_element_tests {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "xs:anyAttribute should be valid, got: {:?}",
@@ -580,7 +580,7 @@ mod any_element_tests {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "xs:any with processContents should be valid, got: {:?}",
@@ -598,7 +598,7 @@ mod any_element_tests {
             </xs:complexType>
         </xs:schema>"#;
 
-        let result = parse_xsd(xsd.as_bytes());
+        let result = Schema::from_xsd(xsd.as_bytes());
         assert!(
             result.is_ok(),
             "xs:any with specific namespace should be valid, got: {:?}",

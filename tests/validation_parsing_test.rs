@@ -4,7 +4,7 @@ mod common;
 
 use fastxml::error::Error;
 use fastxml::schema::error::SchemaError;
-use fastxml::schema::xsd::parse_xsd;
+use fastxml::schema::Schema;
 
 #[test]
 fn test_invalid_xsd_syntax() {
@@ -13,7 +13,7 @@ fn test_invalid_xsd_syntax() {
         </xs:schema>"#;
 
     // Schema parsing should succeed, type resolution happens later
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     assert!(result.is_ok());
 }
 
@@ -23,7 +23,7 @@ fn test_xsd_missing_namespace() {
             <element name="test" type="string"/>
         </schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser is lenient and accepts missing namespace
     assert!(result.is_ok(), "Parser accepts schema without namespace");
 }
@@ -40,7 +40,7 @@ fn test_xsd_invalid_min_occurs() {
             </xs:element>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser rejects invalid minOccurs values
     assert!(
         matches!(&result, Err(e) if format!("{:?}", e).contains("minOccurs") || format!("{:?}", e).contains("negative")),
@@ -61,7 +61,7 @@ fn test_xsd_min_greater_than_max() {
             </xs:element>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser rejects minOccurs > maxOccurs
     assert!(
         matches!(
@@ -91,7 +91,7 @@ fn test_xsd_circular_type_reference() {
             </xs:complexType>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser accepts circular type references during parsing
     // Type resolution happens lazily during validation
     assert!(
@@ -107,7 +107,7 @@ fn test_xsd_duplicate_element_name() {
             <xs:element name="test" type="xs:integer"/>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // Duplicate global element names
     // Later definition may override earlier
     if let Ok(schema) = result {
@@ -125,7 +125,7 @@ fn test_xsd_invalid_facet_value() {
             </xs:simpleType>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser rejects negative length values
     assert!(
         matches!(&result, Err(e) if format!("{:?}", e).contains("minLength") || format!("{:?}", e).contains("negative")),
@@ -145,7 +145,7 @@ fn test_xsd_conflicting_facets() {
             </xs:simpleType>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser rejects conflicting facets (minLength > maxLength)
     assert!(
         matches!(
