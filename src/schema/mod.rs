@@ -48,8 +48,9 @@ pub mod types;
 pub mod validator;
 pub mod xsd;
 
-// Re-export the redesigned schema-construction API
+// Re-export the redesigned schema-construction and validation API
 pub use builder::{Schema, SchemaBuilder};
+pub use validator::{Report, Validator};
 
 // Re-export main types
 pub use fetcher::{

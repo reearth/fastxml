@@ -17,6 +17,7 @@
 mod api;
 mod context;
 mod dom;
+mod facade;
 mod lazy;
 mod state;
 mod streaming;
@@ -24,6 +25,9 @@ mod two_pass;
 
 // Re-export ValidationMode
 pub use self::mode::ValidationMode;
+
+// Re-export the redesigned validation entry point
+pub use facade::{Report, Validator};
 
 // Re-export main types
 pub use context::XmlSchemaValidationContext;
