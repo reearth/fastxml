@@ -1,6 +1,9 @@
 //! XML parsing with quick-xml backend.
 
 pub mod error;
+mod unified;
+
+pub use unified::Parser;
 
 use std::collections::HashMap;
 use std::io::BufRead;
