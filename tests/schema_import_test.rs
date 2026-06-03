@@ -282,7 +282,7 @@ fn test_gml_elements_accessible_by_local_name() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_shared_dependency() {
     use fastxml::schema::fetcher::{FetchResult, SchemaFetcher};
-    use fastxml::schema::parse_xsd_with_imports_multiple;
+    use fastxml::schema::Schema;
     use std::collections::HashMap;
     use std::sync::RwLock;
 
@@ -378,13 +378,7 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
     let mut fetcher = CountingFetcher::new();
     fetcher.add("http://example.com/common.xsd", common_xsd.as_bytes());
 
-    let schema = parse_xsd_with_imports_multiple(
-        &[
-            ("http://example.com/a.xsd", schema_a.as_bytes()),
-            ("http://example.com/b.xsd", schema_b.as_bytes()),
-        ],
-        &fetcher,
-    )
+    let schema = Schema::builder().add("http://example.com/a.xsd", schema_a.as_bytes()).add("http://example.com/b.xsd", schema_b.as_bytes()).resolve_with(&fetcher)
     .unwrap();
 
     // Both entry schemas' elements should be present
@@ -408,11 +402,11 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_no_entries() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::parse_xsd_with_imports_multiple;
+    use fastxml::schema::Schema;
 
     let fetcher = NoopFetcher;
 
-    let schema = parse_xsd_with_imports_multiple(&[], &fetcher).unwrap();
+    let schema = Schema::builder().resolve_with(&fetcher).unwrap();
 
     // Should have built-in types
     assert!(schema.types.contains_key("xs:string"));
@@ -421,7 +415,7 @@ fn test_parse_xsd_with_imports_multiple_no_entries() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_single_entry() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::parse_xsd_with_imports_multiple;
+    use fastxml::schema::Schema;
 
     let xsd = r#"<?xml version="1.0"?>
     <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
@@ -431,10 +425,7 @@ fn test_parse_xsd_with_imports_multiple_single_entry() {
 
     let fetcher = NoopFetcher;
 
-    let schema = parse_xsd_with_imports_multiple(
-        &[("http://example.com/test.xsd", xsd.as_bytes())],
-        &fetcher,
-    )
+    let schema = Schema::builder().add("http://example.com/test.xsd", xsd.as_bytes()).resolve_with(&fetcher)
     .unwrap();
 
     assert!(schema.elements.contains_key("root"));
@@ -443,7 +434,7 @@ fn test_parse_xsd_with_imports_multiple_single_entry() {
 #[test]
 fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
     use fastxml::schema::fetcher::NoopFetcher;
-    use fastxml::schema::parse_xsd_with_imports_multiple;
+    use fastxml::schema::Schema;
 
     let xsd = r#"<?xml version="1.0"?>
     <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -453,13 +444,7 @@ fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
     let fetcher = NoopFetcher;
 
     // Same schema passed twice - should not error
-    let schema = parse_xsd_with_imports_multiple(
-        &[
-            ("http://example.com/test.xsd", xsd.as_bytes()),
-            ("http://example.com/test.xsd", xsd.as_bytes()),
-        ],
-        &fetcher,
-    )
+    let schema = Schema::builder().add("http://example.com/test.xsd", xsd.as_bytes()).add("http://example.com/test.xsd", xsd.as_bytes()).resolve_with(&fetcher)
     .unwrap();
 
     assert!(schema.elements.contains_key("root"));

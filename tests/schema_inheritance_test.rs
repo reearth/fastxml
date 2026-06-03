@@ -77,11 +77,7 @@ fn test_element_type_ref_with_namespace() {
 ///   the validator fails to find `class` because it doesn't traverse the inheritance chain
 #[test]
 fn test_inherited_elements_from_base_type_extension() {
-    use fastxml::Namespace;
-    use fastxml::event::{XmlEvent, XmlEventHandler};
-    use fastxml::schema::validator::OnePassSchemaValidator;
-    use fastxml::schema::xsd::parse_xsd_multiple;
-    use std::sync::Arc;
+    use fastxml::schema::{Schema, Validator};
 
     // Schema mimicking CityGML Transportation module inheritance chain:
     // AbstractCityObjectType -> AbstractTransportationObjectType -> TransportationComplexType -> RoadType
@@ -127,10 +123,7 @@ fn test_inherited_elements_from_base_type_extension() {
         <xs:element name="Road" type="tran:RoadType"/>
     </xs:schema>"#;
 
-    let schema = parse_xsd_multiple(&[(
-        "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-        schema_xsd.as_bytes(),
-    )])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", schema_xsd.as_bytes()).resolve()
     .expect("Failed to compile schema");
 
     // Debug: Print the type structure
@@ -138,60 +131,18 @@ fn test_inherited_elements_from_base_type_extension() {
         eprintln!("RoadType content: {:?}", road_type.content);
     }
 
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
-
     // Validate XML: <tran:Road><tran:class>道路</tran:class></tran:Road>
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![Namespace::new(
-                "tran",
-                "http://www.opengis.net/citygml/transportation/2.0",
-            )],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    // This is the problematic element: class is defined in TransportationComplexType,
-    // which is the base of RoadType. The validator should find it via inheritance.
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Text("道路".into())).unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Eof).unwrap();
-    validator.finish().unwrap();
+    // `class` is defined in TransportationComplexType, the base of RoadType;
+    // the validator should find it via inheritance.
+    let xml = r#"<tran:Road xmlns:tran="http://www.opengis.net/citygml/transportation/2.0"><tran:class>道路</tran:class></tran:Road>"#;
+    let report = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validation failed");
 
     // Check for errors
-    let errors: Vec<_> = validator
-        .errors()
+    let errors: Vec<_> = report
+        .entries()
         .iter()
         .filter(|e| e.message.contains("not declared") || e.message.contains("not expected"))
         .collect();
@@ -213,11 +164,7 @@ fn test_inherited_elements_from_base_type_extension() {
 /// - tran:Road uses tran:RoadType which extends tran:TransportationComplexType
 #[test]
 fn test_inherited_elements_across_namespaces_via_import() {
-    use fastxml::Namespace;
-    use fastxml::event::{XmlEvent, XmlEventHandler};
-    use fastxml::schema::validator::OnePassSchemaValidator;
-    use fastxml::schema::xsd::parse_xsd_multiple;
-    use std::sync::Arc;
+    use fastxml::schema::{Schema, Validator};
 
     // Core schema with AbstractCityObjectType defining creationDate
     let core_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -273,16 +220,7 @@ fn test_inherited_elements_across_namespaces_via_import() {
         <xs:element name="Road" type="tran:RoadType"/>
     </xs:schema>"#;
 
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://www.opengis.net/citygml/2.0/cityGMLBase.xsd",
-            core_xsd.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_xsd.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/cityGMLBase.xsd", core_xsd.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_xsd.as_bytes()).resolve()
     .expect("Failed to compile schema");
 
     // Debug: Check what's in the type_children_cache for RoadType
@@ -310,79 +248,16 @@ fn test_inherited_elements_across_namespaces_via_import() {
         );
     }
 
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
+    // Validate a doc where creationDate (from core:AbstractCityObjectType) and
+    // class (from TransportationComplexType) are reached via inheritance.
+    let xml = r#"<tran:Road xmlns:tran="http://www.opengis.net/citygml/transportation/2.0" xmlns:core="http://www.opengis.net/citygml/2.0"><core:creationDate>2024-01-01</core:creationDate><tran:class>9999</tran:class></tran:Road>"#;
+    let report = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validation failed");
 
-    // Validate: <tran:Road><core:creationDate>2024-01-01</core:creationDate></tran:Road>
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![
-                Namespace::new("tran", "http://www.opengis.net/citygml/transportation/2.0"),
-                Namespace::new("core", "http://www.opengis.net/citygml/2.0"),
-            ],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    // creationDate is defined in core:AbstractCityObjectType but should be visible via inheritance
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "creationDate".into(),
-            prefix: Some("core".into()),
-            namespace: Some("http://www.opengis.net/citygml/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::Text("2024-01-01".into()))
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "creationDate".into(),
-            prefix: Some("core".into()),
-        })
-        .unwrap();
-
-    // Also test tran:class which is defined directly in TransportationComplexType
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(3),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Text("9999".into())).unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    let errors: Vec<_> = validator
-        .errors()
+    let errors: Vec<_> = report
+        .entries()
         .iter()
         .filter(|e| e.message.contains("not declared"))
         .collect();
@@ -402,11 +277,7 @@ fn test_inherited_elements_across_namespaces_via_import() {
 ///   -> tran:AbstractTransportationObjectType -> tran:TransportationComplexType -> tran:RoadType
 #[test]
 fn test_deep_inheritance_chain_across_namespaces() {
-    use fastxml::Namespace;
-    use fastxml::event::{XmlEvent, XmlEventHandler};
-    use fastxml::schema::validator::OnePassSchemaValidator;
-    use fastxml::schema::xsd::parse_xsd_multiple;
-    use std::sync::Arc;
+    use fastxml::schema::{Schema, Validator};
 
     // GML base schema
     let gml_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -516,20 +387,7 @@ fn test_deep_inheritance_chain_across_namespaces() {
         <xs:element name="Road" type="tran:RoadType" substitutionGroup="core:cityObjectMember"/>
     </xs:schema>"#;
 
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://schemas.opengis.net/gml/3.1.1/base/gml.xsd",
-            gml_xsd.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/2.0/cityGMLBase.xsd",
-            core_xsd.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_xsd.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://schemas.opengis.net/gml/3.1.1/base/gml.xsd", gml_xsd.as_bytes()).add("http://www.opengis.net/citygml/2.0/cityGMLBase.xsd", core_xsd.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_xsd.as_bytes()).resolve()
     .expect("Failed to compile schema");
 
     // Debug: Check type_children_cache contents for RoadType
@@ -549,139 +407,18 @@ fn test_deep_inheritance_chain_across_namespaces() {
         );
     }
 
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
+    // A Road instance exercising elements reached through the full inheritance
+    // chain: boundedBy (gml:AbstractFeatureType, 3 up), creationDate
+    // (core:AbstractCityObjectType, 2 up), and class/function/lod1MultiSurface
+    // (tran:TransportationComplexType, 1 up).
+    let xml = r#"<tran:Road gml:id="road_1" xmlns:tran="http://www.opengis.net/citygml/transportation/2.0" xmlns:core="http://www.opengis.net/citygml/2.0" xmlns:gml="http://www.opengis.net/gml"><gml:boundedBy>envelope</gml:boundedBy><core:creationDate>2024-01-01</core:creationDate><tran:class>9999</tran:class><tran:function>9020</tran:function><tran:lod1MultiSurface>surface</tran:lod1MultiSurface></tran:Road>"#;
+    let report = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validation failed");
 
-    // Start Road element
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![("gml:id".into(), "road_1".into())],
-            namespace_decls: vec![
-                Namespace::new("tran", "http://www.opengis.net/citygml/transportation/2.0"),
-                Namespace::new("core", "http://www.opengis.net/citygml/2.0"),
-                Namespace::new("gml", "http://www.opengis.net/gml"),
-            ],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    // Test element from gml:AbstractFeatureType (3 levels up)
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "boundedBy".into(),
-            prefix: Some("gml".into()),
-            namespace: Some("http://www.opengis.net/gml".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-    validator
-        .handle(&XmlEvent::Text("envelope".into()))
-        .unwrap();
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "boundedBy".into(),
-            prefix: Some("gml".into()),
-        })
-        .unwrap();
-
-    // Test element from core:AbstractCityObjectType (2 levels up)
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "creationDate".into(),
-            prefix: Some("core".into()),
-            namespace: Some("http://www.opengis.net/citygml/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(3),
-            column: Some(1),
-        })
-        .unwrap();
-    validator
-        .handle(&XmlEvent::Text("2024-01-01".into()))
-        .unwrap();
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "creationDate".into(),
-            prefix: Some("core".into()),
-        })
-        .unwrap();
-
-    // Test element from tran:TransportationComplexType (1 level up)
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(4),
-            column: Some(1),
-        })
-        .unwrap();
-    validator.handle(&XmlEvent::Text("9999".into())).unwrap();
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    // Test element from tran:TransportationComplexType
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "function".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(5),
-            column: Some(1),
-        })
-        .unwrap();
-    validator.handle(&XmlEvent::Text("9020".into())).unwrap();
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "function".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    // Test element from tran:TransportationComplexType
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "lod1MultiSurface".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(6),
-            column: Some(1),
-        })
-        .unwrap();
-    validator.handle(&XmlEvent::Text("surface".into())).unwrap();
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "lod1MultiSurface".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    // End Road element
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    let errors: Vec<_> = validator
-        .errors()
+    let errors: Vec<_> = report
+        .entries()
         .iter()
         .filter(|e| e.message.contains("not declared"))
         .collect();

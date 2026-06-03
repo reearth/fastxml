@@ -129,7 +129,7 @@ fn test_type_fallback_with_same_local_name() {
 /// they should be stored as "gml:TrackType" and "tran:TrackType" respectively.
 #[test]
 fn test_xsd_compiler_namespace_qualified_types() {
-    use fastxml::schema::xsd::parse_xsd_multiple;
+    use fastxml::schema::Schema;
 
     // Schema 1: GML-like schema with TrackType requiring MovingObjectStatus
     let gml_schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -168,13 +168,7 @@ fn test_xsd_compiler_namespace_qualified_types() {
     </xs:schema>"#;
 
     // Compile both schemas together
-    let schema = parse_xsd_multiple(&[
-        ("http://www.opengis.net/gml/gml.xsd", gml_schema.as_bytes()),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_schema.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/gml/gml.xsd", gml_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
     .expect("Failed to compile schemas");
 
     // Both types should be accessible with their namespace-qualified names
@@ -252,7 +246,7 @@ fn test_xsd_compiler_namespace_qualified_types() {
 ///    prefixed element names like <tran:class>
 #[test]
 fn test_substitution_group_elements_from_imported_schema() {
-    use fastxml::schema::xsd::parse_xsd_multiple;
+    use fastxml::schema::Schema;
 
     // Schema 1: CityGML Core - defines abstract element that others substitute for
     let core_schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -294,16 +288,7 @@ fn test_substitution_group_elements_from_imported_schema() {
     </xs:schema>"#;
 
     // Compile both schemas together
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://www.opengis.net/citygml/2.0/core.xsd",
-            core_schema.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_schema.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
     .expect("Failed to compile schemas");
 
     // Core elements should be stored with core: prefix
@@ -355,7 +340,7 @@ fn test_substitution_group_elements_from_imported_schema() {
 /// 4. Validator can't find "tran:class" because schema only has "class"
 #[test]
 fn test_elements_without_explicit_target_namespace_prefix() {
-    use fastxml::schema::xsd::parse_xsd_multiple;
+    use fastxml::schema::Schema;
 
     // Core schema - has explicit xmlns:core for its target namespace
     let core_schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -384,16 +369,7 @@ fn test_elements_without_explicit_target_namespace_prefix() {
     </xs:schema>"#;
 
     // Compile both schemas
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://www.opengis.net/citygml/2.0/core.xsd",
-            core_schema.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_schema.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
     .expect("Failed to compile schemas");
 
     // Print available elements for debugging
@@ -444,11 +420,7 @@ fn test_elements_without_explicit_target_namespace_prefix() {
 /// the validator should still be able to find the element.
 #[test]
 fn test_validator_finds_element_with_namespace_mismatch() {
-    use fastxml::Namespace;
-    use fastxml::event::{XmlEvent, XmlEventHandler};
-    use fastxml::schema::validator::OnePassSchemaValidator;
-    use fastxml::schema::xsd::parse_xsd_multiple;
-    use std::sync::Arc;
+    use fastxml::schema::{Schema, Validator};
 
     // Schema where transportation elements have NO xmlns:tran prefix
     let core_schema = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -483,77 +455,20 @@ fn test_validator_finds_element_with_namespace_mismatch() {
                     substitutionGroup="core:_GenericApplicationPropertyOfCityObject"/>
     </xs:schema>"#;
 
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://www.opengis.net/citygml/2.0/core.xsd",
-            core_schema.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_schema.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
     .expect("Failed to compile schemas");
 
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
-
-    // Simulate parsing XML with tran: prefix
-    // <tran:Road xmlns:tran="http://www.opengis.net/citygml/transportation/2.0">
-    //   <tran:class>main_road</tran:class>
-    // </tran:Road>
-
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![Namespace::new(
-                "tran",
-                "http://www.opengis.net/citygml/transportation/2.0",
-            )],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    // This is the problematic part: <tran:class> but schema has "class" without prefix
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::Text("main_road".into()))
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "class".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Road".into(),
-            prefix: Some("tran".into()),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Eof).unwrap();
-    validator.finish().unwrap();
+    // Parse XML using the tran: prefix:
+    // <tran:Road xmlns:tran="..."><tran:class>main_road</tran:class></tran:Road>
+    let xml = r#"<tran:Road xmlns:tran="http://www.opengis.net/citygml/transportation/2.0"><tran:class>main_road</tran:class></tran:Road>"#;
+    let report = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validation failed");
 
     // Check for "not declared" errors
-    let errors: Vec<_> = validator
-        .errors()
+    let errors: Vec<_> = report
+        .entries()
         .iter()
         .filter(|e| e.message.contains("not declared"))
         .collect();
@@ -588,11 +503,7 @@ fn test_validator_finds_element_with_namespace_mismatch() {
 /// 3. Validator looks up "tr:class" but can't find it because schema has "tran:class"
 #[test]
 fn test_validator_fails_with_different_prefix_same_namespace() {
-    use fastxml::Namespace;
-    use fastxml::event::{XmlEvent, XmlEventHandler};
-    use fastxml::schema::validator::OnePassSchemaValidator;
-    use fastxml::schema::xsd::parse_xsd_multiple;
-    use std::sync::Arc;
+    use fastxml::schema::{Schema, Validator};
 
     // Schema WITH explicit xmlns:tran for its target namespace
     // Elements will be stored as "tran:class", "tran:function", etc.
@@ -628,16 +539,7 @@ fn test_validator_fails_with_different_prefix_same_namespace() {
                     substitutionGroup="core:_GenericApplicationPropertyOfCityObject"/>
     </xs:schema>"#;
 
-    let schema = parse_xsd_multiple(&[
-        (
-            "http://www.opengis.net/citygml/2.0/core.xsd",
-            core_schema.as_bytes(),
-        ),
-        (
-            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
-            tran_schema.as_bytes(),
-        ),
-    ])
+    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
     .expect("Failed to compile schemas");
 
     // Verify schema stores elements with tran: prefix
@@ -654,65 +556,17 @@ fn test_validator_fails_with_different_prefix_same_namespace() {
         "class should be stored as tran:class"
     );
 
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
-
-    // Simulate XML that uses "tr:" prefix instead of "tran:"
-    // Both map to the same namespace URI!
-    // <tr:Road xmlns:tr="http://www.opengis.net/citygml/transportation/2.0">
-    //   <tr:class>main_road</tr:class>
-    // </tr:Road>
-
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Road".into(),
-            prefix: Some("tr".into()), // Different prefix!
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![Namespace::new(
-                "tr", // Different prefix from schema's "tran"
-                "http://www.opengis.net/citygml/transportation/2.0",
-            )],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "class".into(),
-            prefix: Some("tr".into()), // Different prefix!
-            namespace: Some("http://www.opengis.net/citygml/transportation/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::Text("main_road".into()))
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "class".into(),
-            prefix: Some("tr".into()),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Road".into(),
-            prefix: Some("tr".into()),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Eof).unwrap();
-    validator.finish().unwrap();
+    // XML uses the "tr:" prefix instead of the schema's "tran:" — both map to
+    // the same namespace URI, so validation must match by URI, not prefix.
+    let xml = r#"<tr:Road xmlns:tr="http://www.opengis.net/citygml/transportation/2.0"><tr:class>main_road</tr:class></tr:Road>"#;
+    let report = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validation failed");
 
     // Check for "not declared" errors
-    let errors: Vec<_> = validator
-        .errors()
+    let errors: Vec<_> = report
+        .entries()
         .iter()
         .filter(|e| e.message.contains("not declared"))
         .collect();
