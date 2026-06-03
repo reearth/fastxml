@@ -498,7 +498,7 @@ let buildings = evaluate(&doc, "//bldg:Building")?;
 
 ## Conformance
 
-Conformance test results as of v0.8.0. See [conformance/](conformance/) for details.
+Conformance test results as of v0.8.2. See [conformance/](conformance/) for details.
 
 | Test Suite | Category | Pass Rate |
 |------------|----------|-----------|
