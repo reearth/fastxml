@@ -8,7 +8,6 @@
 //! - DTD/external entity expansion is not supported
 //! - Some edge cases in malformed XML detection may differ from strict compliance
 
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml_conformance::catalog::xmlconf::{TestType, XmlConfCatalog, XmlConfTest};
 use fastxml_conformance::reporter::SuiteReport;
 use fastxml_conformance::{is_known_failure, require_test_data};
@@ -24,37 +23,6 @@ fn requires_non_utf8(test: &XmlConfTest) -> bool {
         || path_str.contains("little")
         || path_str.contains("weekly-")
         || path_str.contains("pr-xml-")
-}
-
-/// Simple event counter for streaming tests.
-#[allow(dead_code)]
-struct EventCounter {
-    elements: usize,
-    texts: usize,
-}
-
-impl EventCounter {
-    fn new() -> Self {
-        Self {
-            elements: 0,
-            texts: 0,
-        }
-    }
-}
-
-impl XmlEventHandler for EventCounter {
-    fn handle(&mut self, event: &XmlEvent) -> fastxml::error::Result<()> {
-        match event {
-            XmlEvent::StartElement { .. } => self.elements += 1,
-            XmlEvent::Text(_) => self.texts += 1,
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-        self
-    }
 }
 
 /// Run all W3C XML conformance tests with DOM parser.
@@ -126,7 +94,7 @@ fn w3c_xml_conformance_dom() {
             }
         };
 
-        match fastxml::parse(&content) {
+        match fastxml::Parser::from(content.as_slice()).parse() {
             Ok(_) => report.record_pass(category),
             Err(e) => {
                 eprintln!("FAIL [valid/dom] {}: {}", test.id, e);
@@ -159,7 +127,7 @@ fn w3c_xml_conformance_dom() {
             }
         };
 
-        match fastxml::parse(&content) {
+        match fastxml::Parser::from(content.as_slice()).parse() {
             Ok(_) => {
                 eprintln!("FAIL [not-wf/dom] {}: parser accepted invalid XML", test.id);
                 report.record_fail(&test.id, category);
@@ -194,7 +162,7 @@ fn w3c_xml_conformance_dom() {
             }
         };
 
-        match fastxml::parse(&content) {
+        match fastxml::Parser::from(content.as_slice()).parse() {
             Ok(_) => report.record_pass(category),
             Err(e) => {
                 eprintln!("FAIL [invalid/dom] {}: {}", test.id, e);
@@ -269,10 +237,7 @@ fn w3c_xml_conformance_streaming() {
         };
 
         let reader = BufReader::new(file);
-        let mut parser = StreamingParser::new(reader);
-        parser.add_handler(Box::new(EventCounter::new()));
-
-        match parser.parse() {
+        match fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(())) {
             Ok(_) => report.record_pass(category),
             Err(e) => {
                 eprintln!("FAIL [valid/streaming] {}: {}", test.id, e);
@@ -306,10 +271,7 @@ fn w3c_xml_conformance_streaming() {
         };
 
         let reader = BufReader::new(file);
-        let mut parser = StreamingParser::new(reader);
-        parser.add_handler(Box::new(EventCounter::new()));
-
-        match parser.parse() {
+        match fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(())) {
             Ok(_) => {
                 eprintln!(
                     "FAIL [not-wf/streaming] {}: parser accepted invalid XML",
@@ -351,16 +313,19 @@ fn w3c_xml_specific_cases() {
     if valid_file.exists() {
         let content = fs::read(&valid_file).expect("read valid file");
         assert!(
-            fastxml::parse(&content).is_ok(),
+            fastxml::Parser::from(content.as_slice()).parse().is_ok(),
             "Should parse valid XML (DOM)"
         );
 
         // Also test streaming
         let file = fs::File::open(&valid_file).expect("open valid file");
         let reader = BufReader::new(file);
-        let mut parser = StreamingParser::new(reader);
-        parser.add_handler(Box::new(EventCounter::new()));
-        assert!(parser.parse().is_ok(), "Should parse valid XML (Streaming)");
+        assert!(
+            fastxml::Parser::from_reader(reader)
+                .for_each_event(|_| Ok(()))
+                .is_ok(),
+            "Should parse valid XML (Streaming)"
+        );
     }
 
     // Test 2: Not well-formed XML - DOM
@@ -372,17 +337,17 @@ fn w3c_xml_specific_cases() {
     if not_wf_file.exists() {
         let content = fs::read(&not_wf_file).expect("read not-wf file");
         assert!(
-            fastxml::parse(&content).is_err(),
+            fastxml::Parser::from(content.as_slice()).parse().is_err(),
             "Should reject not-well-formed XML (DOM)"
         );
 
         // Also test streaming
         let file = fs::File::open(&not_wf_file).expect("open not-wf file");
         let reader = BufReader::new(file);
-        let mut parser = StreamingParser::new(reader);
-        parser.add_handler(Box::new(EventCounter::new()));
         assert!(
-            parser.parse().is_err(),
+            fastxml::Parser::from_reader(reader)
+                .for_each_event(|_| Ok(()))
+                .is_err(),
             "Should reject not-well-formed XML (Streaming)"
         );
     }

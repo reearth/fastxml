@@ -4,13 +4,12 @@
 
 use fastxml::node::error::NodeError;
 use fastxml::parser::error::ParseError;
-use fastxml::schema::{create_xml_schema_validation_context, validate_document_by_schema};
 use fastxml::xpath::collect_text_values;
 use fastxml::xpath::error::XPathEvalError;
 use fastxml::{
-    ParserOptions, create_context, evaluate, find_nodes_by_xpath, find_readonly_nodes_by_xpath,
-    get_node_tag, get_root_node, get_root_readonly_node, node_to_xml_string, parse,
-    parse_schema_locations, parse_with_options,
+    Parser, ParserOptions, create_context, evaluate, find_nodes_by_xpath,
+    find_readonly_nodes_by_xpath, get_node_tag, get_root_node, get_root_readonly_node,
+    node_to_xml_string, parse_schema_locations,
 };
 
 // =============================================================================
@@ -28,7 +27,7 @@ fn test_xpath_pattern_name_equals() {
             <Building gml:id="bldg2"/>
         </nested>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//*[name()='Building']").unwrap();
     let nodes = result.into_nodes();
@@ -45,7 +44,7 @@ fn test_xpath_pattern_or_condition() {
         <Window gml:id="win1"/>
         <Other gml:id="other1"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
     let nodes = result.into_nodes();
@@ -64,7 +63,7 @@ fn test_xpath_pattern_and_not_condition() {
         <Room gml:id="room1"/>
         <Window gml:id="win1"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // This should match Building and Room but exclude Window
     let result = evaluate(
@@ -101,7 +100,7 @@ fn test_xpath_pattern_gml_dictionary() {
             </gml:Definition>
         </gml:dictionaryEntry>
     </gml:Dictionary>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Test full path with text()
     let result = evaluate(
@@ -128,7 +127,7 @@ fn test_xpath_pattern_uro_building_id() {
             </uro:BuildingIDAttribute>
         </uro:buildingIDAttribute>
     </bldg:Building>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let ctx = create_context(&doc).unwrap();
     let root = get_root_readonly_node(&doc).unwrap();
@@ -152,7 +151,7 @@ fn test_xpath_pattern_child_axis() {
         <child2/>
         <child3/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let ctx = create_context(&doc).unwrap();
     let root = get_root_readonly_node(&doc).unwrap();
@@ -169,17 +168,17 @@ fn test_xpath_pattern_child_axis() {
 #[test]
 fn test_api_parse() {
     // From &str
-    let doc1 = parse("<root/>").unwrap();
+    let doc1 = Parser::from("<root/>").parse().unwrap();
     assert!(doc1.get_root_element().is_ok());
 
     // From String
     let xml_string = String::from("<root/>");
-    let doc2 = parse(&xml_string).unwrap();
+    let doc2 = Parser::from(xml_string.as_str()).parse().unwrap();
     assert!(doc2.get_root_element().is_ok());
 
     // From Vec<u8>
     let xml_bytes = b"<root/>".to_vec();
-    let doc3 = parse(&xml_bytes).unwrap();
+    let doc3 = Parser::from(xml_bytes.as_slice()).parse().unwrap();
     assert!(doc3.get_root_element().is_ok());
 }
 
@@ -196,7 +195,7 @@ fn test_api_parse_with_options() {
     };
 
     let xml = "<root><child>text</child></root>";
-    let doc = parse_with_options(xml, &options).unwrap();
+    let doc = Parser::from(xml).options(options).parse().unwrap();
     assert!(doc.get_root_element().is_ok());
 }
 
@@ -212,7 +211,7 @@ fn test_api_memory_limit() {
 
     // Large content should fail
     let large_xml = format!("<root>{}</root>", "x".repeat(1000));
-    let result = parse_with_options(&large_xml, &options);
+    let result = Parser::from(large_xml.as_str()).options(options).parse();
     assert!(
         matches!(
             &result,
@@ -226,7 +225,9 @@ fn test_api_memory_limit() {
 /// Test: evaluate(document, xpath) -> Result<XPathResult>
 #[test]
 fn test_api_evaluate() {
-    let doc = parse("<root><child>value</child></root>").unwrap();
+    let doc = Parser::from("<root><child>value</child></root>")
+        .parse()
+        .unwrap();
 
     // Returns nodes
     let result = evaluate(&doc, "/root/child").unwrap();
@@ -237,7 +238,9 @@ fn test_api_evaluate() {
 /// Test: create_context(document) -> Result<XmlContext>
 #[test]
 fn test_api_create_context() {
-    let doc = parse("<root xmlns:ns='http://example.com'><ns:child/></root>").unwrap();
+    let doc = Parser::from("<root xmlns:ns='http://example.com'><ns:child/></root>")
+        .parse()
+        .unwrap();
     let ctx = create_context(&doc).unwrap();
 
     // Context should have namespaces from document
@@ -249,7 +252,9 @@ fn test_api_create_context() {
 /// Test: find_nodes_by_xpath(ctx, xpath, node) -> Result<Vec<XmlNode>>
 #[test]
 fn test_api_find_nodes_by_xpath() {
-    let doc = parse("<root><a><target/></a><b><target/></b></root>").unwrap();
+    let doc = Parser::from("<root><a><target/></a><b><target/></b></root>")
+        .parse()
+        .unwrap();
     let ctx = create_context(&doc).unwrap();
     let root = get_root_node(&doc).unwrap();
 
@@ -260,7 +265,7 @@ fn test_api_find_nodes_by_xpath() {
 /// Test: get_root_node(document) -> Result<XmlNode>
 #[test]
 fn test_api_get_root_node() {
-    let doc = parse("<myroot/>").unwrap();
+    let doc = Parser::from("<myroot/>").parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "myroot");
 }
@@ -268,7 +273,7 @@ fn test_api_get_root_node() {
 /// Test: get_node_tag(node) -> String
 #[test]
 fn test_api_get_node_tag() {
-    let doc = parse("<element/>").unwrap();
+    let doc = Parser::from("<element/>").parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(get_node_tag(&root), "element");
 }
@@ -276,7 +281,9 @@ fn test_api_get_node_tag() {
 /// Test: node_to_xml_string(document, node) -> Result<String>
 #[test]
 fn test_api_node_to_xml_string() {
-    let doc = parse(r#"<root attr="value"><child>text</child></root>"#).unwrap();
+    let doc = Parser::from(r#"<root attr="value"><child>text</child></root>"#)
+        .parse()
+        .unwrap();
     let mut root = get_root_node(&doc).unwrap();
 
     let xml_str = node_to_xml_string(&doc, &mut root).unwrap();
@@ -288,7 +295,9 @@ fn test_api_node_to_xml_string() {
 /// Test: collect_text_values(xpath_value) -> Vec<String>
 #[test]
 fn test_api_collect_text_values() {
-    let doc = parse("<root><item>one</item><item>two</item><item>three</item></root>").unwrap();
+    let doc = Parser::from("<root><item>one</item><item>two</item><item>three</item></root>")
+        .parse()
+        .unwrap();
     let result = evaluate(&doc, "/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
 
@@ -305,7 +314,7 @@ fn test_api_parse_schema_locations() {
                       xsi:schemaLocation="http://www.opengis.net/gml/3.2 http://schemas.opengis.net/gml/3.2.1/gml.xsd
                                           http://www.opengis.net/citygml/2.0 http://schemas.opengis.net/citygml/2.0/cityGMLBase.xsd">
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let locations = parse_schema_locations(&doc).unwrap();
     assert_eq!(locations.len(), 2);
@@ -315,28 +324,6 @@ fn test_api_parse_schema_locations() {
 
     assert_eq!(locations[1].0, "http://www.opengis.net/citygml/2.0");
     assert!(locations[1].1.contains("cityGMLBase.xsd"));
-}
-
-// =============================================================================
-// Schema Validation API Tests
-// =============================================================================
-
-/// Test: create_xml_schema_validation_context(schema_location) -> Result<XmlSchemaValidationContext>
-#[test]
-fn test_api_create_schema_context() {
-    // Should succeed (returns empty schema for now)
-    let ctx = create_xml_schema_validation_context("http://example.com/schema.xsd").unwrap();
-    assert!(ctx.schema().elements.is_empty());
-}
-
-/// Test: validate_document_by_schema(document, schema_location) -> Result<Vec<StructuredError>>
-#[test]
-fn test_api_validate_document() {
-    let doc = parse("<root><child/></root>").unwrap();
-    let errors = validate_document_by_schema(&doc, "http://example.com/schema.xsd").unwrap();
-
-    // Currently returns empty errors (placeholder implementation)
-    assert!(errors.is_empty());
 }
 
 // =============================================================================
@@ -352,7 +339,7 @@ fn test_node_operations() {
             <grandchild>deep</grandchild>
         </child2>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     // Test get_name
@@ -387,7 +374,7 @@ fn test_namespace_operations() {
         <gml:name>Test</gml:name>
         <bldg:Building/>
     </gml:root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     // Test prefix
@@ -428,7 +415,7 @@ fn test_citygml_building_structure() {
             </bldg:Building>
         </core:cityObjectMember>
     </core:CityModel>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Find all Buildings
     let result = evaluate(&doc, "//bldg:Building").unwrap();
@@ -458,7 +445,7 @@ fn test_citygml_multiple_element_types() {
         <bldg:Window gml:id="win1"/>
         <bldg:Door gml:id="door1"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Select Building or Room only
     let result = evaluate(&doc, "//*[(name()='bldg:Building' or name()='bldg:Room')]").unwrap();
@@ -488,7 +475,7 @@ fn test_citygml_multiple_element_types() {
 /// Test: Empty document handling
 #[test]
 fn test_edge_case_xpath_no_results() {
-    let doc = parse("<root/>").unwrap();
+    let doc = Parser::from("<root/>").parse().unwrap();
     let result = evaluate(&doc, "//nonexistent").unwrap();
     let nodes = result.into_nodes();
     assert!(nodes.is_empty());
@@ -503,7 +490,7 @@ fn test_edge_case_unicode() {
         <korean>한국어 테스트</korean>
         <emoji>🏙️🏢🏗️</emoji>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/japanese/text()").unwrap();
     let texts = collect_text_values(&result);
@@ -527,7 +514,7 @@ fn test_edge_case_deep_nesting() {
         xml.push_str(&format!("</level{}>", i));
     }
 
-    let doc = parse(&xml).unwrap();
+    let doc = Parser::from(xml.as_str()).parse().unwrap();
 
     // Find the deepest element
     let result = evaluate(&doc, "//level49").unwrap();
@@ -545,7 +532,7 @@ fn test_edge_case_many_siblings() {
     }
     xml.push_str("</root>");
 
-    let doc = parse(&xml).unwrap();
+    let doc = Parser::from(xml.as_str()).parse().unwrap();
 
     let result = evaluate(&doc, "/root/item").unwrap();
     let nodes = result.into_nodes();
@@ -562,7 +549,7 @@ fn test_complex_predicates() {
         <item type="B" status="inactive"/>
         <item type="C" status="active"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Test compound conditions with name()
     let result = evaluate(&doc, "//*[name()='item']").unwrap();
@@ -578,7 +565,7 @@ fn test_error_handling_invalid_xml() {
     use fastxml::error::Error;
 
     // Empty input should result in no root element
-    let result = parse("");
+    let result = Parser::from("").parse();
     // Might succeed but have no root - either is acceptable
     if let Ok(doc) = result {
         assert!(
@@ -597,7 +584,7 @@ fn test_error_handling_invalid_xml() {
         ..Default::default()
     };
     let large_xml = format!("<root>{}</root>", "x".repeat(100));
-    let result = parse_with_options(&large_xml, &options);
+    let result = Parser::from(large_xml.as_str()).options(options).parse();
     assert!(
         matches!(
             &result,
@@ -613,7 +600,7 @@ fn test_error_handling_invalid_xml() {
 fn test_error_handling_invalid_xpath() {
     use fastxml::error::Error;
 
-    let doc = parse("<root/>").unwrap();
+    let doc = Parser::from("<root/>").parse().unwrap();
 
     // Invalid XPath syntax
     let result = evaluate(&doc, "/root[[[");
