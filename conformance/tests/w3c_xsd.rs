@@ -3,7 +3,6 @@
 //! These tests run the W3C XSD Test Suite against fastxml's schema validator.
 //! Both DOM-based validation and streaming validation are tested.
 
-use fastxml::schema::validator::{DomSchemaValidator, OnePassSchemaValidator};
 use fastxml_conformance::catalog::xsdtests::{InstanceValidity, SchemaValidity, XsdTestSuite};
 use fastxml_conformance::reporter::SuiteReport;
 use fastxml_conformance::require_test_data;
@@ -68,7 +67,7 @@ fn w3c_xsd_conformance_dom() {
                 Err(_) => continue,
             };
 
-            match fastxml::parse_xsd(&content) {
+            match fastxml::schema::Schema::from_xsd(&content) {
                 Ok(schema) => {
                     if schema_doc.expected == SchemaValidity::Valid {
                         schema_pass += 1;
@@ -107,7 +106,7 @@ fn w3c_xsd_conformance_dom() {
                     }
                 };
 
-                let doc = match fastxml::parse(&content) {
+                let doc = match fastxml::Parser::from(content.as_slice()).parse() {
                     Ok(d) => d,
                     Err(_) => {
                         report.record_skip();
@@ -115,8 +114,11 @@ fn w3c_xsd_conformance_dom() {
                     }
                 };
 
-                let validator = DomSchemaValidator::new(Arc::clone(schema));
-                match validator.validate(&doc) {
+                match fastxml::schema::Validator::from(&doc)
+                    .schema(Arc::clone(schema))
+                    .run()
+                    .map(|r| r.into_entries())
+                {
                     Ok(errors) => {
                         let is_valid = errors.is_empty();
                         if is_valid && instance.expected == InstanceValidity::Valid {
@@ -169,7 +171,7 @@ fn w3c_xsd_conformance_dom() {
     eprintln!("Skipped: {}", report.skipped);
 }
 
-/// Run W3C XSD conformance tests with streaming validator (OnePassSchemaValidator).
+/// Run W3C XSD conformance tests with streaming validator.
 #[test]
 fn w3c_xsd_conformance_streaming() {
     let data_path = require_test_data!("w3c-xsd");
@@ -210,7 +212,7 @@ fn w3c_xsd_conformance_streaming() {
                 Err(_) => continue,
             };
 
-            match fastxml::parse_xsd(&content) {
+            match fastxml::schema::Schema::from_xsd(&content) {
                 Ok(schema) => {
                     if schema_doc.expected == SchemaValidity::Valid {
                         schema_pass += 1;
@@ -245,9 +247,12 @@ fn w3c_xsd_conformance_streaming() {
                 };
 
                 let reader = BufReader::new(file);
-                let validator = OnePassSchemaValidator::new(Arc::clone(schema));
 
-                match validator.validate(reader) {
+                match fastxml::schema::Validator::from_reader(reader)
+                    .schema(Arc::clone(schema))
+                    .run()
+                    .map(|r| r.into_entries())
+                {
                     Ok(errors) => {
                         let is_valid = errors.is_empty();
                         if is_valid && instance.expected == InstanceValidity::Valid {
@@ -353,39 +358,53 @@ fn basic_xsd_validation() {
   <wrongchild>Hello</wrongchild>
 </root>"#;
 
-    let schema = fastxml::parse_xsd(schema_str).expect("parse schema");
+    let schema = fastxml::schema::Schema::from_xsd(schema_str).expect("parse schema");
     let schema = Arc::new(schema);
 
     // Test DOM validator
     {
-        let valid_doc = fastxml::parse(valid_xml).expect("parse valid xml");
-        let invalid_doc = fastxml::parse(invalid_xml).expect("parse invalid xml");
+        let valid_doc = fastxml::Parser::from(valid_xml.as_slice())
+            .parse()
+            .expect("parse valid xml");
+        let invalid_doc = fastxml::Parser::from(invalid_xml.as_slice())
+            .parse()
+            .expect("parse invalid xml");
 
-        let validator = DomSchemaValidator::new(Arc::clone(&schema));
-        let errors = validator.validate(&valid_doc).expect("validate");
+        let errors = fastxml::schema::Validator::from(&valid_doc)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("validate")
+            .into_entries();
         assert!(errors.is_empty(), "Valid document should validate (DOM)");
 
-        let validator = DomSchemaValidator::new(Arc::clone(&schema));
-        let errors = validator.validate(&invalid_doc).expect("validate");
+        let errors = fastxml::schema::Validator::from(&invalid_doc)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("validate")
+            .into_entries();
         assert!(
             !errors.is_empty(),
             "Invalid document should not validate (DOM)"
         );
     }
 
-    // Test streaming validator (OnePassSchemaValidator)
+    // Test streaming validation
     {
-        let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-        let errors = validator.validate(valid_xml.as_slice()).expect("validate");
+        let errors = fastxml::schema::Validator::from(valid_xml.as_slice())
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("validate")
+            .into_entries();
         assert!(
             errors.is_empty(),
             "Valid document should validate (Streaming)"
         );
 
-        let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-        let errors = validator
-            .validate(invalid_xml.as_slice())
-            .expect("validate");
+        let errors = fastxml::schema::Validator::from(invalid_xml.as_slice())
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("validate")
+            .into_entries();
         assert!(
             !errors.is_empty(),
             "Invalid document should not validate (Streaming)"
@@ -419,18 +438,24 @@ fn dom_streaming_consistency() {
         ), // unexpected element
     ];
 
-    let schema = Arc::new(fastxml::parse_xsd(schema_str).expect("parse schema"));
+    let schema = Arc::new(fastxml::schema::Schema::from_xsd(schema_str).expect("parse schema"));
 
     for (xml, expected_valid) in test_cases {
         // DOM validation
-        let doc = fastxml::parse(xml).expect("parse xml");
-        let dom_validator = DomSchemaValidator::new(Arc::clone(&schema));
-        let dom_errors = dom_validator.validate(&doc).expect("dom validate");
+        let doc = fastxml::Parser::from(xml).parse().expect("parse xml");
+        let dom_errors = fastxml::schema::Validator::from(&doc)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("dom validate")
+            .into_entries();
         let dom_valid = dom_errors.is_empty();
 
         // Streaming validation
-        let stream_validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-        let stream_errors = stream_validator.validate(xml).expect("stream validate");
+        let stream_errors = fastxml::schema::Validator::from(xml)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("stream validate")
+            .into_entries();
         let stream_valid = stream_errors.is_empty();
 
         // Check both validators agree
