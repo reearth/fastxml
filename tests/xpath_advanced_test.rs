@@ -10,8 +10,9 @@
 
 mod common;
 
+use fastxml::Parser;
+use fastxml::compat::evaluate;
 use fastxml::xpath::collect_text_values;
-use fastxml::{Parser, evaluate};
 
 // =============================================================================
 // Attribute Axis Tests
@@ -407,7 +408,7 @@ mod complex_predicates {
 
 mod relative_paths {
     use super::*;
-    use fastxml::{create_context, find_readonly_nodes_by_xpath, get_root_readonly_node};
+    use fastxml::compat::{create_context, find_readonly_nodes_by_xpath, get_root_readonly_node};
 
     #[test]
     fn test_parent_navigation() {

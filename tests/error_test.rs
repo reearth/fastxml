@@ -424,7 +424,7 @@ mod parser_options {
 
 mod xpath_errors {
     use super::*;
-    use fastxml::evaluate;
+    use fastxml::compat::evaluate;
 
     #[test]
     fn test_invalid_xpath_unclosed_bracket() {

@@ -1,10 +1,11 @@
 //! Basic DOM parsing example.
 //!
-//! Demonstrates parsing XML into a DOM tree and querying with XPath.
+//! Demonstrates parsing XML into a DOM tree and querying it with the modern
+//! `Parser` / `QueryExt` / `Query` front doors.
 //!
 //! Run with: cargo run --example dom_parsing
 
-use fastxml::{Parser, evaluate, get_root_node};
+use fastxml::{Parser, Query, QueryExt};
 
 fn main() -> fastxml::error::Result<()> {
     let xml = r#"
@@ -15,34 +16,37 @@ fn main() -> fastxml::error::Result<()> {
 </root>
 "#;
 
-    // Parse XML into DOM
+    // Parse XML into a DOM.
     let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("Node count: {}", doc.node_count());
 
-    // Get root element
-    let root = get_root_node(&doc)?;
+    // Get the root element (a plain method on the document).
+    let root = doc.get_root_element()?;
     println!("Root element: {}", root.get_name());
 
-    // XPath query - find all items
-    let result = evaluate(&doc, "//item")?;
-    println!("\nFound {} items:", result.clone().into_nodes().len());
-
-    for node in result.into_nodes() {
+    // XPath query via the `QueryExt` method on the document.
+    let items = doc.query_nodes("//item")?;
+    println!("\nFound {} items:", items.len());
+    for node in &items {
         let id = node.get_attribute("id").unwrap_or_default();
         let text = node.get_content().unwrap_or_default();
         println!("  item[id={}]: {}", id, text);
     }
 
-    // XPath with predicate
-    let result = evaluate(&doc, "//item[@id='2']")?;
+    // XPath with a predicate.
     println!("\nItem with id=2:");
-    for node in result.into_nodes() {
+    for node in doc.query_nodes("//item[@id='2']")? {
         println!("  {}", node.get_content().unwrap_or_default());
     }
 
-    // Get text content
-    let result = evaluate(&doc, "//item/text()")?;
-    let texts: Vec<String> = fastxml::xpath::collect_text_values(&result);
+    // Compile a query once and reuse it (here just once, but it can run against
+    // many documents without re-parsing the expression).
+    let text_query = Query::compile("//item/text()")?;
+    let texts = text_query.eval(&doc)?.into_nodes();
+    let texts: Vec<String> = texts
+        .iter()
+        .map(|n| n.get_content().unwrap_or_default())
+        .collect();
     println!("\nAll text content: {:?}", texts);
 
     Ok(())

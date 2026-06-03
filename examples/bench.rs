@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use serde_json::{Value as JsonValue, json};
 
-use fastxml::evaluate;
+use fastxml::compat::evaluate;
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
 use fastxml::schema::types::CompiledSchema;
 #[cfg(feature = "ureq")]

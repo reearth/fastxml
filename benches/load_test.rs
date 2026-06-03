@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
+use fastxml::compat::evaluate;
 use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
 use fastxml::schema::Validator;
 use fastxml::schema::types::{CompiledSchema, ElementDef};
-use fastxml::{Parser, XmlDocument, evaluate};
+use fastxml::{Parser, XmlDocument};
 
 /// Parses XML bytes into a DOM via the public [`Parser`] front door.
 fn parse(input: &[u8]) -> fastxml::error::Result<XmlDocument> {

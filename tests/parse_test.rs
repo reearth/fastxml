@@ -2,7 +2,8 @@
 
 mod common;
 
-use fastxml::{NodeType, Parser, get_node_tag, get_root_node};
+use fastxml::compat::{get_node_tag, get_root_node};
+use fastxml::{NodeType, Parser};
 
 #[test]
 fn test_parse_simple_xml() {

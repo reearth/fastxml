@@ -3,7 +3,8 @@
 
 mod common;
 
-use fastxml::{Parser, evaluate};
+use fastxml::Parser;
+use fastxml::compat::evaluate;
 
 // =============================================================================
 // Problem 1: get_namespace() should return the namespace for elements

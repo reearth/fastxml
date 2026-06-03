@@ -2,7 +2,7 @@
 //!
 //! [`Query`] parses an XPath expression a single time and can then be evaluated
 //! against many documents, avoiding the re-parse that the free
-//! [`evaluate`](crate::evaluate) function performs on every call.
+//! [`evaluate`](crate::compat::evaluate) function performs on every call.
 
 use std::fmt;
 

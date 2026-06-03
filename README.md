@@ -98,13 +98,12 @@ let result = fetcher.fetch("schema.xsd")?;
 ### DOM Parsing
 
 ```rust
-use fastxml::{Parser, evaluate};
+use fastxml::{Parser, QueryExt};
 
 let xml = r#"<root><item id="1">Hello</item><item id="2">World</item></root>"#;
 
 let doc = Parser::from(xml).parse()?;
-let result = evaluate(&doc, "//item")?;
-for node in result.into_nodes() {
+for node in doc.query_nodes("//item")? {
     println!("{}: {}", node.get_attribute("id").unwrap(), node.get_content().unwrap());
 }
 ```
@@ -520,10 +519,10 @@ for error in report.errors() {
 ### Basic Usage
 
 ```rust
-use fastxml::{Parser, evaluate};
+use fastxml::{Parser, QueryExt};
 
 let doc = Parser::from(xml).parse()?;
-let result = evaluate(&doc, "//item[@id='1']/text()")?;
+let result = doc.query("//item[@id='1']/text()")?;
 ```
 
 ### With Namespaces
@@ -538,8 +537,28 @@ let xml = r#"
 </core:CityModel>"#;
 
 let doc = Parser::from(xml).parse()?;
-let buildings = evaluate(&doc, "//bldg:Building")?;
+let buildings = doc.query_nodes("//bldg:Building")?;
 ```
+
+## libxml Compatibility
+
+For migrating from libxml, the `fastxml::compat` module provides free functions
+that mirror libxml's shape (`evaluate`, `create_context`, `get_root_node`,
+`node_to_xml_string`, `find_nodes_by_xpath`, …). They are thin wrappers over the
+modern front doors — prefer `Parser` / `Query` / `QueryExt` / `Printer` for new
+code.
+
+```rust
+use fastxml::Parser;
+use fastxml::compat::{evaluate, get_root_node};
+
+let doc = Parser::from(xml).parse()?;
+let root = get_root_node(&doc)?;          // modern: doc.get_root_element()
+let items = evaluate(&doc, "//item")?;    // modern: doc.query("//item")
+```
+
+See `examples/` (`query`, `printer`, `compat`, `dom_parsing`, …) for runnable
+demonstrations of both the modern and compatibility APIs.
 
 ## Supported Specifications
 

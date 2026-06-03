@@ -2,15 +2,15 @@
 //!
 //! This file tests all functional requirements from the implementation plan.
 
+use fastxml::compat::{
+    create_context, evaluate, find_nodes_by_xpath, find_readonly_nodes_by_xpath, get_node_tag,
+    get_root_node, get_root_readonly_node, node_to_xml_string,
+};
 use fastxml::node::error::NodeError;
 use fastxml::parser::error::ParseError;
 use fastxml::xpath::collect_text_values;
 use fastxml::xpath::error::XPathEvalError;
-use fastxml::{
-    Parser, ParserOptions, create_context, evaluate, find_nodes_by_xpath,
-    find_readonly_nodes_by_xpath, get_node_tag, get_root_node, get_root_readonly_node,
-    node_to_xml_string, parse_schema_locations,
-};
+use fastxml::{Parser, ParserOptions, parse_schema_locations};
 
 // =============================================================================
 // XPath Pattern Tests (from plan requirements)

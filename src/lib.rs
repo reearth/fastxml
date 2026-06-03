@@ -22,7 +22,7 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use fastxml::{Parser, evaluate, collect_text_values};
+//! use fastxml::{Parser, QueryExt};
 //!
 //! let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
 //!     <gml:name>Hello World</gml:name>
@@ -30,8 +30,8 @@
 //!
 //! let doc = Parser::from(xml).parse().unwrap();
 //!
-//! let result = evaluate(&doc, "//gml:name").unwrap();
-//! let texts = collect_text_values(&result);
+//! let names = doc.query_nodes("//gml:name").unwrap();
+//! let texts: Vec<_> = names.iter().map(|n| n.get_content().unwrap_or_default()).collect();
 //! println!("Found: {:?}", texts);
 //! ```
 //!
@@ -94,6 +94,7 @@
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::large_enum_variant)]
 
+pub mod compat;
 pub mod document;
 pub mod error;
 pub mod event;
@@ -139,121 +140,11 @@ pub use xpath::context::{XmlContext, XmlSafeContext};
 pub use serialize::Printer;
 pub use xpath::{AsQuery, Query, QueryExt};
 
-// ============================================================================
-// libxml-compatible API
-// ============================================================================
-
-/// Evaluates an XPath expression on a document.
-///
-/// This is the main XPath evaluation entry point, compatible with libxml's API.
-pub fn evaluate<T: AsRef<str>>(
-    document: &XmlDocument,
-    xpath_expr: T,
-) -> Result<xpath::XPathResult> {
-    xpath::evaluate(document, xpath_expr.as_ref())
-}
-
-/// Creates an XPath context for a document.
-///
-/// The context automatically registers namespace bindings from the root element.
-pub fn create_context(document: &XmlDocument) -> Result<XmlContext> {
-    xpath::create_context(document)
-}
-
-/// Creates a thread-safe XPath context for a document.
-pub fn create_safe_context(document: &XmlDocument) -> Result<XmlSafeContext> {
-    xpath::create_safe_context(document)
-}
-
-/// Finds nodes by XPath expression relative to a node.
-pub fn find_nodes_by_xpath(
-    ctx: &XmlContext,
-    xpath_expr: &str,
-    node: &XmlNode,
-) -> Result<Vec<XmlNode>> {
-    xpath::find_nodes_by_xpath(ctx, xpath_expr, node)
-}
-
-/// Finds read-only nodes by XPath expression.
-pub fn find_readonly_nodes_by_xpath(
-    ctx: &XmlContext,
-    xpath_expr: &str,
-    node: &XmlRoNode,
-) -> Result<Vec<XmlRoNode>> {
-    xpath::find_readonly_nodes_by_xpath(ctx, xpath_expr, node)
-}
-
-/// Finds read-only nodes using a thread-safe context.
-pub fn find_safe_readonly_nodes_by_xpath(
-    ctx: &XmlSafeContext,
-    xpath_expr: &str,
-    node: &XmlRoNode,
-) -> Result<Vec<XmlRoNode>> {
-    xpath::find_safe_readonly_nodes_by_xpath(ctx, xpath_expr, node)
-}
-
-/// Finds read-only nodes matching element names.
-pub fn find_readonly_nodes_in_elements(
-    ctx: &XmlContext,
-    node: &XmlRoNode,
-    elements_to_match: &[&str],
-) -> Result<Vec<XmlRoNode>> {
-    xpath::find_readonly_nodes_in_elements(ctx, node, elements_to_match)
-}
-
-/// Collects text values from an XPath result.
-pub fn collect_text_values(xpath_value: &xpath::XPathResult) -> Vec<String> {
-    xpath::collect_text_values(xpath_value)
-}
-
-/// Collects a single text value from an XPath result.
-pub fn collect_text_value(xpath_value: &xpath::XPathResult) -> String {
-    xpath::collect_text_value(xpath_value)
-}
-
-/// Gets the root element node from a document.
-pub fn get_root_node(document: &XmlDocument) -> Result<XmlNode> {
-    document.get_root_element()
-}
-
-/// Gets the root element as a read-only node.
-pub fn get_root_readonly_node(document: &XmlDocument) -> Result<XmlRoNode> {
-    document.get_root_element_ro()
-}
-
-/// Gets the qualified tag name of a node (prefix:name or just name).
-pub fn get_node_tag(node: &XmlNode) -> String {
-    node.qname()
-}
-
-/// Gets the qualified tag name of a read-only node.
-pub fn get_readonly_node_tag(node: &XmlRoNode) -> String {
-    node.qname()
-}
-
-/// Gets the namespace prefix of a node.
-pub fn get_node_prefix(node: &XmlNode) -> String {
-    node.get_prefix().unwrap_or_default()
-}
-
-/// Gets the namespace prefix of a read-only node.
-pub fn get_readonly_node_prefix(node: &XmlRoNode) -> String {
-    node.get_prefix().unwrap_or_default()
-}
-
-/// Serializes a node to an XML string.
-pub fn node_to_xml_string(document: &XmlDocument, node: &mut XmlNode) -> Result<String> {
-    serialize::node_to_xml_string(document, node)
-}
-
-/// Serializes a read-only node to an XML string.
-pub fn readonly_node_to_xml_string(document: &XmlDocument, node: &XmlRoNode) -> Result<String> {
-    serialize::readonly_node_to_xml_string(document, node)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These smoke tests also exercise the libxml-compatible `compat` wrappers.
+    use crate::compat::*;
 
     #[test]
     fn test_basic_parsing() {

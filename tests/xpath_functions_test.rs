@@ -3,7 +3,8 @@
 
 mod common;
 
-use fastxml::{Parser, evaluate};
+use fastxml::Parser;
+use fastxml::compat::evaluate;
 
 // =============================================================================
 // Node Set Functions

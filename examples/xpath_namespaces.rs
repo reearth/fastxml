@@ -1,10 +1,11 @@
 //! XPath with namespaces example.
 //!
-//! Demonstrates querying XML documents that use namespaces.
+//! Demonstrates querying namespaced documents with the modern `QueryExt`
+//! (`doc.query(..)`) API.
 //!
 //! Run with: cargo run --example xpath_namespaces
 
-use fastxml::{Parser, evaluate};
+use fastxml::{Parser, QueryExt};
 
 fn main() -> fastxml::error::Result<()> {
     // CityGML-style document with multiple namespaces
@@ -32,33 +33,30 @@ fn main() -> fastxml::error::Result<()> {
     let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("=== XPath with Namespaces ===\n");
 
-    // Query using namespace prefix
+    // Query using a namespace prefix. Prefixes declared on the root element are
+    // registered automatically.
     println!("1. Find all buildings (//bldg:Building):");
-    let result = evaluate(&doc, "//bldg:Building")?;
-    for node in result.into_nodes() {
+    for node in doc.query_nodes("//bldg:Building")? {
         // Attributes are stored with local names (libxml compatible)
         let id = node.get_attribute("id");
         println!("   Found: {}", id.unwrap_or_default());
     }
 
-    // Query specific namespaced elements
+    // Query specific namespaced elements.
     println!("\n2. Get all building heights (//bldg:measuredHeight/text()):");
-    let result = evaluate(&doc, "//bldg:measuredHeight/text()")?;
-    let heights = fastxml::xpath::collect_text_values(&result);
-    for height in &heights {
+    let heights = doc.query("//bldg:measuredHeight/text()")?;
+    for height in fastxml::xpath::collect_text_values(&heights) {
         println!("   Height: {}m", height);
     }
 
-    // Use local-name() function for dynamic matching
+    // Use local-name() for dynamic matching.
     println!("\n3. Find elements by local name (*[local-name()='Building']):");
-    let result = evaluate(&doc, "//*[local-name()='Building']")?;
-    println!("   Found {} buildings", result.into_nodes().len());
+    let buildings = doc.query_nodes("//*[local-name()='Building']")?;
+    println!("   Found {} buildings", buildings.len());
 
-    // Query with predicates on namespaced attributes
+    // Query with predicates on namespaced attributes.
     println!("\n4. Find building with specific ID (//bldg:Building[@gml:id='BLDG_002']):");
-    let result = evaluate(&doc, "//bldg:Building[@gml:id='BLDG_002']")?;
-    for node in result.into_nodes() {
-        // Get child elements
+    for node in doc.query_nodes("//bldg:Building[@gml:id='BLDG_002']")? {
         for child in node.get_child_elements() {
             if child.get_name().contains("measuredHeight") {
                 println!(
@@ -69,28 +67,22 @@ fn main() -> fastxml::error::Result<()> {
         }
     }
 
-    // Query construction years
+    // Query construction years.
     println!("\n5. Get all construction years:");
-    let result = evaluate(&doc, "//bldg:yearOfConstruction/text()")?;
-    let years = fastxml::xpath::collect_text_values(&result);
-    for year in &years {
+    let years = doc.query("//bldg:yearOfConstruction/text()")?;
+    for year in fastxml::xpath::collect_text_values(&years) {
         println!("   Year: {}", year);
     }
 
-    // Query using namespace-uri() function
+    // Query using namespace-uri().
     println!("\n6. Find elements in building namespace:");
-    let result = evaluate(
-        &doc,
-        "//*[namespace-uri()='http://www.opengis.net/citygml/building/2.0']",
-    )?;
-    let count = result.into_nodes().len();
-    println!("   Found {} elements in building namespace", count);
+    let in_ns =
+        doc.query_nodes("//*[namespace-uri()='http://www.opengis.net/citygml/building/2.0']")?;
+    println!("   Found {} elements in building namespace", in_ns.len());
 
-    // Complex query: buildings built after 2000
+    // Complex query: buildings built after 2000.
     println!("\n7. Buildings with yearOfConstruction > 2000:");
-    let result = evaluate(&doc, "//bldg:Building[bldg:yearOfConstruction > 2000]")?;
-    for node in result.into_nodes() {
-        // Attributes are stored with local names (libxml compatible)
+    for node in doc.query_nodes("//bldg:Building[bldg:yearOfConstruction > 2000]")? {
         let id = node.get_attribute("id").unwrap_or_default();
         println!("   {}", id);
     }

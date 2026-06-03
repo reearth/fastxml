@@ -2,10 +2,11 @@
 
 mod common;
 
-use fastxml::xpath::collect_text_values;
-use fastxml::{
-    Parser, create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node,
+use fastxml::Parser;
+use fastxml::compat::{
+    create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node,
 };
+use fastxml::xpath::collect_text_values;
 
 #[test]
 fn test_xpath_simple_path() {
