@@ -5,7 +5,9 @@
 use fastxml::transform::{StreamableQuery, Transformer};
 use fastxml::{Parser, Query, QueryExt};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+// Transform operations return `TransformError`, which converts into the
+// crate-wide `fastxml::error::Error`, so a single `Result` type works throughout.
+fn main() -> fastxml::error::Result<()> {
     println!("=== Querying with Query / QueryExt ===\n");
 
     // 1. QueryExt: method-call ergonomics on a document for one-off lookups.

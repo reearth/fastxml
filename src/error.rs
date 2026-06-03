@@ -9,6 +9,7 @@ use crate::parser::error::ParseError;
 use crate::schema::error::SchemaError;
 use crate::schema::fetcher::error::FetchError;
 use crate::schema::xsd::error::XsdParseError;
+use crate::transform::error::TransformError;
 use crate::xpath::error::{XPathEvalError, XPathSyntaxError};
 
 /// Location information for errors, providing line, column, byte offset, and optional XPath.
@@ -147,7 +148,10 @@ impl fmt::Display for ErrorLocation {
 }
 
 /// Main error type for fastxml operations.
+///
+/// `#[non_exhaustive]`: match with a wildcard arm, as new variants may be added.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// XML parsing error
     #[error("parse error: {0}")]
@@ -207,6 +211,26 @@ pub enum Error {
     /// XSD parsing error
     #[error("xsd parse error: {0}")]
     XsdParse(#[from] XsdParseError),
+
+    /// Stream-transformation error.
+    ///
+    /// Boxed to break the cycle with [`TransformError::Other`], which wraps an
+    /// `Error`.
+    #[error(transparent)]
+    Transform(Box<TransformError>),
+}
+
+impl From<TransformError> for Error {
+    fn from(err: TransformError) -> Self {
+        match err {
+            // Unwrap errors that already have a first-class `Error` variant so a
+            // round-trip (`Error` -> `TransformError::Other` -> `Error`) is lossless.
+            TransformError::Other(inner) => inner,
+            TransformError::Io(io) => Error::Io(io),
+            TransformError::Utf8(utf8) => Error::Utf8(utf8),
+            other => Error::Transform(Box::new(other)),
+        }
+    }
 }
 
 impl From<quick_xml::Error> for Error {
@@ -485,4 +509,35 @@ pub enum ValidationErrorType {
     UnclosedElement,
     /// Generic validation error
     Other,
+}
+
+#[cfg(test)]
+mod transform_conversion_tests {
+    use super::*;
+
+    #[test]
+    fn transform_error_converts_into_crate_error() {
+        // A function returning the crate-wide Result can `?` a transform error.
+        fn run() -> Result<()> {
+            Err(TransformError::InvalidXPath("bad".into()))?;
+            Ok(())
+        }
+        let err = run().unwrap_err();
+        assert!(matches!(err, Error::Transform(_)));
+        assert!(err.to_string().contains("bad"));
+    }
+
+    #[test]
+    fn other_variant_unwraps_losslessly() {
+        // Error -> TransformError::Other -> Error round-trips without nesting.
+        let wrapped: TransformError = Error::InvalidOperation("x".into()).into();
+        let back: Error = wrapped.into();
+        assert!(matches!(back, Error::InvalidOperation(_)));
+    }
+
+    #[test]
+    fn io_and_utf8_map_to_their_variants() {
+        let io = TransformError::Io(io::Error::other("boom"));
+        assert!(matches!(Error::from(io), Error::Io(_)));
+    }
 }
