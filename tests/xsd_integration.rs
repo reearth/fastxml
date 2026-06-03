@@ -1,10 +1,7 @@
 //! Integration tests for XSD parsing with PLATEAU CityGML data.
 
-use std::sync::Arc;
-
-use fastxml::event::{XmlEvent, XmlEventHandler};
-use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::schema::xsd;
+use fastxml::Parser;
+use fastxml::schema::{Schema, Validator};
 
 /// Test parsing a simple CityGML-like schema
 #[test]
@@ -54,7 +51,7 @@ fn test_citygml_schema_parsing() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(citygml_like_xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(citygml_like_xsd.as_bytes()).unwrap();
 
     // Check that elements are parsed
     assert!(schema.elements.contains_key("ReliefFeature"));
@@ -73,70 +70,25 @@ fn test_citygml_schema_parsing() {
 /// Test creating a validation context with built-in types
 #[test]
 fn test_builtin_schema_validation() {
-    let schema = xsd::create_builtin_schema();
-    let validator = OnePassSchemaValidator::new(Arc::new(schema));
-
-    // The validator should be valid initially
-    assert!(validator.is_valid());
+    // A simple document validates against the built-in type schema.
+    let report = Validator::from("<root/>")
+        .schema(Schema::builtin())
+        .run()
+        .unwrap();
+    assert!(report.is_valid());
 }
 
 /// Test parsing and validating a simple GML document
 #[test]
 fn test_gml_document_validation() {
-    let schema = xsd::create_builtin_schema();
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
+    let xml = r#"<gml:Envelope xmlns:gml="http://www.opengis.net/gml/3.2" srsName="EPSG:6697" srsDimension="3">
+        <gml:lowerCorner>35.0 135.0 0.0</gml:lowerCorner>
+    </gml:Envelope>"#;
 
-    // Simulate parsing a GML document
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Envelope".into(),
-            prefix: Some("gml".into()),
-            namespace: Some("http://www.opengis.net/gml/3.2".into()),
-            attributes: vec![
-                ("srsName".into(), "EPSG:6697".into()),
-                ("srsDimension".into(), "3".into()),
-            ],
-            namespace_decls: vec![],
-            line: Some(1),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "lowerCorner".into(),
-            prefix: Some("gml".into()),
-            namespace: Some("http://www.opengis.net/gml/3.2".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
-            line: Some(2),
-            column: Some(1),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::Text("35.0 135.0 0.0".into()))
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "lowerCorner".into(),
-            prefix: Some("gml".into()),
-        })
-        .unwrap();
-
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Envelope".into(),
-            prefix: Some("gml".into()),
-        })
-        .unwrap();
-
-    validator.handle(&XmlEvent::Eof).unwrap();
-    validator.finish().unwrap();
+    let report = Validator::from(xml).schema(Schema::builtin()).run().unwrap();
 
     // Validation should pass
-    assert!(validator.is_valid());
+    assert!(report.is_valid());
 }
 
 /// Test parsing PLATEAU building schema patterns
@@ -173,7 +125,7 @@ fn test_plateau_building_pattern() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(building_xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(building_xsd.as_bytes()).unwrap();
 
     // Check that Building element exists (now stored with namespace prefix)
     assert!(schema.elements.contains_key("bldg:Building"));
@@ -247,7 +199,7 @@ fn test_plateau_iur_extension_pattern() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(uro_xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(uro_xsd.as_bytes()).unwrap();
 
     // Check elements (now stored with namespace prefix)
     assert!(schema.elements.contains_key("uro:buildingDetails"));
@@ -292,7 +244,7 @@ fn test_parse_real_gml_structure() {
     </core:CityModel>"#;
 
     // Parse the document
-    let doc = fastxml::parse(citygml).unwrap();
+    let doc = Parser::from(citygml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
 
     assert_eq!(root.get_name(), "CityModel");
@@ -325,7 +277,7 @@ fn test_sequence_maxoccurs_propagation() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
     // Check that ArrayPropertyType exists
     assert!(schema.types.contains_key("ArrayPropertyType"));
@@ -373,7 +325,7 @@ fn test_nested_sequence_maxoccurs_propagation() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
     if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.types.get("NestedArrayType")
     {
@@ -410,7 +362,7 @@ fn test_choice_maxoccurs_propagation() {
 
     </xs:schema>"#;
 
-    let schema = xsd::parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
     if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
         schema.types.get("RepeatingChoiceType")
@@ -440,39 +392,15 @@ fn test_streaming_parse_with_validator() {
         <gml:upperCorner>36.0 136.0</gml:upperCorner>
     </gml:Envelope>"#;
 
-    // Parse the document
-    let doc = fastxml::parse(citygml).unwrap();
-
-    // Create schema with built-in types and use it for validation
-    let schema = xsd::create_builtin_schema();
-    let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
-
-    // Simulate validation by handling events
-    validator
-        .handle(&XmlEvent::StartElement {
-            name: "Envelope".into(),
-            prefix: Some("gml".into()),
-            namespace: Some("http://www.opengis.net/gml/3.2".into()),
-            attributes: vec![("srsName".into(), "EPSG:6697".into())],
-            namespace_decls: vec![],
-            line: Some(1),
-            column: Some(1),
-        })
+    // Validate the document in a single streaming pass against built-in types.
+    let report = Validator::from(citygml)
+        .schema(Schema::builtin())
+        .run()
         .unwrap();
+    assert!(report.is_valid());
 
-    validator
-        .handle(&XmlEvent::EndElement {
-            name: "Envelope".into(),
-            prefix: Some("gml".into()),
-        })
-        .unwrap();
-
-    validator.finish().unwrap();
-
-    // Validator should be valid
-    assert!(validator.is_valid());
-
-    // Verify we can parse the document
+    // Verify we can also parse it into a DOM.
+    let doc = Parser::from(citygml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     assert_eq!(root.get_name(), "Envelope");
 }

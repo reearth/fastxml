@@ -2,16 +2,18 @@
 
 mod common;
 
-use fastxml::schema::validator::XmlSchemaValidationContext;
+use fastxml::Parser;
 use fastxml::schema::xsd::facets::{FacetConstraints, FacetError, FacetValidator};
-use fastxml::schema::xsd::parse_xsd;
+use fastxml::schema::{Schema, Validator};
 
 fn validate_xml(xml: &str, xsd: &str) -> bool {
-    let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
-    let schema = parse_xsd(xsd.as_bytes()).expect("Failed to parse XSD");
-    let ctx = XmlSchemaValidationContext::new(schema);
-    let errors = ctx.validate(&doc).expect("Validation failed");
-    errors.iter().all(|e| !e.is_error())
+    let doc = Parser::from(xml).parse().expect("Failed to parse XML");
+    let schema = Schema::from_xsd(xsd).expect("Failed to parse XSD");
+    Validator::from(&doc)
+        .schema(schema)
+        .run()
+        .expect("Validation failed")
+        .is_valid()
 }
 
 #[test]
