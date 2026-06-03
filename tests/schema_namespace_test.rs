@@ -168,8 +168,14 @@ fn test_xsd_compiler_namespace_qualified_types() {
     </xs:schema>"#;
 
     // Compile both schemas together
-    let schema = Schema::builder().add("http://www.opengis.net/gml/gml.xsd", gml_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
-    .expect("Failed to compile schemas");
+    let schema = Schema::builder()
+        .add("http://www.opengis.net/gml/gml.xsd", gml_schema.as_bytes())
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_schema.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schemas");
 
     // Both types should be accessible with their namespace-qualified names
     let gml_type = schema.get_type("gml:TrackType");
@@ -288,8 +294,17 @@ fn test_substitution_group_elements_from_imported_schema() {
     </xs:schema>"#;
 
     // Compile both schemas together
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
-    .expect("Failed to compile schemas");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/2.0/core.xsd",
+            core_schema.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_schema.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schemas");
 
     // Core elements should be stored with core: prefix
     assert!(
@@ -369,8 +384,17 @@ fn test_elements_without_explicit_target_namespace_prefix() {
     </xs:schema>"#;
 
     // Compile both schemas
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
-    .expect("Failed to compile schemas");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/2.0/core.xsd",
+            core_schema.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_schema.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schemas");
 
     // Print available elements for debugging
     eprintln!(
@@ -455,8 +479,17 @@ fn test_validator_finds_element_with_namespace_mismatch() {
                     substitutionGroup="core:_GenericApplicationPropertyOfCityObject"/>
     </xs:schema>"#;
 
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
-    .expect("Failed to compile schemas");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/2.0/core.xsd",
+            core_schema.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_schema.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schemas");
 
     // Parse XML using the tran: prefix:
     // <tran:Road xmlns:tran="..."><tran:class>main_road</tran:class></tran:Road>
@@ -539,8 +572,17 @@ fn test_validator_fails_with_different_prefix_same_namespace() {
                     substitutionGroup="core:_GenericApplicationPropertyOfCityObject"/>
     </xs:schema>"#;
 
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/core.xsd", core_schema.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_schema.as_bytes()).resolve()
-    .expect("Failed to compile schemas");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/2.0/core.xsd",
+            core_schema.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_schema.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schemas");
 
     // Verify schema stores elements with tran: prefix
     eprintln!(

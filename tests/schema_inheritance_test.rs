@@ -123,8 +123,13 @@ fn test_inherited_elements_from_base_type_extension() {
         <xs:element name="Road" type="tran:RoadType"/>
     </xs:schema>"#;
 
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", schema_xsd.as_bytes()).resolve()
-    .expect("Failed to compile schema");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            schema_xsd.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schema");
 
     // Debug: Print the type structure
     if let Some(TypeDef::Complex(road_type)) = schema.get_type("tran:RoadType") {
@@ -220,8 +225,17 @@ fn test_inherited_elements_across_namespaces_via_import() {
         <xs:element name="Road" type="tran:RoadType"/>
     </xs:schema>"#;
 
-    let schema = Schema::builder().add("http://www.opengis.net/citygml/2.0/cityGMLBase.xsd", core_xsd.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_xsd.as_bytes()).resolve()
-    .expect("Failed to compile schema");
+    let schema = Schema::builder()
+        .add(
+            "http://www.opengis.net/citygml/2.0/cityGMLBase.xsd",
+            core_xsd.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_xsd.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schema");
 
     // Debug: Check what's in the type_children_cache for RoadType
     eprintln!("=== Type children cache contents ===");
@@ -387,8 +401,21 @@ fn test_deep_inheritance_chain_across_namespaces() {
         <xs:element name="Road" type="tran:RoadType" substitutionGroup="core:cityObjectMember"/>
     </xs:schema>"#;
 
-    let schema = Schema::builder().add("http://schemas.opengis.net/gml/3.1.1/base/gml.xsd", gml_xsd.as_bytes()).add("http://www.opengis.net/citygml/2.0/cityGMLBase.xsd", core_xsd.as_bytes()).add("http://www.opengis.net/citygml/transportation/2.0/transportation.xsd", tran_xsd.as_bytes()).resolve()
-    .expect("Failed to compile schema");
+    let schema = Schema::builder()
+        .add(
+            "http://schemas.opengis.net/gml/3.1.1/base/gml.xsd",
+            gml_xsd.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/2.0/cityGMLBase.xsd",
+            core_xsd.as_bytes(),
+        )
+        .add(
+            "http://www.opengis.net/citygml/transportation/2.0/transportation.xsd",
+            tran_xsd.as_bytes(),
+        )
+        .resolve()
+        .expect("Failed to compile schema");
 
     // Debug: Check type_children_cache contents for RoadType
     eprintln!("=== Deep inheritance test: type_children_cache ===");
