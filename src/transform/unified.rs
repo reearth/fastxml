@@ -39,6 +39,7 @@ use crate::transform::editable::EditableNode;
 use crate::transform::error::{TransformError, TransformResult};
 use crate::transform::multi::CollectMulti;
 use crate::transform::reader::StreamTransformerReader;
+use crate::transform::streamable::IntoStreamable;
 
 /// The transformation engine, selected by the input.
 enum Inner<'a> {
@@ -89,8 +90,13 @@ impl<'a> Transformer<'a> {
     }
 
     /// Registers a callback to run on each element matching `xpath`.
-    pub fn on<F>(self, xpath: &str, callback: F) -> Self
+    ///
+    /// `xpath` is anything that is [`IntoStreamable`]: a string (analyzed when
+    /// the transform runs) or a pre-validated
+    /// [`StreamableQuery`](crate::transform::StreamableQuery).
+    pub fn on<X, F>(self, xpath: X, callback: F) -> Self
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode) + 'a,
     {
         let Transformer { inner, deferred } = self;
@@ -104,8 +110,9 @@ impl<'a> Transformer<'a> {
     /// Registers a callback that also receives ancestor/position context.
     ///
     /// In-memory input only; on reader input this is reported at the terminal.
-    pub fn on_with_context<F>(self, xpath: &str, callback: F) -> Self
+    pub fn on_with_context<X, F>(self, xpath: X, callback: F) -> Self
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode, &TransformContext) + 'a,
     {
         let Transformer {
@@ -248,8 +255,9 @@ impl<'a> Transformer<'a> {
     /// Extracts a value from each element matching `xpath`, in a single pass.
     ///
     /// In-memory input only.
-    pub fn collect<F, T>(self, xpath: &str, f: F) -> TransformResult<Vec<T>>
+    pub fn collect<X, F, T>(self, xpath: X, f: F) -> TransformResult<Vec<T>>
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode) -> T,
     {
         if let Some(msg) = self.deferred {

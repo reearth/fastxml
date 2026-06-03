@@ -84,6 +84,136 @@ pub fn document_to_xml_string_with_options(
     node_to_xml_string_with_options(doc, &root, &opts)
 }
 
+/// What a [`Printer`] serializes.
+enum Target<'a> {
+    /// An entire document (serialized from its root element).
+    Document(&'a XmlDocument),
+    /// A single mutable node.
+    Node(&'a XmlNode),
+    /// A single read-only node.
+    RoNode(&'a XmlRoNode),
+}
+
+/// A consistent front door for XML serialization.
+///
+/// `Printer::from(source)` → optional formatting setters → a terminal
+/// (`to_string` / `into_bytes` / `write_to`). The input type selects what is
+/// serialized: a whole [`XmlDocument`] (from its root, with an XML declaration
+/// by default), or a single [`XmlNode`] / [`XmlRoNode`] (no declaration by
+/// default).
+///
+/// # Example
+///
+/// ```
+/// use fastxml::{Parser, Printer};
+///
+/// let doc = Parser::from("<root><child>hi</child></root>").parse().unwrap();
+///
+/// // Whole document, pretty-printed.
+/// let xml = Printer::from(&doc).pretty().to_string().unwrap();
+/// assert!(xml.contains("<child>hi</child>"));
+/// ```
+pub struct Printer<'a> {
+    target: Target<'a>,
+    options: SerializeOptions,
+}
+
+impl<'a> From<&'a XmlDocument> for Printer<'a> {
+    fn from(doc: &'a XmlDocument) -> Self {
+        // Whole-document output includes the XML declaration by default,
+        // matching `document_to_xml_string`.
+        Self {
+            target: Target::Document(doc),
+            options: SerializeOptions {
+                xml_declaration: true,
+                ..SerializeOptions::default()
+            },
+        }
+    }
+}
+
+impl<'a> From<&'a XmlNode> for Printer<'a> {
+    fn from(node: &'a XmlNode) -> Self {
+        Self {
+            target: Target::Node(node),
+            options: SerializeOptions::default(),
+        }
+    }
+}
+
+impl<'a> From<&'a XmlRoNode> for Printer<'a> {
+    fn from(node: &'a XmlRoNode) -> Self {
+        Self {
+            target: Target::RoNode(node),
+            options: SerializeOptions::default(),
+        }
+    }
+}
+
+impl<'a> Printer<'a> {
+    /// Enables indentation (pretty-printing) with the default 2-space indent.
+    pub fn pretty(mut self) -> Self {
+        self.options.indent = true;
+        self
+    }
+
+    /// Enables indentation using `indent` as the per-level string.
+    pub fn indent(mut self, indent: impl Into<String>) -> Self {
+        self.options.indent = true;
+        self.options.indent_str = indent.into();
+        self
+    }
+
+    /// Controls whether an `<?xml ... ?>` declaration is emitted.
+    ///
+    /// Defaults to `true` for a document and `false` for a single node.
+    pub fn declaration(mut self, yes: bool) -> Self {
+        self.options.xml_declaration = yes;
+        self
+    }
+
+    /// Sets the encoding written in the XML declaration (default `UTF-8`).
+    pub fn encoding(mut self, encoding: impl Into<String>) -> Self {
+        self.options.encoding = encoding.into();
+        self
+    }
+
+    /// Serializes to the given writer.
+    pub fn write_to<W: Write>(self, writer: &mut W) -> Result<()> {
+        let owned: Option<XmlNode> = match &self.target {
+            Target::Document(doc) => Some(doc.get_root_element()?),
+            Target::RoNode(node) => Some((*node).clone().into_node()),
+            Target::Node(_) => None,
+        };
+        let node = match &self.target {
+            Target::Node(node) => *node,
+            _ => owned
+                .as_ref()
+                .expect("owned node present for document/ro-node"),
+        };
+
+        let mut serializer = XmlSerializer::new(writer, self.options.clone());
+        if self.options.xml_declaration {
+            serializer.write_declaration()?;
+        }
+        serializer.write_node(node, 0)?;
+        Ok(())
+    }
+
+    /// Serializes to a byte vector.
+    pub fn into_bytes(self) -> Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        self.write_to(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Serializes to a `String`.
+    #[allow(clippy::wrong_self_convention)]
+    pub fn to_string(self) -> Result<String> {
+        Ok(String::from_utf8(self.into_bytes()?)?)
+    }
+}
+
 /// XML serializer.
 struct XmlSerializer<W: Write> {
     writer: W,
@@ -311,5 +441,52 @@ mod tests {
 
         assert!(xml.contains("&amp;") || xml.contains("&test"));
         assert!(xml.contains("&lt;") || xml.contains("<text>"));
+    }
+
+    #[test]
+    fn test_printer_document_includes_declaration_by_default() {
+        let doc = parse(r#"<root><child>hi</child></root>"#).unwrap();
+        let xml = Printer::from(&doc).to_string().unwrap();
+        assert!(xml.contains("<?xml"));
+        assert!(xml.contains("<child>hi</child>"));
+    }
+
+    #[test]
+    fn test_printer_node_has_no_declaration_by_default() {
+        let doc = parse(r#"<root><child>hi</child></root>"#).unwrap();
+        let root = doc.get_root_element().unwrap();
+        let xml = Printer::from(&root).to_string().unwrap();
+        assert!(!xml.contains("<?xml"));
+        assert!(xml.contains("<root>"));
+    }
+
+    #[test]
+    fn test_printer_pretty_and_declaration_toggle() {
+        let doc = parse(r#"<root><a/><b/></root>"#).unwrap();
+        let xml = Printer::from(&doc)
+            .declaration(false)
+            .pretty()
+            .to_string()
+            .unwrap();
+        assert!(!xml.contains("<?xml"));
+        assert!(xml.contains('\n'));
+    }
+
+    #[test]
+    fn test_printer_write_to_and_into_bytes_match() {
+        let doc = parse(r#"<root><a/></root>"#).unwrap();
+        let bytes = Printer::from(&doc).into_bytes().unwrap();
+        let mut buf = Vec::new();
+        Printer::from(&doc).write_to(&mut buf).unwrap();
+        assert_eq!(bytes, buf);
+    }
+
+    #[test]
+    fn test_printer_readonly_node() {
+        let doc = parse(r#"<root><child>hi</child></root>"#).unwrap();
+        let root = doc.get_root_element().unwrap();
+        let ro = XmlRoNode::from_node(root);
+        let xml = Printer::from(&ro).to_string().unwrap();
+        assert!(xml.contains("<child>hi</child>"));
     }
 }

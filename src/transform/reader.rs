@@ -3,11 +3,10 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
-use crate::xpath::XPathSource;
-
 use super::builder::{Handler, HandlerCallback};
 use super::editable::EditableNode;
 use super::error::{TransformError, TransformResult};
+use super::streamable::IntoStreamable;
 use super::streaming;
 use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
 
@@ -56,12 +55,13 @@ impl<'a, R: BufRead> StreamTransformerReader<'a, R> {
     ///
     /// Only streamable XPath expressions are supported. Non-streamable expressions
     /// (e.g., those using `last()`, backward axes) will return an error at execution time.
-    pub fn on<F>(mut self, xpath: &str, callback: F) -> Self
+    pub fn on<X, F>(mut self, xpath: X, callback: F) -> Self
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode) + 'a,
     {
         self.handlers.push(Handler {
-            xpath: XPathSource::String(xpath.to_string()),
+            xpath: xpath.into_xpath_source(),
             callback: HandlerCallback::Simple(Box::new(callback)),
         });
         self

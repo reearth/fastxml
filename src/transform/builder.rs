@@ -8,6 +8,7 @@ use crate::xpath::XPathSource;
 use super::context::TransformContext;
 use super::editable::EditableNode;
 use super::error::{TransformError, TransformResult};
+use super::streamable::IntoStreamable;
 use super::streaming;
 use super::xpath_analyze::{self, NotStreamableReason, StreamableXPath, XPathAnalysis};
 use super::{
@@ -91,12 +92,13 @@ impl<'a> StreamTransformer<'a> {
     ///     .to_string()?;
     /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn on<F>(mut self, xpath: &str, callback: F) -> Self
+    pub fn on<X, F>(mut self, xpath: X, callback: F) -> Self
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode) + 'a,
     {
         self.handlers.push(Handler {
-            xpath: XPathSource::String(xpath.to_string()),
+            xpath: xpath.into_xpath_source(),
             callback: HandlerCallback::Simple(Box::new(callback)),
         });
         self
@@ -132,12 +134,13 @@ impl<'a> StreamTransformer<'a> {
     ///     .to_string()?;
     /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn on_with_context<F>(mut self, xpath: &str, callback: F) -> Self
+    pub fn on_with_context<X, F>(mut self, xpath: X, callback: F) -> Self
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode, &TransformContext) + 'a,
     {
         self.handlers.push(Handler {
-            xpath: XPathSource::String(xpath.to_string()),
+            xpath: xpath.into_xpath_source(),
             callback: HandlerCallback::WithContext(Box::new(callback)),
         });
         self
@@ -379,12 +382,13 @@ impl<'a> StreamTransformer<'a> {
     /// assert_eq!(contents, vec!["A", "B"]);
     /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
-    pub fn collect<F, T>(self, xpath: &str, mut f: F) -> TransformResult<Vec<T>>
+    pub fn collect<X, F, T>(self, xpath: X, mut f: F) -> TransformResult<Vec<T>>
     where
+        X: IntoStreamable,
         F: FnMut(&mut EditableNode) -> T,
     {
         let mut results = Vec::new();
-        let xpath_source = XPathSource::String(xpath.to_string());
+        let xpath_source = xpath.into_xpath_source();
 
         stream_for_each_impl(
             self.input,

@@ -102,6 +102,7 @@ mod functions;
 mod multi;
 mod reader;
 pub mod span;
+mod streamable;
 pub mod streaming;
 mod unified;
 pub mod xpath_analyze;
@@ -113,6 +114,7 @@ pub use context::{AncestorInfo, TransformContext};
 pub use editable::{EditableNode, EditableNodeBuilder, EditableNodeRef, Modification, NewNode};
 pub use error::{ErrorLocation, TransformError, TransformResult};
 pub use span::ByteSpan;
+pub use streamable::{IntoStreamable, StreamableQuery};
 pub use unified::Transformer;
 pub use xpath_analyze::{
     AttributePredicate, NotStreamableReason, PositionPredicate, StreamableStep, StreamableXPath,

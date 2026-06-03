@@ -111,6 +111,66 @@ for node in result.into_nodes() {
 
 `Parser::from` accepts `&str` or `&[u8]`; use `Parser::from_reader(reader)` to parse from any `BufRead`, and `.options(ParserOptions { .. })` to configure parsing.
 
+### Reusable XPath Queries
+
+`evaluate(&doc, "…")` re-parses the expression on every call. To run the same
+expression against many documents, compile it once with `Query`:
+
+```rust
+use fastxml::{Parser, Query};
+
+let query = Query::compile("//item")?;
+
+let a = Parser::from("<root><item/><item/></root>").parse()?;
+let b = Parser::from("<root><item/></root>").parse()?;
+
+assert_eq!(query.find_nodes(&a)?.len(), 2);
+assert_eq!(query.find_nodes(&b)?.len(), 1);
+```
+
+Namespaces declared on each document's root are registered automatically; add
+extra bindings with `.namespace(prefix, uri)`. Use `.eval(&doc)` for a typed
+`XPathResult`, or `.eval_from(&doc, &node)` to start from a context node.
+
+The `QueryExt` trait adds method-call ergonomics on the document itself. Its
+argument is anything that is `AsQuery`, so a string and a pre-compiled `Query`
+are interchangeable:
+
+```rust
+use fastxml::{Parser, Query, QueryExt};
+
+let doc = Parser::from("<root><item/><item/></root>").parse()?;
+
+// String: compiled on the fly.
+assert_eq!(doc.query_nodes("//item")?.len(), 2);
+let n = doc.query("count(//item)")?.to_number();
+
+// Pre-compiled query: reused without re-parsing.
+let q = Query::compile("//item")?;
+assert_eq!(doc.query_nodes(&q)?.len(), 2);
+```
+
+### Serializing to XML
+
+`Printer` turns a parsed document or node back into XML:
+
+```rust
+use fastxml::{Parser, Printer};
+
+let doc = Parser::from("<root><child>hi</child></root>").parse()?;
+
+let xml = Printer::from(&doc).to_string()?;            // whole document, with <?xml ?>
+let pretty = Printer::from(&doc).pretty().to_string()?; // indented
+
+// Stream straight to any writer, no intermediate String:
+Printer::from(&doc).write_to(&mut std::io::stdout())?;
+```
+
+`Printer::from` accepts `&XmlDocument`, `&XmlNode`, or `&XmlRoNode` (a document
+emits an XML declaration by default, a single node does not). Builders:
+`.pretty()` / `.indent(s)` / `.declaration(bool)` / `.encoding(s)`. Terminals:
+`.to_string()` / `.into_bytes()` / `.write_to(w)`.
+
 ### Streaming Parser
 
 For a quick, buffered list of events:
@@ -167,6 +227,27 @@ Transformer::from(xml)
 ```
 
 Terminals: `to_string()`, `into_bytes()`, `write_to(&mut writer)`, and `for_each()`.
+
+`on` / `on_with_context` / `collect` accept either a string (analyzed when the
+transform runs) or a pre-compiled `StreamableQuery`. Compiling validates
+streamability up front, so a non-streamable pattern is rejected immediately
+rather than failing mid-run:
+
+```rust
+use fastxml::transform::{StreamableQuery, Transformer};
+
+let q = StreamableQuery::compile("//item")?;          // Ok: streamable
+assert!(StreamableQuery::compile("//item[last()]").is_err()); // rejected up front
+
+let result = Transformer::from(xml)
+    .on(&q, |node| node.set_attribute("seen", "1"))
+    .to_string()?;
+```
+
+(`Query` is the analogue for *evaluation*; `StreamableQuery` is for *transforms*.)
+A `StreamableQuery` is a subset of a full `Query`, so it converts freely to one
+(`Query::from(&sq)`, or `doc.query(&sq)`); the reverse is fallible
+(`StreamableQuery::try_from(&query)`, which rejects non-streamable expressions).
 
 #### Reader-based Transform (Large Files)
 

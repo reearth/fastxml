@@ -124,6 +124,7 @@ pub mod types;
 pub mod axes;
 pub mod functions;
 pub mod operators;
+pub mod query;
 
 // Re-export main types and functions
 pub use context::{
@@ -136,6 +137,7 @@ pub use evaluator::{
 };
 pub use operators::ArithmeticOp;
 pub use parser::{Axis, ComparisonOp, Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
+pub use query::{AsQuery, Query, QueryExt};
 pub use types::{EvaluationContext, XPathValue};
 
 use crate::error::Result;
