@@ -11,13 +11,12 @@
 //! `(j*N, k*M)` — both min and max multiply. This is verified with one
 //! table-driven test against both validators (DOM and OnePass).
 
-use std::io::BufReader;
 use std::sync::Arc;
 
+use fastxml::Parser;
 use fastxml::ValidationErrorType;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::{DomSchemaValidator, OnePassSchemaValidator};
-use fastxml::schema::xsd::parse_xsd;
+use fastxml::schema::{Schema, Validator};
 
 const NS: &str = "http://example.com/occurs";
 
@@ -50,7 +49,7 @@ fn schema(group_min: &str, group_max: &str, elem_min: &str, elem_max: &str) -> A
   </xs:group>
 </xs:schema>"#
     );
-    let compiled = parse_xsd(xsd.as_bytes()).expect("Failed to compile occurs schema");
+    let compiled = Schema::from_xsd(xsd.as_bytes()).expect("Failed to compile occurs schema");
     Arc::new(compiled)
 }
 
@@ -65,16 +64,20 @@ fn container_with_items(n: usize) -> String {
 }
 
 fn validate_dom(schema: &Arc<CompiledSchema>, xml: &str) -> Vec<fastxml::StructuredError> {
-    let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
-    DomSchemaValidator::new(schema.clone())
-        .validate(&doc)
+    let doc = Parser::from(xml).parse().expect("Failed to parse XML");
+    Validator::from(&doc)
+        .schema(schema.clone())
+        .run()
         .expect("DOM validation failed")
+        .into_entries()
 }
 
 fn validate_onepass(schema: &Arc<CompiledSchema>, xml: &str) -> Vec<fastxml::StructuredError> {
-    OnePassSchemaValidator::new(schema.clone())
-        .validate(BufReader::new(xml.as_bytes()))
+    Validator::from(xml)
+        .schema(schema.clone())
+        .run()
         .expect("OnePass validation failed")
+        .into_entries()
 }
 
 fn is_valid(errors: &[fastxml::StructuredError]) -> bool {
