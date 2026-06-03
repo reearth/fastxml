@@ -16,9 +16,7 @@ use clap::Parser;
 use serde::Serialize;
 
 use fastxml::error::StructuredError;
-use fastxml::schema::{
-    DefaultFetcher, FetchResult, SchemaFetcher, streaming_validate_with_schema_location_and_fetcher,
-};
+use fastxml::schema::{DefaultFetcher, FetchResult, SchemaFetcher, Validator};
 
 /// XML Schema Validator CLI
 #[derive(Parser, Debug)]
@@ -201,7 +199,9 @@ fn validate_file(
 
     // Perform validation
     let reader = BufReader::new(content.as_slice());
-    let errors = streaming_validate_with_schema_location_and_fetcher(reader, fetcher)?;
+    let errors = Validator::from_reader(reader)
+        .run_with(fetcher)?
+        .into_entries();
 
     let elapsed = start.elapsed();
     let time_ms = elapsed.as_millis() as u64;

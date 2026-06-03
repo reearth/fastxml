@@ -434,7 +434,7 @@ pub mod libxml_compare {
 
     /// Assert that both parsers either succeed or fail on the given XML
     pub fn assert_parse_consistency(xml: &str) {
-        let fastxml_result = fastxml::parse(xml);
+        let fastxml_result = fastxml::Parser::from(xml).parse();
         let libxml_result = libxml_parse(xml);
 
         match (&fastxml_result, &libxml_result) {
@@ -552,8 +552,6 @@ use std::sync::Arc;
 
 use fastxml::Parser;
 use fastxml::StructuredError;
-#[allow(deprecated)]
-use fastxml::schema::validator::TwoPassSchemaValidator;
 use fastxml::schema::{Schema, Validator};
 
 // Note: The following types and functions use `#[allow(dead_code)]` because
@@ -666,21 +664,6 @@ pub fn validate_dom(xml: &str, xsd: &str) -> ValidationResult {
     }
 }
 
-/// Validate XML against XSD using TwoPass validator.
-#[allow(dead_code, deprecated)]
-pub fn validate_twopass(xml: &str, xsd: &str) -> ValidationResult {
-    use std::io::Cursor;
-    // The two-pass engine has no front-door equivalent (it is being retired),
-    // so this helper drives it directly to keep cross-validator consistency.
-    let schema = Schema::from_xsd(xsd).expect("Failed to parse XSD");
-    let reader = Cursor::new(xml.as_bytes().to_vec());
-    let errors = TwoPassSchemaValidator::new(Arc::new(schema))
-        .validate(reader)
-        .expect("Validation failed");
-    let valid = errors.iter().all(|e| !e.is_error());
-    ValidationResult { valid, errors }
-}
-
 /// Validate XML against XSD using OnePass (streaming) validator.
 #[allow(dead_code)]
 pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
@@ -696,37 +679,25 @@ pub fn validate_onepass(xml: &str, xsd: &str) -> ValidationResult {
     }
 }
 
-/// Validate with all validators and check consistency.
-/// Returns (dom_result, twopass_result, onepass_result).
+/// Validate with the DOM and streaming validators and check consistency.
+/// Returns (dom_result, onepass_result).
 #[allow(dead_code)]
-pub fn validate_all(
-    xml: &str,
-    xsd: &str,
-) -> (ValidationResult, ValidationResult, ValidationResult) {
+pub fn validate_all(xml: &str, xsd: &str) -> (ValidationResult, ValidationResult) {
     let dom = validate_dom(xml, xsd);
-    let twopass = validate_twopass(xml, xsd);
     let onepass = validate_onepass(xml, xsd);
-    (dom, twopass, onepass)
+    (dom, onepass)
 }
 
-/// Assert that all validators produce consistent results.
+/// Assert that the DOM and streaming validators produce consistent results.
 #[allow(dead_code)]
 pub fn assert_validators_consistent(xml: &str, xsd: &str) {
-    let (dom, twopass, onepass) = validate_all(xml, xsd);
+    let (dom, onepass) = validate_all(xml, xsd);
 
     assert_eq!(
         dom.is_valid(),
-        twopass.is_valid(),
-        "DOM vs TwoPass mismatch for validity.\nDOM errors: {:?}\nTwoPass errors: {:?}",
-        dom.errors(),
-        twopass.errors()
-    );
-
-    assert_eq!(
-        twopass.is_valid(),
         onepass.is_valid(),
-        "TwoPass vs OnePass mismatch for validity.\nTwoPass errors: {:?}\nOnePass errors: {:?}",
-        twopass.errors(),
+        "DOM vs streaming mismatch for validity.\nDOM errors: {:?}\nstreaming errors: {:?}",
+        dom.errors(),
         onepass.errors()
     );
 }
@@ -754,16 +725,6 @@ macro_rules! test_validation {
                 assert!(
                     !result.is_valid(),
                     "DOM validation: expected invalid, got valid"
-                );
-                result.assert_first_error_position($line, $col);
-            }
-
-            #[test]
-            fn twopass() {
-                let result = $crate::common::validate_twopass($xml, $xsd);
-                assert!(
-                    !result.is_valid(),
-                    "TwoPass validation: expected invalid, got valid"
                 );
                 result.assert_first_error_position($line, $col);
             }
@@ -801,23 +762,6 @@ macro_rules! test_validation {
                     result.is_valid(),
                     $expected_valid,
                     "DOM validation: expected valid={}, got valid={}\nErrors: {:?}",
-                    $expected_valid,
-                    result.is_valid(),
-                    result.errors()
-                );
-                // When validation fails, verify errors have position info
-                if !$expected_valid {
-                    result.assert_errors_have_line();
-                }
-            }
-
-            #[test]
-            fn twopass() {
-                let result = $crate::common::validate_twopass($xml, $xsd);
-                assert_eq!(
-                    result.is_valid(),
-                    $expected_valid,
-                    "TwoPass validation: expected valid={}, got valid={}\nErrors: {:?}",
                     $expected_valid,
                     result.is_valid(),
                     result.errors()

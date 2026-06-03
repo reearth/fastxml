@@ -75,44 +75,10 @@ impl OnePassSchemaValidator {
         }
     }
 
-    /// Creates a new streaming validator with specified mode.
-    #[deprecated(
-        since = "0.3.0",
-        note = "use OnePassSchemaValidator::new(schema).set_mode(mode) instead"
-    )]
-    pub fn with_mode(schema: Arc<CompiledSchema>, mode: ValidationMode) -> Self {
-        Self {
-            mode,
-            ..Self::new(schema)
-        }
-    }
-
-    /// Creates a new streaming validator with specified options.
-    #[deprecated(
-        since = "0.3.0",
-        note = "use OnePassSchemaValidator::new(schema).set_options(options) instead"
-    )]
-    pub fn with_options(schema: Arc<CompiledSchema>, options: ValidationOptions) -> Self {
-        Self {
-            options,
-            ..Self::new(schema)
-        }
-    }
-
     /// Sets the validation mode (builder pattern).
     pub fn set_mode(mut self, mode: ValidationMode) -> Self {
         self.mode = mode;
         self
-    }
-
-    /// Sets validation options.
-    pub fn set_options(&mut self, options: ValidationOptions) {
-        self.options = options;
-    }
-
-    /// Returns the current validation options.
-    pub fn options(&self) -> &ValidationOptions {
-        &self.options
     }
 
     /// Sets the maximum number of errors to collect (builder pattern).
@@ -121,13 +87,6 @@ impl OnePassSchemaValidator {
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
-    }
-
-    /// Sets the maximum number of errors to collect (setter pattern).
-    ///
-    /// Set to 0 for unlimited errors (default).
-    pub fn set_max_errors(&mut self, max: usize) {
-        self.max_errors = max;
     }
 
     /// Validates an XML document from a reader and returns validation errors.
@@ -172,39 +131,9 @@ impl OnePassSchemaValidator {
         &self.errors
     }
 
-    /// Returns only errors (excludes warnings).
-    pub fn errors_only(&self) -> Vec<&StructuredError> {
-        self.errors.iter().filter(|e| e.is_error()).collect()
-    }
-
-    /// Returns only warnings.
-    pub fn warnings(&self) -> Vec<&StructuredError> {
-        self.errors.iter().filter(|e| e.is_warning()).collect()
-    }
-
     /// Takes ownership of collected errors.
     pub fn into_errors(self) -> Vec<StructuredError> {
         self.errors
-    }
-
-    /// Returns true if validation passed without errors (warnings are OK).
-    pub fn is_valid(&self) -> bool {
-        !self.errors.iter().any(|e| e.is_error())
-    }
-
-    /// Returns true if there are no errors or warnings.
-    pub fn is_clean(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    /// Returns the error count (excluding warnings).
-    pub fn error_count(&self) -> usize {
-        self.errors.iter().filter(|e| e.is_error()).count()
-    }
-
-    /// Returns the warning count.
-    pub fn warning_count(&self) -> usize {
-        self.errors.iter().filter(|e| e.is_warning()).count()
     }
 
     pub(crate) fn should_collect_more(&self) -> bool {
@@ -234,11 +163,44 @@ impl OnePassSchemaValidator {
     }
 }
 
-/// Alias for [`OnePassSchemaValidator`].
-///
-/// This provides a convenient name for the recommended streaming validator.
-#[doc(hidden)]
-pub type StreamValidator = OnePassSchemaValidator;
+/// Error-introspection helpers used only by the in-crate engine tests.
+#[cfg(test)]
+impl OnePassSchemaValidator {
+    /// Sets the maximum number of errors to collect (setter pattern).
+    pub fn set_max_errors(&mut self, max: usize) {
+        self.max_errors = max;
+    }
+
+    /// Returns only errors (excludes warnings).
+    pub fn errors_only(&self) -> Vec<&StructuredError> {
+        self.errors.iter().filter(|e| e.is_error()).collect()
+    }
+
+    /// Returns only warnings.
+    pub fn warnings(&self) -> Vec<&StructuredError> {
+        self.errors.iter().filter(|e| e.is_warning()).collect()
+    }
+
+    /// Returns true if validation passed without errors (warnings are OK).
+    pub fn is_valid(&self) -> bool {
+        !self.errors.iter().any(|e| e.is_error())
+    }
+
+    /// Returns true if there are no errors or warnings.
+    pub fn is_clean(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// Returns the error count (excluding warnings).
+    pub fn error_count(&self) -> usize {
+        self.errors.iter().filter(|e| e.is_error()).count()
+    }
+
+    /// Returns the warning count.
+    pub fn warning_count(&self) -> usize {
+        self.errors.iter().filter(|e| e.is_warning()).count()
+    }
+}
 
 #[cfg(test)]
 mod tests;

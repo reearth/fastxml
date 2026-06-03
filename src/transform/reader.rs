@@ -20,7 +20,7 @@ use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
 /// use std::io::{BufReader, Cursor};
 /// use fastxml::transform::StreamTransformerReader;
 ///
@@ -36,8 +36,7 @@ use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
 /// assert!(result.contains(r#"processed="true""#));
 /// # Ok::<(), fastxml::transform::TransformError>(())
 /// ```
-#[doc(hidden)]
-pub struct StreamTransformerReader<'a, R: BufRead> {
+pub(crate) struct StreamTransformerReader<'a, R: BufRead> {
     reader: R,
     handlers: Vec<Handler<'a>>,
     namespaces: HashMap<String, String>,

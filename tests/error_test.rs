@@ -541,32 +541,12 @@ mod xpath_errors {
 // =============================================================================
 
 mod streaming_errors {
-    use fastxml::error::Result;
-    use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
-
-    struct EventCounter {
-        count: usize,
-    }
-
-    impl XmlEventHandler for EventCounter {
-        fn handle(&mut self, _event: &XmlEvent) -> Result<()> {
-            self.count += 1;
-            Ok(())
-        }
-
-        fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-            self
-        }
-    }
+    use fastxml::Parser;
 
     #[test]
     fn test_streaming_malformed_xml() {
         let xml = "<root><unclosed>";
-        let mut parser = StreamingParser::new(xml.as_bytes());
-        let handler = EventCounter { count: 0 };
-        parser.add_handler(Box::new(handler));
-
-        let result = parser.parse();
+        let result = Parser::from(xml).for_each_event(|_event| Ok(()));
         // Unclosed tags at EOF: quick-xml is lenient
         assert!(result.is_ok(), "Streaming accepts unclosed tags at EOF");
     }
@@ -574,22 +554,14 @@ mod streaming_errors {
     #[test]
     fn test_streaming_valid_xml() {
         let xml = "<root><child>text</child></root>";
-        let mut parser = StreamingParser::new(xml.as_bytes());
-        let handler = EventCounter { count: 0 };
-        parser.add_handler(Box::new(handler));
-
-        let result = parser.parse();
+        let result = Parser::from(xml).for_each_event(|_event| Ok(()));
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_streaming_empty_input() {
         let xml = "";
-        let mut parser = StreamingParser::new(xml.as_bytes());
-        let handler = EventCounter { count: 0 };
-        parser.add_handler(Box::new(handler));
-
-        let result = parser.parse();
+        let result = Parser::from(xml).for_each_event(|_event| Ok(()));
         assert!(result.is_ok(), "Empty input should be handled gracefully");
     }
 
@@ -601,11 +573,7 @@ mod streaming_errors {
         let xml = "<root></wrong>";
         //         01234567890123 = positions (14 bytes total)
         //         "<root>" = 6 bytes, "</wrong>" = 8 bytes
-        let mut parser = StreamingParser::new(xml.as_bytes());
-        let handler = EventCounter { count: 0 };
-        parser.add_handler(Box::new(handler));
-
-        let result = parser.parse();
+        let result = Parser::from(xml).for_each_event(|_event| Ok(()));
         match &result {
             Err(Error::Parse(ParseError::AtPosition { message, position })) => {
                 assert!(

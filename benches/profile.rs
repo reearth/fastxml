@@ -1,7 +1,11 @@
 //! Benchmarks for fastxml.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use fastxml::{parse, xpath};
+use fastxml::{Parser, xpath};
+
+fn parse(input: &str) -> fastxml::error::Result<fastxml::XmlDocument> {
+    Parser::from(input).parse()
+}
 
 fn create_test_xml(depth: usize, breadth: usize) -> String {
     fn build(depth: usize, breadth: usize, current: usize) -> String {

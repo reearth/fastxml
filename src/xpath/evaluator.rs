@@ -169,11 +169,11 @@ impl<'a> XPathEvaluator<'a> {
     ///
     /// # Example
     /// ```
-    /// use fastxml::{parse, xpath::{XPathEvaluator, XPathValue}};
+    /// use fastxml::{Parser, xpath::{XPathEvaluator, XPathValue}};
     /// use std::collections::HashMap;
     ///
     /// let xml = "<root><item>test</item></root>";
-    /// let doc = parse(xml).unwrap();
+    /// let doc = Parser::from(xml).parse().unwrap();
     /// let evaluator = XPathEvaluator::new(&doc);
     ///
     /// let mut vars = HashMap::new();
@@ -607,10 +607,10 @@ impl<'a> XPathEvaluator<'a> {
 ///
 /// # Example
 /// ```
-/// use fastxml::{parse, evaluate};
+/// use fastxml::{Parser, evaluate};
 ///
 /// let xml = r#"<root><child>text</child></root>"#;
-/// let doc = parse(xml).unwrap();
+/// let doc = Parser::from(xml).parse().unwrap();
 /// let result = evaluate(&doc, "/root/child/text()").unwrap();
 /// assert_eq!(result.to_string_value(), "text");
 /// ```

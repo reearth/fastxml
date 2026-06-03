@@ -37,7 +37,9 @@ use crate::error::{Result, StructuredError};
 use crate::schema::fetcher::SchemaFetcher;
 use crate::schema::types::CompiledSchema;
 
-use super::{DomSchemaValidator, OnePassSchemaValidator, ValidationMode};
+use super::ValidationMode;
+use super::dom::DomSchemaValidator;
+use super::streaming::OnePassSchemaValidator;
 
 /// The input to validate.
 enum Source<'a> {

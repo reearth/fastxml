@@ -61,25 +61,7 @@ pub use types::{
     AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
     SimpleType, TypeDef,
 };
-pub use validator::{
-    LazySchemaValidator, OnePassSchemaValidator, StreamValidator, ValidationMode,
-    XmlSchemaValidationContext, create_xml_schema_validation_context,
-    create_xml_schema_validation_context_from_buffer, get_schema_from_schema_location_with_fetcher,
-    streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,
-    validate_document_by_schema_context, validate_with_schema_location_and_fetcher,
-};
-
-#[cfg(feature = "ureq")]
-pub use validator::{
-    get_schema_from_schema_location, streaming_validate_with_schema_location,
-    validate_with_schema_location,
-};
-
-#[cfg(feature = "tokio")]
-pub use validator::{
-    get_schema_from_schema_location_async, get_schema_from_schema_location_with_async_fetcher,
-    validate_with_schema_location_async, validate_with_schema_location_with_async_fetcher,
-};
+pub use validator::ValidationMode;
 
 #[cfg(feature = "ureq")]
 pub use fetcher::UreqFetcher;
@@ -89,15 +71,6 @@ pub use fetcher::{
     AsyncCachingFetcher, AsyncDefaultFetcher, AsyncFileCachingFetcher, AsyncFileFetcher,
     AsyncSchemaFetcher, ReqwestFetcher,
 };
-
-// Re-export XSD parsing functions
-pub use xsd::{
-    create_builtin_schema, parse_xsd, parse_xsd_multiple, parse_xsd_with_imports,
-    parse_xsd_with_imports_multiple,
-};
-
-#[cfg(feature = "tokio")]
-pub use xsd::{parse_xsd_with_imports_async, parse_xsd_with_imports_multiple_async};
 
 // Re-export schema resolution functions
 pub use resolve::{

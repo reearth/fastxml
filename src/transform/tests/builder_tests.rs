@@ -1,8 +1,9 @@
 //! Tests for StreamTransformer builder API.
 
+use crate::transform::builder::StreamTransformer;
 use crate::transform::{
-    FallbackMode, NotStreamableReason, StreamTransformer, TransformError, XPathAnalysis,
-    analyze_xpath_str, get_not_streamable_reason, is_streamable, stream_transform,
+    FallbackMode, NotStreamableReason, TransformError, XPathAnalysis, analyze_xpath_str,
+    get_not_streamable_reason, is_streamable,
 };
 
 // =============================================================================
@@ -266,22 +267,6 @@ fn test_with_root_namespaces_multiple() {
 // Deprecated API Tests (ensure backward compatibility)
 // =============================================================================
 
-#[test]
-#[allow(deprecated)]
-fn test_deprecated_xpath_transform() {
-    let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
-
-    let result = StreamTransformer::new(xml)
-        .xpath("//item[@id='2']")
-        .transform(|node| {
-            node.set_attribute("modified", "true");
-        })
-        .to_string()
-        .unwrap();
-
-    assert!(result.contains(r#"modified="true""#));
-}
-
 // =============================================================================
 // XPath Analysis API Tests
 // =============================================================================
@@ -347,15 +332,14 @@ fn test_function_api() {
     let xml = "<root><item>test</item></root>";
     let mut output = Vec::new();
 
-    let count = stream_transform(
-        xml,
-        "//item",
-        |node| {
+    let transformed = StreamTransformer::new(xml)
+        .on("//item", |node| {
             node.set_attribute("processed", "true");
-        },
-        &mut output,
-    )
-    .unwrap();
+        })
+        .run()
+        .unwrap();
+    let count = transformed.count();
+    transformed.write_to(&mut output).unwrap();
 
     assert_eq!(count, 1);
     let result = String::from_utf8(output).unwrap();

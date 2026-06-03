@@ -42,7 +42,7 @@ pub(crate) enum HandlerCallback<'a> {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
 /// use fastxml::transform::StreamTransformer;
 ///
 /// let xml = r#"<root><item>A</item><other>B</other></root>"#;
@@ -54,8 +54,7 @@ pub(crate) enum HandlerCallback<'a> {
 ///     .to_string()?;
 /// # Ok::<(), fastxml::transform::TransformError>(())
 /// ```
-#[doc(hidden)]
-pub struct StreamTransformer<'a> {
+pub(crate) struct StreamTransformer<'a> {
     pub(crate) input: &'a str,
     pub(crate) handlers: Vec<Handler<'a>>,
     pub(crate) namespaces: HashMap<String, String>,
@@ -80,7 +79,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><a/><b/></root>"#;
@@ -113,7 +112,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><items><item id="1"/><item id="2"/></items></root>"#;
@@ -154,7 +153,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root xmlns:gml="http://example.com/gml"><gml:point/></root>"#;
@@ -181,15 +180,6 @@ impl<'a> StreamTransformer<'a> {
         self
     }
 
-    /// Imports namespace bindings from an XmlDocument.
-    ///
-    /// This is useful when you want to use the same namespace prefixes
-    /// as declared in the document.
-    pub fn with_document_namespaces(mut self, doc: &crate::document::XmlDocument) -> Self {
-        self.namespaces.extend(doc.namespaces());
-        self
-    }
-
     /// Automatically extracts and registers namespaces from the root element.
     ///
     /// This is a lightweight operation that doesn't require full DOM parsing.
@@ -197,7 +187,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
@@ -239,7 +229,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><item>A</item><item>B</item><item>C</item></root>"#;
@@ -284,7 +274,7 @@ impl<'a> StreamTransformer<'a> {
     ///   an outer element is called. Inner elements are NOT processed by other handlers
     ///   while the outer element's subtree is being transformed.
     ///
-    /// ```rust
+    /// ```ignore
     /// # use fastxml::transform::StreamTransformer;
     /// let xml = r#"<root><outer><inner/></outer></root>"#;
     ///
@@ -307,7 +297,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><item/></root>"#;
@@ -343,7 +333,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><item id="1"/><item id="2"/></root>"#;
@@ -378,7 +368,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::StreamTransformer;
     ///
     /// let xml = r#"<root><item>A</item><item>B</item></root>"#;
@@ -416,7 +406,7 @@ impl<'a> StreamTransformer<'a> {
     ///
     /// # Example
     ///
-    /// ```rust
+    /// ```ignore
     /// use fastxml::transform::{StreamTransformer, EditableNode};
     ///
     /// let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
@@ -754,7 +744,7 @@ impl<'a> StreamTransformer<'a> {
 ///
 /// Contains the transformed XML data and metadata about the transformation.
 #[derive(Debug)]
-pub struct TransformOutput {
+pub(crate) struct TransformOutput {
     data: Vec<u8>,
     count: usize,
 }
@@ -765,18 +755,15 @@ impl TransformOutput {
         self.count
     }
 
-    /// Converts the output to a String.
-    pub fn to_string(self) -> TransformResult<String> {
-        String::from_utf8(self.data).map_err(|e| TransformError::Utf8(e.utf8_error()))
-    }
-
     /// Writes the output to a writer.
     pub fn write_to<W: Write>(self, writer: &mut W) -> TransformResult<()> {
         writer.write_all(&self.data).map_err(TransformError::Io)
     }
 
-    /// Returns the raw bytes of the output.
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.data
+    /// Converts the output to a String (used by the in-crate engine tests).
+    #[cfg(test)]
+    #[allow(clippy::wrong_self_convention)]
+    pub fn to_string(self) -> TransformResult<String> {
+        String::from_utf8(self.data).map_err(|e| TransformError::Utf8(e.utf8_error()))
     }
 }

@@ -58,7 +58,7 @@ fn oasis_xpath_conformance() {
             }
         };
 
-        let doc = match fastxml::parse(&content) {
+        let doc = match fastxml::Parser::from(content.as_slice()).parse() {
             Ok(d) => d,
             Err(_) => {
                 report.record_skip();
@@ -186,7 +186,9 @@ fn basic_xpath_evaluation() {
   <item id="3">Third</item>
 </root>"#;
 
-    let doc = fastxml::parse(xml).expect("parse xml");
+    let doc = fastxml::Parser::from(xml.as_slice())
+        .parse()
+        .expect("parse xml");
     let ctx = XmlContext::new(&doc);
 
     // Test node selection
@@ -225,7 +227,9 @@ fn xpath_axes() {
   </parent>
 </root>"#;
 
-    let doc = fastxml::parse(xml).expect("parse xml");
+    let doc = fastxml::Parser::from(xml.as_slice())
+        .parse()
+        .expect("parse xml");
     let ctx = XmlContext::new(&doc);
 
     // descendant axis
@@ -250,7 +254,9 @@ fn xpath_axes() {
 fn xpath_string_functions() {
     let xml = br#"<?xml version="1.0"?><root><text>Hello World</text></root>"#;
 
-    let doc = fastxml::parse(xml).expect("parse xml");
+    let doc = fastxml::Parser::from(xml.as_slice())
+        .parse()
+        .expect("parse xml");
     let ctx = XmlContext::new(&doc);
 
     // normalize-space with literal string
@@ -291,7 +297,9 @@ fn xpath_string_functions() {
 fn xpath_number_functions() {
     let xml = br#"<?xml version="1.0"?><root><n>42</n><n>-10</n><n>3.14</n></root>"#;
 
-    let doc = fastxml::parse(xml).expect("parse xml");
+    let doc = fastxml::Parser::from(xml.as_slice())
+        .parse()
+        .expect("parse xml");
     let ctx = XmlContext::new(&doc);
 
     // sum

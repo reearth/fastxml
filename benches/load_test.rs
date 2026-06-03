@@ -14,12 +14,30 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use fastxml::error::Result;
-use fastxml::event::{StreamingParser, XmlEvent, XmlEventHandler};
 use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
+use fastxml::schema::Validator;
 use fastxml::schema::types::{CompiledSchema, ElementDef};
-use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::{evaluate, parse};
+use fastxml::{Parser, XmlDocument, evaluate};
+
+/// Parses XML bytes into a DOM via the public [`Parser`] front door.
+fn parse(input: &[u8]) -> fastxml::error::Result<XmlDocument> {
+    Parser::from(input).parse()
+}
+
+/// Streams every event with constant memory (the public streaming front door).
+fn count_streaming(reader: impl BufRead) {
+    Parser::from_reader(reader)
+        .for_each_event(|_event| Ok(()))
+        .unwrap();
+}
+
+/// Streams and validates against `schema` in a single pass.
+fn validate_streaming(reader: impl BufRead, schema: &Arc<CompiledSchema>) {
+    Validator::from_reader(reader)
+        .schema(Arc::clone(schema))
+        .run()
+        .unwrap();
+}
 
 // =============================================================================
 // libxml comparison (when feature enabled)
@@ -45,53 +63,6 @@ mod libxml_bench {
 }
 
 // =============================================================================
-// Streaming SAX Handler for Counting
-// =============================================================================
-
-/// A handler that counts elements and tracks depth.
-struct CountingHandler {
-    element_count: usize,
-    max_depth: usize,
-    current_depth: usize,
-    text_bytes: usize,
-}
-
-impl CountingHandler {
-    fn new() -> Self {
-        Self {
-            element_count: 0,
-            max_depth: 0,
-            current_depth: 0,
-            text_bytes: 0,
-        }
-    }
-}
-
-impl XmlEventHandler for CountingHandler {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        match event {
-            XmlEvent::StartElement { .. } => {
-                self.element_count += 1;
-                self.current_depth += 1;
-                self.max_depth = self.max_depth.max(self.current_depth);
-            }
-            XmlEvent::EndElement { .. } => {
-                self.current_depth = self.current_depth.saturating_sub(1);
-            }
-            XmlEvent::Text(s) | XmlEvent::CData(s) => {
-                self.text_bytes += s.len();
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-        self
-    }
-}
-
-// =============================================================================
 // Helper Functions
 // =============================================================================
 
@@ -101,26 +72,6 @@ fn generate_xml_bytes(config: GeneratorConfig) -> Vec<u8> {
     let mut output = Vec::new();
     xml_gen.read_to_end(&mut output).unwrap();
     output
-}
-
-/// Process XML using streaming parser.
-#[allow(dead_code)]
-fn process_streaming(reader: impl BufRead) -> ProcessingStats {
-    let start = Instant::now();
-    let mut parser = StreamingParser::new(reader);
-    let handler = CountingHandler::new();
-    parser.add_handler(Box::new(handler));
-
-    // We can't easily get the handler back, so we'll count differently
-    let _ = parser.parse();
-
-    ProcessingStats {
-        bytes_processed: 0, // Not tracked in this version
-        element_count: 0,
-        max_depth: 0,
-        peak_memory: None,
-        time_ms: start.elapsed().as_millis(),
-    }
 }
 
 /// Parse XML into DOM.
@@ -215,10 +166,7 @@ fn bench_many_elements(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
+                    count_streaming(reader)
                 })
             },
         );
@@ -257,10 +205,7 @@ fn bench_deep_nesting(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("streaming", depth), &xml, |b, xml| {
             b.iter(|| {
                 let reader = std::io::Cursor::new(black_box(xml));
-                let mut parser = StreamingParser::new(reader);
-                let handler = CountingHandler::new();
-                parser.add_handler(Box::new(handler));
-                parser.parse().unwrap()
+                count_streaming(reader)
             })
         });
     }
@@ -303,10 +248,7 @@ fn bench_large_content(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
+                    count_streaming(reader)
                 })
             },
         );
@@ -360,10 +302,7 @@ fn bench_citygml_style(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
+                    count_streaming(reader)
                 })
             },
         );
@@ -460,10 +399,7 @@ fn bench_streaming_memory(c: &mut Criterion) {
                 b.iter(|| {
                     let xml_gen = XmlStreamGenerator::many_elements(count);
                     let reader = std::io::BufReader::new(xml_gen);
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
+                    count_streaming(reader)
                 })
             },
         );
@@ -510,10 +446,7 @@ fn bench_schema_validation(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-                    parser.add_handler(Box::new(validator));
-                    parser.parse().unwrap()
+                    validate_streaming(reader, &schema)
                 })
             },
         );
@@ -525,10 +458,7 @@ fn bench_schema_validation(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    parser.add_handler(Box::new(handler));
-                    parser.parse().unwrap()
+                    count_streaming(reader)
                 })
             },
         );
@@ -540,12 +470,7 @@ fn bench_schema_validation(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let handler = CountingHandler::new();
-                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-                    parser.add_handler(Box::new(handler));
-                    parser.add_handler(Box::new(validator));
-                    parser.parse().unwrap()
+                    validate_streaming(reader, &schema)
                 })
             },
         );
@@ -566,10 +491,7 @@ fn bench_schema_validation(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let reader = std::io::Cursor::new(black_box(xml));
-                    let mut parser = StreamingParser::new(reader);
-                    let validator = OnePassSchemaValidator::new(Arc::clone(&schema));
-                    parser.add_handler(Box::new(validator));
-                    parser.parse().unwrap()
+                    validate_streaming(reader, &schema)
                 })
             },
         );

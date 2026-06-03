@@ -22,6 +22,9 @@
 .DS_Store
 Thumbs.db
 
+# Claude Code local tooling state
+.claude/
+
 examples/cache
 
 # Conformance test data (downloaded by fastxml-conformance)

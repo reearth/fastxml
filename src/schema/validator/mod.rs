@@ -1,9 +1,9 @@
 //! XML schema validators.
 //!
-//! This module provides multiple validation approaches for XML documents against XSD schemas:
-//!
-//! - [`DomSchemaValidator`] - Direct DOM tree validation (~17 MB/s)
-//! - [`StreamValidator`] / [`OnePassSchemaValidator`] - Streaming single-pass validation (~41 MB/s)
+//! The public entry point is [`Validator`], which selects the engine from the
+//! input type: a DOM tree validator for `&XmlDocument`, and a one-pass streaming
+//! validator for `&str` / `&[u8]` / a reader. The engines themselves live in the
+//! private submodules below.
 //!
 //! # Module Structure
 //!
@@ -21,46 +21,15 @@ mod facade;
 mod lazy;
 mod state;
 mod streaming;
-mod two_pass;
 
-// Re-export ValidationMode
+// The public validation surface is the `Validator` front door and its `Report`,
+// plus `ValidationMode`. The engine types (DomSchemaValidator,
+// OnePassSchemaValidator, LazySchemaValidator, XmlSchemaValidationContext) and
+// the `validate_*` / `get_schema_*` / `create_xml_schema_validation_context*`
+// free functions live in the private `dom` / `streaming` / `lazy` / `api`
+// submodules and are reached internally via `super::`.
 pub use self::mode::ValidationMode;
-
-// Re-export the redesigned validation entry point
 pub use facade::{Report, Validator};
-
-// Re-export main types
-pub use context::XmlSchemaValidationContext;
-pub use dom::DomSchemaValidator;
-pub use lazy::LazySchemaValidator;
-pub use streaming::{OnePassSchemaValidator, StreamValidator, ValidationOptions};
-#[allow(deprecated)]
-pub use two_pass::{DocumentSkeleton, ElementSkeleton, TwoPassSchemaValidator};
-
-// Re-export API functions
-#[allow(deprecated)]
-pub use api::two_pass_validate_with_schema_location_and_fetcher;
-pub use api::{
-    create_xml_schema_validation_context, create_xml_schema_validation_context_from_buffer,
-    get_schema_from_schema_location_with_fetcher,
-    streaming_validate_with_schema_location_and_fetcher, validate_document_by_schema,
-    validate_document_by_schema_context, validate_with_schema_location_and_fetcher,
-};
-
-#[allow(deprecated)]
-#[cfg(feature = "ureq")]
-pub use api::two_pass_validate_with_schema_location;
-#[cfg(feature = "ureq")]
-pub use api::{
-    get_schema_from_schema_location, streaming_validate_with_schema_location,
-    validate_with_schema_location,
-};
-
-#[cfg(feature = "tokio")]
-pub use api::{
-    get_schema_from_schema_location_async, get_schema_from_schema_location_with_async_fetcher,
-    validate_with_schema_location_async, validate_with_schema_location_with_async_fetcher,
-};
 
 /// Validation mode module.
 mod mode {

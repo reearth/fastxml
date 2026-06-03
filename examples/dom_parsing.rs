@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example dom_parsing
 
-use fastxml::{evaluate, get_root_node, parse};
+use fastxml::{Parser, evaluate, get_root_node};
 
 fn main() -> fastxml::error::Result<()> {
     let xml = r#"
@@ -16,7 +16,7 @@ fn main() -> fastxml::error::Result<()> {
 "#;
 
     // Parse XML into DOM
-    let doc = parse(xml.as_bytes())?;
+    let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("Node count: {}", doc.node_count());
 
     // Get root element

@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example dom_modification
 
-use fastxml::{evaluate, get_root_node, node_to_xml_string, parse};
+use fastxml::{Parser, evaluate, get_root_node, node_to_xml_string};
 
 fn main() -> fastxml::error::Result<()> {
     let xml = r#"<?xml version="1.0"?>
@@ -20,7 +20,7 @@ fn main() -> fastxml::error::Result<()> {
 </catalog>
 "#;
 
-    let doc = parse(xml.as_bytes())?;
+    let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("=== DOM Modification Example ===\n");
 
     // Get mutable root

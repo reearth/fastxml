@@ -89,9 +89,9 @@
 //! # Examples
 //!
 //! ```
-//! use fastxml::{parse, xpath};
+//! use fastxml::{Parser, xpath};
 //!
-//! let doc = parse(r#"<root><Building/><Room/></root>"#).unwrap();
+//! let doc = Parser::from(r#"<root><Building/><Room/></root>"#).parse().unwrap();
 //!
 //! // Simple path
 //! let result = xpath::evaluate(&doc, "/root/Building").unwrap();

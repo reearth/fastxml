@@ -1,6 +1,6 @@
 //! Tests for context-aware handlers.
 
-use crate::transform::StreamTransformer;
+use crate::transform::builder::StreamTransformer;
 
 #[test]
 fn test_on_with_context_parent() {
