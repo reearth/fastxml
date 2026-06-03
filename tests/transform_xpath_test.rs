@@ -1,7 +1,7 @@
 //! XPath-related tests for the transform module.
 
 use fastxml::transform::{
-    EditableNode, StreamTransformer, XPathAnalysis, analyze_xpath_str, get_not_streamable_reason,
+    EditableNode, Transformer, XPathAnalysis, analyze_xpath_str, get_not_streamable_reason,
     is_streamable,
 };
 
@@ -21,11 +21,11 @@ mod complex_xpath_tests {
         </root>"#;
 
         let mut count = 0;
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//item[@status='active']", |_: &mut EditableNode| {
                 count += 1;
             })
-            .run();
+            .for_each();
 
         assert_eq!(count, 2);
     }
@@ -34,12 +34,10 @@ mod complex_xpath_tests {
     fn test_transform_with_position() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item[1]", |node: &mut EditableNode| {
                 node.set_attribute("first", "true");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -53,12 +51,10 @@ mod complex_xpath_tests {
     fn test_transform_descendant_path() {
         let xml = r#"<root><a><b><target/></b></a></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//target", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -116,7 +112,7 @@ fn test_get_not_streamable_reason_backward_axis() {
 // =============================================================================
 
 mod xpath_evaluation_tests {
-    use fastxml::transform::{EditableNode, StreamTransformer};
+    use fastxml::transform::{EditableNode, Transformer};
 
     #[test]
     fn test_stream_transformer_with_xpath_evaluation() {
@@ -126,7 +122,7 @@ mod xpath_evaluation_tests {
         </root>"#;
 
         let mut names = Vec::new();
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 let found = node.find_by_xpath(".//name").unwrap();
                 if let Some(name_node) = found.first()
@@ -149,7 +145,7 @@ mod xpath_evaluation_tests {
         </root>"#;
 
         let mut names = Vec::new();
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .namespace("ns", "http://example.com")
             .on("//ns:item", |node: &mut EditableNode| {
                 let found = node.find_by_xpath(".//*[local-name()='name']").unwrap();
@@ -170,7 +166,7 @@ mod xpath_evaluation_tests {
         let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
         let mut count = 0.0;
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .on("//root", |node: &mut EditableNode| {
                 let result = node.evaluate_xpath("count(//item)").unwrap();
                 count = result.to_number();

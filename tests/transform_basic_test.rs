@@ -1,10 +1,10 @@
-//! Basic StreamTransformer API tests.
+//! Basic Transformer API tests.
 
-use fastxml::transform::{EditableNode, StreamTransformer, XPathSource, stream_transform};
+use fastxml::transform::{EditableNode, Transformer, XPathSource};
 use fastxml::xpath::{Expr, parse_xpath};
 
 // =============================================================================
-// StreamTransformer Builder Tests (New API)
+// Transformer Builder Tests (New API)
 // =============================================================================
 
 mod stream_transformer_tests {
@@ -14,12 +14,10 @@ mod stream_transformer_tests {
     fn test_basic_transform() {
         let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item[@id='2']", |node: &mut EditableNode| {
                 node.set_attribute("modified", "true");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -32,13 +30,11 @@ mod stream_transformer_tests {
     fn test_transform_with_namespace() {
         let xml = r#"<root xmlns:ns="http://example.com"><ns:item>text</ns:item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .namespace("ns", "http://example.com")
             .on("//ns:item", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -49,12 +45,10 @@ mod stream_transformer_tests {
     fn test_transform_no_match() {
         let xml = r#"<root><item>text</item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//nonexistent", |_node: &mut EditableNode| {
                 panic!("Should not be called");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -67,13 +61,11 @@ mod stream_transformer_tests {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
 
         let mut count = 0;
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 count += 1;
                 node.set_attribute("n", &count.to_string());
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -87,12 +79,10 @@ mod stream_transformer_tests {
     fn test_transform_nested_elements() {
         let xml = r#"<root><parent><child>text</child></parent></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//parent", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -104,13 +94,11 @@ mod stream_transformer_tests {
     fn test_transform_remove_attribute() {
         let xml = r#"<root><item old="value">text</item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.remove_attribute("old");
                 node.set_attribute("new", "value");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -122,14 +110,12 @@ mod stream_transformer_tests {
     fn test_transform_set_text_content() {
         let xml = r#"<root><item>old text</item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 // set_text_content may not be fully implemented
                 // Just test that it doesn't panic
                 node.set_text_content("new text");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -142,12 +128,10 @@ mod stream_transformer_tests {
         let xml = r#"<root><item/></root>"#;
 
         let mut output = Vec::new();
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("done", "true");
             })
-            .run()
-            .unwrap()
             .write_to(&mut output)
             .unwrap();
 
@@ -159,72 +143,10 @@ mod stream_transformer_tests {
     fn test_transform_invalid_xpath() {
         let xml = r#"<root><item/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("[invalid xpath", |_: &mut EditableNode| {})
-            .run();
+            .for_each();
 
-        assert!(result.is_err());
-    }
-}
-
-// =============================================================================
-// Deprecated API Tests (Backwards Compatibility)
-// =============================================================================
-
-mod deprecated_api_tests {
-    use super::*;
-
-    /// Test deprecated .xpath().transform() API for backwards compatibility
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_xpath_transform() {
-        let xml = r#"<root><item id="1">A</item></root>"#;
-
-        let result = StreamTransformer::new(xml)
-            .xpath("//item")
-            .transform(|node: &mut EditableNode| {
-                node.set_attribute("modified", "true");
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(result.contains(r#"modified="true""#));
-    }
-
-    /// Test deprecated .xpath_ast() API for backwards compatibility
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_xpath_ast() {
-        let xml = r#"<root><item>text</item></root>"#;
-
-        // Parse XPath to AST first
-        let ast = parse_xpath("//item").unwrap();
-
-        let result = StreamTransformer::new(xml)
-            .xpath_ast(ast)
-            .transform(|node: &mut EditableNode| {
-                node.set_attribute("processed", "true");
-            })
-            .to_string()
-            .unwrap();
-
-        assert!(result.contains(r#"processed="true""#));
-    }
-
-    /// Test deprecated API without xpath (should return error)
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_no_xpath() {
-        let xml = r#"<root><item/></root>"#;
-
-        // No xpath set - returns an error
-        let result = StreamTransformer::new(xml)
-            .transform(|_: &mut EditableNode| {
-                panic!("Should not be called");
-            })
-            .to_string();
-
-        // Without XPath, the transformer returns an error
         assert!(result.is_err());
     }
 }
@@ -241,15 +163,12 @@ mod stream_transform_function_tests {
         let xml = r#"<root><item>text</item></root>"#;
         let mut output = Vec::new();
 
-        stream_transform(
-            xml,
-            "//item",
-            |node: &mut EditableNode| {
+        Transformer::from(xml)
+            .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("x", "y");
-            },
-            &mut output,
-        )
-        .unwrap();
+            })
+            .write_to(&mut output)
+            .unwrap();
 
         let result = String::from_utf8(output).unwrap();
         assert!(result.contains(r#"x="y""#));
@@ -260,14 +179,11 @@ mod stream_transform_function_tests {
         let xml = r#"<root xmlns:a="http://a.com"><a:item/></root>"#;
         let mut output = Vec::new();
 
-        let result = stream_transform(
-            xml,
-            "//a:item",
-            |node: &mut EditableNode| {
+        let result = Transformer::from(xml)
+            .on("//a:item", |node: &mut EditableNode| {
                 node.set_attribute("found", "true");
-            },
-            &mut output,
-        );
+            })
+            .write_to(&mut output);
 
         // May succeed or fail depending on namespace handling
         let _ = result;

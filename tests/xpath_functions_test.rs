@@ -3,7 +3,7 @@
 
 mod common;
 
-use fastxml::{evaluate, parse};
+use fastxml::{Parser, evaluate};
 
 // =============================================================================
 // Node Set Functions
@@ -15,7 +15,7 @@ mod node_set_functions {
     #[test]
     fn test_last_function() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // last() returns context size
         let result = evaluate(&doc, "/root/item[last()]").unwrap();
@@ -29,7 +29,7 @@ mod node_set_functions {
     #[test]
     fn test_last_with_wrong_args() {
         let xml = r#"<root><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // last() should not take arguments
         let result = evaluate(&doc, "last(1)");
@@ -39,7 +39,7 @@ mod node_set_functions {
     #[test]
     fn test_position_function() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/item[position()=2]").unwrap();
         let nodes = result.into_nodes();
@@ -52,7 +52,7 @@ mod node_set_functions {
     #[test]
     fn test_position_with_wrong_args() {
         let xml = r#"<root><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "position(1)");
         assert!(result.is_err(), "position() with args should fail");
@@ -61,7 +61,7 @@ mod node_set_functions {
     #[test]
     fn test_count_function() {
         let xml = r#"<root><item/><item/><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "count(/root/item)").unwrap();
         assert_eq!(result.to_number(), 3.0);
@@ -72,7 +72,7 @@ mod node_set_functions {
     #[test]
     fn test_count_with_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // count() requires exactly 1 argument
         let result = evaluate(&doc, "count()");
@@ -85,7 +85,7 @@ mod node_set_functions {
     #[test]
     fn test_count_with_non_nodeset() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // count() requires a node-set argument
         let result = evaluate(&doc, "count('string')");
@@ -95,7 +95,7 @@ mod node_set_functions {
     #[test]
     fn test_name_function() {
         let xml = r#"<root><ns:item xmlns:ns="http://example.com"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "name(/root/ns:item)").unwrap();
         assert_eq!(result.to_string_value(), "ns:item");
@@ -104,7 +104,7 @@ mod node_set_functions {
     #[test]
     fn test_name_function_context_node() {
         let xml = r#"<root><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/item[name()='item']").unwrap();
         let nodes = result.into_nodes();
@@ -116,7 +116,7 @@ mod node_set_functions {
     #[test]
     fn test_local_name_function() {
         let xml = r#"<root><ns:item xmlns:ns="http://example.com"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "local-name(/root/ns:item)").unwrap();
         assert_eq!(result.to_string_value(), "item");
@@ -125,7 +125,7 @@ mod node_set_functions {
     #[test]
     fn test_namespace_uri_function() {
         let xml = r#"<root xmlns:ns="http://example.com"><ns:item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // namespace-uri() returns the namespace URI of the element
         let result = evaluate(&doc, "namespace-uri(/root/ns:item)").unwrap();
@@ -138,7 +138,7 @@ mod node_set_functions {
     #[test]
     fn test_id_function() {
         let xml = r#"<root><item id="a">A</item><item id="b">B</item><item id="c">C</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "id('b')").unwrap();
         let nodes = result.into_nodes();
@@ -152,7 +152,7 @@ mod node_set_functions {
     #[test]
     fn test_id_with_multiple_ids() {
         let xml = r#"<root><item id="a">A</item><item id="b">B</item><item id="c">C</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // id() can take space-separated IDs
         let result = evaluate(&doc, "id('a c')").unwrap();
@@ -163,7 +163,7 @@ mod node_set_functions {
     #[test]
     fn test_id_with_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "id()");
         assert!(result.is_err(), "id() without args should fail");
@@ -180,7 +180,7 @@ mod string_functions {
     #[test]
     fn test_string_function() {
         let xml = r#"<root>hello</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "string(/root)").unwrap();
         assert_eq!(result.to_string_value(), "hello");
@@ -192,7 +192,7 @@ mod string_functions {
     #[test]
     fn test_string_function_no_args() {
         let xml = r#"<root>context text</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // string() with no args uses context node
         let result = evaluate(&doc, "/root[string()='context text']").unwrap();
@@ -203,7 +203,7 @@ mod string_functions {
     #[test]
     fn test_string_with_too_many_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "string('a', 'b')");
         assert!(result.is_err(), "string() with 2 args should fail");
@@ -212,7 +212,7 @@ mod string_functions {
     #[test]
     fn test_concat_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "concat('a', 'b', 'c')").unwrap();
         assert_eq!(result.to_string_value(), "abc");
@@ -223,7 +223,7 @@ mod string_functions {
     #[test]
     fn test_concat_with_one_arg() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // concat() requires at least 2 arguments
         let result = evaluate(&doc, "concat('a')");
@@ -233,7 +233,7 @@ mod string_functions {
     #[test]
     fn test_starts_with_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "starts-with('hello', 'he')").unwrap();
         assert!(result.to_boolean());
@@ -247,7 +247,7 @@ mod string_functions {
     #[test]
     fn test_starts_with_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "starts-with('a')");
         assert!(result.is_err(), "starts-with() with 1 arg should fail");
@@ -259,7 +259,7 @@ mod string_functions {
     #[test]
     fn test_contains_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "contains('hello world', 'wor')").unwrap();
         assert!(result.to_boolean());
@@ -273,7 +273,7 @@ mod string_functions {
     #[test]
     fn test_contains_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "contains('a')");
         assert!(result.is_err());
@@ -282,7 +282,7 @@ mod string_functions {
     #[test]
     fn test_substring_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // 2 args: start to end
         let result = evaluate(&doc, "substring('12345', 2)").unwrap();
@@ -298,7 +298,7 @@ mod string_functions {
     #[test]
     fn test_substring_with_nan() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // NaN start returns empty string
         let result = evaluate(&doc, "substring('hello', number('x'))").unwrap();
@@ -308,7 +308,7 @@ mod string_functions {
     #[test]
     fn test_substring_with_negative_length() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring('hello', 2, -1)").unwrap();
         assert_eq!(result.to_string_value(), "");
@@ -317,7 +317,7 @@ mod string_functions {
     #[test]
     fn test_substring_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring('a')");
         assert!(result.is_err());
@@ -329,7 +329,7 @@ mod string_functions {
     #[test]
     fn test_substring_before_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring-before('hello/world', '/')").unwrap();
         assert_eq!(result.to_string_value(), "hello");
@@ -346,7 +346,7 @@ mod string_functions {
     #[test]
     fn test_substring_before_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring-before('a')");
         assert!(result.is_err());
@@ -355,7 +355,7 @@ mod string_functions {
     #[test]
     fn test_substring_after_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring-after('hello/world', '/')").unwrap();
         assert_eq!(result.to_string_value(), "world");
@@ -372,7 +372,7 @@ mod string_functions {
     #[test]
     fn test_substring_after_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "substring-after('a')");
         assert!(result.is_err());
@@ -381,7 +381,7 @@ mod string_functions {
     #[test]
     fn test_string_length_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "string-length('hello')").unwrap();
         assert_eq!(result.to_number(), 5.0);
@@ -392,7 +392,7 @@ mod string_functions {
     #[test]
     fn test_string_length_no_args() {
         let xml = r#"<root>test</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // string-length() with no args uses context node
         let result = evaluate(&doc, "/root[string-length()=4]").unwrap();
@@ -403,7 +403,7 @@ mod string_functions {
     #[test]
     fn test_string_length_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "string-length('a', 'b')");
         assert!(result.is_err());
@@ -412,7 +412,7 @@ mod string_functions {
     #[test]
     fn test_normalize_space_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "normalize-space('  hello   world  ')").unwrap();
         assert_eq!(result.to_string_value(), "hello world");
@@ -423,7 +423,7 @@ mod string_functions {
     #[test]
     fn test_normalize_space_no_args() {
         let xml = r#"<root>  spacy  text  </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root[normalize-space()='spacy text']").unwrap();
         let nodes = result.into_nodes();
@@ -433,7 +433,7 @@ mod string_functions {
     #[test]
     fn test_normalize_space_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "normalize-space('a', 'b')");
         assert!(result.is_err());
@@ -442,7 +442,7 @@ mod string_functions {
     #[test]
     fn test_translate_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "translate('bar', 'abc', 'ABC')").unwrap();
         assert_eq!(result.to_string_value(), "BAr");
@@ -457,7 +457,7 @@ mod string_functions {
     #[test]
     fn test_translate_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "translate('a', 'b')");
         assert!(result.is_err());
@@ -474,7 +474,7 @@ mod boolean_functions {
     #[test]
     fn test_boolean_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Non-empty string is true
         let result = evaluate(&doc, "boolean('text')").unwrap();
@@ -498,7 +498,7 @@ mod boolean_functions {
     #[test]
     fn test_boolean_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "boolean()");
         assert!(result.is_err());
@@ -510,7 +510,7 @@ mod boolean_functions {
     #[test]
     fn test_not_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "not(true())").unwrap();
         assert!(!result.to_boolean());
@@ -524,7 +524,7 @@ mod boolean_functions {
     #[test]
     fn test_not_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "not()");
         assert!(result.is_err());
@@ -536,7 +536,7 @@ mod boolean_functions {
     #[test]
     fn test_true_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "true()").unwrap();
         assert!(result.to_boolean());
@@ -547,7 +547,7 @@ mod boolean_functions {
     #[test]
     fn test_true_with_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "true(1)");
         assert!(result.is_err());
@@ -556,7 +556,7 @@ mod boolean_functions {
     #[test]
     fn test_false_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "false()").unwrap();
         assert!(!result.to_boolean());
@@ -567,7 +567,7 @@ mod boolean_functions {
     #[test]
     fn test_false_with_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "false(1)");
         assert!(result.is_err());
@@ -576,7 +576,7 @@ mod boolean_functions {
     #[test]
     fn test_lang_function() {
         let xml = r#"<root xml:lang="en"><item xml:lang="en-US">text</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // lang() matches 'en' on root
         let result = evaluate(&doc, "/root[lang('en')]").unwrap();
@@ -592,7 +592,7 @@ mod boolean_functions {
     #[test]
     fn test_lang_function_no_match() {
         let xml = r#"<root xml:lang="en"><item>text</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root[lang('fr')]").unwrap();
         let nodes = result.into_nodes();
@@ -602,7 +602,7 @@ mod boolean_functions {
     #[test]
     fn test_lang_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "lang()");
         assert!(result.is_err());
@@ -622,7 +622,7 @@ mod number_functions {
     #[test]
     fn test_number_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "number('42')").unwrap();
         assert_eq!(result.to_number(), 42.0);
@@ -637,7 +637,7 @@ mod number_functions {
     #[test]
     fn test_number_no_args() {
         let xml = r#"<root>123</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // number() with no args uses context node
         let result = evaluate(&doc, "/root[number()=123]").unwrap();
@@ -648,7 +648,7 @@ mod number_functions {
     #[test]
     fn test_number_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "number('1', '2')");
         assert!(result.is_err());
@@ -657,7 +657,7 @@ mod number_functions {
     #[test]
     fn test_sum_function() {
         let xml = r#"<root><n>1</n><n>2</n><n>3</n></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "sum(/root/n)").unwrap();
         assert_eq!(result.to_number(), 6.0);
@@ -668,7 +668,7 @@ mod number_functions {
     #[test]
     fn test_sum_with_nan() {
         let xml = r#"<root><n>1</n><n>two</n><n>3</n></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Sum with non-numeric node returns NaN
         let result = evaluate(&doc, "sum(/root/n)").unwrap();
@@ -678,7 +678,7 @@ mod number_functions {
     #[test]
     fn test_sum_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "sum()");
         assert!(result.is_err());
@@ -694,7 +694,7 @@ mod number_functions {
     #[test]
     fn test_floor_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "floor(3.7)").unwrap();
         assert_eq!(result.to_number(), 3.0);
@@ -708,7 +708,7 @@ mod number_functions {
     #[test]
     fn test_floor_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "floor()");
         assert!(result.is_err());
@@ -720,7 +720,7 @@ mod number_functions {
     #[test]
     fn test_ceiling_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "ceiling(3.2)").unwrap();
         assert_eq!(result.to_number(), 4.0);
@@ -734,7 +734,7 @@ mod number_functions {
     #[test]
     fn test_ceiling_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "ceiling()");
         assert!(result.is_err());
@@ -746,7 +746,7 @@ mod number_functions {
     #[test]
     fn test_round_function() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // XPath rounds .5 towards positive infinity
         let result = evaluate(&doc, "round(1.5)").unwrap();
@@ -764,7 +764,7 @@ mod number_functions {
     #[test]
     fn test_round_special_values() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // NaN remains NaN
         let result = evaluate(&doc, "round(number('x'))").unwrap();
@@ -782,7 +782,7 @@ mod number_functions {
     #[test]
     fn test_round_wrong_args() {
         let xml = r#"<root/>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "round()");
         assert!(result.is_err());
@@ -802,7 +802,7 @@ mod text_function {
     #[test]
     fn test_text_as_function() {
         let xml = r#"<root>content</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // text() is typically used as a node test, but can be called as function too
         let result = evaluate(&doc, "/root/text()").unwrap();
@@ -813,7 +813,7 @@ mod text_function {
     #[test]
     fn test_text_wrong_args() {
         let xml = r#"<root>content</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // text() as function should not take arguments
         // This depends on how text() is parsed - it might be parsed as a node test

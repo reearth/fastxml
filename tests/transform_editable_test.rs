@@ -1,6 +1,6 @@
 //! EditableNode tests for the transform module.
 
-use fastxml::transform::{EditableNode, StreamTransformer};
+use fastxml::transform::{EditableNode, Transformer};
 
 // =============================================================================
 // EditableNode Basic Tests
@@ -14,11 +14,11 @@ mod editable_node_tests {
     fn test_editable_node_name() {
         let xml = r#"<root><myitem/></root>"#;
         let name = RefCell::new(String::new());
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//myitem", |node: &mut EditableNode| {
                 *name.borrow_mut() = node.name().to_string();
             })
-            .run();
+            .for_each();
         assert_eq!(name.into_inner(), "myitem");
     }
 
@@ -26,11 +26,11 @@ mod editable_node_tests {
     fn test_editable_node_get_attribute() {
         let xml = r#"<root><item attr="value"/></root>"#;
         let attr = RefCell::new(None);
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 *attr.borrow_mut() = node.get_attribute("attr");
             })
-            .run();
+            .for_each();
         assert_eq!(attr.into_inner(), Some("value".to_string()));
     }
 
@@ -38,11 +38,11 @@ mod editable_node_tests {
     fn test_editable_node_get_attribute_missing() {
         let xml = r#"<root><item/></root>"#;
         let attr = RefCell::new(Some("initial".to_string()));
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 *attr.borrow_mut() = node.get_attribute("missing");
             })
-            .run();
+            .for_each();
         assert_eq!(attr.into_inner(), None);
     }
 
@@ -50,11 +50,11 @@ mod editable_node_tests {
     fn test_editable_node_get_content() {
         let xml = r#"<root><item>hello world</item></root>"#;
         let content = RefCell::new(None);
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 *content.borrow_mut() = node.get_content();
             })
-            .run();
+            .for_each();
         assert_eq!(content.into_inner(), Some("hello world".to_string()));
     }
 
@@ -62,11 +62,11 @@ mod editable_node_tests {
     fn test_editable_node_children() {
         let xml = r#"<root><parent><child1/><child2/></parent></root>"#;
         let count = RefCell::new(0);
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//parent", |node: &mut EditableNode| {
                 *count.borrow_mut() = node.children().len();
             })
-            .run();
+            .for_each();
         assert_eq!(count.into_inner(), 2);
     }
 
@@ -74,11 +74,11 @@ mod editable_node_tests {
     fn test_editable_node_children_with_text() {
         let xml = r#"<root><item>text<sub/>more</item></root>"#;
         let count = RefCell::new(0);
-        let _ = StreamTransformer::new(xml)
+        let _ = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 *count.borrow_mut() = node.children().len();
             })
-            .run();
+            .for_each();
         // Should have: text node, sub element, text node
         assert!(count.into_inner() >= 1);
     }
@@ -94,7 +94,7 @@ fn test_editable_node_to_xml() {
 
     let mut node_xml = String::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on("//item", |node| {
             node_xml = node.to_xml().unwrap();
         })
@@ -112,7 +112,7 @@ fn test_editable_node_display() {
 
     let mut displayed = String::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on("//item", |node| {
             displayed = format!("{}", node);
         })
@@ -131,7 +131,7 @@ fn test_to_xml_with_namespaces_basic() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point id="1"/></root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |node| {
@@ -151,7 +151,7 @@ fn test_to_xml_with_namespaces_nested() {
     let xml = r#"<root xmlns:ns="http://example.com"><ns:parent><ns:child>text</ns:child></ns:parent></root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//ns:parent", |node| {
@@ -174,7 +174,7 @@ fn test_to_xml_with_namespaces_multiple_prefixes() {
     </root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//a:outer", |node| {
@@ -196,7 +196,7 @@ fn test_to_xml_with_namespaces_no_duplicates() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point xmlns:gml="http://www.opengis.net/gml" id="1"/></root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |node| {
@@ -215,7 +215,7 @@ fn test_to_xml_without_namespaces_fallback() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point id="1"/></root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |node| {
@@ -235,7 +235,7 @@ fn test_to_xml_with_namespaces_empty_namespaces() {
     let xml = r#"<root><item id="1"/></root>"#;
 
     let mut fragment_xml = String::new();
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on("//item", |node| {
             fragment_xml = node.to_xml_with_namespaces().unwrap();
         })
@@ -252,7 +252,7 @@ fn test_editable_node_namespaces_accessor() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
 
     let mut has_namespaces = false;
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |node| {
@@ -280,7 +280,7 @@ fn test_collect_multi_basic() {
         <item id="3">Cherry</item>
     </root>"#;
 
-    let (ids, contents): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+    let (ids, contents): (Vec<String>, Vec<String>) = Transformer::from(xml)
         .collect_multi((
             ("//item", |node: &mut EditableNode| {
                 node.get_attribute("id").unwrap_or_default()
@@ -304,7 +304,7 @@ fn test_collect_multi_different_xpaths() {
         <category>Home</category>
     </store>"#;
 
-    let (products, categories): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+    let (products, categories): (Vec<String>, Vec<String>) = Transformer::from(xml)
         .collect_multi((
             ("//product", |node: &mut EditableNode| {
                 node.get_attribute("name").unwrap_or_default()
@@ -326,7 +326,7 @@ fn test_collect_multi_with_namespaces() {
         <gml:Point id="p2"><gml:pos>3.0 4.0</gml:pos></gml:Point>
     </root>"#;
 
-    let (ids, coords): (Vec<String>, Vec<String>) = StreamTransformer::new(xml)
+    let (ids, coords): (Vec<String>, Vec<String>) = Transformer::from(xml)
         .namespace("gml", "http://www.opengis.net/gml")
         .collect_multi((
             ("//gml:Point", |node: &mut EditableNode| {
@@ -349,20 +349,19 @@ fn test_collect_multi_three_xpaths() {
         <a>4</a><b>5</b><c>6</c>
     </data>"#;
 
-    let (a_vals, b_vals, c_vals): (Vec<String>, Vec<String>, Vec<String>) =
-        StreamTransformer::new(xml)
-            .collect_multi((
-                ("//a", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-                ("//b", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-                ("//c", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-            ))
-            .unwrap();
+    let (a_vals, b_vals, c_vals): (Vec<String>, Vec<String>, Vec<String>) = Transformer::from(xml)
+        .collect_multi((
+            ("//a", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+            ("//b", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+            ("//c", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+        ))
+        .unwrap();
 
     assert_eq!(a_vals, vec!["1", "4"]);
     assert_eq!(b_vals, vec!["2", "5"]);

@@ -11,7 +11,7 @@
 mod common;
 
 use fastxml::xpath::collect_text_values;
-use fastxml::{evaluate, parse};
+use fastxml::{Parser, evaluate};
 
 // =============================================================================
 // Attribute Axis Tests
@@ -23,7 +23,7 @@ mod attribute_axis {
     #[test]
     fn test_attribute_shorthand() {
         let xml = r#"<root><item id="1" name="first"/><item id="2" name="second"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // @id shorthand for attribute::id
         let result = evaluate(&doc, "//item/@id").unwrap();
@@ -38,7 +38,7 @@ mod attribute_axis {
     #[test]
     fn test_attribute_axis_explicit() {
         let xml = r#"<root><item id="1" name="first"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Explicit attribute axis
         let result = evaluate(&doc, "//item/attribute::id").unwrap();
@@ -52,7 +52,7 @@ mod attribute_axis {
     #[test]
     fn test_attribute_wildcard() {
         let xml = r#"<root><item id="1" name="first" type="A"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // All attributes
         let result = evaluate(&doc, "//item/@*").unwrap();
@@ -73,7 +73,7 @@ mod attribute_axis {
             <item id="2" status="inactive"/>
             <item id="3" status="active"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[@status='active']").unwrap();
         let nodes = result.into_nodes();
@@ -89,7 +89,7 @@ mod attribute_axis {
             <item name="no-id"/>
             <item id="2"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Check for existence of @id
         let result = evaluate(&doc, "//item[@id]").unwrap();
@@ -106,7 +106,7 @@ mod attribute_axis {
             <item id="2" type="A" status="inactive"/>
             <item id="3" type="B" status="active"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Multiple attribute conditions with AND
         let result = evaluate(&doc, "//item[@type='A' and @status='active']").unwrap();
@@ -123,7 +123,7 @@ mod attribute_axis {
             <item id="2" type="B"/>
             <item id="3" type="C"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // OR condition on attributes
         let result = evaluate(&doc, "//item[@type='A' or @type='B']").unwrap();
@@ -140,7 +140,7 @@ mod attribute_axis {
             <item id="2" status="inactive"/>
             <item id="3" status="active"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[not(@status='active')]").unwrap();
         let nodes = result.into_nodes();
@@ -159,7 +159,7 @@ mod attribute_axis {
             <item name="second"/>
             <item id="3" type="B"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // @*[local-name()='id'] should only select attributes whose local-name is 'id'
         // So .//*[@*[local-name()='id']] should match elements that have an 'id' attribute
@@ -190,7 +190,7 @@ mod attribute_axis {
                 <bldg:measuredHeight uom="m">10.5</bldg:measuredHeight>
             </bldg:Building>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Should only match elements that have an attribute with
         // namespace-uri='http://www.opengis.net/gml' and local-name='id'
@@ -221,7 +221,7 @@ mod node_test {
     #[test]
     fn test_node_selects_all_nodes() {
         let xml = r#"<root><child>text</child></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/node()").unwrap();
         let nodes = result.into_nodes();
@@ -234,7 +234,7 @@ mod node_test {
     #[test]
     fn test_node_with_descendant() {
         let xml = r#"<root><a><b>text</b></a><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//node()").unwrap();
         let nodes = result.into_nodes();
@@ -248,7 +248,7 @@ mod node_test {
     #[test]
     fn test_node_vs_wildcard() {
         let xml = r#"<root>text<child/>more text</root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // node() includes text nodes, * only includes elements
         let node_result = evaluate(&doc, "/root/node()").unwrap();
@@ -267,7 +267,7 @@ mod node_test {
     #[test]
     fn test_node_with_position() {
         let xml = r#"<root><a/><b/><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/node()[2]").unwrap();
         let nodes = result.into_nodes();
@@ -287,7 +287,7 @@ mod complex_predicates {
     #[test]
     fn test_position_greater_than() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[position() > 2]").unwrap();
         let nodes = result.into_nodes();
@@ -297,7 +297,7 @@ mod complex_predicates {
     #[test]
     fn test_position_less_than() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[position() < 3]").unwrap();
         let nodes = result.into_nodes();
@@ -307,7 +307,7 @@ mod complex_predicates {
     #[test]
     fn test_position_range() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[position() >= 2 and position() <= 4]").unwrap();
         let nodes = result.into_nodes();
@@ -317,7 +317,7 @@ mod complex_predicates {
     #[test]
     fn test_string_length_predicate() {
         let xml = r#"<root><item>ab</item><item>abcdef</item><item>abc</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[string-length() > 3]").unwrap();
         let nodes = result.into_nodes();
@@ -329,7 +329,7 @@ mod complex_predicates {
     fn test_contains_in_predicate() {
         let xml =
             r#"<root><item>hello world</item><item>goodbye</item><item>world peace</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[contains(., 'world')]").unwrap();
         let nodes = result.into_nodes();
@@ -339,7 +339,7 @@ mod complex_predicates {
     #[test]
     fn test_starts_with_in_predicate() {
         let xml = r#"<root><item>prefix_a</item><item>other</item><item>prefix_b</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[starts-with(., 'prefix')]").unwrap();
         let nodes = result.into_nodes();
@@ -357,7 +357,7 @@ mod complex_predicates {
                 <child status="active">also keep</child>
             </parent>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//parent[child[@status='active']]").unwrap();
         let nodes = result.into_nodes();
@@ -371,7 +371,7 @@ mod complex_predicates {
             <group><item/></group>
             <group><item/><item/></group>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//group[count(item) >= 2]").unwrap();
         let nodes = result.into_nodes();
@@ -381,7 +381,7 @@ mod complex_predicates {
     #[test]
     fn test_last_predicate() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[last()]").unwrap();
         let nodes = result.into_nodes();
@@ -392,7 +392,7 @@ mod complex_predicates {
     #[test]
     fn test_last_minus_one() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[position() = last() - 1]").unwrap();
         let nodes = result.into_nodes();
@@ -412,7 +412,7 @@ mod relative_paths {
     #[test]
     fn test_parent_navigation() {
         let xml = r#"<root><parent><child/></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/parent/child/..").unwrap();
         let nodes = result.into_nodes();
@@ -423,7 +423,7 @@ mod relative_paths {
     #[test]
     fn test_grandparent_navigation() {
         let xml = r#"<root><parent><child><grandchild/></child></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/parent/child/grandchild/../..").unwrap();
         let nodes = result.into_nodes();
@@ -434,7 +434,7 @@ mod relative_paths {
     #[test]
     fn test_self_reference() {
         let xml = r#"<root><child/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/child/.").unwrap();
         let nodes = result.into_nodes();
@@ -445,7 +445,7 @@ mod relative_paths {
     #[test]
     fn test_parent_then_sibling() {
         let xml = r#"<root><a/><b/><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // From b, go to parent, then find sibling a
         let result = evaluate(&doc, "/root/b/../a").unwrap();
@@ -457,7 +457,7 @@ mod relative_paths {
     #[test]
     fn test_context_relative_descendant() {
         let xml = r#"<root><parent><target>1</target></parent><target>2</target></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let ctx = create_context(&doc).unwrap();
         let root = get_root_readonly_node(&doc).unwrap();
@@ -475,7 +475,7 @@ mod relative_paths {
     #[test]
     fn test_relative_wildcard() {
         let xml = r#"<root><parent><a/><b/><c/></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let ctx = create_context(&doc).unwrap();
         let root = get_root_readonly_node(&doc).unwrap();
@@ -496,7 +496,7 @@ mod union_edge_cases {
     #[test]
     fn test_union_removes_duplicates() {
         let xml = r#"<root><item id="1"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Same path twice should not duplicate
         let result = evaluate(&doc, "//item | //item").unwrap();
@@ -507,7 +507,7 @@ mod union_edge_cases {
     #[test]
     fn test_union_different_axes() {
         let xml = r#"<root><a><b/></a><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Descendant axis | child axis
         let result = evaluate(&doc, "//b | /root/c").unwrap();
@@ -518,7 +518,7 @@ mod union_edge_cases {
     #[test]
     fn test_union_with_text() {
         let xml = r#"<root><a>text1</a><b>text2</b></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//a/text() | //b/text()").unwrap();
         let values = collect_text_values(&result);
@@ -531,7 +531,7 @@ mod union_edge_cases {
     #[test]
     fn test_union_preserves_document_order() {
         let xml = r#"<root><a/><b/><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Union returns all elements (order may vary by implementation)
         let result = evaluate(&doc, "//c | //a | //b").unwrap();
@@ -548,7 +548,7 @@ mod union_edge_cases {
     #[test]
     fn test_union_empty_result() {
         let xml = r#"<root><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//nonexistent | //alsonothere").unwrap();
         let nodes = result.into_nodes();
@@ -566,7 +566,7 @@ mod sibling_axes {
     #[test]
     fn test_following_sibling() {
         let xml = r#"<root><a/><b/><c/><d/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/b/following-sibling::*").unwrap();
         let nodes = result.into_nodes();
@@ -580,7 +580,7 @@ mod sibling_axes {
     #[test]
     fn test_preceding_sibling() {
         let xml = r#"<root><a/><b/><c/><d/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/c/preceding-sibling::*").unwrap();
         let nodes = result.into_nodes();
@@ -592,7 +592,7 @@ mod sibling_axes {
     #[test]
     fn test_following_sibling_with_name() {
         let xml = r#"<root><item/><other/><item/><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/other/following-sibling::item").unwrap();
         let nodes = result.into_nodes();
@@ -604,7 +604,7 @@ mod sibling_axes {
     #[test]
     fn test_preceding_sibling_first() {
         let xml = r#"<root><a/><b/><c/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/c/preceding-sibling::*[1]").unwrap();
         let nodes = result.into_nodes();
@@ -625,7 +625,7 @@ mod ancestor_axes {
     #[test]
     fn test_ancestor() {
         let xml = r#"<root><parent><child><target/></child></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//target/ancestor::*").unwrap();
         let nodes = result.into_nodes();
@@ -638,7 +638,7 @@ mod ancestor_axes {
     #[test]
     fn test_ancestor_with_name() {
         let xml = r#"<root><parent><child><target/></child></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//target/ancestor::parent").unwrap();
         let nodes = result.into_nodes();
@@ -651,7 +651,7 @@ mod ancestor_axes {
     #[test]
     fn test_ancestor_or_self() {
         let xml = r#"<root><parent><target/></parent></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//target/ancestor-or-self::*").unwrap();
         let nodes = result.into_nodes();
@@ -667,7 +667,7 @@ mod ancestor_axes {
             <container type="A"><item>1</item></container>
             <container type="B"><item>2</item></container>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[ancestor::container[@type='A']]").unwrap();
         let nodes = result.into_nodes();
@@ -688,7 +688,7 @@ mod descendant_axes {
     #[test]
     fn test_descendant_or_self() {
         let xml = r#"<root><child><grandchild/></child></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/descendant-or-self::*").unwrap();
         let nodes = result.into_nodes();
@@ -701,7 +701,7 @@ mod descendant_axes {
     #[test]
     fn test_descendant_deep() {
         let xml = r#"<root><a><b><c><d><target/></d></c></b></a></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
@@ -717,7 +717,7 @@ mod descendant_axes {
             <b><c><target>2</target></c></b>
             <target>3</target>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
@@ -737,7 +737,7 @@ mod following_preceding_axes {
     #[test]
     fn test_following_axis() {
         let xml = r#"<root><a><b/></a><c/><d/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Following axis includes all nodes after current node in document order
         let result = evaluate(&doc, "/root/a/following::*").unwrap();
@@ -751,7 +751,7 @@ mod following_preceding_axes {
     #[test]
     fn test_preceding_axis() {
         let xml = r#"<root><a/><b/><c><d/></c></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "/root/c/preceding::*").unwrap();
         let nodes = result.into_nodes();
@@ -772,7 +772,7 @@ mod edge_cases {
     #[test]
     fn test_empty_string_comparison() {
         let xml = r#"<root><item value=""/><item value="text"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[@value='']").unwrap();
         let nodes = result.into_nodes();
@@ -782,7 +782,7 @@ mod edge_cases {
     #[test]
     fn test_whitespace_text() {
         let xml = r#"<root><item>   </item><item>text</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[normalize-space()='']").unwrap();
         let nodes = result.into_nodes();
@@ -792,7 +792,7 @@ mod edge_cases {
     #[test]
     fn test_numeric_string_comparison() {
         let xml = r#"<root><item>2</item><item>10</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // XPath 1.0: when comparing string to number, string is converted to number
         let result = evaluate(&doc, "//item[. > 5]").unwrap();
@@ -804,7 +804,7 @@ mod edge_cases {
     #[test]
     fn test_empty_element() {
         let xml = r#"<root><item/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[.='']").unwrap();
         let nodes = result.into_nodes();
@@ -814,7 +814,7 @@ mod edge_cases {
     #[test]
     fn test_special_characters_in_text() {
         let xml = r#"<root><item>&lt;tag&gt;</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[contains(., '<')]").unwrap();
         let nodes = result.into_nodes();
@@ -824,7 +824,7 @@ mod edge_cases {
     #[test]
     fn test_cdata_content() {
         let xml = r#"<root><item><![CDATA[<not xml>]]></item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item").unwrap();
         let values = collect_text_values(&result);
@@ -843,7 +843,7 @@ mod arithmetic {
     #[test]
     fn test_addition_in_predicate() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[position() = 1 + 1]").unwrap();
         let nodes = result.into_nodes();
@@ -854,7 +854,7 @@ mod arithmetic {
     #[test]
     fn test_multiplication_in_predicate() {
         let xml = r#"<root><item>10</item><item>20</item><item>30</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[. = 2 * 10]").unwrap();
         let nodes = result.into_nodes();
@@ -865,7 +865,7 @@ mod arithmetic {
     #[test]
     fn test_division_in_predicate() {
         let xml = r#"<root><item>5</item><item>10</item><item>20</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[. = 20 div 2]").unwrap();
         let nodes = result.into_nodes();
@@ -876,7 +876,7 @@ mod arithmetic {
     #[test]
     fn test_modulo_in_predicate() {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // Select items at odd positions
         let result = evaluate(&doc, "//item[position() mod 2 = 1]").unwrap();
@@ -902,7 +902,7 @@ mod boolean_logic {
             <item a="2" b="1"/>
             <item a="2" b="2"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         // (a=1 AND b=1) OR (a=2 AND b=2)
         let result = evaluate(&doc, "//item[(@a='1' and @b='1') or (@a='2' and @b='2')]").unwrap();
@@ -917,7 +917,7 @@ mod boolean_logic {
             <item status="active" type="B"/>
             <item status="inactive" type="A"/>
         </root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[@status='active' and not(@type='A')]").unwrap();
         let nodes = result.into_nodes();
@@ -927,7 +927,7 @@ mod boolean_logic {
     #[test]
     fn test_double_negation() {
         let xml = r#"<root><item status="active"/><item status="inactive"/></root>"#;
-        let doc = parse(xml).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
 
         let result = evaluate(&doc, "//item[not(not(@status='active'))]").unwrap();
         let nodes = result.into_nodes();

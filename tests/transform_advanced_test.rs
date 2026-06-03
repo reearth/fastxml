@@ -1,6 +1,6 @@
 //! Advanced tests for the transform module: edge cases, context, fallback, error location.
 
-use fastxml::transform::{EditableNode, StreamTransformer};
+use fastxml::transform::{EditableNode, Transformer};
 
 // =============================================================================
 // Edge Cases
@@ -13,10 +13,8 @@ mod edge_cases {
     fn test_transform_empty_xml() {
         let xml = "";
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |_: &mut EditableNode| {})
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -27,12 +25,10 @@ mod edge_cases {
     fn test_transform_xml_declaration() {
         let xml = r#"<?xml version="1.0"?><root><item/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("x", "1");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -44,12 +40,10 @@ mod edge_cases {
     fn test_transform_with_comments() {
         let xml = r#"<root><!-- comment --><item/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("done", "true");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -61,12 +55,10 @@ mod edge_cases {
     fn test_transform_with_cdata() {
         let xml = r#"<root><item><![CDATA[some <data>]]></item></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("has_cdata", "true");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -77,12 +69,10 @@ mod edge_cases {
     fn test_transform_self_closing_element() {
         let xml = r#"<root><empty/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//empty", |node: &mut EditableNode| {
                 node.set_attribute("not_empty", "now");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -93,12 +83,10 @@ mod edge_cases {
     fn test_transform_special_characters_in_attribute() {
         let xml = r#"<root><item/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("special", "a<b>c&d\"e");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -114,13 +102,13 @@ mod edge_cases {
         </root>"#;
 
         let mut found_id = None;
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .namespace("gml", "http://www.opengis.net/gml")
             .on("//item", |node: &mut EditableNode| {
                 // Should be able to get attribute by local name only
                 found_id = node.get_attribute("id");
             })
-            .run()
+            .for_each()
             .unwrap();
 
         assert_eq!(found_id, Some("test123".to_string()));
@@ -134,13 +122,13 @@ mod edge_cases {
         </root>"#;
 
         let mut prefixed_id = Some("should be None".to_string());
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .namespace("gml", "http://www.opengis.net/gml")
             .on("//item", |node: &mut EditableNode| {
                 // Prefixed key should NOT work
                 prefixed_id = node.get_attribute("gml:id");
             })
-            .run()
+            .for_each()
             .unwrap();
 
         assert_eq!(prefixed_id, None);
@@ -158,7 +146,7 @@ fn test_on_with_context_parent() {
     let mut parent_names = Vec::new();
     let mut parent_ids = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on_with_context("//item", |_node, ctx| {
             if let Some(parent) = ctx.parent() {
                 parent_names.push(parent.name.clone());
@@ -180,7 +168,7 @@ fn test_on_with_context_position() {
 
     let mut positions = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on_with_context("//item", |_node, ctx| {
             positions.push(ctx.position());
         })
@@ -196,7 +184,7 @@ fn test_on_with_context_depth() {
 
     let mut depths = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on_with_context("//target", |_node, ctx| {
             depths.push(ctx.depth());
         })
@@ -213,7 +201,7 @@ fn test_on_with_context_ancestors() {
 
     let mut ancestor_names = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on_with_context("//target", |_node, ctx| {
             ancestor_names = ctx.ancestors().iter().map(|a| a.name.clone()).collect();
         })
@@ -229,7 +217,7 @@ fn test_on_with_context_path_id() {
 
     let mut paths = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .on_with_context("//item", |_node, ctx| {
             paths.push(ctx.path_id());
         })
@@ -245,7 +233,7 @@ fn test_on_with_context_path_id() {
 fn test_on_with_context_transform() {
     let xml = r#"<root><items id="list1"><item/><item/></items></root>"#;
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .on_with_context("//item", |node, ctx| {
             let path = ctx.path_id();
             let pos = ctx.position();
@@ -255,8 +243,6 @@ fn test_on_with_context_transform() {
                 node.set_attribute("parent_id", parent_id);
             }
         })
-        .run()
-        .unwrap()
         .to_string()
         .unwrap();
 
@@ -273,9 +259,9 @@ fn test_on_with_context_transform() {
 fn test_fallback_disabled_by_default() {
     let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .on("//item[last()]", |_| {})
-        .run();
+        .for_each();
 
     // Should fail because last() is not streamable and fallback is disabled
     assert!(result.is_err());
@@ -288,13 +274,11 @@ fn test_fallback_disabled_by_default() {
 fn test_allow_fallback() {
     let xml = "<root><item>A</item><item>B</item><item>C</item></root>";
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .allow_fallback()
         .on("//item[last()]", |node| {
             node.set_attribute("last", "true");
         })
-        .run()
-        .unwrap()
         .to_string()
         .unwrap();
 
@@ -311,17 +295,17 @@ fn test_fallback_mode_enum() {
     let xml = "<root><item>test</item></root>";
 
     // Test with Disabled mode
-    let result_disabled = StreamTransformer::new(xml)
+    let result_disabled = Transformer::from(xml)
         .fallback_mode(FallbackMode::Disabled)
         .on("//item[last()]", |_| {})
-        .run();
+        .for_each();
     assert!(result_disabled.is_err());
 
     // Test with Enabled mode
-    let result_enabled = StreamTransformer::new(xml)
+    let result_enabled = Transformer::from(xml)
         .fallback_mode(FallbackMode::Enabled)
         .on("//item[last()]", |_| {})
-        .run();
+        .for_each();
     assert!(result_enabled.is_ok());
 }
 
@@ -444,12 +428,12 @@ fn test_error_location_structured_error_integration() {
 
 #[test]
 fn test_xml_parse_error_with_location() {
-    use fastxml::transform::{StreamTransformer, TransformError};
+    use fastxml::transform::{TransformError, Transformer};
 
     // Invalid XML - unclosed tag
     let xml = "<root><item";
 
-    let result = StreamTransformer::new(xml).on("//item", |_| {}).run();
+    let result = Transformer::from(xml).on("//item", |_| {}).to_string();
 
     match result {
         Err(TransformError::XmlParseWithLocation { message, location }) => {

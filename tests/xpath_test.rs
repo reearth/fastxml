@@ -4,13 +4,13 @@ mod common;
 
 use fastxml::xpath::collect_text_values;
 use fastxml::{
-    create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node, parse,
+    Parser, create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node,
 };
 
 #[test]
 fn test_xpath_simple_path() {
     let xml = r#"<root><child>text</child></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/child").unwrap();
     let nodes = result.into_nodes();
@@ -23,7 +23,7 @@ fn test_xpath_simple_path() {
 #[test]
 fn test_xpath_descendant() {
     let xml = r#"<root><a><b><target>found</target></b></a></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//target").unwrap();
     let nodes = result.into_nodes();
@@ -36,7 +36,7 @@ fn test_xpath_descendant() {
 #[test]
 fn test_xpath_wildcard() {
     let xml = r#"<root><a/><b/><c/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/*").unwrap();
     let nodes = result.into_nodes();
@@ -48,7 +48,7 @@ fn test_xpath_wildcard() {
 #[test]
 fn test_xpath_name_predicate() {
     let xml = r#"<root><Building/><Room/><Window/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//*[name()='Building']").unwrap();
     let nodes = result.into_nodes();
@@ -61,7 +61,7 @@ fn test_xpath_name_predicate() {
 #[test]
 fn test_xpath_or_predicate() {
     let xml = r#"<root><Building/><Room/><Window/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
     let nodes = result.into_nodes();
@@ -77,7 +77,7 @@ fn test_xpath_and_predicate() {
         <item type="a" status="inactive"/>
         <item type="b" status="active"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Note: This tests the xpath system, though we're just checking by name here
     let result = evaluate(&doc, "//item").unwrap();
@@ -90,7 +90,7 @@ fn test_xpath_and_predicate() {
 #[test]
 fn test_xpath_not_predicate() {
     let xml = r#"<root><Keep/><Keep/><Remove/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/*[not(name()='Remove')]").unwrap();
     let nodes = result.into_nodes();
@@ -103,7 +103,7 @@ fn test_xpath_not_predicate() {
 #[test]
 fn test_xpath_text() {
     let xml = r#"<root><item>first</item><item>second</item></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
@@ -118,7 +118,7 @@ fn test_xpath_namespaced() {
         <gml:name>test value</gml:name>
         <gml:description>description</gml:description>
     </gml:root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/gml:root/gml:name").unwrap();
     let nodes = result.into_nodes();
@@ -131,7 +131,7 @@ fn test_xpath_namespaced() {
 #[test]
 fn test_xpath_child_axis() {
     let xml = r#"<root><a/><b/><c/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/child::*").unwrap();
     let nodes = result.into_nodes();
@@ -143,7 +143,7 @@ fn test_xpath_child_axis() {
 #[test]
 fn test_xpath_relative_path() {
     let xml = r#"<root><parent><child>value</child></parent></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let ctx = create_context(&doc).unwrap();
     let root = get_root_readonly_node(&doc).unwrap();
@@ -158,7 +158,7 @@ fn test_xpath_relative_path() {
 #[test]
 fn test_xpath_self_axis() {
     let xml = r#"<root><child/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/child/self::*").unwrap();
     let nodes = result.into_nodes();
@@ -171,7 +171,7 @@ fn test_xpath_self_axis() {
 #[test]
 fn test_xpath_parent_axis() {
     let xml = r#"<root><child/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "/root/child/..").unwrap();
     let nodes = result.into_nodes();
@@ -188,7 +188,7 @@ fn test_xpath_deep_descendant() {
         <b><c><target>2</target></c></b>
         <target>3</target>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//target").unwrap();
     let nodes = result.into_nodes();
@@ -200,7 +200,7 @@ fn test_xpath_deep_descendant() {
 #[test]
 fn test_xpath_no_match() {
     let xml = r#"<root><child/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "//nonexistent").unwrap();
     let nodes = result.into_nodes();
@@ -223,7 +223,7 @@ fn test_xpath_citysgml_style() {
             </gml:Definition>
         </gml:dictionaryEntry>
     </gml:Dictionary>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(
         &doc,
@@ -241,7 +241,7 @@ fn test_xpath_citysgml_style() {
 #[test]
 fn test_xpath_union_operator() {
     let xml = r#"<root><a>1</a><b>2</b><c>3</c></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Union of two paths
     let result = evaluate(&doc, "//a | //b").unwrap();
@@ -258,7 +258,7 @@ fn test_xpath_union_operator() {
 #[test]
 fn test_xpath_union_three_paths() {
     let xml = r#"<root><a>1</a><b>2</b><c>3</c></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Union of three paths
     let result = evaluate(&doc, "//a | //b | //c").unwrap();
@@ -271,7 +271,7 @@ fn test_xpath_union_three_paths() {
 #[test]
 fn test_xpath_union_with_predicates() {
     let xml = r#"<root><item id="1">A</item><item id="2">B</item><other>C</other></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Union with predicates
     let result = evaluate(&doc, "//item[@id='1'] | //other").unwrap();
@@ -287,7 +287,7 @@ fn test_xpath_variable_string() {
     use std::collections::HashMap;
 
     let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let evaluator = XPathEvaluator::new(&doc);
 
     let mut vars = HashMap::new();
@@ -315,7 +315,7 @@ fn test_xpath_variable_number() {
     use std::collections::HashMap;
 
     let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let evaluator = XPathEvaluator::new(&doc);
 
     let mut vars = HashMap::new();
@@ -343,7 +343,7 @@ fn test_xpath_undefined_variable() {
     use std::collections::HashMap;
 
     let xml = r#"<root><item/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let evaluator = XPathEvaluator::new(&doc);
 
     let result = evaluator.evaluate_with_variables("//item[@id=$missing]", HashMap::new());
@@ -357,7 +357,7 @@ fn test_xpath_namespace_axis() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
         <gml:name>test</gml:name>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Get all namespace nodes from root element
     let result = evaluate(&doc, "/root/namespace::*").unwrap();
@@ -384,7 +384,7 @@ fn test_xpath_namespace_axis_with_name() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
         <child/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Get specific namespace by prefix
     let result = evaluate(&doc, "/root/namespace::gml").unwrap();
@@ -404,7 +404,7 @@ fn test_xpath_namespace_axis_inherited() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
         <child xmlns:bldg="http://www.opengis.net/citygml/building/2.0"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Child should inherit gml namespace from parent
     let result = evaluate(&doc, "/root/child/namespace::gml").unwrap();
@@ -422,7 +422,7 @@ fn test_xpath_namespace_axis_inherited() {
 #[test]
 fn test_xpath_namespace_axis_on_non_element() {
     let xml = r#"<root>text</root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Namespace axis on text node should return empty
     let result = evaluate(&doc, "/root/text()/namespace::*").unwrap();
