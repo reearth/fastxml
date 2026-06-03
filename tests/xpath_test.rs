@@ -2,18 +2,16 @@
 
 mod common;
 
-use fastxml::Parser;
-use fastxml::compat::{
-    create_context, evaluate, find_readonly_nodes_by_xpath, get_root_readonly_node,
-};
+use fastxml::compat::{create_context, find_readonly_nodes_by_xpath, get_root_readonly_node};
 use fastxml::xpath::collect_text_values;
+use fastxml::{Parser, QueryExt};
 
 #[test]
 fn test_xpath_simple_path() {
     let xml = r#"<root><child>text</child></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/child").unwrap();
+    let result = doc.query("/root/child").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "child");
@@ -26,7 +24,7 @@ fn test_xpath_descendant() {
     let xml = r#"<root><a><b><target>found</target></b></a></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//target").unwrap();
+    let result = doc.query("//target").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "target");
@@ -39,7 +37,7 @@ fn test_xpath_wildcard() {
     let xml = r#"<root><a/><b/><c/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/*").unwrap();
+    let result = doc.query("/root/*").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
 
@@ -51,7 +49,7 @@ fn test_xpath_name_predicate() {
     let xml = r#"<root><Building/><Room/><Window/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//*[name()='Building']").unwrap();
+    let result = doc.query("//*[name()='Building']").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "Building");
@@ -64,7 +62,9 @@ fn test_xpath_or_predicate() {
     let xml = r#"<root><Building/><Room/><Window/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
+    let result = doc
+        .query("//*[(name()='Building' or name()='Room')]")
+        .unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -81,7 +81,7 @@ fn test_xpath_and_predicate() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Note: This tests the xpath system, though we're just checking by name here
-    let result = evaluate(&doc, "//item").unwrap();
+    let result = doc.query("//item").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
 
@@ -93,7 +93,7 @@ fn test_xpath_not_predicate() {
     let xml = r#"<root><Keep/><Keep/><Remove/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/*[not(name()='Remove')]").unwrap();
+    let result = doc.query("/root/*[not(name()='Remove')]").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
     assert!(nodes.iter().all(|n| n.get_name() == "Keep"));
@@ -106,7 +106,7 @@ fn test_xpath_text() {
     let xml = r#"<root><item>first</item><item>second</item></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/item/text()").unwrap();
+    let result = doc.query("/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts, vec!["first", "second"]);
 
@@ -121,7 +121,7 @@ fn test_xpath_namespaced() {
     </gml:root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/gml:root/gml:name").unwrap();
+    let result = doc.query("/gml:root/gml:name").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "name");
@@ -134,7 +134,7 @@ fn test_xpath_child_axis() {
     let xml = r#"<root><a/><b/><c/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/child::*").unwrap();
+    let result = doc.query("/root/child::*").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
 
@@ -161,7 +161,7 @@ fn test_xpath_self_axis() {
     let xml = r#"<root><child/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/child/self::*").unwrap();
+    let result = doc.query("/root/child/self::*").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "child");
@@ -174,7 +174,7 @@ fn test_xpath_parent_axis() {
     let xml = r#"<root><child/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/child/..").unwrap();
+    let result = doc.query("/root/child/..").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_name(), "root");
@@ -191,7 +191,7 @@ fn test_xpath_deep_descendant() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//target").unwrap();
+    let result = doc.query("//target").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
 
@@ -203,7 +203,7 @@ fn test_xpath_no_match() {
     let xml = r#"<root><child/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//nonexistent").unwrap();
+    let result = doc.query("//nonexistent").unwrap();
     let nodes = result.into_nodes();
     assert!(nodes.is_empty());
 
@@ -226,11 +226,9 @@ fn test_xpath_citysgml_style() {
     </gml:Dictionary>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(
-        &doc,
-        "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name",
-    )
-    .unwrap();
+    let result = doc
+        .query("/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name")
+        .unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts.len(), 2);
     assert!(texts.contains(&"Value1".to_string()));
@@ -245,7 +243,7 @@ fn test_xpath_union_operator() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Union of two paths
-    let result = evaluate(&doc, "//a | //b").unwrap();
+    let result = doc.query("//a | //b").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -262,7 +260,7 @@ fn test_xpath_union_three_paths() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Union of three paths
-    let result = evaluate(&doc, "//a | //b | //c").unwrap();
+    let result = doc.query("//a | //b | //c").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 3);
 
@@ -275,7 +273,7 @@ fn test_xpath_union_with_predicates() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Union with predicates
-    let result = evaluate(&doc, "//item[@id='1'] | //other").unwrap();
+    let result = doc.query("//item[@id='1'] | //other").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -361,7 +359,7 @@ fn test_xpath_namespace_axis() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Get all namespace nodes from root element
-    let result = evaluate(&doc, "/root/namespace::*").unwrap();
+    let result = doc.query("/root/namespace::*").unwrap();
     let nodes = result.into_nodes();
 
     // Should have at least gml, bldg, and xml namespaces
@@ -388,7 +386,7 @@ fn test_xpath_namespace_axis_with_name() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Get specific namespace by prefix
-    let result = evaluate(&doc, "/root/namespace::gml").unwrap();
+    let result = doc.query("/root/namespace::gml").unwrap();
     let nodes = result.into_nodes();
 
     assert_eq!(nodes.len(), 1);
@@ -408,7 +406,7 @@ fn test_xpath_namespace_axis_inherited() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Child should inherit gml namespace from parent
-    let result = evaluate(&doc, "/root/child/namespace::gml").unwrap();
+    let result = doc.query("/root/child/namespace::gml").unwrap();
     let nodes = result.into_nodes();
 
     assert_eq!(nodes.len(), 1);
@@ -426,7 +424,7 @@ fn test_xpath_namespace_axis_on_non_element() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Namespace axis on text node should return empty
-    let result = evaluate(&doc, "/root/text()/namespace::*").unwrap();
+    let result = doc.query("/root/text()/namespace::*").unwrap();
     let nodes = result.into_nodes();
 
     assert!(nodes.is_empty());

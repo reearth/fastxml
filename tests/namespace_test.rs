@@ -3,8 +3,7 @@
 
 mod common;
 
-use fastxml::Parser;
-use fastxml::compat::evaluate;
+use fastxml::{Parser, QueryExt};
 
 // =============================================================================
 // Problem 1: get_namespace() should return the namespace for elements
@@ -178,7 +177,7 @@ fn test_xpath_namespace_uri_function() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "namespace-uri(/root/gml:Envelope)").unwrap();
+    let result = doc.query("namespace-uri(/root/gml:Envelope)").unwrap();
     assert_eq!(result.to_string_value(), "http://www.opengis.net/gml");
 }
 
@@ -191,11 +190,9 @@ fn test_xpath_namespace_uri_predicate() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Select elements by namespace URI
-    let result = evaluate(
-        &doc,
-        ".//*[namespace-uri()='http://www.opengis.net/gml' and local-name()='Envelope']",
-    )
-    .unwrap();
+    let result = doc
+        .query(".//*[namespace-uri()='http://www.opengis.net/gml' and local-name()='Envelope']")
+        .unwrap();
     assert_eq!(result.into_nodes().len(), 1);
 }
 
@@ -204,7 +201,7 @@ fn test_xpath_namespace_uri_empty_for_no_namespace() {
     let xml = r#"<root><child/></root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "namespace-uri(/root/child)").unwrap();
+    let result = doc.query("namespace-uri(/root/child)").unwrap();
     assert_eq!(result.to_string_value(), "");
 }
 
@@ -219,7 +216,7 @@ fn test_xpath_local_name_with_namespace() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "local-name(/root/gml:Envelope)").unwrap();
+    let result = doc.query("local-name(/root/gml:Envelope)").unwrap();
     assert_eq!(result.to_string_value(), "Envelope");
 }
 
@@ -277,9 +274,7 @@ fn test_citygml_like_structure() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Test XPath with namespace-uri()
-    let result = evaluate(
-        &doc,
-        ".//*[namespace-uri()='http://www.opengis.net/citygml/building/2.0' and local-name()='Building']",
+    let result = doc.query(".//*[namespace-uri()='http://www.opengis.net/citygml/building/2.0' and local-name()='Building']",
     )
     .unwrap();
     let buildings = result.into_nodes();

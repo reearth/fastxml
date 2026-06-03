@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use clap::{Parser, ValueEnum};
 use serde_json::{Value as JsonValue, json};
 
-use fastxml::compat::evaluate;
+use fastxml::QueryExt;
 use fastxml::generator::{GeneratorConfig, XmlStreamGenerator};
 use fastxml::schema::types::CompiledSchema;
 #[cfg(feature = "ureq")]
@@ -1330,7 +1330,7 @@ fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: u
         let doc = fastxml::Parser::from(xml_bytes.as_slice()).parse().unwrap();
 
         let start = Instant::now();
-        let result = evaluate(&doc, "//*").unwrap();
+        let result = doc.query("//*").unwrap();
         let count = result.into_nodes().len();
         println!(
             "  //*: {} elements in {}",
@@ -1340,7 +1340,7 @@ fn run_pattern_test(config: GeneratorConfig, mode: ProcessingMode, iterations: u
 
         if config.with_namespaces {
             let start = Instant::now();
-            let result = evaluate(&doc, "//bldg:Building").unwrap();
+            let result = doc.query("//bldg:Building").unwrap();
             let count = result.into_nodes().len();
             println!(
                 "  //bldg:Building: {} elements in {}",

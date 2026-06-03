@@ -10,7 +10,7 @@ use fastxml::node::error::NodeError;
 use fastxml::parser::error::ParseError;
 use fastxml::xpath::collect_text_values;
 use fastxml::xpath::error::XPathEvalError;
-use fastxml::{Parser, ParserOptions, parse_schema_locations};
+use fastxml::{Parser, ParserOptions, QueryExt, parse_schema_locations};
 
 // =============================================================================
 // XPath Pattern Tests (from plan requirements)
@@ -29,7 +29,7 @@ fn test_xpath_pattern_name_equals() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//*[name()='Building']").unwrap();
+    let result = doc.query("//*[name()='Building']").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
     assert!(nodes.iter().all(|n| n.get_name() == "Building"));
@@ -46,7 +46,9 @@ fn test_xpath_pattern_or_condition() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "//*[(name()='Building' or name()='Room')]").unwrap();
+    let result = doc
+        .query("//*[(name()='Building' or name()='Room')]")
+        .unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -66,11 +68,9 @@ fn test_xpath_pattern_and_not_condition() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // This should match Building and Room but exclude Window
-    let result = evaluate(
-        &doc,
-        "//*[(name()='Building' or name()='Room') and not(name()='Window')]",
-    )
-    .unwrap();
+    let result = doc
+        .query("//*[(name()='Building' or name()='Room') and not(name()='Window')]")
+        .unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
@@ -103,11 +103,9 @@ fn test_xpath_pattern_gml_dictionary() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Test full path with text()
-    let result = evaluate(
-        &doc,
-        "/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name/text()",
-    )
-    .unwrap();
+    let result = doc
+        .query("/gml:Dictionary/gml:dictionaryEntry/gml:Definition/gml:name/text()")
+        .unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts.len(), 3);
     assert!(texts.contains(&"BuildingType1".to_string()));
@@ -298,7 +296,7 @@ fn test_api_collect_text_values() {
     let doc = Parser::from("<root><item>one</item><item>two</item><item>three</item></root>")
         .parse()
         .unwrap();
-    let result = evaluate(&doc, "/root/item/text()").unwrap();
+    let result = doc.query("/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
 
     assert_eq!(texts.len(), 3);
@@ -418,7 +416,7 @@ fn test_citygml_building_structure() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Find all Buildings
-    let result = evaluate(&doc, "//bldg:Building").unwrap();
+    let result = doc.query("//bldg:Building").unwrap();
     let buildings = result.into_nodes();
     assert_eq!(buildings.len(), 2);
 
@@ -428,7 +426,7 @@ fn test_citygml_building_structure() {
     assert!(ids.contains(&Some("BLD_002".to_string())));
 
     // Find measured heights
-    let result = evaluate(&doc, "//bldg:measuredHeight/text()").unwrap();
+    let result = doc.query("//bldg:measuredHeight/text()").unwrap();
     let heights = collect_text_values(&result);
     assert_eq!(heights.len(), 2);
     assert!(heights.contains(&"25.5".to_string()));
@@ -448,16 +446,16 @@ fn test_citygml_multiple_element_types() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Select Building or Room only
-    let result = evaluate(&doc, "//*[(name()='bldg:Building' or name()='bldg:Room')]").unwrap();
+    let result = doc
+        .query("//*[(name()='bldg:Building' or name()='bldg:Room')]")
+        .unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 2);
 
     // Exclude Window and Door from the bldg: elements
-    let result = evaluate(
-        &doc,
-        "/root/*[not(name()='bldg:Window') and not(name()='bldg:Door')]",
-    )
-    .unwrap();
+    let result = doc
+        .query("/root/*[not(name()='bldg:Window') and not(name()='bldg:Door')]")
+        .unwrap();
     let nodes = result.into_nodes();
     // Should get: Building, BuildingPart, Room
     assert_eq!(nodes.len(), 3);
@@ -476,7 +474,7 @@ fn test_citygml_multiple_element_types() {
 #[test]
 fn test_edge_case_xpath_no_results() {
     let doc = Parser::from("<root/>").parse().unwrap();
-    let result = evaluate(&doc, "//nonexistent").unwrap();
+    let result = doc.query("//nonexistent").unwrap();
     let nodes = result.into_nodes();
     assert!(nodes.is_empty());
 }
@@ -492,11 +490,11 @@ fn test_edge_case_unicode() {
     </root>"#;
     let doc = Parser::from(xml).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/japanese/text()").unwrap();
+    let result = doc.query("/root/japanese/text()").unwrap();
     let texts = collect_text_values(&result);
     assert_eq!(texts[0], "日本語テスト");
 
-    let result = evaluate(&doc, "/root/emoji/text()").unwrap();
+    let result = doc.query("/root/emoji/text()").unwrap();
     let texts = collect_text_values(&result);
     assert!(texts[0].contains("🏙️"));
 }
@@ -517,7 +515,7 @@ fn test_edge_case_deep_nesting() {
     let doc = Parser::from(xml.as_str()).parse().unwrap();
 
     // Find the deepest element
-    let result = evaluate(&doc, "//level49").unwrap();
+    let result = doc.query("//level49").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].get_content(), Some("deep_value".to_string()));
@@ -534,7 +532,7 @@ fn test_edge_case_many_siblings() {
 
     let doc = Parser::from(xml.as_str()).parse().unwrap();
 
-    let result = evaluate(&doc, "/root/item").unwrap();
+    let result = doc.query("/root/item").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 100);
 }
@@ -552,7 +550,7 @@ fn test_complex_predicates() {
     let doc = Parser::from(xml).parse().unwrap();
 
     // Test compound conditions with name()
-    let result = evaluate(&doc, "//*[name()='item']").unwrap();
+    let result = doc.query("//*[name()='item']").unwrap();
     let nodes = result.into_nodes();
     assert_eq!(nodes.len(), 5);
 }
@@ -603,7 +601,7 @@ fn test_error_handling_invalid_xpath() {
     let doc = Parser::from("<root/>").parse().unwrap();
 
     // Invalid XPath syntax
-    let result = evaluate(&doc, "/root[[[");
+    let result = doc.query("/root[[[");
     assert!(
         matches!(result, Err(Error::XPathSyntax(_))),
         "Expected XPathSyntax error for invalid syntax, got: {:?}",
@@ -611,7 +609,7 @@ fn test_error_handling_invalid_xpath() {
     );
 
     // Unknown function
-    let result = evaluate(&doc, "/root[unknownfn()]");
+    let result = doc.query("/root[unknownfn()]");
     assert!(
         matches!(&result, Err(Error::XPathEval(XPathEvalError::UnknownFunction { name })) if name == "unknownfn"),
         "Expected XPathEval error for unknown function, got: {:?}",

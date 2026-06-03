@@ -3,8 +3,7 @@
 
 mod common;
 
-use fastxml::Parser;
-use fastxml::compat::evaluate;
+use fastxml::{Parser, QueryExt};
 
 // =============================================================================
 // Node Set Functions
@@ -19,7 +18,7 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // last() returns context size
-        let result = evaluate(&doc, "/root/item[last()]").unwrap();
+        let result = doc.query("/root/item[last()]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("3".to_string()));
@@ -33,7 +32,7 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // last() should not take arguments
-        let result = evaluate(&doc, "last(1)");
+        let result = doc.query("last(1)");
         assert!(result.is_err(), "last() with args should fail");
     }
 
@@ -42,7 +41,7 @@ mod node_set_functions {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/item[position()=2]").unwrap();
+        let result = doc.query("/root/item[position()=2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("2".to_string()));
@@ -55,7 +54,7 @@ mod node_set_functions {
         let xml = r#"<root><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "position(1)");
+        let result = doc.query("position(1)");
         assert!(result.is_err(), "position() with args should fail");
     }
 
@@ -64,7 +63,7 @@ mod node_set_functions {
         let xml = r#"<root><item/><item/><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "count(/root/item)").unwrap();
+        let result = doc.query("count(/root/item)").unwrap();
         assert_eq!(result.to_number(), 3.0);
 
         compare_with_libxml!(xpath: xml, "count(/root/item)", &doc);
@@ -76,10 +75,10 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // count() requires exactly 1 argument
-        let result = evaluate(&doc, "count()");
+        let result = doc.query("count()");
         assert!(result.is_err(), "count() without args should fail");
 
-        let result = evaluate(&doc, "count(/root, /root)");
+        let result = doc.query("count(/root, /root)");
         assert!(result.is_err(), "count() with 2 args should fail");
     }
 
@@ -89,7 +88,7 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // count() requires a node-set argument
-        let result = evaluate(&doc, "count('string')");
+        let result = doc.query("count('string')");
         assert!(result.is_err(), "count() with string should fail");
     }
 
@@ -98,7 +97,7 @@ mod node_set_functions {
         let xml = r#"<root><ns:item xmlns:ns="http://example.com"/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "name(/root/ns:item)").unwrap();
+        let result = doc.query("name(/root/ns:item)").unwrap();
         assert_eq!(result.to_string_value(), "ns:item");
     }
 
@@ -107,7 +106,7 @@ mod node_set_functions {
         let xml = r#"<root><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/item[name()='item']").unwrap();
+        let result = doc.query("/root/item[name()='item']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
@@ -119,7 +118,7 @@ mod node_set_functions {
         let xml = r#"<root><ns:item xmlns:ns="http://example.com"/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "local-name(/root/ns:item)").unwrap();
+        let result = doc.query("local-name(/root/ns:item)").unwrap();
         assert_eq!(result.to_string_value(), "item");
     }
 
@@ -129,7 +128,7 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // namespace-uri() returns the namespace URI of the element
-        let result = evaluate(&doc, "namespace-uri(/root/ns:item)").unwrap();
+        let result = doc.query("namespace-uri(/root/ns:item)").unwrap();
         // The namespace may or may not be resolved depending on implementation
         // Just verify it returns a string (empty or the URI)
         let uri = result.to_string_value();
@@ -141,7 +140,7 @@ mod node_set_functions {
         let xml = r#"<root><item id="a">A</item><item id="b">B</item><item id="c">C</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "id('b')").unwrap();
+        let result = doc.query("id('b')").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("B".to_string()));
@@ -156,7 +155,7 @@ mod node_set_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // id() can take space-separated IDs
-        let result = evaluate(&doc, "id('a c')").unwrap();
+        let result = doc.query("id('a c')").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -166,7 +165,7 @@ mod node_set_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "id()");
+        let result = doc.query("id()");
         assert!(result.is_err(), "id() without args should fail");
     }
 }
@@ -183,7 +182,7 @@ mod string_functions {
         let xml = r#"<root>hello</root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "string(/root)").unwrap();
+        let result = doc.query("string(/root)").unwrap();
         assert_eq!(result.to_string_value(), "hello");
 
         // String functions return scalar values, not node-sets
@@ -196,7 +195,7 @@ mod string_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // string() with no args uses context node
-        let result = evaluate(&doc, "/root[string()='context text']").unwrap();
+        let result = doc.query("/root[string()='context text']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -206,7 +205,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "string('a', 'b')");
+        let result = doc.query("string('a', 'b')");
         assert!(result.is_err(), "string() with 2 args should fail");
     }
 
@@ -215,7 +214,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "concat('a', 'b', 'c')").unwrap();
+        let result = doc.query("concat('a', 'b', 'c')").unwrap();
         assert_eq!(result.to_string_value(), "abc");
 
         // Scalar result - libxml comparison not applicable
@@ -227,7 +226,7 @@ mod string_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // concat() requires at least 2 arguments
-        let result = evaluate(&doc, "concat('a')");
+        let result = doc.query("concat('a')");
         assert!(result.is_err(), "concat() with 1 arg should fail");
     }
 
@@ -236,10 +235,10 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "starts-with('hello', 'he')").unwrap();
+        let result = doc.query("starts-with('hello', 'he')").unwrap();
         assert!(result.to_boolean());
 
-        let result = evaluate(&doc, "starts-with('hello', 'lo')").unwrap();
+        let result = doc.query("starts-with('hello', 'lo')").unwrap();
         assert!(!result.to_boolean());
 
         // Scalar result - libxml comparison not applicable
@@ -250,10 +249,10 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "starts-with('a')");
+        let result = doc.query("starts-with('a')");
         assert!(result.is_err(), "starts-with() with 1 arg should fail");
 
-        let result = evaluate(&doc, "starts-with('a', 'b', 'c')");
+        let result = doc.query("starts-with('a', 'b', 'c')");
         assert!(result.is_err(), "starts-with() with 3 args should fail");
     }
 
@@ -262,10 +261,10 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "contains('hello world', 'wor')").unwrap();
+        let result = doc.query("contains('hello world', 'wor')").unwrap();
         assert!(result.to_boolean());
 
-        let result = evaluate(&doc, "contains('hello', 'xyz')").unwrap();
+        let result = doc.query("contains('hello', 'xyz')").unwrap();
         assert!(!result.to_boolean());
 
         // Scalar result - libxml comparison not applicable
@@ -276,7 +275,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "contains('a')");
+        let result = doc.query("contains('a')");
         assert!(result.is_err());
     }
 
@@ -286,11 +285,11 @@ mod string_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // 2 args: start to end
-        let result = evaluate(&doc, "substring('12345', 2)").unwrap();
+        let result = doc.query("substring('12345', 2)").unwrap();
         assert_eq!(result.to_string_value(), "2345");
 
         // 3 args: start and length
-        let result = evaluate(&doc, "substring('12345', 2, 3)").unwrap();
+        let result = doc.query("substring('12345', 2, 3)").unwrap();
         assert_eq!(result.to_string_value(), "234");
 
         compare_with_libxml!(xpath: xml, "substring('12345', 2, 3)", &doc);
@@ -302,7 +301,7 @@ mod string_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // NaN start returns empty string
-        let result = evaluate(&doc, "substring('hello', number('x'))").unwrap();
+        let result = doc.query("substring('hello', number('x'))").unwrap();
         assert_eq!(result.to_string_value(), "");
     }
 
@@ -311,7 +310,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring('hello', 2, -1)").unwrap();
+        let result = doc.query("substring('hello', 2, -1)").unwrap();
         assert_eq!(result.to_string_value(), "");
     }
 
@@ -320,10 +319,10 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring('a')");
+        let result = doc.query("substring('a')");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "substring('a', 1, 2, 3)");
+        let result = doc.query("substring('a', 1, 2, 3)");
         assert!(result.is_err());
     }
 
@@ -332,13 +331,13 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring-before('hello/world', '/')").unwrap();
+        let result = doc.query("substring-before('hello/world', '/')").unwrap();
         assert_eq!(result.to_string_value(), "hello");
 
-        let result = evaluate(&doc, "substring-before('hello', 'x')").unwrap();
+        let result = doc.query("substring-before('hello', 'x')").unwrap();
         assert_eq!(result.to_string_value(), "");
 
-        let result = evaluate(&doc, "substring-before('hello', '')").unwrap();
+        let result = doc.query("substring-before('hello', '')").unwrap();
         assert_eq!(result.to_string_value(), "");
 
         compare_with_libxml!(xpath: xml, "substring-before('hello/world', '/')", &doc);
@@ -349,7 +348,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring-before('a')");
+        let result = doc.query("substring-before('a')");
         assert!(result.is_err());
     }
 
@@ -358,13 +357,13 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring-after('hello/world', '/')").unwrap();
+        let result = doc.query("substring-after('hello/world', '/')").unwrap();
         assert_eq!(result.to_string_value(), "world");
 
-        let result = evaluate(&doc, "substring-after('hello', 'x')").unwrap();
+        let result = doc.query("substring-after('hello', 'x')").unwrap();
         assert_eq!(result.to_string_value(), "");
 
-        let result = evaluate(&doc, "substring-after('hello', '')").unwrap();
+        let result = doc.query("substring-after('hello', '')").unwrap();
         assert_eq!(result.to_string_value(), "hello");
 
         compare_with_libxml!(xpath: xml, "substring-after('hello/world', '/')", &doc);
@@ -375,7 +374,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "substring-after('a')");
+        let result = doc.query("substring-after('a')");
         assert!(result.is_err());
     }
 
@@ -384,7 +383,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "string-length('hello')").unwrap();
+        let result = doc.query("string-length('hello')").unwrap();
         assert_eq!(result.to_number(), 5.0);
 
         compare_with_libxml!(xpath: xml, "string-length('hello')", &doc);
@@ -396,7 +395,7 @@ mod string_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // string-length() with no args uses context node
-        let result = evaluate(&doc, "/root[string-length()=4]").unwrap();
+        let result = doc.query("/root[string-length()=4]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -406,7 +405,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "string-length('a', 'b')");
+        let result = doc.query("string-length('a', 'b')");
         assert!(result.is_err());
     }
 
@@ -415,7 +414,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "normalize-space('  hello   world  ')").unwrap();
+        let result = doc.query("normalize-space('  hello   world  ')").unwrap();
         assert_eq!(result.to_string_value(), "hello world");
 
         compare_with_libxml!(xpath: xml, "normalize-space('  hello   world  ')", &doc);
@@ -426,7 +425,7 @@ mod string_functions {
         let xml = r#"<root>  spacy  text  </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root[normalize-space()='spacy text']").unwrap();
+        let result = doc.query("/root[normalize-space()='spacy text']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -436,7 +435,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "normalize-space('a', 'b')");
+        let result = doc.query("normalize-space('a', 'b')");
         assert!(result.is_err());
     }
 
@@ -445,11 +444,11 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "translate('bar', 'abc', 'ABC')").unwrap();
+        let result = doc.query("translate('bar', 'abc', 'ABC')").unwrap();
         assert_eq!(result.to_string_value(), "BAr");
 
         // Removal: no corresponding char in 'to'
-        let result = evaluate(&doc, "translate('--aaa--', 'abc-', 'ABC')").unwrap();
+        let result = doc.query("translate('--aaa--', 'abc-', 'ABC')").unwrap();
         assert_eq!(result.to_string_value(), "AAA");
 
         compare_with_libxml!(xpath: xml, "translate('bar', 'abc', 'ABC')", &doc);
@@ -460,7 +459,7 @@ mod string_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "translate('a', 'b')");
+        let result = doc.query("translate('a', 'b')");
         assert!(result.is_err());
     }
 }
@@ -478,19 +477,19 @@ mod boolean_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Non-empty string is true
-        let result = evaluate(&doc, "boolean('text')").unwrap();
+        let result = doc.query("boolean('text')").unwrap();
         assert!(result.to_boolean());
 
         // Empty string is false
-        let result = evaluate(&doc, "boolean('')").unwrap();
+        let result = doc.query("boolean('')").unwrap();
         assert!(!result.to_boolean());
 
         // Non-zero number is true
-        let result = evaluate(&doc, "boolean(1)").unwrap();
+        let result = doc.query("boolean(1)").unwrap();
         assert!(result.to_boolean());
 
         // Zero is false
-        let result = evaluate(&doc, "boolean(0)").unwrap();
+        let result = doc.query("boolean(0)").unwrap();
         assert!(!result.to_boolean());
 
         compare_with_libxml!(xpath: xml, "boolean('text')", &doc);
@@ -501,10 +500,10 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "boolean()");
+        let result = doc.query("boolean()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "boolean('a', 'b')");
+        let result = doc.query("boolean('a', 'b')");
         assert!(result.is_err());
     }
 
@@ -513,10 +512,10 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "not(true())").unwrap();
+        let result = doc.query("not(true())").unwrap();
         assert!(!result.to_boolean());
 
-        let result = evaluate(&doc, "not(false())").unwrap();
+        let result = doc.query("not(false())").unwrap();
         assert!(result.to_boolean());
 
         compare_with_libxml!(xpath: xml, "not(true())", &doc);
@@ -527,10 +526,10 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "not()");
+        let result = doc.query("not()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "not(true(), false())");
+        let result = doc.query("not(true(), false())");
         assert!(result.is_err());
     }
 
@@ -539,7 +538,7 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "true()").unwrap();
+        let result = doc.query("true()").unwrap();
         assert!(result.to_boolean());
 
         compare_with_libxml!(xpath: xml, "true()", &doc);
@@ -550,7 +549,7 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "true(1)");
+        let result = doc.query("true(1)");
         assert!(result.is_err());
     }
 
@@ -559,7 +558,7 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "false()").unwrap();
+        let result = doc.query("false()").unwrap();
         assert!(!result.to_boolean());
 
         compare_with_libxml!(xpath: xml, "false()", &doc);
@@ -570,7 +569,7 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "false(1)");
+        let result = doc.query("false(1)");
         assert!(result.is_err());
     }
 
@@ -580,12 +579,12 @@ mod boolean_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // lang() matches 'en' on root
-        let result = evaluate(&doc, "/root[lang('en')]").unwrap();
+        let result = doc.query("/root[lang('en')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
         // lang() matches sublanguage 'en-US' on item
-        let result = evaluate(&doc, "/root/item[lang('en')]").unwrap();
+        let result = doc.query("/root/item[lang('en')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -595,7 +594,7 @@ mod boolean_functions {
         let xml = r#"<root xml:lang="en"><item>text</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root[lang('fr')]").unwrap();
+        let result = doc.query("/root[lang('fr')]").unwrap();
         let nodes = result.into_nodes();
         assert!(nodes.is_empty());
     }
@@ -605,10 +604,10 @@ mod boolean_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "lang()");
+        let result = doc.query("lang()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "lang('en', 'fr')");
+        let result = doc.query("lang('en', 'fr')");
         assert!(result.is_err());
     }
 }
@@ -625,11 +624,11 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "number('42')").unwrap();
+        let result = doc.query("number('42')").unwrap();
         assert_eq!(result.to_number(), 42.0);
 
         // Non-numeric string becomes NaN
-        let result = evaluate(&doc, "number('not a number')").unwrap();
+        let result = doc.query("number('not a number')").unwrap();
         assert!(result.to_number().is_nan());
 
         compare_with_libxml!(xpath: xml, "number('42')", &doc);
@@ -641,7 +640,7 @@ mod number_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // number() with no args uses context node
-        let result = evaluate(&doc, "/root[number()=123]").unwrap();
+        let result = doc.query("/root[number()=123]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -651,7 +650,7 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "number('1', '2')");
+        let result = doc.query("number('1', '2')");
         assert!(result.is_err());
     }
 
@@ -660,7 +659,7 @@ mod number_functions {
         let xml = r#"<root><n>1</n><n>2</n><n>3</n></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "sum(/root/n)").unwrap();
+        let result = doc.query("sum(/root/n)").unwrap();
         assert_eq!(result.to_number(), 6.0);
 
         compare_with_libxml!(xpath: xml, "sum(/root/n)", &doc);
@@ -672,7 +671,7 @@ mod number_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Sum with non-numeric node returns NaN
-        let result = evaluate(&doc, "sum(/root/n)").unwrap();
+        let result = doc.query("sum(/root/n)").unwrap();
         assert!(result.to_number().is_nan());
     }
 
@@ -681,14 +680,14 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "sum()");
+        let result = doc.query("sum()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "sum(/root, /root)");
+        let result = doc.query("sum(/root, /root)");
         assert!(result.is_err());
 
         // sum() requires node-set
-        let result = evaluate(&doc, "sum('string')");
+        let result = doc.query("sum('string')");
         assert!(result.is_err());
     }
 
@@ -697,10 +696,10 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "floor(3.7)").unwrap();
+        let result = doc.query("floor(3.7)").unwrap();
         assert_eq!(result.to_number(), 3.0);
 
-        let result = evaluate(&doc, "floor(-3.7)").unwrap();
+        let result = doc.query("floor(-3.7)").unwrap();
         assert_eq!(result.to_number(), -4.0);
 
         compare_with_libxml!(xpath: xml, "floor(3.7)", &doc);
@@ -711,10 +710,10 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "floor()");
+        let result = doc.query("floor()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "floor(1, 2)");
+        let result = doc.query("floor(1, 2)");
         assert!(result.is_err());
     }
 
@@ -723,10 +722,10 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "ceiling(3.2)").unwrap();
+        let result = doc.query("ceiling(3.2)").unwrap();
         assert_eq!(result.to_number(), 4.0);
 
-        let result = evaluate(&doc, "ceiling(-3.2)").unwrap();
+        let result = doc.query("ceiling(-3.2)").unwrap();
         assert_eq!(result.to_number(), -3.0);
 
         compare_with_libxml!(xpath: xml, "ceiling(3.2)", &doc);
@@ -737,10 +736,10 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "ceiling()");
+        let result = doc.query("ceiling()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "ceiling(1, 2)");
+        let result = doc.query("ceiling(1, 2)");
         assert!(result.is_err());
     }
 
@@ -750,13 +749,13 @@ mod number_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // XPath rounds .5 towards positive infinity
-        let result = evaluate(&doc, "round(1.5)").unwrap();
+        let result = doc.query("round(1.5)").unwrap();
         assert_eq!(result.to_number(), 2.0);
 
-        let result = evaluate(&doc, "round(-1.5)").unwrap();
+        let result = doc.query("round(-1.5)").unwrap();
         assert_eq!(result.to_number(), -1.0);
 
-        let result = evaluate(&doc, "round(2.5)").unwrap();
+        let result = doc.query("round(2.5)").unwrap();
         assert_eq!(result.to_number(), 3.0);
 
         compare_with_libxml!(xpath: xml, "round(1.5)", &doc);
@@ -768,15 +767,15 @@ mod number_functions {
         let doc = Parser::from(xml).parse().unwrap();
 
         // NaN remains NaN
-        let result = evaluate(&doc, "round(number('x'))").unwrap();
+        let result = doc.query("round(number('x'))").unwrap();
         assert!(result.to_number().is_nan());
 
         // Zero remains zero
-        let result = evaluate(&doc, "round(0)").unwrap();
+        let result = doc.query("round(0)").unwrap();
         assert_eq!(result.to_number(), 0.0);
 
         // Test with negative zero (edge case)
-        let result = evaluate(&doc, "round(-0.4)").unwrap();
+        let result = doc.query("round(-0.4)").unwrap();
         assert_eq!(result.to_number(), 0.0);
     }
 
@@ -785,10 +784,10 @@ mod number_functions {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "round()");
+        let result = doc.query("round()");
         assert!(result.is_err());
 
-        let result = evaluate(&doc, "round(1, 2)");
+        let result = doc.query("round(1, 2)");
         assert!(result.is_err());
     }
 }
@@ -806,7 +805,7 @@ mod text_function {
         let doc = Parser::from(xml).parse().unwrap();
 
         // text() is typically used as a node test, but can be called as function too
-        let result = evaluate(&doc, "/root/text()").unwrap();
+        let result = doc.query("/root/text()").unwrap();
         let texts = fastxml::xpath::collect_text_values(&result);
         assert_eq!(texts, vec!["content"]);
     }
@@ -819,7 +818,7 @@ mod text_function {
         // text() as function should not take arguments
         // This depends on how text() is parsed - it might be parsed as a node test
         // Let's test the xpath that would reach fn_text
-        let result = evaluate(&doc, "/root[text(1)]");
+        let result = doc.query("/root[text(1)]");
         // If parsed as node test, error might differ
         // Just checking it doesn't panic is sufficient
         let _ = result;

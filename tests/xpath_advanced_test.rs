@@ -10,9 +10,8 @@
 
 mod common;
 
-use fastxml::Parser;
-use fastxml::compat::evaluate;
 use fastxml::xpath::collect_text_values;
+use fastxml::{Parser, QueryExt};
 
 // =============================================================================
 // Attribute Axis Tests
@@ -27,7 +26,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // @id shorthand for attribute::id
-        let result = evaluate(&doc, "//item/@id").unwrap();
+        let result = doc.query("//item/@id").unwrap();
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 2);
         assert!(values.contains(&"1".to_string()));
@@ -42,7 +41,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Explicit attribute axis
-        let result = evaluate(&doc, "//item/attribute::id").unwrap();
+        let result = doc.query("//item/attribute::id").unwrap();
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], "1");
@@ -56,7 +55,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // All attributes
-        let result = evaluate(&doc, "//item/@*").unwrap();
+        let result = doc.query("//item/@*").unwrap();
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 3);
         assert!(values.contains(&"1".to_string()));
@@ -76,7 +75,7 @@ mod attribute_axis {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[@status='active']").unwrap();
+        let result = doc.query("//item[@status='active']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
 
@@ -93,7 +92,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Check for existence of @id
-        let result = evaluate(&doc, "//item[@id]").unwrap();
+        let result = doc.query("//item[@id]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
 
@@ -110,7 +109,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Multiple attribute conditions with AND
-        let result = evaluate(&doc, "//item[@type='A' and @status='active']").unwrap();
+        let result = doc.query("//item[@type='A' and @status='active']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
@@ -127,7 +126,7 @@ mod attribute_axis {
         let doc = Parser::from(xml).parse().unwrap();
 
         // OR condition on attributes
-        let result = evaluate(&doc, "//item[@type='A' or @type='B']").unwrap();
+        let result = doc.query("//item[@type='A' or @type='B']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
 
@@ -143,7 +142,7 @@ mod attribute_axis {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[not(@status='active')]").unwrap();
+        let result = doc.query("//item[not(@status='active')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
@@ -164,7 +163,7 @@ mod attribute_axis {
 
         // @*[local-name()='id'] should only select attributes whose local-name is 'id'
         // So .//*[@*[local-name()='id']] should match elements that have an 'id' attribute
-        let result = evaluate(&doc, ".//*[@*[local-name()='id']]").unwrap();
+        let result = doc.query(".//*[@*[local-name()='id']]").unwrap();
         let nodes = result.into_nodes();
         // Only item[0] (id="1") and item[2] (id="3") have 'id' attribute
         assert_eq!(
@@ -196,11 +195,9 @@ mod attribute_axis {
         // Should only match elements that have an attribute with
         // namespace-uri='http://www.opengis.net/gml' and local-name='id'
         // Only bldg:Building has gml:id, the others have non-gml attributes
-        let result = evaluate(
-            &doc,
-            ".//*[@*[namespace-uri()='http://www.opengis.net/gml' and local-name()='id']]",
-        )
-        .unwrap();
+        let result = doc
+            .query(".//*[@*[namespace-uri()='http://www.opengis.net/gml' and local-name()='id']]")
+            .unwrap();
         let nodes = result.into_nodes();
         assert_eq!(
             nodes.len(),
@@ -224,7 +221,7 @@ mod node_test {
         let xml = r#"<root><child>text</child></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/node()").unwrap();
+        let result = doc.query("/root/node()").unwrap();
         let nodes = result.into_nodes();
         // Should include the child element (and possibly text nodes)
         assert!(!nodes.is_empty());
@@ -237,7 +234,7 @@ mod node_test {
         let xml = r#"<root><a><b>text</b></a><c/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//node()").unwrap();
+        let result = doc.query("//node()").unwrap();
         let nodes = result.into_nodes();
         // Should include root, a, b, c, and text node (5 total)
         // //node() is equivalent to /descendant-or-self::node()/child::node()
@@ -252,8 +249,8 @@ mod node_test {
         let doc = Parser::from(xml).parse().unwrap();
 
         // node() includes text nodes, * only includes elements
-        let node_result = evaluate(&doc, "/root/node()").unwrap();
-        let wildcard_result = evaluate(&doc, "/root/*").unwrap();
+        let node_result = doc.query("/root/node()").unwrap();
+        let wildcard_result = doc.query("/root/*").unwrap();
 
         let node_count = node_result.into_nodes().len();
         let wildcard_count = wildcard_result.into_nodes().len();
@@ -270,7 +267,7 @@ mod node_test {
         let xml = r#"<root><a/><b/><c/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/node()[2]").unwrap();
+        let result = doc.query("/root/node()[2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
@@ -290,7 +287,7 @@ mod complex_predicates {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[position() > 2]").unwrap();
+        let result = doc.query("//item[position() > 2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -300,7 +297,7 @@ mod complex_predicates {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[position() < 3]").unwrap();
+        let result = doc.query("//item[position() < 3]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -310,7 +307,9 @@ mod complex_predicates {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item><item>4</item><item>5</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[position() >= 2 and position() <= 4]").unwrap();
+        let result = doc
+            .query("//item[position() >= 2 and position() <= 4]")
+            .unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 3);
     }
@@ -320,7 +319,7 @@ mod complex_predicates {
         let xml = r#"<root><item>ab</item><item>abcdef</item><item>abc</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[string-length() > 3]").unwrap();
+        let result = doc.query("//item[string-length() > 3]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("abcdef".to_string()));
@@ -332,7 +331,7 @@ mod complex_predicates {
             r#"<root><item>hello world</item><item>goodbye</item><item>world peace</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[contains(., 'world')]").unwrap();
+        let result = doc.query("//item[contains(., 'world')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -342,7 +341,7 @@ mod complex_predicates {
         let xml = r#"<root><item>prefix_a</item><item>other</item><item>prefix_b</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[starts-with(., 'prefix')]").unwrap();
+        let result = doc.query("//item[starts-with(., 'prefix')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -360,7 +359,7 @@ mod complex_predicates {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//parent[child[@status='active']]").unwrap();
+        let result = doc.query("//parent[child[@status='active']]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -374,7 +373,7 @@ mod complex_predicates {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//group[count(item) >= 2]").unwrap();
+        let result = doc.query("//group[count(item) >= 2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -384,7 +383,7 @@ mod complex_predicates {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[last()]").unwrap();
+        let result = doc.query("//item[last()]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("3".to_string()));
@@ -395,7 +394,7 @@ mod complex_predicates {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[position() = last() - 1]").unwrap();
+        let result = doc.query("//item[position() = last() - 1]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("2".to_string()));
@@ -415,7 +414,7 @@ mod relative_paths {
         let xml = r#"<root><parent><child/></parent></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/parent/child/..").unwrap();
+        let result = doc.query("/root/parent/child/..").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "parent");
@@ -426,7 +425,7 @@ mod relative_paths {
         let xml = r#"<root><parent><child><grandchild/></child></parent></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/parent/child/grandchild/../..").unwrap();
+        let result = doc.query("/root/parent/child/grandchild/../..").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "parent");
@@ -437,7 +436,7 @@ mod relative_paths {
         let xml = r#"<root><child/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/child/.").unwrap();
+        let result = doc.query("/root/child/.").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "child");
@@ -449,7 +448,7 @@ mod relative_paths {
         let doc = Parser::from(xml).parse().unwrap();
 
         // From b, go to parent, then find sibling a
-        let result = evaluate(&doc, "/root/b/../a").unwrap();
+        let result = doc.query("/root/b/../a").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "a");
@@ -500,7 +499,7 @@ mod union_edge_cases {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Same path twice should not duplicate
-        let result = evaluate(&doc, "//item | //item").unwrap();
+        let result = doc.query("//item | //item").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -511,7 +510,7 @@ mod union_edge_cases {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Descendant axis | child axis
-        let result = evaluate(&doc, "//b | /root/c").unwrap();
+        let result = doc.query("//b | /root/c").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -521,7 +520,7 @@ mod union_edge_cases {
         let xml = r#"<root><a>text1</a><b>text2</b></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//a/text() | //b/text()").unwrap();
+        let result = doc.query("//a/text() | //b/text()").unwrap();
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 2);
         assert!(values.contains(&"text1".to_string()));
@@ -535,7 +534,7 @@ mod union_edge_cases {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Union returns all elements (order may vary by implementation)
-        let result = evaluate(&doc, "//c | //a | //b").unwrap();
+        let result = doc.query("//c | //a | //b").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 3);
 
@@ -551,7 +550,7 @@ mod union_edge_cases {
         let xml = r#"<root><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//nonexistent | //alsonothere").unwrap();
+        let result = doc.query("//nonexistent | //alsonothere").unwrap();
         let nodes = result.into_nodes();
         assert!(nodes.is_empty());
     }
@@ -569,7 +568,7 @@ mod sibling_axes {
         let xml = r#"<root><a/><b/><c/><d/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/b/following-sibling::*").unwrap();
+        let result = doc.query("/root/b/following-sibling::*").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].get_name(), "c");
@@ -583,7 +582,7 @@ mod sibling_axes {
         let xml = r#"<root><a/><b/><c/><d/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/c/preceding-sibling::*").unwrap();
+        let result = doc.query("/root/c/preceding-sibling::*").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
 
@@ -595,7 +594,7 @@ mod sibling_axes {
         let xml = r#"<root><item/><other/><item/><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/other/following-sibling::item").unwrap();
+        let result = doc.query("/root/other/following-sibling::item").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
 
@@ -607,7 +606,7 @@ mod sibling_axes {
         let xml = r#"<root><a/><b/><c/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/c/preceding-sibling::*[1]").unwrap();
+        let result = doc.query("/root/c/preceding-sibling::*[1]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "b");
@@ -628,7 +627,7 @@ mod ancestor_axes {
         let xml = r#"<root><parent><child><target/></child></parent></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//target/ancestor::*").unwrap();
+        let result = doc.query("//target/ancestor::*").unwrap();
         let nodes = result.into_nodes();
         // Should include child, parent, root
         assert_eq!(nodes.len(), 3);
@@ -641,7 +640,7 @@ mod ancestor_axes {
         let xml = r#"<root><parent><child><target/></child></parent></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//target/ancestor::parent").unwrap();
+        let result = doc.query("//target/ancestor::parent").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_name(), "parent");
@@ -654,7 +653,7 @@ mod ancestor_axes {
         let xml = r#"<root><parent><target/></parent></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//target/ancestor-or-self::*").unwrap();
+        let result = doc.query("//target/ancestor-or-self::*").unwrap();
         let nodes = result.into_nodes();
         // Should include target, parent, root
         assert_eq!(nodes.len(), 3);
@@ -670,7 +669,7 @@ mod ancestor_axes {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[ancestor::container[@type='A']]").unwrap();
+        let result = doc.query("//item[ancestor::container[@type='A']]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("1".to_string()));
@@ -691,7 +690,7 @@ mod descendant_axes {
         let xml = r#"<root><child><grandchild/></child></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/descendant-or-self::*").unwrap();
+        let result = doc.query("/root/descendant-or-self::*").unwrap();
         let nodes = result.into_nodes();
         // root, child, grandchild
         assert_eq!(nodes.len(), 3);
@@ -704,7 +703,7 @@ mod descendant_axes {
         let xml = r#"<root><a><b><c><d><target/></d></c></b></a></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/descendant::target").unwrap();
+        let result = doc.query("/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
 
@@ -720,7 +719,7 @@ mod descendant_axes {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/descendant::target").unwrap();
+        let result = doc.query("/root/descendant::target").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 3);
 
@@ -741,7 +740,7 @@ mod following_preceding_axes {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Following axis includes all nodes after current node in document order
-        let result = evaluate(&doc, "/root/a/following::*").unwrap();
+        let result = doc.query("/root/a/following::*").unwrap();
         let nodes = result.into_nodes();
         // Should include c, d (not b since it's a descendant, not following)
         assert_eq!(nodes.len(), 2);
@@ -754,7 +753,7 @@ mod following_preceding_axes {
         let xml = r#"<root><a/><b/><c><d/></c></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "/root/c/preceding::*").unwrap();
+        let result = doc.query("/root/c/preceding::*").unwrap();
         let nodes = result.into_nodes();
         // Should include a, b
         assert_eq!(nodes.len(), 2);
@@ -775,7 +774,7 @@ mod edge_cases {
         let xml = r#"<root><item value=""/><item value="text"/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[@value='']").unwrap();
+        let result = doc.query("//item[@value='']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -785,7 +784,7 @@ mod edge_cases {
         let xml = r#"<root><item>   </item><item>text</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[normalize-space()='']").unwrap();
+        let result = doc.query("//item[normalize-space()='']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -796,7 +795,7 @@ mod edge_cases {
         let doc = Parser::from(xml).parse().unwrap();
 
         // XPath 1.0: when comparing string to number, string is converted to number
-        let result = evaluate(&doc, "//item[. > 5]").unwrap();
+        let result = doc.query("//item[. > 5]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("10".to_string()));
@@ -807,7 +806,7 @@ mod edge_cases {
         let xml = r#"<root><item/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[.='']").unwrap();
+        let result = doc.query("//item[.='']").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -817,7 +816,7 @@ mod edge_cases {
         let xml = r#"<root><item>&lt;tag&gt;</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[contains(., '<')]").unwrap();
+        let result = doc.query("//item[contains(., '<')]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -827,7 +826,7 @@ mod edge_cases {
         let xml = r#"<root><item><![CDATA[<not xml>]]></item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item").unwrap();
+        let result = doc.query("//item").unwrap();
         let values = collect_text_values(&result);
         assert_eq!(values.len(), 1);
         assert!(values[0].contains("<not xml>"));
@@ -846,7 +845,7 @@ mod arithmetic {
         let xml = r#"<root><item>1</item><item>2</item><item>3</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[position() = 1 + 1]").unwrap();
+        let result = doc.query("//item[position() = 1 + 1]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("2".to_string()));
@@ -857,7 +856,7 @@ mod arithmetic {
         let xml = r#"<root><item>10</item><item>20</item><item>30</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[. = 2 * 10]").unwrap();
+        let result = doc.query("//item[. = 2 * 10]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("20".to_string()));
@@ -868,7 +867,7 @@ mod arithmetic {
         let xml = r#"<root><item>5</item><item>10</item><item>20</item></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[. = 20 div 2]").unwrap();
+        let result = doc.query("//item[. = 20 div 2]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].get_content(), Some("10".to_string()));
@@ -880,7 +879,7 @@ mod arithmetic {
         let doc = Parser::from(xml).parse().unwrap();
 
         // Select items at odd positions
-        let result = evaluate(&doc, "//item[position() mod 2 = 1]").unwrap();
+        let result = doc.query("//item[position() mod 2 = 1]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].get_content(), Some("1".to_string()));
@@ -906,7 +905,9 @@ mod boolean_logic {
         let doc = Parser::from(xml).parse().unwrap();
 
         // (a=1 AND b=1) OR (a=2 AND b=2)
-        let result = evaluate(&doc, "//item[(@a='1' and @b='1') or (@a='2' and @b='2')]").unwrap();
+        let result = doc
+            .query("//item[(@a='1' and @b='1') or (@a='2' and @b='2')]")
+            .unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 2);
     }
@@ -920,7 +921,9 @@ mod boolean_logic {
         </root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[@status='active' and not(@type='A')]").unwrap();
+        let result = doc
+            .query("//item[@status='active' and not(@type='A')]")
+            .unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
@@ -930,7 +933,7 @@ mod boolean_logic {
         let xml = r#"<root><item status="active"/><item status="inactive"/></root>"#;
         let doc = Parser::from(xml).parse().unwrap();
 
-        let result = evaluate(&doc, "//item[not(not(@status='active'))]").unwrap();
+        let result = doc.query("//item[not(not(@status='active'))]").unwrap();
         let nodes = result.into_nodes();
         assert_eq!(nodes.len(), 1);
     }
