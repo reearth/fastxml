@@ -2,10 +2,10 @@
 
 mod common;
 
+use fastxml::schema::Schema;
 use fastxml::schema::xsd::constraints::{
     ConstraintError, ConstraintValidator, IdentityConstraint, KeyValue,
 };
-use fastxml::schema::xsd::parse_xsd;
 
 // =============================================================================
 // Identity Constraint Tests
@@ -113,7 +113,7 @@ fn test_integer_type_with_string() {
             <xs:element name="count" type="xs:integer"/>
         </xs:schema>"#;
 
-    let schema = parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
     assert!(schema.elements.contains_key("count"));
 }
 
@@ -125,7 +125,7 @@ fn test_date_type_invalid_format() {
             <xs:element name="birthday" type="xs:date"/>
         </xs:schema>"#;
 
-    let schema = parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
     assert!(schema.elements.contains_key("birthday"));
     // Validation of "invalid-date" against xs:date would fail
 }
@@ -138,7 +138,7 @@ fn test_boolean_type_invalid_value() {
             <xs:element name="flag" type="xs:boolean"/>
         </xs:schema>"#;
 
-    let schema = parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
     assert!(schema.elements.contains_key("flag"));
     // Validation of "yes" against xs:boolean would fail
 }
@@ -155,7 +155,7 @@ fn test_decimal_type_precision() {
             </xs:simpleType>
         </xs:schema>"#;
 
-    let schema = parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
     assert!(schema.types.contains_key("Price"));
 }
 
@@ -172,7 +172,7 @@ fn test_wrong_namespace() {
             <xs:element name="item" type="xs:string"/>
         </xs:schema>"#;
 
-    let schema = parse_xsd(xsd.as_bytes()).unwrap();
+    let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
     assert_eq!(
         schema.target_namespace,
         Some("http://example.com/correct".to_string())
@@ -187,7 +187,7 @@ fn test_missing_namespace_declaration() {
             <xs:element name="item" type="custom:Type"/>
         </xs:schema>"#;
 
-    let result = parse_xsd(xsd.as_bytes());
+    let result = Schema::from_xsd(xsd.as_bytes());
     // XSD parser accepts undeclared prefixes during parsing
     // Type resolution with the undeclared prefix happens at validation time
     assert!(

@@ -22,13 +22,12 @@
 //! split across the real gml / core / building namespaces and compiled with
 //! `parse_xsd_multiple`.
 
-use std::io::BufReader;
 use std::sync::Arc;
 
+use fastxml::Parser;
 use fastxml::StructuredError;
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::{DomSchemaValidator, OnePassSchemaValidator};
-use fastxml::schema::xsd::parse_xsd_multiple;
+use fastxml::schema::{Schema, Validator};
 
 // --- GML 3.2 (simplified) -------------------------------------------------
 // Provides the feature/geometry base types that CityGML extends: gml:id,
@@ -205,35 +204,39 @@ const XML_CASE_B_WITH_MEMBER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 /// Compiles the simplified gml / core / building modules into one schema using
 /// the real CityGML 3.0 namespaces (no network fetch).
 fn citygml_schema() -> Arc<CompiledSchema> {
-    let schema = parse_xsd_multiple(&[
-        (
+    let schema = Schema::builder()
+        .add(
             "https://schemas.opengis.net/gml/3.2.1/gml.xsd",
             GML_XSD.as_bytes(),
-        ),
-        (
+        )
+        .add(
             "https://schemas.opengis.net/citygml/3.0/core.xsd",
             CORE_XSD.as_bytes(),
-        ),
-        (
+        )
+        .add(
             "https://schemas.opengis.net/citygml/building/3.0/building.xsd",
             BLDG_XSD.as_bytes(),
-        ),
-    ])
-    .expect("Failed to compile CityGML 3.0 schema modules");
+        )
+        .resolve()
+        .expect("Failed to compile CityGML 3.0 schema modules");
     Arc::new(schema)
 }
 
 fn validate_dom(xml: &str) -> Vec<StructuredError> {
-    let doc = fastxml::parse(xml.as_bytes()).expect("Failed to parse XML");
-    DomSchemaValidator::new(citygml_schema())
-        .validate(&doc)
+    let doc = Parser::from(xml).parse().expect("Failed to parse XML");
+    Validator::from(&doc)
+        .schema(citygml_schema())
+        .run()
         .expect("Validation failed")
+        .into_entries()
 }
 
 fn validate_onepass(xml: &str) -> Vec<StructuredError> {
-    OnePassSchemaValidator::new(citygml_schema())
-        .validate(BufReader::new(xml.as_bytes()))
+    Validator::from(xml)
+        .schema(citygml_schema())
+        .run()
         .expect("Validation failed")
+        .into_entries()
 }
 
 fn is_valid(errors: &[StructuredError]) -> bool {
