@@ -225,7 +225,9 @@ fn test_api_memory_limit() {
 /// Test: evaluate(document, xpath) -> Result<XPathResult>
 #[test]
 fn test_api_evaluate() {
-    let doc = Parser::from("<root><child>value</child></root>").parse().unwrap();
+    let doc = Parser::from("<root><child>value</child></root>")
+        .parse()
+        .unwrap();
 
     // Returns nodes
     let result = evaluate(&doc, "/root/child").unwrap();
@@ -236,7 +238,9 @@ fn test_api_evaluate() {
 /// Test: create_context(document) -> Result<XmlContext>
 #[test]
 fn test_api_create_context() {
-    let doc = Parser::from("<root xmlns:ns='http://example.com'><ns:child/></root>").parse().unwrap();
+    let doc = Parser::from("<root xmlns:ns='http://example.com'><ns:child/></root>")
+        .parse()
+        .unwrap();
     let ctx = create_context(&doc).unwrap();
 
     // Context should have namespaces from document
@@ -248,7 +252,9 @@ fn test_api_create_context() {
 /// Test: find_nodes_by_xpath(ctx, xpath, node) -> Result<Vec<XmlNode>>
 #[test]
 fn test_api_find_nodes_by_xpath() {
-    let doc = Parser::from("<root><a><target/></a><b><target/></b></root>").parse().unwrap();
+    let doc = Parser::from("<root><a><target/></a><b><target/></b></root>")
+        .parse()
+        .unwrap();
     let ctx = create_context(&doc).unwrap();
     let root = get_root_node(&doc).unwrap();
 
@@ -275,7 +281,9 @@ fn test_api_get_node_tag() {
 /// Test: node_to_xml_string(document, node) -> Result<String>
 #[test]
 fn test_api_node_to_xml_string() {
-    let doc = Parser::from(r#"<root attr="value"><child>text</child></root>"#).parse().unwrap();
+    let doc = Parser::from(r#"<root attr="value"><child>text</child></root>"#)
+        .parse()
+        .unwrap();
     let mut root = get_root_node(&doc).unwrap();
 
     let xml_str = node_to_xml_string(&doc, &mut root).unwrap();
@@ -287,7 +295,9 @@ fn test_api_node_to_xml_string() {
 /// Test: collect_text_values(xpath_value) -> Vec<String>
 #[test]
 fn test_api_collect_text_values() {
-    let doc = Parser::from("<root><item>one</item><item>two</item><item>three</item></root>").parse().unwrap();
+    let doc = Parser::from("<root><item>one</item><item>two</item><item>three</item></root>")
+        .parse()
+        .unwrap();
     let result = evaluate(&doc, "/root/item/text()").unwrap();
     let texts = collect_text_values(&result);
 

@@ -85,7 +85,10 @@ fn test_gml_document_validation() {
         <gml:lowerCorner>35.0 135.0 0.0</gml:lowerCorner>
     </gml:Envelope>"#;
 
-    let report = Validator::from(xml).schema(Schema::builtin()).run().unwrap();
+    let report = Validator::from(xml)
+        .schema(Schema::builtin())
+        .run()
+        .unwrap();
 
     // Validation should pass
     assert!(report.is_valid());
