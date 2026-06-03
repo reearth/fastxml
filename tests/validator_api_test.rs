@@ -3,7 +3,7 @@
 use std::io::BufReader;
 use std::sync::Arc;
 
-use fastxml::parse;
+use fastxml::Parser;
 use fastxml::schema::{Schema, Validator};
 
 const XSD: &str = r#"<?xml version="1.0"?>
@@ -35,14 +35,14 @@ fn streaming_explicit_schema_invalid() {
 
 #[test]
 fn dom_explicit_schema_valid() {
-    let doc = parse(VALID.as_bytes()).unwrap();
+    let doc = Parser::from(VALID).parse().unwrap();
     let report = Validator::from(&doc).schema(schema()).run().unwrap();
     assert!(report.is_valid(), "errors: {:?}", report.errors());
 }
 
 #[test]
 fn dom_explicit_schema_invalid() {
-    let doc = parse(INVALID.as_bytes()).unwrap();
+    let doc = Parser::from(INVALID).parse().unwrap();
     let report = Validator::from(&doc).schema(schema()).run().unwrap();
     assert!(!report.is_valid());
 }
@@ -69,7 +69,7 @@ fn from_bytes_input() {
 fn dom_and_streaming_agree() {
     let s = schema();
     for (xml, expected_valid) in [(VALID, true), (INVALID, false)] {
-        let doc = parse(xml.as_bytes()).unwrap();
+        let doc = Parser::from(xml).parse().unwrap();
         let dom = Validator::from(&doc).schema(Arc::clone(&s)).run().unwrap();
         let stream = Validator::from(xml).schema(Arc::clone(&s)).run().unwrap();
         assert_eq!(dom.is_valid(), expected_valid, "DOM disagreed for {xml}");

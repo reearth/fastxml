@@ -3,7 +3,7 @@
 
 mod common;
 
-use fastxml::{evaluate, parse};
+use fastxml::{Parser, evaluate};
 
 // =============================================================================
 // Problem 1: get_namespace() should return the namespace for elements
@@ -14,7 +14,7 @@ fn test_element_namespace() {
     let xml = r#"<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0">
         <core:child/>
     </core:CityModel>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
 
     let ns = root.get_namespace();
@@ -32,7 +32,7 @@ fn test_child_element_namespace() {
     let xml = r#"<core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0">
         <core:child/>
     </core:CityModel>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let child = root.get_child_elements()[0].clone();
 
@@ -49,7 +49,7 @@ fn test_element_namespace_uri() {
     let xml = r#"<gml:root xmlns:gml="http://www.opengis.net/gml">
         <gml:child/>
     </gml:root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
 
     assert_eq!(
@@ -63,7 +63,7 @@ fn test_default_namespace() {
     let xml = r#"<root xmlns="http://example.com/default">
         <child/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
 
     // Default namespace should be resolved
@@ -77,7 +77,7 @@ fn test_multiple_namespaces() {
         <a:child1/>
         <b:child2/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let children = root.get_child_elements();
 
@@ -97,7 +97,7 @@ fn test_nested_namespace_override() {
             </inner>
         </ns:outer>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let outer = root.get_child_elements()[0].clone();
     let inner = outer.get_child_elements()[0].clone();
@@ -125,7 +125,7 @@ fn test_get_attribute_ns() {
     let xml = r#"<bldg:Building xmlns:gml="http://www.opengis.net/gml"
                                 xmlns:bldg="http://example.com"
                                 gml:id="test123"/>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
 
     let gml_id = root.get_attribute_ns("id", "http://www.opengis.net/gml");
@@ -137,7 +137,7 @@ fn test_get_attribute_ns_inherited() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
         <child gml:id="child123"/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let child = root.get_child_elements()[0].clone();
 
@@ -155,7 +155,7 @@ fn test_get_attribute_ns_deeply_nested() {
             </level2>
         </level1>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let level1 = root.get_child_elements()[0].clone();
     let level2 = level1.get_child_elements()[0].clone();
@@ -175,7 +175,7 @@ fn test_xpath_namespace_uri_function() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
         <gml:Envelope/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "namespace-uri(/root/gml:Envelope)").unwrap();
     assert_eq!(result.to_string_value(), "http://www.opengis.net/gml");
@@ -187,7 +187,7 @@ fn test_xpath_namespace_uri_predicate() {
         <gml:Envelope/>
         <other/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Select elements by namespace URI
     let result = evaluate(
@@ -201,7 +201,7 @@ fn test_xpath_namespace_uri_predicate() {
 #[test]
 fn test_xpath_namespace_uri_empty_for_no_namespace() {
     let xml = r#"<root><child/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "namespace-uri(/root/child)").unwrap();
     assert_eq!(result.to_string_value(), "");
@@ -216,7 +216,7 @@ fn test_xpath_local_name_with_namespace() {
     let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
         <gml:Envelope/>
     </root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let result = evaluate(&doc, "local-name(/root/gml:Envelope)").unwrap();
     assert_eq!(result.to_string_value(), "Envelope");
@@ -229,7 +229,7 @@ fn test_xpath_local_name_with_namespace() {
 #[test]
 fn test_get_attributes_local_name_keys() {
     let xml = r#"<element xmlns:gml="http://www.opengis.net/gml" gml:id="test" name="foo"/>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let attrs = root.get_attributes();
 
@@ -245,7 +245,7 @@ fn test_get_attributes_local_name_keys() {
 fn test_get_attributes_multiple_namespaced() {
     let xml = r#"<root xmlns:a="http://a.com" xmlns:b="http://b.com"
                       a:x="1" b:x="2" y="3"/>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = doc.get_root_element().unwrap();
     let attrs = root.get_attributes();
 
@@ -273,7 +273,7 @@ fn test_citygml_like_structure() {
         </bldg:Building>
     </core:cityObjectMember>
 </core:CityModel>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Test XPath with namespace-uri()
     let result = evaluate(

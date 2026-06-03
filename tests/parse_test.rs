@@ -2,12 +2,12 @@
 
 mod common;
 
-use fastxml::{NodeType, get_node_tag, get_root_node, parse};
+use fastxml::{NodeType, Parser, get_node_tag, get_root_node};
 
 #[test]
 fn test_parse_simple_xml() {
     let xml = r#"<root><child>text</child></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     assert_eq!(get_node_tag(&root), "root");
@@ -24,7 +24,7 @@ fn test_parse_simple_xml() {
 #[test]
 fn test_parse_with_attributes() {
     let xml = r#"<root id="1" name="test"><child type="element"/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_attribute("id"), Some("1".to_string()));
@@ -50,7 +50,7 @@ fn test_parse_namespaced_xml() {
         </gml:featureMember>
     </gml:root>"#;
 
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     assert_eq!(root.get_name(), "root");
@@ -67,7 +67,7 @@ fn test_parse_namespaced_xml() {
 #[test]
 fn test_parse_mixed_content() {
     let xml = r#"<root>text before<child/>text after</root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     let children = root.get_child_nodes();
@@ -81,7 +81,7 @@ fn test_parse_mixed_content() {
 #[test]
 fn test_parse_cdata() {
     let xml = r#"<root><![CDATA[<not xml> & special chars]]></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     let content = root.get_content().unwrap();
@@ -94,7 +94,7 @@ fn test_parse_cdata() {
 #[test]
 fn test_parse_comments() {
     let xml = r#"<root><!-- this is a comment --><child/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     let children = root.get_child_nodes();
@@ -117,7 +117,7 @@ fn test_parse_comments() {
 #[test]
 fn test_parse_empty_elements() {
     let xml = r#"<root><empty1/><empty2></empty2></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     let children = root.get_child_elements();
@@ -129,7 +129,7 @@ fn test_parse_empty_elements() {
 #[test]
 fn test_parse_deeply_nested() {
     let xml = r#"<a><b><c><d><e><f>deep</f></e></d></c></b></a>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "a");
@@ -152,7 +152,7 @@ fn test_parse_deeply_nested() {
 #[test]
 fn test_parse_special_characters() {
     let xml = r#"<root attr="&lt;value&gt;">&amp; &lt; &gt; &quot; &apos;</root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     let root = get_root_node(&doc).unwrap();
     let attr = root.get_attribute("attr").unwrap();
@@ -164,7 +164,7 @@ fn test_parse_special_characters() {
 #[test]
 fn test_node_count() {
     let xml = r#"<root><a/><b/><c/></root>"#;
-    let doc = parse(xml).unwrap();
+    let doc = Parser::from(xml).parse().unwrap();
 
     // Document node + root + 3 children = 5 nodes minimum
     assert!(doc.node_count() >= 4);
@@ -190,7 +190,7 @@ fn test_parse_xhtml_with_doctype() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     assert_eq!(root.get_name(), "html");
@@ -215,7 +215,7 @@ fn test_parse_html5_doctype() {
     <body><p>Content</p></body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
 
@@ -242,7 +242,7 @@ fn test_parse_html_with_comments() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
 
@@ -318,7 +318,7 @@ fn test_parse_html_self_closing_tags() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
 
@@ -353,7 +353,7 @@ fn test_parse_html_attributes() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     assert_eq!(root.get_attribute("lang"), Some("en".to_string()));
@@ -393,7 +393,7 @@ fn test_parse_html_with_cdata_content() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
 
@@ -418,7 +418,7 @@ fn test_parse_html_table() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     let body = root
@@ -454,7 +454,7 @@ fn test_parse_html_form() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     let body = root
@@ -485,7 +485,7 @@ fn test_parse_xhtml_strict() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     assert_eq!(root.get_name(), "html");
@@ -510,7 +510,7 @@ fn test_parse_html_entities() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     let body = root
@@ -542,7 +542,7 @@ fn test_parse_html_multiple_comments() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     let body = root
@@ -583,7 +583,7 @@ fn test_parse_html_multiple_comments() {
 fn test_parse_minimal_html() {
     let html = r#"<!DOCTYPE html><html><body>Hello</body></html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "html");
 
@@ -610,7 +610,7 @@ fn test_parse_html_deeply_nested() {
     </body>
 </html>"#;
 
-    let doc = parse(html).unwrap();
+    let doc = Parser::from(html).parse().unwrap();
     let root = get_root_node(&doc).unwrap();
 
     // Navigate to the deepest element

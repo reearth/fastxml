@@ -573,7 +573,7 @@ mod error_conversion_tests {
     fn test_error_from_quick_xml_error() {
         // Create a quick_xml error through parsing
         let bad_xml = "<root></roo>";
-        let result = fastxml::parse(bad_xml);
+        let result = fastxml::Parser::from(bad_xml).parse();
         assert!(matches!(result, Err(Error::Parse(_))));
     }
 
