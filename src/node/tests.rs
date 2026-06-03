@@ -157,7 +157,7 @@ fn create_test_document() -> crate::document::XmlDocument {
 #[test]
 fn test_xml_node_id() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     // Root node should have id > 0 (document is 0)
     assert!(root.id() > 0);
 }
@@ -165,21 +165,21 @@ fn test_xml_node_id() {
 #[test]
 fn test_xml_node_get_type() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert_eq!(root.get_type(), NodeType::Element);
 }
 
 #[test]
 fn test_xml_node_get_name() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert_eq!(root.get_name(), "root");
 }
 
 #[test]
 fn test_xml_node_get_attribute() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert_eq!(root.get_attribute("attr"), Some("val".to_string()));
     assert_eq!(root.get_attribute("nonexistent"), None);
 }
@@ -187,7 +187,7 @@ fn test_xml_node_get_attribute() {
 #[test]
 fn test_xml_node_get_attributes() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let attrs = root.get_attributes();
     assert_eq!(attrs.get("attr"), Some(&"val".to_string()));
 }
@@ -195,7 +195,7 @@ fn test_xml_node_get_attributes() {
 #[test]
 fn test_xml_node_get_child_nodes() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let children = root.get_child_nodes();
     assert!(!children.is_empty());
 }
@@ -203,7 +203,7 @@ fn test_xml_node_get_child_nodes() {
 #[test]
 fn test_xml_node_get_child_elements() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let children = root.get_child_elements();
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].get_name(), "child");
@@ -212,7 +212,7 @@ fn test_xml_node_get_child_elements() {
 #[test]
 fn test_xml_node_first_child() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let first = root.first_child();
     assert!(first.is_some());
 }
@@ -220,7 +220,7 @@ fn test_xml_node_first_child() {
 #[test]
 fn test_xml_node_last_child() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let last = root.last_child();
     assert!(last.is_some());
 }
@@ -228,7 +228,7 @@ fn test_xml_node_last_child() {
 #[test]
 fn test_xml_node_get_parent() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     let parent = child.get_parent();
     assert!(parent.is_some());
@@ -238,7 +238,7 @@ fn test_xml_node_get_parent() {
 #[test]
 fn test_xml_node_get_content_element() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     assert_eq!(child.get_content(), Some("text".to_string()));
 }
@@ -246,14 +246,14 @@ fn test_xml_node_get_content_element() {
 #[test]
 fn test_xml_node_is_element() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert!(root.is_element());
 }
 
 #[test]
 fn test_xml_node_is_text() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     let text_node = child.get_child_nodes().into_iter().find(|n| n.is_text());
     assert!(text_node.is_some());
@@ -262,7 +262,7 @@ fn test_xml_node_is_text() {
 #[test]
 fn test_xml_node_set_attribute() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_attribute("new_attr", "new_value");
     assert_eq!(
         root.get_attribute("new_attr"),
@@ -273,7 +273,7 @@ fn test_xml_node_set_attribute() {
 #[test]
 fn test_xml_node_remove_attribute() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let removed = root.remove_attribute("attr");
     assert_eq!(removed, Some("val".to_string()));
     assert_eq!(root.get_attribute("attr"), None);
@@ -282,7 +282,7 @@ fn test_xml_node_remove_attribute() {
 #[test]
 fn test_xml_node_remove_attribute_nonexistent() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let removed = root.remove_attribute("nonexistent");
     assert_eq!(removed, None);
 }
@@ -290,7 +290,7 @@ fn test_xml_node_remove_attribute_nonexistent() {
 #[test]
 fn test_xml_node_set_content() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     child.set_content("new content");
     // After set_content, children are cleared and content is set directly
@@ -299,7 +299,7 @@ fn test_xml_node_set_content() {
 #[test]
 fn test_xml_node_set_name() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_name("newroot");
     assert_eq!(root.get_name(), "newroot");
 }
@@ -307,7 +307,7 @@ fn test_xml_node_set_name() {
 #[test]
 fn test_xml_node_set_prefix() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_prefix(Some("ns"));
     assert_eq!(root.get_prefix(), Some("ns".to_string()));
 }
@@ -315,7 +315,7 @@ fn test_xml_node_set_prefix() {
 #[test]
 fn test_xml_node_set_prefix_none() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_prefix(None);
     assert_eq!(root.get_prefix(), None);
 }
@@ -323,7 +323,7 @@ fn test_xml_node_set_prefix_none() {
 #[test]
 fn test_xml_node_set_namespace_uri() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_namespace_uri(Some("http://example.com"));
     assert_eq!(
         root.get_namespace_uri(),
@@ -334,7 +334,7 @@ fn test_xml_node_set_namespace_uri() {
 #[test]
 fn test_xml_node_add_namespace_decl() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.add_namespace_decl("ns", "http://example.com");
     let decls = root.get_namespace_declarations();
     assert!(
@@ -347,7 +347,7 @@ fn test_xml_node_add_namespace_decl() {
 #[test]
 fn test_xml_node_clear_children() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert!(!root.get_child_nodes().is_empty());
     root.clear_children();
     assert!(root.get_child_nodes().is_empty());
@@ -356,14 +356,14 @@ fn test_xml_node_clear_children() {
 #[test]
 fn test_xml_node_qname() {
     let doc = crate::parse("<ns:root xmlns:ns=\"http://example.com\"/>").unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     assert_eq!(root.qname(), "ns:root");
 }
 
 #[test]
 fn test_xml_node_debug() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let debug = format!("{:?}", root);
     assert!(debug.contains("XmlNode"));
     assert!(debug.contains("root"));
@@ -372,7 +372,7 @@ fn test_xml_node_debug() {
 #[test]
 fn test_xml_node_clone() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let cloned = root.clone();
     assert_eq!(root.id(), cloned.id());
     assert_eq!(root.get_name(), cloned.get_name());
@@ -381,8 +381,8 @@ fn test_xml_node_clone() {
 #[test]
 fn test_xml_node_eq() {
     let doc = create_test_document();
-    let root1 = crate::get_root_node(&doc).unwrap();
-    let root2 = crate::get_root_node(&doc).unwrap();
+    let root1 = crate::compat::get_root_node(&doc).unwrap();
+    let root2 = crate::compat::get_root_node(&doc).unwrap();
     assert_eq!(root1, root2);
 }
 
@@ -391,7 +391,7 @@ fn test_xml_node_eq() {
 fn test_xml_node_hash() {
     use std::collections::HashSet;
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let mut set = HashSet::new();
     set.insert(root.clone());
     assert!(set.contains(&root));
@@ -401,7 +401,7 @@ fn test_xml_node_hash() {
 #[test]
 fn test_xml_ro_node_from_node() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root.clone());
     assert_eq!(ro_node.id(), root.id());
 }
@@ -409,7 +409,7 @@ fn test_xml_ro_node_from_node() {
 #[test]
 fn test_xml_ro_node_get_type() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(ro_node.get_type(), NodeType::Element);
 }
@@ -417,7 +417,7 @@ fn test_xml_ro_node_get_type() {
 #[test]
 fn test_xml_ro_node_get_name() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(ro_node.get_name(), "root");
 }
@@ -425,7 +425,7 @@ fn test_xml_ro_node_get_name() {
 #[test]
 fn test_xml_ro_node_get_prefix() {
     let doc = crate::parse("<ns:root xmlns:ns=\"http://example.com\"/>").unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(ro_node.get_prefix(), Some("ns".to_string()));
 }
@@ -434,7 +434,7 @@ fn test_xml_ro_node_get_prefix() {
 fn test_xml_ro_node_get_namespace_uri() {
     // Test with manually set namespace URI
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_namespace_uri(Some("http://example.com"));
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(
@@ -447,7 +447,7 @@ fn test_xml_ro_node_get_namespace_uri() {
 fn test_xml_ro_node_get_namespace() {
     // Test with manually set namespace
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     root.set_prefix(Some("ns"));
     root.set_namespace_uri(Some("http://example.com"));
     let ro_node = XmlRoNode::from_node(root);
@@ -461,7 +461,7 @@ fn test_xml_ro_node_get_namespace() {
 #[test]
 fn test_xml_ro_node_qname() {
     let doc = crate::parse("<ns:root xmlns:ns=\"http://example.com\"/>").unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(ro_node.qname(), "ns:root");
 }
@@ -469,7 +469,7 @@ fn test_xml_ro_node_qname() {
 #[test]
 fn test_xml_ro_node_get_content() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     let ro_node = XmlRoNode::from_node(child);
     assert_eq!(ro_node.get_content(), Some("text".to_string()));
@@ -478,7 +478,7 @@ fn test_xml_ro_node_get_content() {
 #[test]
 fn test_xml_ro_node_get_attribute() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert_eq!(ro_node.get_attribute("attr"), Some("val".to_string()));
 }
@@ -486,7 +486,7 @@ fn test_xml_ro_node_get_attribute() {
 #[test]
 fn test_xml_ro_node_get_attributes() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let attrs = ro_node.get_attributes();
     assert!(attrs.contains_key("attr"));
@@ -495,7 +495,7 @@ fn test_xml_ro_node_get_attributes() {
 #[test]
 fn test_xml_ro_node_get_namespace_declarations() {
     let doc = crate::parse("<root xmlns:ns=\"http://example.com\"/>").unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let decls = ro_node.get_namespace_declarations();
     assert!(decls.iter().any(|d| d.prefix() == "ns"));
@@ -504,7 +504,7 @@ fn test_xml_ro_node_get_namespace_declarations() {
 #[test]
 fn test_xml_ro_node_get_parent() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     let ro_child = XmlRoNode::from_node(child);
     let parent = ro_child.get_parent();
@@ -515,7 +515,7 @@ fn test_xml_ro_node_get_parent() {
 #[test]
 fn test_xml_ro_node_get_child_nodes() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let children = ro_node.get_child_nodes();
     assert!(!children.is_empty());
@@ -524,7 +524,7 @@ fn test_xml_ro_node_get_child_nodes() {
 #[test]
 fn test_xml_ro_node_get_child_elements() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let children = ro_node.get_child_elements();
     assert_eq!(children.len(), 1);
@@ -533,7 +533,7 @@ fn test_xml_ro_node_get_child_elements() {
 #[test]
 fn test_xml_ro_node_first_child() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert!(ro_node.first_child().is_some());
 }
@@ -541,7 +541,7 @@ fn test_xml_ro_node_first_child() {
 #[test]
 fn test_xml_ro_node_last_child() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert!(ro_node.last_child().is_some());
 }
@@ -549,7 +549,7 @@ fn test_xml_ro_node_last_child() {
 #[test]
 fn test_xml_ro_node_is_element() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     assert!(ro_node.is_element());
 }
@@ -557,7 +557,7 @@ fn test_xml_ro_node_is_element() {
 #[test]
 fn test_xml_ro_node_is_text() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     let text_node = child
         .get_child_nodes()
@@ -571,7 +571,7 @@ fn test_xml_ro_node_is_text() {
 #[test]
 fn test_xml_ro_node_into_node() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root.clone());
     let back_to_node = ro_node.into_node();
     assert_eq!(back_to_node.id(), root.id());
@@ -580,7 +580,7 @@ fn test_xml_ro_node_into_node() {
 #[test]
 fn test_xml_ro_node_debug() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let debug = format!("{:?}", ro_node);
     assert!(debug.contains("XmlRoNode"));
@@ -590,7 +590,7 @@ fn test_xml_ro_node_debug() {
 #[test]
 fn test_xml_ro_node_clone() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let cloned = ro_node.clone();
     assert_eq!(ro_node.id(), cloned.id());
@@ -599,7 +599,7 @@ fn test_xml_ro_node_clone() {
 #[test]
 fn test_xml_ro_node_eq() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro1 = XmlRoNode::from_node(root.clone());
     let ro2 = XmlRoNode::from_node(root);
     assert_eq!(ro1, ro2);
@@ -610,7 +610,7 @@ fn test_xml_ro_node_eq() {
 fn test_xml_ro_node_hash() {
     use std::collections::HashSet;
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let mut set = HashSet::new();
     set.insert(ro_node.clone());
@@ -621,7 +621,7 @@ fn test_xml_ro_node_hash() {
 #[test]
 fn test_xml_node_get_attribute_ns() {
     let doc = crate::parse(r#"<root xmlns:ns="http://example.com" ns:attr="value"/>"#).unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     // Attributes are stored with local names only (libxml compatible)
     assert_eq!(root.get_attribute("attr"), Some("value".to_string()));
 }
@@ -629,7 +629,7 @@ fn test_xml_node_get_attribute_ns() {
 #[test]
 fn test_xml_ro_node_get_attribute_ns() {
     let doc = crate::parse(r#"<root xmlns:ns="http://example.com" ns:attr="value"/>"#).unwrap();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     // get_attribute_ns searches by namespace URI
     let result = ro_node.get_attribute_ns("attr", "http://example.com");
@@ -643,7 +643,7 @@ fn test_xml_ro_node_get_attribute_ns() {
 #[test]
 fn test_xml_node_line_column() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     // Line/column may or may not be available depending on parser config
     let _ = root.line();
     let _ = root.column();
@@ -652,7 +652,7 @@ fn test_xml_node_line_column() {
 #[test]
 fn test_xml_ro_node_line_column() {
     let doc = create_test_document();
-    let root = crate::get_root_node(&doc).unwrap();
+    let root = crate::compat::get_root_node(&doc).unwrap();
     let ro_node = XmlRoNode::from_node(root);
     let _ = ro_node.line();
     let _ = ro_node.column();

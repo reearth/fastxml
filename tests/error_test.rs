@@ -424,12 +424,12 @@ mod parser_options {
 
 mod xpath_errors {
     use super::*;
-    use fastxml::evaluate;
+    use fastxml::QueryExt;
 
     #[test]
     fn test_invalid_xpath_unclosed_bracket() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "/root[");
+        let result = doc.query("/root[");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
             "Expected XPathSyntax error, got: {:?}",
@@ -440,7 +440,7 @@ mod xpath_errors {
     #[test]
     fn test_invalid_xpath_unclosed_parenthesis() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "count(/root");
+        let result = doc.query("count(/root");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
             "Expected XPathSyntax error, got: {:?}",
@@ -452,7 +452,7 @@ mod xpath_errors {
     fn test_invalid_xpath_unknown_function() {
         use super::XPathEvalError;
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "unknownfn()");
+        let result = doc.query("unknownfn()");
         // Unknown function returns error
         assert!(
             matches!(&result, Err(Error::XPathEval(XPathEvalError::UnknownFunction { name })) if name == "unknownfn"),
@@ -465,7 +465,7 @@ mod xpath_errors {
     fn test_invalid_xpath_unknown_axis() {
         use super::XPathSyntaxError;
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "unknownaxis::*");
+        let result = doc.query("unknownaxis::*");
         // Unknown axis returns error
         assert!(
             matches!(&result, Err(Error::XPathSyntax(XPathSyntaxError::UnknownAxis { name })) if name == "unknownaxis"),
@@ -477,7 +477,7 @@ mod xpath_errors {
     #[test]
     fn test_invalid_xpath_empty() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "");
+        let result = doc.query("");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
             "Expected XPathSyntax error for empty expression, got: {:?}",
@@ -488,7 +488,7 @@ mod xpath_errors {
     #[test]
     fn test_xpath_double_slash_at_end() {
         let doc = Parser::from("<root><child/></root>").parse().unwrap();
-        let result = evaluate(&doc, "/root//");
+        let result = doc.query("/root//");
         // Trailing // matches all descendants of root
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         let nodes = result.unwrap().into_nodes();
@@ -499,7 +499,7 @@ mod xpath_errors {
     #[test]
     fn test_invalid_xpath_missing_operand() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "/root +");
+        let result = doc.query("/root +");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
             "Expected XPathSyntax error, got: {:?}",
@@ -510,7 +510,7 @@ mod xpath_errors {
     #[test]
     fn test_xpath_division_by_zero() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "1 div 0");
+        let result = doc.query("1 div 0");
         // XPath 1.0: division by zero returns Infinity, not an error
         assert!(result.is_ok(), "XPath division by zero returns Infinity");
     }
@@ -518,7 +518,7 @@ mod xpath_errors {
     #[test]
     fn test_xpath_invalid_number() {
         let doc = Parser::from("<root/>").parse().unwrap();
-        let result = evaluate(&doc, "number('not a number') + 1");
+        let result = doc.query("number('not a number') + 1");
         // XPath: number('invalid') returns NaN, arithmetic with NaN is valid
         assert!(result.is_ok(), "XPath NaN arithmetic is valid");
     }
@@ -526,7 +526,7 @@ mod xpath_errors {
     #[test]
     fn test_xpath_on_empty_document() {
         let doc = Parser::from("").parse().unwrap();
-        let result = evaluate(&doc, "/root");
+        let result = doc.query("/root");
         // XPath on empty doc returns NodeNotFound error (no root element)
         assert!(
             matches!(result, Err(Error::Node(NodeError::NoRootElement))),

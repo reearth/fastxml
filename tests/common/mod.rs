@@ -192,7 +192,7 @@ pub mod libxml_compare {
         let mut differences = vec![];
 
         // Compare root element name
-        let fastxml_root = fastxml::get_root_node(fastxml_doc).ok();
+        let fastxml_root = fastxml_doc.get_root_element().ok();
         let fastxml_root_name = fastxml_root.as_ref().map(|n| n.get_name());
         let libxml_root_name = libxml_doc.root_name();
 

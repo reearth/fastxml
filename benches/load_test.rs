@@ -17,7 +17,7 @@ use std::sync::Arc;
 use fastxml::generator::{GeneratorConfig, ProcessingStats, XmlStreamGenerator};
 use fastxml::schema::Validator;
 use fastxml::schema::types::{CompiledSchema, ElementDef};
-use fastxml::{Parser, XmlDocument, evaluate};
+use fastxml::{Parser, QueryExt, XmlDocument};
 
 /// Parses XML bytes into a DOM via the public [`Parser`] front door.
 fn parse(input: &[u8]) -> fastxml::error::Result<XmlDocument> {
@@ -290,7 +290,7 @@ fn bench_citygml_style(c: &mut Criterion) {
             |b, xml| {
                 b.iter(|| {
                     let doc = parse(black_box(xml)).unwrap();
-                    let result = evaluate(&doc, "//bldg:Building").unwrap();
+                    let result = doc.query("//bldg:Building").unwrap();
                     black_box(result.into_nodes().len())
                 })
             },
@@ -326,28 +326,28 @@ fn bench_xpath_evaluation(c: &mut Criterion) {
 
     group.bench_function("fastxml_descendant_all", |b| {
         b.iter(|| {
-            let result = evaluate(black_box(&doc), "//*").unwrap();
+            let result = black_box(&doc).query("//*").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
     group.bench_function("fastxml_by_name", |b| {
         b.iter(|| {
-            let result = evaluate(black_box(&doc), "//element").unwrap();
+            let result = black_box(&doc).query("//element").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
     group.bench_function("fastxml_with_predicate", |b| {
         b.iter(|| {
-            let result = evaluate(black_box(&doc), "//*[name()='item']").unwrap();
+            let result = black_box(&doc).query("//*[name()='item']").unwrap();
             black_box(result.into_nodes().len())
         })
     });
 
     group.bench_function("fastxml_direct_path", |b| {
         b.iter(|| {
-            let result = evaluate(black_box(&doc), "/root/*").unwrap();
+            let result = black_box(&doc).query("/root/*").unwrap();
             black_box(result.into_nodes().len())
         })
     });

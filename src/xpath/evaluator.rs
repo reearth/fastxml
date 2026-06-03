@@ -623,7 +623,8 @@ impl<'a> XPathEvaluator<'a> {
 ///
 /// # Example
 /// ```
-/// use fastxml::{Parser, evaluate};
+/// use fastxml::Parser;
+/// use fastxml::xpath::evaluate;
 ///
 /// let xml = r#"<root><child>text</child></root>"#;
 /// let doc = Parser::from(xml).parse().unwrap();

@@ -1,10 +1,11 @@
 //! DOM modification example.
 //!
-//! Demonstrates modifying XML documents using the mutable DOM API.
+//! Demonstrates modifying XML documents using the mutable DOM API, querying
+//! with `QueryExt` and serializing with `Printer`.
 //!
 //! Run with: cargo run --example dom_modification
 
-use fastxml::{Parser, evaluate, get_root_node, node_to_xml_string};
+use fastxml::{Parser, Printer, QueryExt};
 
 fn main() -> fastxml::error::Result<()> {
     let xml = r#"<?xml version="1.0"?>
@@ -23,43 +24,38 @@ fn main() -> fastxml::error::Result<()> {
     let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("=== DOM Modification Example ===\n");
 
-    // Get mutable root
-    let mut root = get_root_node(&doc)?;
+    let root = doc.get_root_element()?;
 
     println!("Original document:");
-    println!("{}\n", node_to_xml_string(&doc, &mut root)?);
+    println!("{}\n", Printer::from(&root).to_string()?);
 
-    // 1. Modify attribute
+    // 1. Modify an attribute.
     println!("1. Adding attribute to root...");
     root.set_attribute("version", "1.0");
 
-    // 2. Modify element content
+    // 2. Modify element content.
     println!("2. Modifying book title...");
-    let result = evaluate(&doc, "//book[@id='1']/title")?;
-    for node in result.into_nodes() {
+    for node in doc.query_nodes("//book[@id='1']/title")? {
         node.set_content("Modified Title");
     }
 
-    // 3. Add new attribute to elements
+    // 3. Add an attribute to several elements.
     println!("3. Adding 'currency' attribute to prices...");
-    let result = evaluate(&doc, "//price")?;
-    for node in result.into_nodes() {
+    for node in doc.query_nodes("//price")? {
         node.set_attribute("currency", "USD");
     }
 
-    // 4. Modify multiple elements
+    // 4. Modify multiple elements.
     println!("4. Adding discount attribute to all books...");
-    let result = evaluate(&doc, "//book")?;
-    for node in result.into_nodes() {
+    for node in doc.query_nodes("//book")? {
         node.set_attribute("discount", "10%");
     }
 
-    // Print modified document
-    let mut root = get_root_node(&doc)?;
+    // Print the modified document (pretty-printed).
     println!("\nModified document:");
-    println!("{}", node_to_xml_string(&doc, &mut root)?);
+    println!("{}", Printer::from(&doc).pretty().to_string()?);
 
-    // 5. For element removal, use the Transformer API
+    // 5. For element removal, use the Transformer API.
     println!("\n5. For element removal, use the Transformer API:");
     println!("   See transform_example.rs for examples.");
 
