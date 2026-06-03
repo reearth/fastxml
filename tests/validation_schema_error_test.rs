@@ -6,8 +6,8 @@
 //! - Circular dependency detection
 
 use fastxml::error::Error;
-use fastxml::schema::error::SchemaError;
 use fastxml::schema::Schema;
+use fastxml::schema::error::SchemaError;
 
 // =============================================================================
 // Facet Constraint Errors in Schema

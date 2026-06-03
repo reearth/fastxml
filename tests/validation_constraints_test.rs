@@ -2,10 +2,10 @@
 
 mod common;
 
+use fastxml::schema::Schema;
 use fastxml::schema::xsd::constraints::{
     ConstraintError, ConstraintValidator, IdentityConstraint, KeyValue,
 };
-use fastxml::schema::Schema;
 
 // =============================================================================
 // Identity Constraint Tests

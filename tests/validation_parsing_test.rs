@@ -3,8 +3,8 @@
 mod common;
 
 use fastxml::error::Error;
-use fastxml::schema::error::SchemaError;
 use fastxml::schema::Schema;
+use fastxml::schema::error::SchemaError;
 
 #[test]
 fn test_invalid_xsd_syntax() {

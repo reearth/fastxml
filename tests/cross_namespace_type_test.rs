@@ -149,7 +149,10 @@ fn build_cross_namespace_schema() -> CompiledSchema {
             "http://www.opengis.net/citygml/building/2.0/building.xsd",
             bldg_schema.as_bytes(),
         )
-        .add("http://example.com/other/other.xsd", other_schema.as_bytes())
+        .add(
+            "http://example.com/other/other.xsd",
+            other_schema.as_bytes(),
+        )
         .resolve()
         .expect("Failed to compile schemas")
 }
