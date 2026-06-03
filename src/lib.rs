@@ -135,6 +135,10 @@ pub use position::PositionTrackingReader;
 // Re-export XPath context (for libxml compatibility)
 pub use xpath::context::{XmlContext, XmlSafeContext};
 
+// Re-export the serialization and XPath front doors
+pub use serialize::Printer;
+pub use xpath::{AsQuery, Query, QueryExt};
+
 // ============================================================================
 // libxml-compatible API
 // ============================================================================

@@ -165,6 +165,22 @@ impl<'a> XPathEvaluator<'a> {
         self.eval_expr(&expr, &ctx)
     }
 
+    /// Evaluates a pre-parsed XPath expression from the document root.
+    ///
+    /// This skips parsing, so a [`Query`](crate::Query) can compile an
+    /// expression once and evaluate it against many documents.
+    pub fn evaluate_expr(&self, expr: &Expr) -> Result<XPathResult> {
+        let root = self.doc.get_root_element()?;
+        let ctx = EvaluationContext::new(root, self.doc, self.resolver.clone());
+        self.eval_expr(expr, &ctx)
+    }
+
+    /// Evaluates a pre-parsed XPath expression relative to a context node.
+    pub fn evaluate_expr_from(&self, expr: &Expr, context: &XmlNode) -> Result<XPathResult> {
+        let ctx = EvaluationContext::new(context.clone(), self.doc, self.resolver.clone());
+        self.eval_expr(expr, &ctx)
+    }
+
     /// Evaluates an XPath expression with variable bindings.
     ///
     /// # Example
