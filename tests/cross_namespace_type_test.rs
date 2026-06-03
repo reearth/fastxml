@@ -3,10 +3,7 @@
 //! schema defines types with the same local name but different children.
 
 use fastxml::schema::types::CompiledSchema;
-use fastxml::schema::validator::OnePassSchemaValidator;
-use fastxml::schema::xsd::parse_xsd_multiple;
-use std::io::BufReader;
-use std::sync::Arc;
+use fastxml::schema::{Schema, Validator};
 
 /// Schema A uses only a default namespace (`xmlns="..."`, no explicit prefix).
 /// Schema B defines types with the same local name but different children,
@@ -25,9 +22,11 @@ fn test_validates_correctly_when_schema_uses_default_namespace_with_conflicting_
         <bldg:opening>window-1</bldg:opening>
     </bldg:WallSurface>"#;
 
-    let errors = OnePassSchemaValidator::new(Arc::new(schema))
-        .validate(BufReader::new(xml.as_bytes()))
-        .expect("Validation should not fail");
+    let errors = Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("Validation should not fail")
+        .into_entries();
 
     let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
 
@@ -56,9 +55,11 @@ fn test_other_namespace_wall_surface_has_own_children_not_bldg_children() {
         <other:otherMaterial>concrete</other:otherMaterial>
     </other:WallSurface>"#;
 
-    let errors = OnePassSchemaValidator::new(Arc::new(schema.clone()))
-        .validate(BufReader::new(valid_xml.as_bytes()))
-        .expect("Validation should not fail");
+    let errors = Validator::from(valid_xml)
+        .schema(schema.clone())
+        .run()
+        .expect("Validation should not fail")
+        .into_entries();
 
     let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
     assert!(
@@ -76,9 +77,11 @@ fn test_other_namespace_wall_surface_has_own_children_not_bldg_children() {
         <other:opening>should-not-be-allowed</other:opening>
     </other:WallSurface>"#;
 
-    let errors = OnePassSchemaValidator::new(Arc::new(schema))
-        .validate(BufReader::new(invalid_xml.as_bytes()))
-        .expect("Validation should not fail");
+    let errors = Validator::from(invalid_xml)
+        .schema(schema)
+        .run()
+        .expect("Validation should not fail")
+        .into_entries();
 
     assert!(
         !errors.is_empty(),
@@ -141,15 +144,12 @@ fn build_cross_namespace_schema() -> CompiledSchema {
         <xs:element name="WallSurface" type="other:WallSurfaceType"/>
     </xs:schema>"#;
 
-    parse_xsd_multiple(&[
-        (
+    Schema::builder()
+        .add(
             "http://www.opengis.net/citygml/building/2.0/building.xsd",
             bldg_schema.as_bytes(),
-        ),
-        (
-            "http://example.com/other/other.xsd",
-            other_schema.as_bytes(),
-        ),
-    ])
-    .expect("Failed to compile schemas")
+        )
+        .add("http://example.com/other/other.xsd", other_schema.as_bytes())
+        .resolve()
+        .expect("Failed to compile schemas")
 }
