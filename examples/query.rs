@@ -2,8 +2,24 @@
 //!
 //! Run with: cargo run --example query
 
-use fastxml::transform::{StreamableQuery, Transformer};
+use std::sync::LazyLock;
+
+use fastxml::transform::{StreamableQuery, TransformResult, Transformer};
 use fastxml::{Parser, Query, QueryExt};
+
+// A query known at author time: compile it once, fail fast (panic) if the
+// literal is ever wrong — that's a programmer error, not a runtime condition.
+static ITEM_QUERY: LazyLock<StreamableQuery> =
+    LazyLock::new(|| StreamableQuery::compile("//item").expect("valid streamable xpath"));
+
+/// Tags every `//item`. Because `ITEM_QUERY` is already compiled and validated,
+/// the returned `Result` carries only genuine *runtime* errors — a bad XPath
+/// would have panicked at startup, not surfaced here.
+fn tag_items(xml: &str) -> TransformResult<String> {
+    Transformer::from(xml)
+        .on(&*ITEM_QUERY, |node| node.set_attribute("seen", "1"))
+        .to_string()
+}
 
 // Transform operations return `TransformError`, which converts into the
 // crate-wide `fastxml::error::Error`, so a single `Result` type works throughout.
@@ -69,6 +85,15 @@ fn main() -> fastxml::error::Result<()> {
     println!(
         "   used as a Query too: {} nodes",
         ns_doc.query_nodes("//gml:point")?.len()
+    );
+
+    // 6. Fail-fast pattern: compile the pattern once up front (see `ITEM_QUERY` /
+    //    `tag_items` above). A bad literal panics at startup as a programmer
+    //    error, so the transform call below only has to handle *runtime* errors.
+    println!("\n=== Pre-compiled, fail-fast pattern ===\n");
+    println!(
+        "6. tag_items -> {}",
+        tag_items("<root><item/><item/></root>")?
     );
 
     Ok(())
