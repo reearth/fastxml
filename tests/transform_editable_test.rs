@@ -349,20 +349,19 @@ fn test_collect_multi_three_xpaths() {
         <a>4</a><b>5</b><c>6</c>
     </data>"#;
 
-    let (a_vals, b_vals, c_vals): (Vec<String>, Vec<String>, Vec<String>) =
-        Transformer::from(xml)
-            .collect_multi((
-                ("//a", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-                ("//b", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-                ("//c", |n: &mut EditableNode| {
-                    n.get_content().unwrap_or_default()
-                }),
-            ))
-            .unwrap();
+    let (a_vals, b_vals, c_vals): (Vec<String>, Vec<String>, Vec<String>) = Transformer::from(xml)
+        .collect_multi((
+            ("//a", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+            ("//b", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+            ("//c", |n: &mut EditableNode| {
+                n.get_content().unwrap_or_default()
+            }),
+        ))
+        .unwrap();
 
     assert_eq!(a_vals, vec!["1", "4"]);
     assert_eq!(b_vals, vec!["2", "5"]);

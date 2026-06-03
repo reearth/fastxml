@@ -428,7 +428,7 @@ fn test_error_location_structured_error_integration() {
 
 #[test]
 fn test_xml_parse_error_with_location() {
-    use fastxml::transform::{Transformer, TransformError};
+    use fastxml::transform::{TransformError, Transformer};
 
     // Invalid XML - unclosed tag
     let xml = "<root><item";
