@@ -1,6 +1,6 @@
 //! Namespace-related tests for the transform module.
 
-use fastxml::transform::{EditableNode, StreamTransformer};
+use fastxml::transform::{EditableNode, Transformer};
 
 // =============================================================================
 // Namespace Auto-Registration Tests
@@ -12,14 +12,12 @@ fn test_with_root_namespaces() {
             <gml:point id="1"/>
         </root>"#;
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |node| {
             node.set_attribute("found", "true");
         })
-        .run()
-        .unwrap()
         .to_string()
         .unwrap();
 
@@ -35,7 +33,7 @@ fn test_with_root_namespaces_multiple() {
     let mut found_gml = false;
     let mut found_uro = false;
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .with_root_namespaces()
         .unwrap()
         .on("//gml:point", |_| found_gml = true)
@@ -57,7 +55,7 @@ fn test_namespace_uri_matching() {
             <gml:feature id="1">Test</gml:feature>
         </root>"#;
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .namespace("gml", "http://www.opengis.net/gml")
         .on(
             "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
@@ -65,8 +63,6 @@ fn test_namespace_uri_matching() {
                 node.set_attribute("matched", "true");
             },
         )
-        .run()
-        .unwrap()
         .to_string()
         .unwrap();
 
@@ -80,7 +76,7 @@ fn test_namespace_uri_matching_different_prefix() {
             <g:feature id="1">Test</g:feature>
         </root>"#;
 
-    let result = StreamTransformer::new(xml)
+    let result = Transformer::from(xml)
         .namespace("g", "http://www.opengis.net/gml")
         .on(
             "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
@@ -88,8 +84,6 @@ fn test_namespace_uri_matching_different_prefix() {
                 node.set_attribute("matched", "true");
             },
         )
-        .run()
-        .unwrap()
         .to_string()
         .unwrap();
 
@@ -105,7 +99,7 @@ fn test_namespace_uri_no_match_wrong_uri() {
 
     let mut matched = false;
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .namespace("gml", "http://different.uri.com")
         .on(
             "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
@@ -126,7 +120,7 @@ fn test_local_name_only_matching() {
 
     let mut matched_ids = Vec::new();
 
-    StreamTransformer::new(xml)
+    Transformer::from(xml)
         .namespace("ns", "http://example.com")
         .on("//*[local-name()='item']", |node| {
             if let Some(id) = node.get_attribute("id") {
@@ -154,13 +148,11 @@ mod attribute_namespace_tests {
             <item xlink:href="http://example.com"/>
         </root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .namespace("xlink", "http://www.w3.org/1999/xlink")
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -181,7 +173,7 @@ mod attribute_namespace_tests {
 
         let mut matched = false;
 
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .namespace("xlink", "http://www.w3.org/1999/xlink")
             .allow_fallback()
             .on(
@@ -207,7 +199,7 @@ mod attribute_namespace_tests {
         </root>"#;
 
         let mut fragment_xml = String::new();
-        StreamTransformer::new(xml)
+        Transformer::from(xml)
             .with_root_namespaces()
             .unwrap()
             .on("//item", |node: &mut EditableNode| {
@@ -235,13 +227,11 @@ mod attribute_namespace_tests {
     fn test_attribute_prefix_preserved_self_closing() {
         let xml = r#"<root xmlns:xlink="http://www.w3.org/1999/xlink"><item xlink:href="http://example.com"/></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .namespace("xlink", "http://www.w3.org/1999/xlink")
             .on("//item", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
@@ -257,13 +247,11 @@ mod attribute_namespace_tests {
     fn test_gml_id_attribute_prefix_preserved() {
         let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:Point gml:id="p1"><gml:pos>1.0 2.0</gml:pos></gml:Point></root>"#;
 
-        let result = StreamTransformer::new(xml)
+        let result = Transformer::from(xml)
             .namespace("gml", "http://www.opengis.net/gml")
             .on("//gml:Point", |node: &mut EditableNode| {
                 node.set_attribute("found", "yes");
             })
-            .run()
-            .unwrap()
             .to_string()
             .unwrap();
 
