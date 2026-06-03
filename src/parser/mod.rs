@@ -111,25 +111,17 @@ impl ParserOptions {
 
 /// Parses XML content from a byte slice.
 ///
-/// This is the main entry point for parsing XML.
-///
-/// # Example
-/// ```
-/// use fastxml::parse;
-///
-/// let xml = r#"<root><child>Hello</child></root>"#;
-/// let doc = parse(xml).unwrap();
-/// let root = doc.get_root_element().unwrap();
-/// assert_eq!(root.get_name(), "root");
-/// ```
-#[doc(hidden)]
-pub fn parse<T: AsRef<[u8]>>(xml: T) -> Result<XmlDocument> {
+/// Internal helper; the public entry point is [`Parser`](crate::Parser)
+/// (`Parser::from(xml).parse()`).
+pub(crate) fn parse<T: AsRef<[u8]>>(xml: T) -> Result<XmlDocument> {
     parse_with_options(xml, &ParserOptions::default())
 }
 
 /// Parses XML content with custom options.
-#[doc(hidden)]
-pub fn parse_with_options<T: AsRef<[u8]>>(xml: T, options: &ParserOptions) -> Result<XmlDocument> {
+pub(crate) fn parse_with_options<T: AsRef<[u8]>>(
+    xml: T,
+    options: &ParserOptions,
+) -> Result<XmlDocument> {
     let tracking_reader = PositionTrackingReader::new(xml.as_ref());
     let mut reader = Reader::from_reader(tracking_reader);
     configure_reader(&mut reader, options);
@@ -137,8 +129,10 @@ pub fn parse_with_options<T: AsRef<[u8]>>(xml: T, options: &ParserOptions) -> Re
 }
 
 /// Parses XML from a BufRead source.
-#[doc(hidden)]
-pub fn parse_from_bufread<R: BufRead>(reader: R, options: &ParserOptions) -> Result<XmlDocument> {
+pub(crate) fn parse_from_bufread<R: BufRead>(
+    reader: R,
+    options: &ParserOptions,
+) -> Result<XmlDocument> {
     let tracking_reader = PositionTrackingReader::new(reader);
     let mut xml_reader = Reader::from_reader(tracking_reader);
     configure_reader(&mut xml_reader, options);

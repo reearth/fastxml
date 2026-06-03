@@ -75,10 +75,10 @@ impl XmlDocument {
     ///
     /// # Example
     /// ```
-    /// use fastxml::parse;
+    /// use fastxml::Parser;
     ///
     /// let xml = "<root><child/></root>";
-    /// let doc = parse(xml).unwrap();
+    /// let doc = Parser::from(xml).parse().unwrap();
     /// doc.register_namespaces([
     ///     ("gml", "http://www.opengis.net/gml"),
     ///     ("bldg", "http://www.opengis.net/citygml/building/2.0"),
@@ -107,13 +107,13 @@ impl XmlDocument {
     ///
     /// # Example
     /// ```
-    /// use fastxml::parse;
+    /// use fastxml::Parser;
     ///
     /// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"
     ///                    xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
     ///     <gml:name>Test</gml:name>
     /// </root>"#;
-    /// let doc = parse(xml).unwrap();
+    /// let doc = Parser::from(xml).parse().unwrap();
     ///
     /// let namespaces = doc.namespaces();
     /// assert_eq!(namespaces.get("gml"), Some(&"http://www.opengis.net/gml".to_string()));

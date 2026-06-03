@@ -16,7 +16,7 @@ This crate provides test harnesses for running standard XML test suites against 
 
 ### W3C XML Conformance Test Suite
 
-Tests both DOM parsing (`fastxml::parse`) and streaming parsing (`StreamingParser`).
+Tests both DOM parsing (`Parser::from(..).parse()`) and streaming parsing (`Parser::from(..).for_each_event(..)`).
 
 | Category | DOM | Streaming | Description |
 |----------|-----|-----------|-------------|

@@ -34,18 +34,17 @@
 //! ## Transform with Multiple Handlers
 //!
 //! ```rust
-//! use fastxml::transform::StreamTransformer;
+//! use fastxml::transform::Transformer;
 //!
 //! let xml = r#"<root><item id="1">A</item><other>B</other></root>"#;
 //!
-//! let result = StreamTransformer::new(xml)
+//! let result = Transformer::from(xml)
 //!     .on("//item", |node| {
 //!         node.set_attribute("type", "item");
 //!     })
 //!     .on("//other", |node| {
 //!         node.set_attribute("type", "other");
 //!     })
-//!     .run()?
 //!     .to_string()?;
 //!
 //! assert!(result.contains(r#"type="item""#));
@@ -56,11 +55,11 @@
 //! ## Collect Data
 //!
 //! ```rust
-//! use fastxml::transform::StreamTransformer;
+//! use fastxml::transform::Transformer;
 //!
 //! let xml = r#"<root><item id="1">A</item><item id="2">B</item></root>"#;
 //!
-//! let ids: Vec<String> = StreamTransformer::new(xml)
+//! let ids: Vec<String> = Transformer::from(xml)
 //!     .collect("//item", |node| node.get_attribute("id").unwrap_or_default())?;
 //!
 //! assert_eq!(ids, vec!["1", "2"]);
@@ -70,14 +69,14 @@
 //! ## For Each (Side Effects Only)
 //!
 //! ```rust
-//! use fastxml::transform::StreamTransformer;
+//! use fastxml::transform::Transformer;
 //!
 //! let xml = r#"<root><item>A</item><other>B</other></root>"#;
 //!
 //! let mut items = Vec::new();
 //! let mut others = Vec::new();
 //!
-//! StreamTransformer::new(xml)
+//! Transformer::from(xml)
 //!     .on("//item", |node| {
 //!         items.push(node.get_content().unwrap_or_default());
 //!     })
@@ -96,7 +95,6 @@ mod analysis;
 mod builder;
 mod callbacks;
 pub mod context;
-mod deprecated;
 pub mod editable;
 pub mod error;
 pub mod fallback;
@@ -108,12 +106,12 @@ pub mod streaming;
 mod unified;
 pub mod xpath_analyze;
 
-// Re-export main types
-pub use builder::{StreamTransformer, TransformOutput};
+// The public transform entry point is `Transformer`; the in-memory and
+// reader-based engines (`builder` / `reader`) and the `stream_transform*` free
+// functions are internal and reached via `crate::transform::…`.
 pub use context::{AncestorInfo, TransformContext};
 pub use editable::{EditableNode, EditableNodeBuilder, EditableNodeRef, Modification, NewNode};
 pub use error::{ErrorLocation, TransformError, TransformResult};
-pub use reader::StreamTransformerReader;
 pub use span::ByteSpan;
 pub use unified::Transformer;
 pub use xpath_analyze::{
@@ -127,17 +125,8 @@ pub use crate::xpath::{Expr, XPathResult, XPathSource};
 // Re-export analysis functions
 pub use analysis::{analyze_xpath_str, get_not_streamable_reason, is_streamable};
 
-// Re-export function API
-pub use functions::{
-    stream_transform, stream_transform_with_fallback, stream_transform_with_namespaces,
-};
-
 // Re-export multi collection trait
 pub use multi::CollectMulti;
-
-// Re-export deprecated API
-#[allow(deprecated)]
-pub use deprecated::StreamTransformBuilder;
 
 // Internal re-exports for submodules
 pub(crate) use callbacks::{stream_for_each_with_callback, stream_transform_with_callback};

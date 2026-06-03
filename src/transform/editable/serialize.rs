@@ -58,16 +58,16 @@ impl EditableNode {
     /// This method analyzes the XML output to find all used namespace prefixes
     /// and adds the corresponding `xmlns:prefix` declarations to the root element.
     /// Only prefixes that are registered via `with_root_namespaces()` on the
-    /// `StreamTransformer` will be included.
+    /// [`Transformer`](crate::transform::Transformer) will be included.
     ///
     /// # Example
     ///
     /// ```rust
-    /// # use fastxml::transform::StreamTransformer;
+    /// # use fastxml::transform::Transformer;
     /// let xml = r#"<root xmlns:gml="http://www.opengis.net/gml"><gml:point/></root>"#;
     ///
     /// let mut fragment_xml = String::new();
-    /// StreamTransformer::new(xml)
+    /// Transformer::from(xml)
     ///     .with_root_namespaces()
     ///     .unwrap()
     ///     .on("//gml:point", |node| {

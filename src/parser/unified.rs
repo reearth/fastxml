@@ -93,7 +93,7 @@ impl<'a> Parser<'a> {
     /// Parses the input and returns all XML events as a buffered `Vec`.
     ///
     /// This collects the full event stream into memory. For push-based
-    /// streaming without buffering, use [`StreamingParser`] with a handler.
+    /// streaming without buffering, use [`for_each_event`](Self::for_each_event).
     pub fn events(self) -> Result<Vec<XmlEvent>> {
         match self.source {
             Source::Bytes(bytes) => collect_events(bytes),

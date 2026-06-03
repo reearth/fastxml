@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example xpath_namespaces
 
-use fastxml::{evaluate, parse};
+use fastxml::{Parser, evaluate};
 
 fn main() -> fastxml::error::Result<()> {
     // CityGML-style document with multiple namespaces
@@ -29,7 +29,7 @@ fn main() -> fastxml::error::Result<()> {
 </core:CityModel>
 "#;
 
-    let doc = parse(xml.as_bytes())?;
+    let doc = Parser::from(xml.as_bytes()).parse()?;
     println!("=== XPath with Namespaces ===\n");
 
     // Query using namespace prefix

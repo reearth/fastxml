@@ -3,7 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::transform::{StreamTransformerReader, TransformError};
+use crate::transform::TransformError;
+use crate::transform::reader::StreamTransformerReader;
 
 fn make_reader(xml: &str) -> std::io::BufReader<std::io::Cursor<&[u8]>> {
     std::io::BufReader::new(std::io::Cursor::new(xml.as_bytes()))

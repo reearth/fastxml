@@ -59,12 +59,6 @@ impl DomSchemaValidator {
         self
     }
 
-    /// Sets the validation options.
-    pub fn with_options(mut self, options: ValidationOptions) -> Self {
-        self.options = options;
-        self
-    }
-
     /// Sets the maximum number of errors to collect.
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;

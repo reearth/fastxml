@@ -1,6 +1,7 @@
 //! Tests for collect_multi functionality.
 
-use crate::transform::{EditableNode, StreamTransformer, TransformError, TransformResult};
+use crate::transform::builder::StreamTransformer;
+use crate::transform::{EditableNode, TransformError, TransformResult};
 
 #[test]
 fn test_collect_multi_2_same_xpath() {
