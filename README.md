@@ -130,7 +130,9 @@ assert_eq!(query.find_nodes(&b)?.len(), 1);
 
 Namespaces declared on each document's root are registered automatically; add
 extra bindings with `.namespace(prefix, uri)`. Use `.eval(&doc)` for a typed
-`XPathResult`, or `.eval_from(&doc, &node)` to start from a context node.
+`XPathResult`, or `.eval_from(&doc, &node)` to start from a context node. A
+compiled `Query` (and `StreamableQuery`) renders back to an equivalent XPath
+string via `to_string()`.
 
 The `QueryExt` trait adds method-call ergonomics on the document itself. Its
 argument is anything that is `AsQuery`, so a string and a pre-compiled `Query`

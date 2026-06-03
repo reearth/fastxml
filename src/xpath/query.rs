@@ -4,6 +4,8 @@
 //! against many documents, avoiding the re-parse that the free
 //! [`evaluate`](crate::evaluate) function performs on every call.
 
+use std::fmt;
+
 use crate::document::XmlDocument;
 use crate::error::Result;
 use crate::node::XmlNode;
@@ -94,6 +96,13 @@ impl Query {
     /// Convenience: evaluates and returns the matched nodes.
     pub fn find_nodes(&self, doc: &XmlDocument) -> Result<Vec<XmlNode>> {
         Ok(self.eval(doc)?.into_nodes())
+    }
+}
+
+/// Renders the compiled expression back to an (equivalent) XPath string.
+impl fmt::Display for Query {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.expr.fmt(f)
     }
 }
 
@@ -207,6 +216,22 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(query.eval_from(&doc, &group).unwrap().into_nodes().len(), 2);
+    }
+
+    #[test]
+    fn query_to_string_roundtrips() {
+        let q = Query::compile("//item[@id='2']").unwrap();
+        let rendered = q.to_string();
+        // Re-compiling the rendered string yields an equivalent query.
+        let doc = Parser::from(r#"<root><item id="1"/><item id="2"/></root>"#)
+            .parse()
+            .unwrap();
+        let again = Query::compile(&rendered).unwrap();
+        assert_eq!(
+            q.find_nodes(&doc).unwrap().len(),
+            again.find_nodes(&doc).unwrap().len()
+        );
+        assert_eq!(rendered, "//item[@id='2']");
     }
 
     #[test]

@@ -125,6 +125,7 @@ pub mod axes;
 pub mod functions;
 pub mod operators;
 pub mod query;
+mod unparse;
 
 // Re-export main types and functions
 pub use context::{

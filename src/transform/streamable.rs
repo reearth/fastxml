@@ -5,6 +5,8 @@
 //! time* that the expression can be matched in a single streaming pass, so a
 //! non-streamable pattern is rejected up front instead of failing mid-run.
 
+use std::fmt;
+
 use crate::document::XmlDocument;
 use crate::error::Result;
 use crate::xpath::{AsQuery, Expr, Query, XPathEvaluator, XPathResult, XPathSource, parse_xpath};
@@ -84,10 +86,17 @@ impl TryFrom<&Query> for StreamableQuery {
         match analyze_xpath(expr) {
             XPathAnalysis::Streamable(_) => Ok(Self { expr: expr.clone() }),
             XPathAnalysis::NotStreamable(reason) => Err(TransformError::NotStreamable {
-                xpath: "<query>".to_string(),
+                xpath: query.to_string(),
                 reason,
             }),
         }
+    }
+}
+
+/// Renders the compiled expression back to an (equivalent) XPath string.
+impl fmt::Display for StreamableQuery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.expr.fmt(f)
     }
 }
 
@@ -208,9 +217,18 @@ mod tests {
         let ok = Query::compile("//item").unwrap();
         assert!(StreamableQuery::try_from(&ok).is_ok());
 
-        // Non-streamable query is rejected.
+        // Non-streamable query is rejected, and the error names the expression.
         let bad = Query::compile("//item[last()]").unwrap();
-        assert!(StreamableQuery::try_from(&bad).is_err());
+        let err = StreamableQuery::try_from(&bad).unwrap_err();
+        assert!(format!("{err}").contains("//item[last()]"));
+    }
+
+    #[test]
+    fn streamable_to_string_roundtrips() {
+        let sq = StreamableQuery::compile("//item[@id='2']").unwrap();
+        assert_eq!(sq.to_string(), "//item[@id='2']");
+        // Re-compiles fine.
+        assert!(StreamableQuery::compile(&sq.to_string()).is_ok());
     }
 
     #[test]
