@@ -4,7 +4,7 @@ use fastxml::error::Error;
 use fastxml::node::error::NodeError;
 use fastxml::parser::error::ParseError;
 use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
-use fastxml::{ParserOptions, parse, parse_with_options};
+use fastxml::{Parser, ParserOptions};
 
 // =============================================================================
 // Malformed XML Tests
@@ -16,7 +16,7 @@ mod malformed_xml {
     #[test]
     fn test_unclosed_tag() {
         let xml = "<root><child>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml is lenient with unclosed tags at EOF
         // Document parses but may have incomplete structure
         assert!(result.is_ok());
@@ -27,7 +27,7 @@ mod malformed_xml {
         let xml = "<root></roo>";
         //         0123456789AB (hex) = positions
         //         "<root>" = 6 bytes, "</roo>" = 6 bytes, total = 12 bytes
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         match &result {
             Err(Error::Parse(ParseError::AtPosition { message, position })) => {
                 assert!(
@@ -51,7 +51,7 @@ mod malformed_xml {
     #[test]
     fn test_mismatched_nested_tags() {
         let xml = "<root><child></root></child>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error, got: {:?}",
@@ -62,7 +62,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_tag_name_starting_with_number() {
         let xml = "<1root/>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml is lenient and accepts tags starting with numbers
         assert!(
             result.is_ok(),
@@ -73,7 +73,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_tag_name_with_space() {
         let xml = "<root element/>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for tag with space, got: {:?}",
@@ -84,7 +84,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_attribute_no_value() {
         let xml = r#"<root attr=>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for attribute without value, got: {:?}",
@@ -95,7 +95,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_attribute_no_quotes() {
         let xml = r#"<root attr=value/>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml does NOT accept unquoted attribute values
         assert!(
             matches!(result, Err(Error::Parse(_))),
@@ -107,7 +107,7 @@ mod malformed_xml {
     #[test]
     fn test_duplicate_attributes() {
         let xml = r#"<root attr="1" attr="2"/>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml returns error for duplicate attributes
         assert!(
             matches!(result, Err(Error::Parse(_))),
@@ -119,7 +119,7 @@ mod malformed_xml {
     #[test]
     fn test_unescaped_ampersand() {
         let xml = "<root>a & b</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml error: "Cannot find ';' after '&'"
         assert!(
             matches!(&result, Err(Error::Parse(_))),
@@ -131,7 +131,7 @@ mod malformed_xml {
     #[test]
     fn test_unescaped_less_than() {
         let xml = "<root>a < b</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for unescaped <, got: {:?}",
@@ -142,7 +142,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_entity_reference() {
         let xml = "<root>&invalid;</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml returns error for unknown entities
         assert!(
             matches!(result, Err(Error::Parse(_))),
@@ -154,7 +154,7 @@ mod malformed_xml {
     #[test]
     fn test_incomplete_entity_reference() {
         let xml = "<root>&amp</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for incomplete entity, got: {:?}",
@@ -165,7 +165,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_xml_declaration() {
         let xml = r#"<?xml version="2.0"?><root/>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml doesn't validate XML version
         assert!(result.is_ok(), "quick-xml accepts version 2.0");
     }
@@ -173,7 +173,7 @@ mod malformed_xml {
     #[test]
     fn test_xml_declaration_not_at_start() {
         let xml = " <?xml version=\"1.0\"?><root/>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml is lenient about whitespace before declaration
         assert!(
             result.is_ok(),
@@ -184,7 +184,7 @@ mod malformed_xml {
     #[test]
     fn test_multiple_root_elements() {
         let xml = "<root1/><root2/>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml only parses the first root
         assert!(result.is_ok());
         let doc = result.unwrap();
@@ -195,7 +195,7 @@ mod malformed_xml {
     #[test]
     fn test_empty_input() {
         let xml = "";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // Empty input is accepted but has no root
         assert!(result.is_ok());
         let doc = result.unwrap();
@@ -211,7 +211,7 @@ mod malformed_xml {
     #[test]
     fn test_whitespace_only() {
         let xml = "   \n\t  ";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
@@ -226,7 +226,7 @@ mod malformed_xml {
     #[test]
     fn test_comment_only() {
         let xml = "<!-- just a comment -->";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(result.is_ok());
         let doc = result.unwrap();
         assert!(
@@ -241,7 +241,7 @@ mod malformed_xml {
     #[test]
     fn test_unclosed_comment() {
         let xml = "<root><!-- unclosed comment</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for unclosed comment, got: {:?}",
@@ -252,7 +252,7 @@ mod malformed_xml {
     #[test]
     fn test_double_hyphen_in_comment() {
         let xml = "<root><!-- invalid -- comment --></root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for -- in comment, got: {:?}",
@@ -263,7 +263,7 @@ mod malformed_xml {
     #[test]
     fn test_unclosed_cdata() {
         let xml = "<root><![CDATA[unclosed</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         assert!(
             matches!(result, Err(Error::Parse(_))),
             "Expected Parse error for unclosed CDATA, got: {:?}",
@@ -274,7 +274,7 @@ mod malformed_xml {
     #[test]
     fn test_cdata_end_in_cdata() {
         let xml = "<root><![CDATA[contains ]]> in middle]]></root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // ]]> inside CDATA ends it early, but quick-xml handles this gracefully
         // and parses the rest as text/another CDATA
         assert!(
@@ -286,7 +286,7 @@ mod malformed_xml {
     #[test]
     fn test_invalid_namespace_prefix() {
         let xml = r#"<unknown:root/>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml accepts undeclared namespace prefixes
         assert!(result.is_ok(), "quick-xml accepts undeclared prefixes");
     }
@@ -294,7 +294,7 @@ mod malformed_xml {
     #[test]
     fn test_xml_reserved_prefix() {
         let xml = r#"<xml:element xmlns:xml="http://wrong.url"/>"#;
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml doesn't validate xml prefix namespace
         assert!(result.is_ok(), "quick-xml doesn't validate xml prefix");
     }
@@ -306,7 +306,7 @@ mod malformed_xml {
         let close_tags: String = (0..depth).rev().map(|i| format!("</e{}>", i)).collect();
         let xml = format!("{}{}", open_tags, close_tags);
 
-        let result = parse(&xml);
+        let result = Parser::from(xml.as_str()).parse();
         // Should succeed - no stack overflow
         assert!(result.is_ok(), "Deep nesting should be handled");
     }
@@ -316,7 +316,7 @@ mod malformed_xml {
         let long_name = "a".repeat(10000);
         let xml = format!("<{}/>", long_name);
 
-        let result = parse(&xml);
+        let result = Parser::from(xml.as_str()).parse();
         assert!(result.is_ok());
         let doc = result.unwrap();
         let root = doc.get_root_element().unwrap();
@@ -328,7 +328,7 @@ mod malformed_xml {
         let long_value = "x".repeat(100000);
         let xml = format!(r#"<root attr="{}"/>"#, long_value);
 
-        let result = parse(&xml);
+        let result = Parser::from(xml.as_str()).parse();
         assert!(result.is_ok());
         let doc = result.unwrap();
         let root = doc.get_root_element().unwrap();
@@ -339,7 +339,7 @@ mod malformed_xml {
     #[test]
     fn test_null_byte_in_content() {
         let xml = "<root>hello\0world</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml accepts null bytes in content
         assert!(result.is_ok(), "quick-xml accepts null bytes");
     }
@@ -347,7 +347,7 @@ mod malformed_xml {
     #[test]
     fn test_control_characters() {
         let xml = "<root>\x01\x02\x03</root>";
-        let result = parse(xml);
+        let result = Parser::from(xml).parse();
         // quick-xml accepts control characters in content
         assert!(result.is_ok(), "quick-xml accepts control characters");
     }
@@ -358,7 +358,7 @@ mod malformed_xml {
             0x3c, 0x72, 0x6f, 0x6f, 0x74, 0x3e, 0xff, 0xfe, 0x3c, 0x2f, 0x72, 0x6f, 0x6f, 0x74,
             0x3e,
         ];
-        let result = parse(invalid_bytes);
+        let result = Parser::from(invalid_bytes).parse();
         // Invalid UTF-8 should cause an error
         assert!(
             matches!(
@@ -386,7 +386,7 @@ mod parser_options {
         };
 
         let large_xml = format!("<root>{}</root>", "x".repeat(1000));
-        let result = parse_with_options(&large_xml, &options);
+        let result = Parser::from(large_xml.as_str()).options(options).parse();
         assert!(
             matches!(
                 &result,
@@ -405,7 +405,7 @@ mod parser_options {
         };
 
         let xml = "<root>small content</root>";
-        let result = parse_with_options(xml, &options);
+        let result = Parser::from(xml).options(options).parse();
         assert!(result.is_ok());
     }
 
@@ -413,7 +413,7 @@ mod parser_options {
     fn test_default_options() {
         let options = ParserOptions::default();
         let xml = "<root><child>text</child></root>";
-        let result = parse_with_options(xml, &options);
+        let result = Parser::from(xml).options(options).parse();
         assert!(result.is_ok());
     }
 }
@@ -428,7 +428,7 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_unclosed_bracket() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "/root[");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
@@ -439,7 +439,7 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_unclosed_parenthesis() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "count(/root");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
@@ -451,7 +451,7 @@ mod xpath_errors {
     #[test]
     fn test_invalid_xpath_unknown_function() {
         use super::XPathEvalError;
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "unknownfn()");
         // Unknown function returns error
         assert!(
@@ -464,7 +464,7 @@ mod xpath_errors {
     #[test]
     fn test_invalid_xpath_unknown_axis() {
         use super::XPathSyntaxError;
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "unknownaxis::*");
         // Unknown axis returns error
         assert!(
@@ -476,7 +476,7 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_empty() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
@@ -487,7 +487,7 @@ mod xpath_errors {
 
     #[test]
     fn test_xpath_double_slash_at_end() {
-        let doc = parse("<root><child/></root>").unwrap();
+        let doc = Parser::from("<root><child/></root>").parse().unwrap();
         let result = evaluate(&doc, "/root//");
         // Trailing // matches all descendants of root
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
@@ -498,7 +498,7 @@ mod xpath_errors {
 
     #[test]
     fn test_invalid_xpath_missing_operand() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "/root +");
         assert!(
             matches!(result, Err(Error::XPathSyntax(_))),
@@ -509,7 +509,7 @@ mod xpath_errors {
 
     #[test]
     fn test_xpath_division_by_zero() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "1 div 0");
         // XPath 1.0: division by zero returns Infinity, not an error
         assert!(result.is_ok(), "XPath division by zero returns Infinity");
@@ -517,7 +517,7 @@ mod xpath_errors {
 
     #[test]
     fn test_xpath_invalid_number() {
-        let doc = parse("<root/>").unwrap();
+        let doc = Parser::from("<root/>").parse().unwrap();
         let result = evaluate(&doc, "number('not a number') + 1");
         // XPath: number('invalid') returns NaN, arithmetic with NaN is valid
         assert!(result.is_ok(), "XPath NaN arithmetic is valid");
@@ -525,7 +525,7 @@ mod xpath_errors {
 
     #[test]
     fn test_xpath_on_empty_document() {
-        let doc = parse("").unwrap();
+        let doc = Parser::from("").parse().unwrap();
         let result = evaluate(&doc, "/root");
         // XPath on empty doc returns NodeNotFound error (no root element)
         assert!(
