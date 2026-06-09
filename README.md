@@ -45,7 +45,7 @@ Benchmark results as of v0.8.0 on PLATEAU DEM GML (907 MB, 31M nodes) — [bench
 
 ```toml
 [dependencies]
-fastxml = "0.8"
+fastxml = "0.9"
 ```
 
 ### Cargo Features
@@ -59,10 +59,10 @@ fastxml = "0.8"
 
 ```toml
 # Recommended: sync schema fetching
-fastxml = { version = "0.8", features = ["ureq"] }
+fastxml = { version = "0.9", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.8", features = ["tokio"] }
+fastxml = { version = "0.9", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
