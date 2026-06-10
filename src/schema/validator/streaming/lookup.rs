@@ -109,6 +109,8 @@ impl OnePassSchemaValidator {
             ordered.push(elem.name.clone());
         }
         flattened.ordered_elements = Arc::from(ordered);
+        flattened.wildcard =
+            crate::schema::xsd::compiler::inherited_wildcard(complex, &self.schema);
 
         flattened
     }

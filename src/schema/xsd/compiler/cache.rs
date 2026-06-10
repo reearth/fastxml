@@ -131,6 +131,7 @@ impl XsdCompiler {
                 .constraints
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
         }
+        flattened.wildcard = inherited_wildcard(complex, schema);
 
         flattened
     }
@@ -185,4 +186,28 @@ impl XsdCompiler {
 
         elements
     }
+}
+
+/// Returns the complex type's element wildcard, inheriting from base types.
+pub(crate) fn inherited_wildcard(
+    complex: &crate::schema::types::ComplexType,
+    schema: &CompiledSchema,
+) -> Option<crate::schema::types::WildcardConstraint> {
+    if complex.wildcard.is_some() {
+        return complex.wildcard.clone();
+    }
+    let mut base = complex.base_type.clone();
+    for _ in 0..16 {
+        let Some(b) = base else { break };
+        match schema.get_type(&b) {
+            Some(crate::schema::types::TypeDef::Complex(c)) => {
+                if c.wildcard.is_some() {
+                    return c.wildcard.clone();
+                }
+                base = c.base_type.clone();
+            }
+            _ => break,
+        }
+    }
+    None
 }

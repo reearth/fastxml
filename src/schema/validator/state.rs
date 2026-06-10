@@ -54,6 +54,9 @@ pub(crate) struct ElementContext {
     /// Inline (anonymous) type from the element declaration, used when the
     /// declaration carries no named type reference.
     pub inline_type: Option<crate::schema::types::TypeDef>,
+    /// Set when this element was admitted by a lax/skip wildcard; its
+    /// subtree inherits that processing mode.
+    pub wildcard_mode: Option<crate::schema::types::ProcessContents>,
 }
 
 impl ElementContext {
@@ -73,6 +76,7 @@ impl ElementContext {
             default_value: None,
             fixed_value: None,
             inline_type: None,
+            wildcard_mode: None,
         }
     }
 

@@ -90,6 +90,8 @@ impl DomSchemaValidator {
             ordered.push(elem.name.clone());
         }
         flattened.ordered_elements = std::sync::Arc::from(ordered);
+        flattened.wildcard =
+            crate::schema::xsd::compiler::inherited_wildcard(complex, &self.schema);
 
         flattened
     }

@@ -2,12 +2,121 @@
 
 use crate::error::Result;
 use crate::schema::types::{
-    AttributeDef, BlockSet, ComplexType, ContentModel, DerivationMethod, SimpleType, TypeDef,
-    WhiteSpace,
+    AttributeDef, BlockSet, ComplexType, ContentModel, DerivationMethod, ProcessContents,
+    SimpleType, TypeDef, WhiteSpace, WildcardConstraint, WildcardNamespace,
 };
 
 use super::super::types::*;
 use super::XsdCompiler;
+
+/// A wildcard found in a content model along with its effective occurrence
+/// bounds (the wildcard's own occurs scaled by every enclosing compositor).
+struct FoundWildcard<'a> {
+    any: &'a XsdAny,
+    min: u32,
+    max: Option<u32>,
+}
+
+impl<'a> FoundWildcard<'a> {
+    fn scaled(mut self, min: Occurs, max: Occurs, optional: bool) -> Self {
+        let comp_min = match min {
+            Occurs::Count(n) => n,
+            Occurs::Unbounded => 1,
+        };
+        self.min = if optional {
+            0
+        } else {
+            self.min.saturating_mul(comp_min)
+        };
+        let comp_max = match max {
+            Occurs::Count(n) => Some(n),
+            Occurs::Unbounded => None,
+        };
+        self.max = match (self.max, comp_max) {
+            (Some(a), Some(b)) => Some(a.saturating_mul(b)),
+            _ => None,
+        };
+        self
+    }
+}
+
+/// Finds the first element wildcard (`xs:any`) in a complex type's content.
+fn find_wildcard_in_content(content: &XsdComplexContent) -> Option<FoundWildcard<'_>> {
+    match content {
+        XsdComplexContent::Particle(p) => find_wildcard_in_particle(p),
+        XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+            XsdComplexContentDerivation::Extension(ext) => {
+                ext.particle.as_ref().and_then(find_wildcard_in_particle)
+            }
+            XsdComplexContentDerivation::Restriction(r) => {
+                r.particle.as_ref().and_then(find_wildcard_in_particle)
+            }
+        },
+        _ => None,
+    }
+}
+
+fn found(any: &XsdAny) -> FoundWildcard<'_> {
+    FoundWildcard {
+        any,
+        min: match any.min_occurs {
+            Occurs::Count(n) => n,
+            Occurs::Unbounded => 0,
+        },
+        max: match any.max_occurs {
+            Occurs::Count(n) => Some(n),
+            Occurs::Unbounded => None,
+        },
+    }
+}
+
+fn find_wildcard_in_particle(particle: &XsdParticle) -> Option<FoundWildcard<'_>> {
+    match particle {
+        XsdParticle::Any(any) => Some(found(any)),
+        XsdParticle::Sequence(seq) => find_wildcard_in_items(&seq.particles)
+            .map(|w| w.scaled(seq.min_occurs, seq.max_occurs, false)),
+        XsdParticle::Choice(choice) => {
+            find_wildcard_in_items(&choice.particles).map(|w| {
+                // With sibling alternatives the wildcard branch may be
+                // skipped entirely, so its minimum is not enforceable.
+                w.scaled(
+                    choice.min_occurs,
+                    choice.max_occurs,
+                    choice.particles.len() > 1,
+                )
+            })
+        }
+        XsdParticle::All(_) => None, // xs:all cannot contain wildcards in XSD 1.0
+        XsdParticle::GroupRef(_) => None,
+    }
+}
+
+fn find_wildcard_in_items(items: &[XsdParticleItem]) -> Option<FoundWildcard<'_>> {
+    let optional = items.len() > 1; // siblings make exact bounds undecidable
+    for item in items {
+        let found = match item {
+            XsdParticleItem::Any(any) => Some(found(any)),
+            XsdParticleItem::Sequence(seq) => find_wildcard_in_items(&seq.particles)
+                .map(|w| w.scaled(seq.min_occurs, seq.max_occurs, false)),
+            XsdParticleItem::Choice(choice) => find_wildcard_in_items(&choice.particles).map(|w| {
+                w.scaled(
+                    choice.min_occurs,
+                    choice.max_occurs,
+                    choice.particles.len() > 1,
+                )
+            }),
+            _ => None,
+        };
+        if let Some(w) = found {
+            return Some(if optional {
+                FoundWildcard { min: 0, ..w }
+            } else {
+                w
+            });
+        }
+    }
+    None
+}
 
 /// Maps a parsed `block` attribute to the compiled [`BlockSet`].
 fn compile_block_set(control: Option<&DerivationControl>) -> BlockSet {
@@ -150,6 +259,45 @@ impl XsdCompiler {
         Ok(TypeDef::Simple(compiled))
     }
 
+    /// Compiles an `xs:any` wildcard into its runtime representation.
+    pub(crate) fn compile_wildcard(&self, any: &XsdAny) -> WildcardConstraint {
+        WildcardConstraint {
+            namespace: match &any.namespace {
+                NamespaceConstraint::Any => WildcardNamespace::Any,
+                NamespaceConstraint::Other => WildcardNamespace::Other,
+                NamespaceConstraint::TargetNamespace => WildcardNamespace::List(vec![
+                    self.current_target_ns.clone().unwrap_or_default(),
+                ]),
+                NamespaceConstraint::Local => WildcardNamespace::List(vec![String::new()]),
+                NamespaceConstraint::List(uris) => WildcardNamespace::List(
+                    uris.iter()
+                        .map(|u| match u.as_str() {
+                            "##targetNamespace" => {
+                                self.current_target_ns.clone().unwrap_or_default()
+                            }
+                            "##local" => String::new(),
+                            other => other.to_string(),
+                        })
+                        .collect(),
+                ),
+            },
+            process_contents: match any.process_contents {
+                ProcessContentsMode::Strict => ProcessContents::Strict,
+                ProcessContentsMode::Lax => ProcessContents::Lax,
+                ProcessContentsMode::Skip => ProcessContents::Skip,
+            },
+            min_occurs: match any.min_occurs {
+                Occurs::Count(n) => n,
+                Occurs::Unbounded => 0,
+            },
+            max_occurs: match any.max_occurs {
+                Occurs::Count(n) => Some(n),
+                Occurs::Unbounded => None,
+            },
+            target_namespace: self.current_target_ns.clone(),
+        }
+    }
+
     /// Compiles a complex type.
     pub(crate) fn compile_complex_type(&mut self, ct: &XsdComplexType) -> Result<TypeDef> {
         let name = ct.name.clone().unwrap_or_default();
@@ -185,6 +333,14 @@ impl XsdCompiler {
 
         // Compile content model
         compiled.content = self.compile_complex_content(&ct.content)?;
+
+        // Record any element wildcard found in the content model
+        compiled.wildcard = find_wildcard_in_content(&ct.content).map(|w| {
+            let mut compiled_wc = self.compile_wildcard(w.any);
+            compiled_wc.min_occurs = w.min;
+            compiled_wc.max_occurs = w.max;
+            compiled_wc
+        });
 
         // Compile attributes
         for attr in &ct.attributes {

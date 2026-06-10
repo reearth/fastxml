@@ -44,6 +44,17 @@ impl OnePassSchemaValidator {
         // Check if this element is expected by the parent (inline element definition)
         let is_expected_by_parent = self.is_element_expected_by_parent(name);
 
+        // Wildcard handling: a skip wildcard admits this whole subtree
+        // without validation; a lax wildcard admits undeclared elements.
+        let wildcard_mode = self.parent_wildcard_mode(name, namespace, is_expected_by_parent);
+        if wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Skip);
+            }
+            return;
+        }
+
         let schema_has_elements = !self.schema.elements.is_empty();
 
         // Priority: inline element definition > global element definition
@@ -105,6 +116,13 @@ impl OnePassSchemaValidator {
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
+            }
+        } else if wildcard_mode == Some(crate::schema::types::ProcessContents::Lax) {
+            // Undeclared element admitted by a lax wildcard; its subtree
+            // keeps lax processing.
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Lax);
             }
         } else {
             // Element not found in schema
@@ -282,10 +300,89 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Returns the wildcard processing mode the parent applies to this
+    /// element: a propagated lax/skip subtree mode, or the parent content
+    /// model's wildcard when the element is not declared there.
+    fn parent_wildcard_mode(
+        &self,
+        name: &Arc<str>,
+        namespace: Option<&str>,
+        is_expected_by_parent: bool,
+    ) -> Option<crate::schema::types::ProcessContents> {
+        let len = self.state.element_stack.len();
+        if len < 2 {
+            return None;
+        }
+        let parent = self.state.element_stack.get(len - 2)?;
+        if let Some(mode) = parent.wildcard_mode {
+            // Inside a skipped subtree everything is skipped; inside a lax
+            // subtree undeclared elements stay lax.
+            match mode {
+                crate::schema::types::ProcessContents::Skip => return Some(mode),
+                crate::schema::types::ProcessContents::Lax if !is_expected_by_parent => {
+                    return Some(mode);
+                }
+                _ => {}
+            }
+        }
+        if is_expected_by_parent {
+            return None;
+        }
+        let fc = parent.flattened_children.as_ref()?;
+        let w = fc.wildcard.as_ref()?;
+        if !fc.constraints.contains_key(name.as_ref()) && w.matches(namespace) {
+            Some(w.process_contents)
+        } else {
+            None
+        }
+    }
+
     /// Validates an element when it closes.
     pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
+            // A subtree admitted by a skip wildcard is not validated.
+            if ctx.wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
+                return;
+            }
+
+            // Wildcard occurrence bounds, decidable only when the wildcard
+            // is the sole particle of the content model.
+            if let Some(fc) = &ctx.flattened_children
+                && let Some(w) = &fc.wildcard
+                && fc.constraints.is_empty()
+            {
+                let matched: u32 = ctx.child_counts.iter().map(|(_, c)| *c).sum();
+                if matched < w.min_occurs {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::TooFewOccurrences,
+                            format!(
+                                "element '{}' requires at least {} wildcard-matched child element(s), found {}",
+                                ctx.name, w.min_occurs, matched
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+                if let Some(max) = w.max_occurs
+                    && matched > max
+                {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::TooManyOccurrences,
+                            format!(
+                                "element '{}' allows at most {} wildcard-matched child element(s), found {}",
+                                ctx.name, max, matched
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+
             // A nilled element must be empty.
             if ctx.nilled && (!ctx.text_content.trim().is_empty() || !ctx.child_counts.is_empty()) {
                 let error = self
@@ -321,6 +418,11 @@ impl OnePassSchemaValidator {
                 self.validate_text_against_type_def(ctx, &type_def);
                 return;
             }
+        }
+
+        // Elements admitted by a wildcard have no declared type to check.
+        if ctx.wildcard_mode.is_some() && ctx.type_ref.is_none() && ctx.inline_type.is_none() {
+            return;
         }
 
         // Inline (anonymous) type captured at element start

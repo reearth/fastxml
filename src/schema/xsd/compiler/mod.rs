@@ -4,6 +4,7 @@
 //! representation (CompiledSchema).
 
 mod cache;
+pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod substitution;
 mod types;

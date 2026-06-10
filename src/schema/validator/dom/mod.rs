@@ -15,7 +15,10 @@ use std::sync::Arc;
 use crate::document::XmlDocument;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::node::{NodeType, XmlNode};
-use crate::schema::types::{CompiledSchema, ElementDef, FlattenedChildren, TypeDef};
+use crate::schema::types::{
+    CompiledSchema, ElementDef, FlattenedChildren, ProcessContents, TypeDef, WildcardConstraint,
+    WildcardNamespace,
+};
 
 use super::ValidationMode;
 use super::streaming::ValidationOptions;
@@ -41,6 +44,21 @@ use super::streaming::ValidationOptions;
 struct ParentContext {
     allowed: Option<Arc<FlattenedChildren>>,
     elements: Vec<ElementDef>,
+    /// Wildcard admitting otherwise-undeclared children (from the type's
+    /// content model, or propagated from an enclosing lax/skip wildcard).
+    wildcard: Option<WildcardConstraint>,
+}
+
+/// A wildcard that admits anything, used to propagate lax/skip processing
+/// into the subtree of a wildcard-matched element.
+fn propagated_wildcard(mode: ProcessContents) -> WildcardConstraint {
+    WildcardConstraint {
+        namespace: WildcardNamespace::Any,
+        process_contents: mode,
+        min_occurs: 0,
+        max_occurs: None,
+        target_namespace: None,
+    }
 }
 
 /// XML Schema Instance namespace.
@@ -231,6 +249,21 @@ impl DomSchemaValidator {
             .map(|fc| fc.constraints.contains_key(&name))
             .unwrap_or(false);
 
+        // A skip wildcard admits this element without any validation, even
+        // when a matching declaration exists.
+        if !is_allowed_by_parent {
+            if let Some(w) = parent_ctx.and_then(|ctx| ctx.wildcard.as_ref()) {
+                if w.process_contents == ProcessContents::Skip
+                    && w.matches(node.get_namespace_uri().as_deref())
+                {
+                    return ParentContext {
+                        wildcard: Some(propagated_wildcard(ProcessContents::Skip)),
+                        ..ParentContext::default()
+                    };
+                }
+            }
+        }
+
         if let Some(elem) = elem_def {
             // xsi:type substitution: validate against the named type instead
             // of the declared one (when the substitution is allowed).
@@ -335,6 +368,56 @@ impl DomSchemaValidator {
 
                 // Validate sequence order for sequence content models
                 self.validate_sequence_order(node, fc, errors);
+
+                // Validate wildcard occurrence bounds. Without a full
+                // content-model automaton this is only decidable when the
+                // wildcard is the sole particle (no declared siblings).
+                if let Some(ref w) = fc.wildcard
+                    && fc.constraints.is_empty()
+                {
+                    let matched = node
+                        .get_child_elements()
+                        .iter()
+                        .filter(|c| {
+                            !fc.constraints.contains_key(&c.get_name())
+                                && w.matches(c.get_namespace_uri().as_deref())
+                        })
+                        .count() as u32;
+                    if matched < w.min_occurs {
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::TooFewOccurrences,
+                                format!(
+                                    "element '{}' requires at least {} wildcard-matched child element(s), found {}",
+                                    name, w.min_occurs, matched
+                                ),
+                                node,
+                            )
+                            .with_node_name(&name)
+                            .with_level(ErrorLevel::Error);
+                        if self.should_add_error(errors) {
+                            errors.push(error);
+                        }
+                    }
+                    if let Some(max) = w.max_occurs {
+                        if matched > max {
+                            let error = self
+                                .make_error(
+                                    ValidationErrorType::TooManyOccurrences,
+                                    format!(
+                                        "element '{}' allows at most {} wildcard-matched child element(s), found {}",
+                                        name, max, matched
+                                    ),
+                                    node,
+                                )
+                                .with_node_name(&name)
+                                .with_level(ErrorLevel::Error);
+                            if self.should_add_error(errors) {
+                                errors.push(error);
+                            }
+                        }
+                    }
+                }
             }
 
             // Validate text content
@@ -343,15 +426,30 @@ impl DomSchemaValidator {
             // Validate attributes against the type's attribute declarations
             self.validate_node_attributes(node, elem, ids, errors);
 
+            let wildcard = flattened.as_ref().and_then(|fc| fc.wildcard.clone());
             ParentContext {
                 elements: self.element_child_declarations(elem),
                 allowed: flattened,
+                wildcard,
             }
         } else if is_allowed_by_parent {
             // Element is allowed by the parent type but has no resolvable
             // declaration - nothing further to validate.
             ParentContext::default()
         } else if self.mode == ValidationMode::Strict && schema_has_elements {
+            // An undeclared element admitted by a lax wildcard is fine; its
+            // subtree keeps lax processing.
+            if let Some(w) = parent_ctx.and_then(|ctx| ctx.wildcard.as_ref()) {
+                if w.process_contents == ProcessContents::Lax
+                    && w.matches(node.get_namespace_uri().as_deref())
+                {
+                    return ParentContext {
+                        wildcard: Some(propagated_wildcard(ProcessContents::Lax)),
+                        ..ParentContext::default()
+                    };
+                }
+            }
+
             // Unknown element
             let qname = match &prefix {
                 Some(p) => format!("{}:{}", p, name),

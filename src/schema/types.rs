@@ -55,6 +55,8 @@ pub struct FlattenedChildren {
     /// Ordered element names for sequence validation.
     /// Using Arc<[String]> to make cloning cheap (pointer copy instead of deep clone).
     pub ordered_elements: Arc<[String]>,
+    /// Element wildcard (xs:any) in the content model, if present
+    pub wildcard: Option<WildcardConstraint>,
 }
 
 impl FlattenedChildren {
@@ -64,6 +66,7 @@ impl FlattenedChildren {
             constraints: HashMap::new(),
             content_model_type: ContentModelType::Empty,
             ordered_elements: Arc::from([]),
+            wildcard: None,
         }
     }
 
@@ -73,6 +76,7 @@ impl FlattenedChildren {
             constraints: HashMap::new(),
             content_model_type,
             ordered_elements: Arc::from([]),
+            wildcard: None,
         }
     }
 }
@@ -530,6 +534,8 @@ pub struct ComplexType {
     pub content: ContentModel,
     /// Attribute definitions
     pub attributes: Vec<AttributeDef>,
+    /// Element wildcard (xs:any) anywhere in the content model
+    pub wildcard: Option<WildcardConstraint>,
     /// Whether this type is abstract
     pub is_abstract: bool,
     /// Whether content is mixed (text + elements)
@@ -546,6 +552,7 @@ impl ComplexType {
             block: BlockSet::default(),
             content: ContentModel::Empty,
             attributes: Vec::new(),
+            wildcard: None,
             is_abstract: false,
             mixed: false,
         }
@@ -560,6 +567,7 @@ impl ComplexType {
             block: BlockSet::default(),
             content: ContentModel::Sequence(elements),
             attributes: Vec::new(),
+            wildcard: None,
             is_abstract: false,
             mixed: false,
         }
@@ -596,6 +604,53 @@ pub enum ContentModel {
         /// How to process the content
         process_contents: ProcessContents,
     },
+}
+
+/// A compiled element wildcard (`xs:any`).
+#[derive(Debug, Clone)]
+pub struct WildcardConstraint {
+    /// Namespace constraint
+    pub namespace: WildcardNamespace,
+    /// How matched content is processed
+    pub process_contents: ProcessContents,
+    /// Minimum number of matched elements
+    pub min_occurs: u32,
+    /// Maximum number of matched elements (None = unbounded)
+    pub max_occurs: Option<u32>,
+    /// The schema's target namespace (used by `##other`)
+    pub target_namespace: Option<String>,
+}
+
+impl WildcardConstraint {
+    /// Whether an element in `ns` is admitted by this wildcard.
+    pub fn matches(&self, ns: Option<&str>) -> bool {
+        match &self.namespace {
+            WildcardNamespace::Any => true,
+            WildcardNamespace::Other => {
+                // ##other: a namespace other than the target namespace;
+                // absent namespaces are not admitted.
+                match ns {
+                    Some(ns) => Some(ns) != self.target_namespace.as_deref(),
+                    None => false,
+                }
+            }
+            WildcardNamespace::List(uris) => uris
+                .iter()
+                .any(|u| (u.is_empty() && ns.is_none()) || Some(u.as_str()) == ns),
+        }
+    }
+}
+
+/// Namespace constraint of a wildcard.
+#[derive(Debug, Clone)]
+pub enum WildcardNamespace {
+    /// `##any`
+    Any,
+    /// `##other` (any namespace other than the target namespace)
+    Other,
+    /// An explicit list of namespace URIs (the empty string means
+    /// "no namespace", from `##local`)
+    List(Vec<String>),
 }
 
 /// How to process wildcard content.
