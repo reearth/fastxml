@@ -30,6 +30,12 @@ pub(crate) fn resolve_xsi_type(
     };
     let declared_local = declared.rsplit(':').next().unwrap_or(declared);
 
+    // Every type derives from xs:anyType (and every simple type from
+    // xs:anySimpleType), so substitution is always allowed.
+    if declared_local == "anyType" || declared_local == "anySimpleType" {
+        return Ok(key);
+    }
+
     if local_name(&key) == declared_local {
         return Ok(key); // same type
     }

@@ -5,6 +5,7 @@
 //! as it avoids the overhead of event reconstruction.
 
 mod content;
+mod identity;
 mod lookup;
 mod occurrence;
 
@@ -63,6 +64,9 @@ pub(crate) struct DocIdState {
     seen_ids: std::collections::HashSet<String>,
     /// `xs:IDREF` values with their locations, resolved after traversal
     pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
+    /// Identity constraint tasks (scoping element x constraint), evaluated
+    /// after traversal
+    constraint_tasks: Vec<identity::ConstraintTask>,
 }
 
 impl DocIdState {
@@ -127,6 +131,15 @@ impl DomSchemaValidator {
         // Start validation from root
         if let Ok(root) = doc.get_root_element() {
             self.validate_node_recursive(&root, None, &mut ids, &mut errors);
+        }
+
+        // Evaluate identity constraints (unique / key / keyref)
+        for message in identity::validate_identity_constraints(doc, &ids.constraint_tasks) {
+            let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
+                .with_level(ErrorLevel::Error);
+            if self.should_add_error(&errors) {
+                errors.push(error);
+            }
         }
 
         // Resolve IDREF references against the IDs seen in the document
@@ -297,6 +310,15 @@ impl DomSchemaValidator {
                         errors.push(error);
                     }
                 }
+            }
+
+            // Queue identity constraints declared on this element for
+            // post-traversal evaluation.
+            for constraint in &elem.constraints {
+                ids.constraint_tasks.push(identity::ConstraintTask {
+                    node: node.clone(),
+                    constraint: constraint.clone(),
+                });
             }
 
             // Count child elements

@@ -1,7 +1,9 @@
 //! Particle compilation - sequences, choices, all, and elements.
 
 use crate::error::Result;
-use crate::schema::types::{ContentModel, ElementDef, NsName, ProcessContents};
+use crate::schema::types::{
+    CompiledConstraint, CompiledConstraintType, ContentModel, ElementDef, NsName, ProcessContents,
+};
 
 use super::super::types::*;
 use super::XsdCompiler;
@@ -280,6 +282,21 @@ impl XsdCompiler {
 
         if let Some(sg) = &elem.substitution_group {
             compiled.substitution_group = Some(self.resolve_qname(sg));
+        }
+
+        // Compile identity constraints (unique / key / keyref)
+        for ic in &elem.identity_constraints {
+            compiled.constraints.push(CompiledConstraint {
+                name: ic.name.clone(),
+                constraint_type: match ic.constraint_type {
+                    XsdConstraintType::Unique => CompiledConstraintType::Unique,
+                    XsdConstraintType::Key => CompiledConstraintType::Key,
+                    XsdConstraintType::KeyRef => CompiledConstraintType::KeyRef,
+                },
+                selector_xpath: ic.selector.clone(),
+                field_xpaths: ic.fields.clone(),
+                refer: ic.refer.as_ref().map(|q| q.local.clone()),
+            });
         }
 
         Ok(compiled)

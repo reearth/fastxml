@@ -51,6 +51,9 @@ pub(crate) struct ElementContext {
     pub default_value: Option<String>,
     /// Fixed value from the element declaration.
     pub fixed_value: Option<String>,
+    /// Inline (anonymous) type from the element declaration, used when the
+    /// declaration carries no named type reference.
+    pub inline_type: Option<crate::schema::types::TypeDef>,
 }
 
 impl ElementContext {
@@ -69,6 +72,7 @@ impl ElementContext {
             nilled: false,
             default_value: None,
             fixed_value: None,
+            inline_type: None,
         }
     }
 

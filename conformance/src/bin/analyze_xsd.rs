@@ -68,15 +68,22 @@ fn main() {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
-                let doc = match fastxml::Parser::from(content.as_slice()).parse() {
-                    Ok(d) => d,
-                    Err(_) => continue,
+                let streaming = std::env::args().any(|a| a == "--streaming");
+                let result = if streaming {
+                    fastxml::schema::Validator::from(content.as_slice())
+                        .schema(Arc::clone(&schema))
+                        .run()
+                        .map(|r| r.into_entries())
+                } else {
+                    let doc = match fastxml::Parser::from(content.as_slice()).parse() {
+                        Ok(d) => d,
+                        Err(_) => continue,
+                    };
+                    fastxml::schema::Validator::from(&doc)
+                        .schema(Arc::clone(&schema))
+                        .run()
+                        .map(|r| r.into_entries())
                 };
-
-                let result = fastxml::schema::Validator::from(&doc)
-                    .schema(Arc::clone(&schema))
-                    .run()
-                    .map(|r| r.into_entries());
 
                 let (actual_valid, first_error) = match &result {
                     Ok(errors) => (errors.is_empty(), errors.first().map(|e| e.to_string())),

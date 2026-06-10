@@ -52,21 +52,25 @@ impl OnePassSchemaValidator {
         // For example, gml:exterior in Solid (SurfacePropertyType) vs Polygon (AbstractRingPropertyType)
         if is_expected_by_parent {
             // Try inline element first - declared in parent's type definition
-            let (inline_type_ref, inline_flattened) = self.get_inline_element_info(name);
+            let (inline_type_ref, inline_flattened, inline_anon_type) =
+                self.get_inline_element_info(name);
 
             // Use inline type if available, otherwise fall back to global element
-            let (type_ref, flattened_children) =
-                if inline_type_ref.is_some() || inline_flattened.is_some() {
-                    (inline_type_ref, inline_flattened)
-                } else if let Some(elem) = elem_def {
-                    // Fall back to global element
-                    (
-                        elem.type_ref.clone(),
-                        self.get_flattened_children_for_element(elem),
-                    )
-                } else {
-                    (None, None)
-                };
+            let (type_ref, flattened_children, anon_type) = if inline_type_ref.is_some()
+                || inline_flattened.is_some()
+                || inline_anon_type.is_some()
+            {
+                (inline_type_ref, inline_flattened, inline_anon_type)
+            } else if let Some(elem) = elem_def {
+                // Fall back to global element
+                (
+                    elem.type_ref.clone(),
+                    self.get_flattened_children_for_element(elem),
+                    elem.inline_type.clone(),
+                )
+            } else {
+                (None, None, None)
+            };
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -79,12 +83,14 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
             let type_ref = elem.type_ref.clone();
             let flattened_children = self.get_flattened_children_for_element(elem);
+            let anon_type = elem.inline_type.clone();
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -97,6 +103,7 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
             }
         } else {
@@ -213,8 +220,14 @@ impl OnePassSchemaValidator {
             {
                 Some(tr) => self.schema.get_type(tr),
                 None => {
-                    inline_owned = self.get_element_inline_type(element_name);
-                    inline_owned.as_ref()
+                    if let Some(ctx) = self.state.current_element()
+                        && ctx.inline_type.is_some()
+                    {
+                        ctx.inline_type.as_ref()
+                    } else {
+                        inline_owned = self.get_element_inline_type(element_name);
+                        inline_owned.as_ref()
+                    }
                 }
             };
 
@@ -308,6 +321,12 @@ impl OnePassSchemaValidator {
                 self.validate_text_against_type_def(ctx, &type_def);
                 return;
             }
+        }
+
+        // Inline (anonymous) type captured at element start
+        if let Some(inline_type) = ctx.inline_type.clone() {
+            self.validate_text_against_type_def(ctx, &inline_type);
+            return;
         }
 
         // If no type_ref, try to get inline type from element definition
