@@ -242,9 +242,33 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
                 match local_name {
+                    "testSet" => {
+                        // A 1.1-only test set doesn't apply to an XSD 1.0
+                        // processor at all.
+                        let attrs = parse_attributes(e)?;
+                        if attrs
+                            .get("version")
+                            .is_some_and(|v| !v.split_whitespace().any(|t| t == "1.0"))
+                        {
+                            return Ok(TestSet {
+                                name: path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string(),
+                                path: path.to_path_buf(),
+                                groups: Vec::new(),
+                            });
+                        }
+                    }
                     "testGroup" => {
                         let attrs = parse_attributes(e)?;
-                        current_group = Some(SchemaTestGroup {
+                        // Skip groups that don't apply to XSD 1.0 (the suite
+                        // marks 1.1-only groups with version="1.1").
+                        let applies = attrs
+                            .get("version")
+                            .is_none_or(|v| v.split_whitespace().any(|t| t == "1.0"));
+                        current_group = applies.then(|| SchemaTestGroup {
                             name: attrs.get("name").cloned().unwrap_or_default(),
                             description: None,
                             schemas: Vec::new(),

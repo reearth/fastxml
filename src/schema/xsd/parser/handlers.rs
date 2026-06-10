@@ -9,6 +9,23 @@ use super::XsdParser;
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
 
+/// Parses a `block` / `final` attribute value into a [`DerivationControl`].
+fn parse_derivation_control(value: &str) -> DerivationControl {
+    if value.trim() == "#all" {
+        return DerivationControl::All;
+    }
+    let types = value
+        .split_whitespace()
+        .filter_map(|t| match t {
+            "extension" => Some(DerivationType::Extension),
+            "restriction" => Some(DerivationType::Restriction),
+            "substitution" => Some(DerivationType::Substitution),
+            _ => None,
+        })
+        .collect();
+    DerivationControl::List(types)
+}
+
 impl XsdParser {
     /// Handles a start element event.
     pub(super) fn handle_start(
@@ -252,6 +269,12 @@ impl XsdParser {
         }
         if attrs.get("mixed").is_some_and(|v| v == "true") {
             ct.mixed = true;
+        }
+        if let Some(block) = attrs.get("block") {
+            ct.block = Some(parse_derivation_control(block));
+        }
+        if let Some(final_) = attrs.get("final") {
+            ct.final_ = Some(parse_derivation_control(final_));
         }
 
         self.stack.push(StackFrame::ComplexType(ct));

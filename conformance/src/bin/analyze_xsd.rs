@@ -118,6 +118,18 @@ fn main() {
         }
     }
 
+    let (total_pass, total_fail) = by_set
+        .values()
+        .fold((0usize, 0usize), |(p, f), (pass, fail)| {
+            (p + pass, f + fail)
+        });
+    println!(
+        "TOTAL\tpass={}\tfail={}\trate={:.2}%",
+        total_pass,
+        total_fail,
+        100.0 * total_pass as f64 / (total_pass + total_fail) as f64
+    );
+    println!();
     println!("=== Per test-set results (failures > 0, sorted by fail count) ===");
     let mut rows: Vec<_> = by_set.iter().collect();
     rows.sort_by_key(|(_, (_, fail))| std::cmp::Reverse(*fail));

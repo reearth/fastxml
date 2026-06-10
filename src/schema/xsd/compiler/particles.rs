@@ -275,6 +275,8 @@ impl XsdCompiler {
         // Set other properties
         compiled.is_abstract = elem.is_abstract;
         compiled.nillable = elem.nillable;
+        compiled.default = elem.default.clone();
+        compiled.fixed = elem.fixed.clone();
 
         if let Some(sg) = &elem.substitution_group {
             compiled.substitution_group = Some(self.resolve_qname(sg));

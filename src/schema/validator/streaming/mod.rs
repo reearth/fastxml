@@ -57,6 +57,10 @@ pub struct OnePassSchemaValidator {
     pub(crate) max_errors: usize,
     /// Options for controlling which validations are performed
     pub(crate) options: ValidationOptions,
+    /// `xs:ID` values seen in the document (for uniqueness checking)
+    pub(crate) seen_ids: std::collections::HashSet<String>,
+    /// `xs:IDREF` values with their locations, resolved at `finish()`
+    pub(crate) pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
 }
 
 impl OnePassSchemaValidator {
@@ -72,6 +76,8 @@ impl OnePassSchemaValidator {
             mode: ValidationMode::Strict,
             max_errors: 0,
             options: ValidationOptions::default(),
+            seen_ids: std::collections::HashSet::new(),
+            pending_idrefs: Vec::new(),
         }
     }
 

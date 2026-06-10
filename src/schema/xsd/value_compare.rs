@@ -62,7 +62,14 @@ pub fn compare_values(kind: Option<PrimitiveKind>, a: &str, b: &str) -> Option<O
             | PrimitiveKind::HexBinary
             | PrimitiveKind::Base64Binary
             | PrimitiveKind::AnyUri
-            | PrimitiveKind::QName,
+            | PrimitiveKind::QName
+            | PrimitiveKind::Name
+            | PrimitiveKind::Ncname
+            | PrimitiveKind::Nmtoken
+            | PrimitiveKind::Language
+            | PrimitiveKind::Id
+            | PrimitiveKind::Idref
+            | PrimitiveKind::Entity,
         ) => None,
         None => {
             // Fallback: numeric comparison when both sides parse as f64.

@@ -25,6 +25,9 @@ impl OnePassSchemaValidator {
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
         let elem_def = self.lookup_element_optimized(name, prefix, namespace);
         let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
+        let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
+        let elem_default = elem_def.and_then(|e| e.default.clone());
+        let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
         // Construct qname only when needed for error messages or when prefix exists
         let qname_owned: Option<String> = match prefix {
@@ -32,6 +35,11 @@ impl OnePassSchemaValidator {
             _ => None,
         };
         let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
+
+        let elem_known = elem_def.is_some();
+        let nilled = attributes
+            .iter()
+            .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
 
         // Check if this element is expected by the parent (inline element definition)
         let is_expected_by_parent = self.is_element_expected_by_parent(name);
@@ -105,6 +113,84 @@ impl OnePassSchemaValidator {
             }
         }
 
+        // xsi:type substitution: validate the element against the named type
+        // instead of the declared one (when the substitution is allowed).
+        if let Some(xsi_type) = attributes
+            .iter()
+            .find(|&&(n, _)| n == "xsi:type")
+            .map(|&(_, v)| v)
+        {
+            let declared = self
+                .state
+                .current_element()
+                .and_then(|ctx| ctx.type_ref.clone());
+            match super::super::xsi_type::resolve_xsi_type(
+                &self.schema,
+                declared.as_deref(),
+                xsi_type,
+            ) {
+                Ok(substituted) => {
+                    let flattened = match self.schema.get_type(&substituted) {
+                        Some(TypeDef::Complex(complex)) => {
+                            Some(Arc::new(self.compute_flattened_children(complex)))
+                        }
+                        _ => None,
+                    };
+                    if let Some(ctx) = self.state.current_element_mut() {
+                        ctx.type_ref = Some(substituted);
+                        if flattened.is_some() {
+                            ctx.flattened_children = flattened;
+                        }
+                    }
+                }
+                Err(message) => {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidAttributeValue,
+                            format!("element '{}': {}", qname, message),
+                        )
+                        .with_node_name(qname)
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+        }
+
+        // An abstract element may not appear in the instance directly.
+        if elem_abstract {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidContent,
+                    format!(
+                        "element '{}' is abstract and cannot be used directly",
+                        qname
+                    ),
+                )
+                .with_node_name(qname)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+
+        // xsi:nil handling: only nillable declarations may carry it.
+        if nilled && elem_known && !elem_nillable {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidAttributeValue,
+                    format!(
+                        "element '{}' is not nillable but has xsi:nil=\"true\"",
+                        qname
+                    ),
+                )
+                .with_node_name(qname)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+        if let Some(ctx) = self.state.current_element_mut() {
+            ctx.nilled = nilled;
+            ctx.default_value = elem_default;
+            ctx.fixed_value = elem_fixed;
+        }
+
         // Validate attributes
         self.validate_attributes(name, attributes);
     }
@@ -116,7 +202,7 @@ impl OnePassSchemaValidator {
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
-        let messages = {
+        let result = {
             // Resolve the element's complex type: explicit type_ref first,
             // then an inline (anonymous) type from the parent's content model.
             let inline_owned;
@@ -143,7 +229,7 @@ impl OnePassSchemaValidator {
             )
         };
 
-        for message in messages {
+        for message in result.errors {
             let error = self
                 .make_error(
                     ValidationErrorType::InvalidAttributeValue,
@@ -152,6 +238,27 @@ impl OnePassSchemaValidator {
                 .with_node_name(element_name.as_ref())
                 .with_level(ErrorLevel::Error);
             self.add_error(error);
+        }
+        self.record_ids(result.ids, result.idrefs);
+    }
+
+    /// Records `xs:ID` values (checking document-wide uniqueness) and
+    /// `xs:IDREF` values (resolved at the end of the document).
+    pub(crate) fn record_ids(&mut self, ids: Vec<String>, idrefs: Vec<String>) {
+        for id in ids {
+            if !self.seen_ids.insert(id.clone()) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::IdentityConstraint,
+                        format!("duplicate ID value '{}'", id),
+                    )
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+        }
+        for idref in idrefs {
+            self.pending_idrefs
+                .push((idref, self.current_line, self.current_column));
         }
     }
 
@@ -166,6 +273,21 @@ impl OnePassSchemaValidator {
     pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
+            // A nilled element must be empty.
+            if ctx.nilled && (!ctx.text_content.trim().is_empty() || !ctx.child_counts.is_empty()) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' has xsi:nil=\"true\" but is not empty",
+                            ctx.name
+                        ),
+                    )
+                    .with_node_name(ctx.name.as_ref())
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+
             // Always run type validation — primitive types (e.g., xs:integer)
             // need to reject empty content, while types whose lexical space
             // allows empty (xs:string and derivatives) pass through cheaply.
@@ -237,9 +359,11 @@ impl OnePassSchemaValidator {
     /// runs both user-declared facet constraints and (when applicable) the
     /// built-in primitive lexical/value-space check.
     fn validate_text_against_simple_type(&mut self, ctx: &ElementContext, simple: &SimpleType) {
-        // Skip everything for an empty, nillable element: `xsi:nil="true"`
-        // legitimately leaves the content empty.
-        if ctx.text_content.is_empty() && ctx.nillable {
+        // Skip everything for an empty element that is nillable or carries a
+        // default/fixed value constraint (the constraint value applies).
+        if ctx.text_content.is_empty()
+            && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some())
+        {
             return;
         }
 
@@ -247,6 +371,31 @@ impl OnePassSchemaValidator {
         // or enumeration facet can legitimately reject the empty string.
         {
             let constraints = self.create_facet_constraints(simple);
+
+            // Fixed value constraint: non-empty content must match.
+            if let Some(ref fixed) = ctx.fixed_value {
+                let text = ctx.text_content.trim();
+                if text != fixed.trim()
+                    && crate::schema::xsd::value_compare::compare_values(
+                        constraints.value_kind,
+                        text,
+                        fixed,
+                    ) != Some(std::cmp::Ordering::Equal)
+                {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "element '{}' must have the fixed value '{}', found '{}'",
+                                ctx.name, fixed, text
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(&ctx.text_content) {
                 let error = self
@@ -261,6 +410,15 @@ impl OnePassSchemaValidator {
                     .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
+
+            // Track ID/IDREF values carried as element content
+            let mut id_values = super::super::attributes::AttrValidation::default();
+            super::super::attributes::push_id_values_from_constraints(
+                &constraints,
+                &ctx.text_content,
+                &mut id_values,
+            );
+            self.record_ids(id_values.ids, id_values.idrefs);
         }
 
         // Built-in primitive lexical/value-space check.

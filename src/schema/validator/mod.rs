@@ -22,6 +22,7 @@ mod facade;
 mod lazy;
 mod state;
 mod streaming;
+mod xsi_type;
 
 // The public validation surface is the `Validator` front door and its `Report`,
 // plus `ValidationMode`. The engine types (DomSchemaValidator,

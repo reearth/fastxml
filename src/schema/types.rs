@@ -332,6 +332,10 @@ pub struct ElementDef {
     pub substitution_group: Option<String>,
     /// Whether the element is nillable
     pub nillable: bool,
+    /// Default value applied when the element is empty
+    pub default: Option<String>,
+    /// Fixed value the element content must match
+    pub fixed: Option<String>,
     /// Identity constraints (unique, key, keyref)
     pub constraints: Vec<CompiledConstraint>,
 }
@@ -348,6 +352,8 @@ impl ElementDef {
             is_abstract: false,
             substitution_group: None,
             nillable: false,
+            default: None,
+            fixed: None,
             constraints: Vec::new(),
         }
     }
@@ -481,6 +487,34 @@ impl SimpleType {
     }
 }
 
+/// How a type is derived from its base type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivationMethod {
+    /// Derived by extension
+    Extension,
+    /// Derived by restriction
+    Restriction,
+}
+
+/// Derivation methods blocked by a `block` attribute.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlockSet {
+    /// `block` includes `extension` (or `#all`)
+    pub extension: bool,
+    /// `block` includes `restriction` (or `#all`)
+    pub restriction: bool,
+}
+
+impl BlockSet {
+    /// Whether the given derivation method is blocked.
+    pub fn blocks(&self, method: DerivationMethod) -> bool {
+        match method {
+            DerivationMethod::Extension => self.extension,
+            DerivationMethod::Restriction => self.restriction,
+        }
+    }
+}
+
 /// A complex type definition.
 #[derive(Debug, Clone)]
 pub struct ComplexType {
@@ -488,6 +522,10 @@ pub struct ComplexType {
     pub name: String,
     /// Base type (for extension or restriction)
     pub base_type: Option<String>,
+    /// How this type derives from `base_type`
+    pub derivation: Option<DerivationMethod>,
+    /// Derivation methods blocked for xsi:type substitution
+    pub block: BlockSet,
     /// Content model
     pub content: ContentModel,
     /// Attribute definitions
@@ -504,6 +542,8 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            derivation: None,
+            block: BlockSet::default(),
             content: ContentModel::Empty,
             attributes: Vec::new(),
             is_abstract: false,
@@ -516,6 +556,8 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            derivation: None,
+            block: BlockSet::default(),
             content: ContentModel::Sequence(elements),
             attributes: Vec::new(),
             is_abstract: false,

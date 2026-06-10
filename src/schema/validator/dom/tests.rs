@@ -64,6 +64,8 @@ fn test_dom_validator_min_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        derivation: None,
+        block: Default::default(),
         content: ContentModel::Sequence(vec![
             ElementDef::new("required_child").with_occurs(1, Some(1)),
         ]),
@@ -97,6 +99,8 @@ fn test_dom_validator_max_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        derivation: None,
+        block: Default::default(),
         content: ContentModel::Sequence(vec![ElementDef::new("child").with_occurs(0, Some(2))]),
         attributes: Vec::new(),
         is_abstract: false,

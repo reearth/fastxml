@@ -30,9 +30,16 @@ impl DomSchemaValidator {
         &self,
         node: &XmlNode,
         elem: &ElementDef,
+        ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
         let text_content = self.collect_text_content(node);
+
+        // An empty element with a default/fixed value constraint takes the
+        // constraint value — nothing further to check.
+        if text_content.is_empty() && (elem.default.is_some() || elem.fixed.is_some()) {
+            return;
+        }
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -40,6 +47,35 @@ impl DomSchemaValidator {
         } else {
             elem.inline_type.clone()
         };
+
+        // Fixed value constraint: non-empty content must match.
+        if let Some(ref fixed) = elem.fixed {
+            let kind = match &type_def {
+                Some(TypeDef::Simple(simple)) => PrimitiveKind::resolve(&self.schema, simple),
+                _ => None,
+            };
+            let text = text_content.trim();
+            if text != fixed.trim()
+                && crate::schema::xsd::value_compare::compare_values(kind, text, fixed)
+                    != Some(std::cmp::Ordering::Equal)
+            {
+                let node_name = node.get_name();
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' must have the fixed value '{}', found '{}'",
+                            node_name, fixed, text
+                        ),
+                        node,
+                    )
+                    .with_node_name(&node_name)
+                    .with_level(ErrorLevel::Error);
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
+        }
 
         match type_def {
             Some(TypeDef::Simple(simple)) => {
@@ -52,6 +88,7 @@ impl DomSchemaValidator {
                     &simple,
                     &text_content,
                     elem.nillable,
+                    ids,
                     errors,
                 );
             }
@@ -65,6 +102,7 @@ impl DomSchemaValidator {
                             &simple,
                             &text_content,
                             elem.nillable,
+                            ids,
                             errors,
                         );
                     }
@@ -109,6 +147,7 @@ impl DomSchemaValidator {
         simple: &SimpleType,
         text_content: &str,
         nillable: bool,
+        ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
         // Skip everything for an empty, nillable element: `xsi:nil="true"`
@@ -134,6 +173,24 @@ impl DomSchemaValidator {
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
 
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
+
+            // Track ID/IDREF values carried as element content
+            let mut id_values = super::super::attributes::AttrValidation::default();
+            super::super::attributes::push_id_values_from_constraints(
+                &constraints,
+                text_content,
+                &mut id_values,
+            );
+            for message in ids.record(id_values.ids, id_values.idrefs, node.line(), node.column()) {
+                let node_name = node.get_name();
+                let error = self
+                    .make_error(ValidationErrorType::IdentityConstraint, message, node)
+                    .with_node_name(&node_name)
+                    .with_level(ErrorLevel::Error);
                 if self.should_add_error(errors) {
                     errors.push(error);
                 }

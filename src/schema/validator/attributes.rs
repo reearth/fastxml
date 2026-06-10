@@ -114,16 +114,25 @@ pub(crate) fn is_exempt_attribute(name: &str) -> bool {
         || name.contains("schemaLocation")
 }
 
+/// Outcome of validating an element's attributes: error messages plus the
+/// `xs:ID` / `xs:IDREF` values found, for document-level checking.
+#[derive(Default)]
+pub(crate) struct AttrValidation {
+    pub errors: Vec<String>,
+    pub ids: Vec<String>,
+    pub idrefs: Vec<String>,
+}
+
 /// Validates an element's attributes against the attribute declarations of
 /// its complex type. Returns error messages for invalid or missing-required
-/// attributes.
+/// attributes, plus any ID/IDREF values for document-level checks.
 pub(crate) fn validate_element_attributes<'a>(
     schema: &CompiledSchema,
     complex: &ComplexType,
     attributes: impl Iterator<Item = (&'a str, &'a str)> + Clone,
-) -> Vec<String> {
+) -> AttrValidation {
     let defs = collect_attributes(schema, complex);
-    let mut errors = Vec::new();
+    let mut out = AttrValidation::default();
 
     for (name, value) in attributes.clone() {
         if is_exempt_attribute(name) {
@@ -132,8 +141,9 @@ pub(crate) fn validate_element_attributes<'a>(
         let local = name.rsplit(':').next().unwrap_or(name);
         if let Some(def) = defs.iter().find(|d| d.name == local || d.name == name) {
             if let Some(msg) = validate_attribute_value(schema, def, value) {
-                errors.push(msg);
+                out.errors.push(msg);
             }
+            collect_id_values(schema, resolve_ref(schema, def), value, &mut out);
         }
     }
 
@@ -143,9 +153,75 @@ pub(crate) fn validate_element_attributes<'a>(
                 .clone()
                 .any(|(n, _)| n.rsplit(':').next().unwrap_or(n) == def.name || n == def.name)
         {
-            errors.push(format!("required attribute '{}' is missing", def.name));
+            out.errors
+                .push(format!("required attribute '{}' is missing", def.name));
         }
     }
 
-    errors
+    out
+}
+
+/// Records ID / IDREF / IDREFS values carried by an attribute.
+fn collect_id_values(
+    schema: &CompiledSchema,
+    attr: &AttributeDef,
+    value: &str,
+    out: &mut AttrValidation,
+) {
+    let Some(simple) = attribute_simple_type(schema, attr) else {
+        // No resolvable type, but xml:id-style direct refs are rare; also
+        // cover the common case of `type="xs:ID"` on the def itself.
+        let kind = attr
+            .type_ref
+            .as_deref()
+            .and_then(PrimitiveKind::from_type_name);
+        push_id_values(kind, None, false, value, out);
+        return;
+    };
+    let constraints = FacetConstraints::from_simple_type(schema, simple);
+    push_id_values_from_constraints(&constraints, value, out);
+}
+
+/// Records ID / IDREF / IDREFS values described by compiled facet
+/// constraints (used for both attribute and element content values).
+pub(crate) fn push_id_values_from_constraints(
+    constraints: &FacetConstraints,
+    value: &str,
+    out: &mut AttrValidation,
+) {
+    push_id_values(
+        constraints.value_kind,
+        constraints.item_kind,
+        constraints.is_list,
+        value,
+        out,
+    );
+}
+
+fn push_id_values(
+    kind: Option<PrimitiveKind>,
+    item_kind: Option<PrimitiveKind>,
+    is_list: bool,
+    value: &str,
+    out: &mut AttrValidation,
+) {
+    if is_list {
+        match item_kind {
+            Some(k) if k.is_idref() => out
+                .idrefs
+                .extend(value.split_whitespace().map(str::to_string)),
+            Some(k) if k.is_id() => out.ids.extend(value.split_whitespace().map(str::to_string)),
+            _ => {}
+        }
+        return;
+    }
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return; // empty values are already lexical errors for ID/IDREF
+    }
+    match kind {
+        Some(k) if k.is_id() => out.ids.push(trimmed.to_string()),
+        Some(k) if k.is_idref() => out.idrefs.push(trimmed.to_string()),
+        _ => {}
+    }
 }

@@ -123,6 +123,14 @@ pub mod gml {
     pub const ABSTRACT_SOLID_TYPE: &str = "gml:AbstractSolidType";
 }
 
+/// Creates a built-in list simple type (NMTOKENS, IDREFS, ENTITIES).
+fn list_type(name: &str, item: &str) -> SimpleType {
+    let mut st = SimpleType::new(name);
+    st.item_type = Some(item.to_string());
+    st.base_type = Some(format!("list({})", item));
+    st
+}
+
 /// Creates XSD primitive type definitions.
 pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
     vec![
@@ -170,6 +178,27 @@ pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
         (
             xs::IDREF.to_string(),
             TypeDef::Simple(SimpleType::new("IDREF").with_base(xs::NCNAME)),
+        ),
+        (
+            xs::ENTITY.to_string(),
+            TypeDef::Simple(SimpleType::new("ENTITY").with_base(xs::NCNAME)),
+        ),
+        (
+            xs::NOTATION.to_string(),
+            TypeDef::Simple(SimpleType::new("NOTATION")),
+        ),
+        // Built-in list types
+        (
+            xs::NMTOKENS.to_string(),
+            TypeDef::Simple(list_type("NMTOKENS", xs::NMTOKEN)),
+        ),
+        (
+            xs::IDREFS.to_string(),
+            TypeDef::Simple(list_type("IDREFS", xs::IDREF)),
+        ),
+        (
+            xs::ENTITIES.to_string(),
+            TypeDef::Simple(list_type("ENTITIES", xs::ENTITY)),
         ),
         // Boolean
         (

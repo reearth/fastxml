@@ -2,11 +2,27 @@
 
 use crate::error::Result;
 use crate::schema::types::{
-    AttributeDef, ComplexType, ContentModel, SimpleType, TypeDef, WhiteSpace,
+    AttributeDef, BlockSet, ComplexType, ContentModel, DerivationMethod, SimpleType, TypeDef,
+    WhiteSpace,
 };
 
 use super::super::types::*;
 use super::XsdCompiler;
+
+/// Maps a parsed `block` attribute to the compiled [`BlockSet`].
+fn compile_block_set(control: Option<&DerivationControl>) -> BlockSet {
+    match control {
+        None => BlockSet::default(),
+        Some(DerivationControl::All) => BlockSet {
+            extension: true,
+            restriction: true,
+        },
+        Some(DerivationControl::List(types)) => BlockSet {
+            extension: types.contains(&DerivationType::Extension),
+            restriction: types.contains(&DerivationType::Restriction),
+        },
+    }
+}
 
 impl XsdCompiler {
     /// Compiles a type definition.
@@ -140,6 +156,32 @@ impl XsdCompiler {
         let mut compiled = ComplexType::new(&name);
         compiled.is_abstract = ct.is_abstract;
         compiled.mixed = ct.mixed;
+        compiled.block = compile_block_set(ct.block.as_ref());
+
+        // Record the derivation base and method (used for xsi:type checks)
+        match &ct.content {
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => {
+                    compiled.base_type = Some(self.resolve_qname(&ext.base));
+                    compiled.derivation = Some(DerivationMethod::Extension);
+                }
+                XsdSimpleContentDerivation::Restriction(r) => {
+                    compiled.base_type = Some(self.resolve_qname(&r.base));
+                    compiled.derivation = Some(DerivationMethod::Restriction);
+                }
+            },
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => {
+                    compiled.base_type = Some(self.resolve_qname(&ext.base));
+                    compiled.derivation = Some(DerivationMethod::Extension);
+                }
+                XsdComplexContentDerivation::Restriction(r) => {
+                    compiled.base_type = Some(self.resolve_qname(&r.base));
+                    compiled.derivation = Some(DerivationMethod::Restriction);
+                }
+            },
+            _ => {}
+        }
 
         // Compile content model
         compiled.content = self.compile_complex_content(&ct.content)?;
@@ -147,6 +189,25 @@ impl XsdCompiler {
         // Compile attributes
         for attr in &ct.attributes {
             compiled.attributes.push(self.compile_attribute(attr)?);
+        }
+
+        // Attributes declared inside simpleContent / complexContent
+        // derivations belong to this type as well.
+        let derivation_attrs: Option<&[XsdAttribute]> = match &ct.content {
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => Some(&ext.attributes),
+                XsdSimpleContentDerivation::Restriction(r) => Some(&r.attributes),
+            },
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => Some(&ext.attributes),
+                XsdComplexContentDerivation::Restriction(r) => Some(&r.attributes),
+            },
+            _ => None,
+        };
+        if let Some(attrs) = derivation_attrs {
+            for attr in attrs {
+                compiled.attributes.push(self.compile_attribute(attr)?);
+            }
         }
 
         // Handle attribute groups

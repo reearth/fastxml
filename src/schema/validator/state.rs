@@ -45,6 +45,12 @@ pub(crate) struct ElementContext {
     /// element is empty, primitive lexical/value-space checks are skipped so an
     /// `xsi:nil` element (e.g. an empty `xs:int`) is not rejected as invalid.
     pub nillable: bool,
+    /// Whether the instance element carries `xsi:nil="true"`.
+    pub nilled: bool,
+    /// Default value from the element declaration (applies when empty).
+    pub default_value: Option<String>,
+    /// Fixed value from the element declaration.
+    pub fixed_value: Option<String>,
 }
 
 impl ElementContext {
@@ -60,6 +66,9 @@ impl ElementContext {
             flattened_children: None,
             sequence_index: 0,
             nillable: false,
+            nilled: false,
+            default_value: None,
+            fixed_value: None,
         }
     }
 

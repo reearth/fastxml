@@ -42,6 +42,52 @@ struct ParentContext {
     elements: Vec<ElementDef>,
 }
 
+/// XML Schema Instance namespace.
+const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
+
+/// Looks up an `xsi:*` attribute on a node. The DOM stores attributes under
+/// their local names, so the namespace is verified via the node's attribute
+/// namespace info.
+fn get_xsi_attribute(node: &XmlNode, local: &str) -> Option<String> {
+    let value = node.get_attribute(local)?;
+    match node.get_attribute_ns_info(local) {
+        Some((_, ns)) => (ns == XSI_NS).then_some(value),
+        None => None,
+    }
+}
+
+/// Document-wide ID / IDREF tracking state.
+#[derive(Default)]
+pub(crate) struct DocIdState {
+    /// `xs:ID` values seen so far (uniqueness checking)
+    seen_ids: std::collections::HashSet<String>,
+    /// `xs:IDREF` values with their locations, resolved after traversal
+    pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
+}
+
+impl DocIdState {
+    /// Records ID values (returning duplicate-ID error messages) and IDREF
+    /// values found at the given location.
+    pub(crate) fn record(
+        &mut self,
+        ids: Vec<String>,
+        idrefs: Vec<String>,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> Vec<String> {
+        let mut errors = Vec::new();
+        for id in ids {
+            if !self.seen_ids.insert(id.clone()) {
+                errors.push(format!("duplicate ID value '{}'", id));
+            }
+        }
+        for idref in idrefs {
+            self.pending_idrefs.push((idref, line, column));
+        }
+        errors
+    }
+}
+
 #[doc(hidden)]
 pub struct DomSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
@@ -76,10 +122,31 @@ impl DomSchemaValidator {
     /// Validates the document and returns any errors found.
     pub fn validate(&self, doc: &XmlDocument) -> Result<Vec<StructuredError>> {
         let mut errors = Vec::new();
+        let mut ids = DocIdState::default();
 
         // Start validation from root
         if let Ok(root) = doc.get_root_element() {
-            self.validate_node_recursive(&root, None, &mut errors);
+            self.validate_node_recursive(&root, None, &mut ids, &mut errors);
+        }
+
+        // Resolve IDREF references against the IDs seen in the document
+        for (idref, line, column) in ids.pending_idrefs {
+            if !ids.seen_ids.contains(&idref) {
+                let mut error = StructuredError::new(
+                    format!("IDREF '{}' does not match any ID in the document", idref),
+                    ValidationErrorType::IdentityConstraint,
+                )
+                .with_level(ErrorLevel::Error);
+                if let Some(line) = line {
+                    error = error.with_line(line);
+                }
+                if let Some(column) = column {
+                    error = error.with_column(column);
+                }
+                if self.should_add_error(&errors) {
+                    errors.push(error);
+                }
+            }
         }
 
         Ok(errors)
@@ -94,6 +161,7 @@ impl DomSchemaValidator {
         &self,
         node: &XmlNode,
         parent_ctx: Option<&ParentContext>,
+        ids: &mut DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
         // Check max errors
@@ -103,17 +171,17 @@ impl DomSchemaValidator {
 
         match node.get_type() {
             NodeType::Element => {
-                let ctx = self.validate_element(node, parent_ctx, errors);
+                let ctx = self.validate_element(node, parent_ctx, ids, errors);
 
                 // Validate children recursively with this element's context
                 for child in node.get_child_elements() {
-                    self.validate_node_recursive(&child, Some(&ctx), errors);
+                    self.validate_node_recursive(&child, Some(&ctx), ids, errors);
                 }
             }
             NodeType::Document => {
                 // Validate children of document node
                 for child in node.get_child_elements() {
-                    self.validate_node_recursive(&child, None, errors);
+                    self.validate_node_recursive(&child, None, ids, errors);
                 }
             }
             _ => {
@@ -130,6 +198,7 @@ impl DomSchemaValidator {
         &self,
         node: &XmlNode,
         parent_ctx: Option<&ParentContext>,
+        ids: &mut DocIdState,
         errors: &mut Vec<StructuredError>,
     ) -> ParentContext {
         let name = node.get_name();
@@ -150,6 +219,86 @@ impl DomSchemaValidator {
             .unwrap_or(false);
 
         if let Some(elem) = elem_def {
+            // xsi:type substitution: validate against the named type instead
+            // of the declared one (when the substitution is allowed).
+            let mut elem_substituted;
+            let mut elem = elem;
+            if let Some(xsi_type) = get_xsi_attribute(node, "type") {
+                let declared = elem.type_ref.as_deref();
+                match super::xsi_type::resolve_xsi_type(&self.schema, declared, &xsi_type) {
+                    Ok(substituted) => {
+                        elem_substituted = elem.clone();
+                        elem_substituted.type_ref = Some(substituted);
+                        elem_substituted.inline_type = None;
+                        elem = &elem_substituted;
+                    }
+                    Err(message) => {
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::InvalidAttributeValue,
+                                format!("element '{}': {}", name, message),
+                                node,
+                            )
+                            .with_node_name(&name)
+                            .with_level(ErrorLevel::Error);
+                        if self.should_add_error(errors) {
+                            errors.push(error);
+                        }
+                    }
+                }
+            }
+
+            // An abstract element may not appear in the instance directly.
+            if elem.is_abstract {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!("element '{}' is abstract and cannot be used directly", name),
+                        node,
+                    )
+                    .with_node_name(&name)
+                    .with_level(ErrorLevel::Error);
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
+
+            // xsi:nil handling: only nillable declarations may carry it, and
+            // a nilled element must be empty.
+            let nilled = get_xsi_attribute(node, "nil").is_some_and(|v| v.trim() == "true");
+            if nilled {
+                if !elem.nillable {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidAttributeValue,
+                            format!(
+                                "element '{}' is not nillable but has xsi:nil=\"true\"",
+                                name
+                            ),
+                            node,
+                        )
+                        .with_node_name(&name)
+                        .with_level(ErrorLevel::Error);
+                    if self.should_add_error(errors) {
+                        errors.push(error);
+                    }
+                } else if !node.get_child_elements().is_empty()
+                    || !self.collect_text_content(node).trim().is_empty()
+                {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!("element '{}' has xsi:nil=\"true\" but is not empty", name),
+                            node,
+                        )
+                        .with_node_name(&name)
+                        .with_level(ErrorLevel::Error);
+                    if self.should_add_error(errors) {
+                        errors.push(error);
+                    }
+                }
+            }
+
             // Count child elements
             let child_counts = self.count_child_elements(node);
 
@@ -167,10 +316,10 @@ impl DomSchemaValidator {
             }
 
             // Validate text content
-            self.validate_text_content(node, elem, errors);
+            self.validate_text_content(node, elem, ids, errors);
 
             // Validate attributes against the type's attribute declarations
-            self.validate_node_attributes(node, elem, errors);
+            self.validate_node_attributes(node, elem, ids, errors);
 
             ParentContext {
                 elements: self.element_child_declarations(elem),
@@ -211,6 +360,7 @@ impl DomSchemaValidator {
         &self,
         node: &XmlNode,
         elem: &ElementDef,
+        ids: &mut DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -222,12 +372,24 @@ impl DomSchemaValidator {
             return;
         };
 
+        // The DOM stores attribute names without prefixes; exclude xsi:*
+        // control attributes so they aren't matched against declared
+        // attributes that happen to share a local name (e.g. "type").
         let attrs = node.get_attributes();
-        let messages = super::attributes::validate_element_attributes(
+        let filtered: Vec<(&str, &str)> = attrs
+            .iter()
+            .filter(
+                |(k, _)| !matches!(node.get_attribute_ns_info(k), Some((_, ns)) if ns == XSI_NS),
+            )
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let result = super::attributes::validate_element_attributes(
             &self.schema,
             complex,
-            attrs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+            filtered.iter().copied(),
         );
+        let mut messages = result.errors;
+        messages.extend(ids.record(result.ids, result.idrefs, node.line(), node.column()));
         for message in messages {
             let name = node.get_name();
             let error = self
