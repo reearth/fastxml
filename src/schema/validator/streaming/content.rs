@@ -109,27 +109,49 @@ impl OnePassSchemaValidator {
         self.validate_attributes(name, attributes);
     }
 
-    /// Validates attributes on an element.
+    /// Validates attributes on an element against the attribute
+    /// declarations of its complex type.
     pub(crate) fn validate_attributes(
         &mut self,
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
-        for &(attr_name, attr_value) in attributes {
-            // Skip namespace declarations
-            if attr_name.starts_with("xmlns") {
-                continue;
-            }
+        let messages = {
+            // Resolve the element's complex type: explicit type_ref first,
+            // then an inline (anonymous) type from the parent's content model.
+            let inline_owned;
+            let type_def: Option<&TypeDef> = match self
+                .state
+                .current_element()
+                .and_then(|ctx| ctx.type_ref.as_deref())
+            {
+                Some(tr) => self.schema.get_type(tr),
+                None => {
+                    inline_owned = self.get_element_inline_type(element_name);
+                    inline_owned.as_ref()
+                }
+            };
 
-            // Skip schema location attributes
-            if attr_name.contains("schemaLocation") {
-                continue;
-            }
+            let Some(TypeDef::Complex(complex)) = type_def else {
+                return;
+            };
 
-            // In strict mode, check if attribute is known
-            // For now, we don't have attribute definitions easily accessible
-            // so we'll skip this validation
-            let _ = (element_name, attr_value);
+            super::super::attributes::validate_element_attributes(
+                &self.schema,
+                complex,
+                attributes.iter().copied(),
+            )
+        };
+
+        for message in messages {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidAttributeValue,
+                    format!("element '{}': {}", element_name, message),
+                )
+                .with_node_name(element_name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
         }
     }
 
@@ -215,9 +237,15 @@ impl OnePassSchemaValidator {
     /// runs both user-declared facet constraints and (when applicable) the
     /// built-in primitive lexical/value-space check.
     fn validate_text_against_simple_type(&mut self, ctx: &ElementContext, simple: &SimpleType) {
-        // User-declared facets. Skip on empty content so we don't double up
-        // on top of any primitive-level "empty value" error.
-        if !ctx.text_content.is_empty() {
+        // Skip everything for an empty, nillable element: `xsi:nil="true"`
+        // legitimately leaves the content empty.
+        if ctx.text_content.is_empty() && ctx.nillable {
+            return;
+        }
+
+        // User-declared facets. Empty content is still checked — a pattern
+        // or enumeration facet can legitimately reject the empty string.
+        {
             let constraints = self.create_facet_constraints(simple);
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(&ctx.text_content) {
@@ -235,12 +263,7 @@ impl OnePassSchemaValidator {
             }
         }
 
-        // Built-in primitive lexical/value-space check. Skip for an empty,
-        // nillable element: `xsi:nil="true"` legitimately leaves the content
-        // empty and it must not be checked against the primitive type.
-        if ctx.text_content.is_empty() && ctx.nillable {
-            return;
-        }
+        // Built-in primitive lexical/value-space check.
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(&ctx.text_content)
         {

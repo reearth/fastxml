@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::document::XmlDocument;
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
 use crate::node::{NodeType, XmlNode};
-use crate::schema::types::{CompiledSchema, FlattenedChildren};
+use crate::schema::types::{CompiledSchema, ElementDef, FlattenedChildren, TypeDef};
 
 use super::ValidationMode;
 use super::streaming::ValidationOptions;
@@ -34,6 +34,14 @@ use super::streaming::ValidationOptions;
 ///     .with_max_errors(100)
 ///     .validate(&doc)?;
 /// ```
+/// Validation context an element provides to its children: the allowed
+/// child-name constraints plus the actual local element declarations.
+#[derive(Default)]
+struct ParentContext {
+    allowed: Option<Arc<FlattenedChildren>>,
+    elements: Vec<ElementDef>,
+}
+
 #[doc(hidden)]
 pub struct DomSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
@@ -79,11 +87,13 @@ impl DomSchemaValidator {
 
     /// Recursively validates a node and its children.
     ///
-    /// `parent_allowed_children` contains the set of child element names allowed by the parent's type.
+    /// `parent_ctx` carries the parent type's allowed-children constraints
+    /// and element declarations, so locally declared elements can be
+    /// resolved and validated.
     fn validate_node_recursive(
         &self,
         node: &XmlNode,
-        parent_allowed_children: Option<&FlattenedChildren>,
+        parent_ctx: Option<&ParentContext>,
         errors: &mut Vec<StructuredError>,
     ) {
         // Check max errors
@@ -93,11 +103,11 @@ impl DomSchemaValidator {
 
         match node.get_type() {
             NodeType::Element => {
-                let allowed_children = self.validate_element(node, parent_allowed_children, errors);
+                let ctx = self.validate_element(node, parent_ctx, errors);
 
-                // Validate children recursively with this element's allowed children
+                // Validate children recursively with this element's context
                 for child in node.get_child_elements() {
-                    self.validate_node_recursive(&child, allowed_children.as_deref(), errors);
+                    self.validate_node_recursive(&child, Some(&ctx), errors);
                 }
             }
             NodeType::Document => {
@@ -114,23 +124,28 @@ impl DomSchemaValidator {
 
     /// Validates an element node.
     ///
-    /// Returns the flattened children constraints for this element's type, so child elements
-    /// can be validated against the parent's type definition.
+    /// Returns the validation context (allowed children + local element
+    /// declarations) of this element's type for validating its children.
     fn validate_element(
         &self,
         node: &XmlNode,
-        parent_allowed_children: Option<&FlattenedChildren>,
+        parent_ctx: Option<&ParentContext>,
         errors: &mut Vec<StructuredError>,
-    ) -> Option<Arc<FlattenedChildren>> {
+    ) -> ParentContext {
         let name = node.get_name();
         let prefix = node.get_prefix();
 
-        // Look up element definition (global or from parent's type)
-        let elem_def = self.lookup_element(&name, prefix.as_deref());
+        // Look up element definition: global first, then the parent type's
+        // local declarations (searched from the end so a derived type's
+        // redeclaration shadows the base type's).
+        let elem_def = self.lookup_element(&name, prefix.as_deref()).or_else(|| {
+            parent_ctx.and_then(|ctx| ctx.elements.iter().rev().find(|e| e.name == *name))
+        });
         let schema_has_elements = !self.schema.elements.is_empty();
 
         // Check if element is allowed by parent's type definition
-        let is_allowed_by_parent = parent_allowed_children
+        let is_allowed_by_parent = parent_ctx
+            .and_then(|ctx| ctx.allowed.as_ref())
             .map(|fc| fc.constraints.contains_key(&name))
             .unwrap_or(false);
 
@@ -154,11 +169,17 @@ impl DomSchemaValidator {
             // Validate text content
             self.validate_text_content(node, elem, errors);
 
-            flattened
+            // Validate attributes against the type's attribute declarations
+            self.validate_node_attributes(node, elem, errors);
+
+            ParentContext {
+                elements: self.element_child_declarations(elem),
+                allowed: flattened,
+            }
         } else if is_allowed_by_parent {
-            // Element is defined inline in parent's type - not an error
-            // Try to get inline element definition from parent's constraints
-            None
+            // Element is allowed by the parent type but has no resolvable
+            // declaration - nothing further to validate.
+            ParentContext::default()
         } else if self.mode == ValidationMode::Strict && schema_has_elements {
             // Unknown element
             let qname = match &prefix {
@@ -178,9 +199,65 @@ impl DomSchemaValidator {
             if self.should_add_error(errors) {
                 errors.push(error);
             }
-            None
+            ParentContext::default()
         } else {
-            None
+            ParentContext::default()
+        }
+    }
+
+    /// Validates an element's attributes against the attribute declarations
+    /// of its complex type.
+    fn validate_node_attributes(
+        &self,
+        node: &XmlNode,
+        elem: &ElementDef,
+        errors: &mut Vec<StructuredError>,
+    ) {
+        let type_def = if let Some(ref type_ref) = elem.type_ref {
+            self.schema.get_type(type_ref)
+        } else {
+            elem.inline_type.as_ref()
+        };
+        let Some(TypeDef::Complex(complex)) = type_def else {
+            return;
+        };
+
+        let attrs = node.get_attributes();
+        let messages = super::attributes::validate_element_attributes(
+            &self.schema,
+            complex,
+            attrs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        );
+        for message in messages {
+            let name = node.get_name();
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidAttributeValue,
+                    format!("element '{}': {}", name, message),
+                    node,
+                )
+                .with_node_name(&name)
+                .with_level(ErrorLevel::Error);
+            if self.should_add_error(errors) {
+                errors.push(error);
+            }
+        }
+    }
+
+    /// Collects the child element declarations of an element's type so
+    /// locally declared children can be resolved during recursion.
+    fn element_child_declarations(&self, elem: &ElementDef) -> Vec<ElementDef> {
+        let type_def = if let Some(ref type_ref) = elem.type_ref {
+            self.schema.get_type(type_ref)
+        } else {
+            elem.inline_type.as_ref()
+        };
+        match type_def {
+            Some(TypeDef::Complex(complex)) => {
+                let mut visited = std::collections::HashSet::new();
+                self.collect_elements_with_inheritance(complex, &mut visited)
+            }
+            _ => Vec::new(),
         }
     }
 

@@ -111,11 +111,16 @@ impl DomSchemaValidator {
         nillable: bool,
         errors: &mut Vec<StructuredError>,
     ) {
+        // Skip everything for an empty, nillable element: `xsi:nil="true"`
+        // legitimately leaves the content empty.
+        if text_content.is_empty() && nillable {
+            return;
+        }
+
         // User-declared facets (minLength, pattern, enumeration, …).
-        // Skip on empty content — facet constraints like minLength=0 would
-        // pass, but more importantly we don't want a spurious extra error on
-        // top of any primitive-level "empty value" error.
-        if !text_content.is_empty() {
+        // Empty content is still checked — a pattern or enumeration facet
+        // can legitimately reject the empty string.
+        {
             let constraints = self.create_facet_constraints(simple);
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(text_content) {
@@ -136,12 +141,7 @@ impl DomSchemaValidator {
         }
 
         // Built-in primitive lexical/value-space check (e.g., xs:integer
-        // rejecting "1.5" or "", xs:int rejecting 2147483648). Skip for an
-        // empty, nillable element: `xsi:nil="true"` legitimately leaves the
-        // content empty and it must not be checked against the primitive type.
-        if text_content.is_empty() && nillable {
-            return;
-        }
+        // rejecting "1.5" or "", xs:int rejecting 2147483648).
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(text_content)
         {
@@ -163,28 +163,7 @@ impl DomSchemaValidator {
 
     /// Creates FacetConstraints from a SimpleType definition.
     pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        let mut constraints = FacetConstraints::new();
-
-        if let Some(min_len) = simple.min_length {
-            constraints = constraints.with_min_length(min_len as usize);
-        }
-        if let Some(max_len) = simple.max_length {
-            constraints = constraints.with_max_length(max_len as usize);
-        }
-        if let Some(ref min_inc) = simple.min_inclusive {
-            constraints = constraints.with_min_inclusive(min_inc.clone());
-        }
-        if let Some(ref max_inc) = simple.max_inclusive {
-            constraints = constraints.with_max_inclusive(max_inc.clone());
-        }
-        if !simple.enumeration.is_empty() {
-            constraints = constraints.with_enumeration(simple.enumeration.clone());
-        }
-        if let Some(ref pattern) = simple.pattern {
-            constraints = constraints.with_pattern(pattern.clone());
-        }
-
-        constraints
+        FacetConstraints::from_simple_type(&self.schema, simple)
     }
 
     /// Creates a structured error with context.

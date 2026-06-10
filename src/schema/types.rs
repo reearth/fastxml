@@ -398,6 +398,8 @@ pub struct SimpleType {
     pub enumeration: Vec<String>,
     /// Pattern restriction
     pub pattern: Option<String>,
+    /// Exact length restriction
+    pub length: Option<u32>,
     /// Min length restriction
     pub min_length: Option<u32>,
     /// Max length restriction
@@ -406,6 +408,31 @@ pub struct SimpleType {
     pub min_inclusive: Option<String>,
     /// Maximum value (inclusive)
     pub max_inclusive: Option<String>,
+    /// Minimum value (exclusive)
+    pub min_exclusive: Option<String>,
+    /// Maximum value (exclusive)
+    pub max_exclusive: Option<String>,
+    /// Total digits restriction
+    pub total_digits: Option<u32>,
+    /// Fraction digits restriction
+    pub fraction_digits: Option<u32>,
+    /// Item type for list types (`<xs:list itemType="..."/>`)
+    pub item_type: Option<String>,
+    /// Member types for union types (`<xs:union memberTypes="..."/>`)
+    pub member_types: Vec<String>,
+    /// Whitespace normalization declared by a whiteSpace facet
+    pub white_space: Option<WhiteSpace>,
+}
+
+/// Whitespace normalization mode declared by an `xs:whiteSpace` facet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhiteSpace {
+    /// Preserve all whitespace as-is
+    Preserve,
+    /// Replace tab/newline/carriage-return with spaces
+    Replace,
+    /// Collapse whitespace runs and trim
+    Collapse,
 }
 
 impl SimpleType {
@@ -416,10 +443,18 @@ impl SimpleType {
             base_type: None,
             enumeration: Vec::new(),
             pattern: None,
+            length: None,
             min_length: None,
             max_length: None,
             min_inclusive: None,
             max_inclusive: None,
+            min_exclusive: None,
+            max_exclusive: None,
+            total_digits: None,
+            fraction_digits: None,
+            item_type: None,
+            member_types: Vec::new(),
+            white_space: None,
         }
     }
 
@@ -436,6 +471,12 @@ impl SimpleType {
     /// Sets the base type.
     pub fn with_base(mut self, base: impl Into<String>) -> Self {
         self.base_type = Some(base.into());
+        self
+    }
+
+    /// Sets the whiteSpace facet.
+    pub fn with_white_space(mut self, ws: WhiteSpace) -> Self {
+        self.white_space = Some(ws);
         self
     }
 }
@@ -533,12 +574,16 @@ pub struct AttributeDef {
     pub name: String,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Inline simple type definition
+    pub inline_type: Option<Box<SimpleType>>,
     /// Whether the attribute is required
     pub required: bool,
     /// Default value
     pub default: Option<String>,
     /// Fixed value
     pub fixed: Option<String>,
+    /// Whether this is a reference to a globally declared attribute
+    pub is_ref: bool,
 }
 
 impl AttributeDef {
@@ -547,9 +592,11 @@ impl AttributeDef {
         Self {
             name: name.into(),
             type_ref: None,
+            inline_type: None,
             required: false,
             default: None,
             fixed: None,
+            is_ref: false,
         }
     }
 

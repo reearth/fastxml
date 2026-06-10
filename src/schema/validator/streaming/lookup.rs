@@ -152,28 +152,7 @@ impl OnePassSchemaValidator {
 
     /// Creates FacetConstraints from a SimpleType definition.
     pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        let mut constraints = FacetConstraints::new();
-
-        if let Some(min_len) = simple.min_length {
-            constraints = constraints.with_min_length(min_len as usize);
-        }
-        if let Some(max_len) = simple.max_length {
-            constraints = constraints.with_max_length(max_len as usize);
-        }
-        if let Some(ref min_inc) = simple.min_inclusive {
-            constraints = constraints.with_min_inclusive(min_inc.clone());
-        }
-        if let Some(ref max_inc) = simple.max_inclusive {
-            constraints = constraints.with_max_inclusive(max_inc.clone());
-        }
-        if !simple.enumeration.is_empty() {
-            constraints = constraints.with_enumeration(simple.enumeration.clone());
-        }
-        if let Some(ref pattern) = simple.pattern {
-            constraints = constraints.with_pattern(pattern.clone());
-        }
-
-        constraints
+        FacetConstraints::from_simple_type(&self.schema, simple)
     }
 
     /// Checks if an element is expected by its parent (defined in parent's content model).

@@ -18,6 +18,15 @@ impl XsdParser {
         attrs: &[(&str, &str)],
         namespace_decls: &[crate::namespace::Namespace],
     ) -> Result<()> {
+        // Track the default namespace in scope for this element (an
+        // `xmlns="..."` declaration overrides the inherited one).
+        let default_ns = namespace_decls
+            .iter()
+            .find(|ns| ns.prefix().is_empty())
+            .map(|ns| Some(ns.uri().to_string()))
+            .unwrap_or_else(|| self.default_ns_stack.last().cloned().flatten());
+        self.default_ns_stack.push(default_ns);
+
         // Check for XSD namespace binding (only if not yet detected)
         if self.xsd_prefix.is_none() {
             // First pass: look for default namespace (empty prefix) - preferred
@@ -701,6 +710,10 @@ impl XsdParser {
 
     /// Handles an end element event.
     pub(super) fn handle_end(&mut self, name: &str, prefix: Option<&str>) -> Result<()> {
+        // Pop this element's default-namespace scope (pushed in handle_start)
+        // and use it to judge whether this is an XSD element.
+        let ending_default_ns = self.default_ns_stack.pop().flatten();
+
         // Handle annotation skipping
         if self.skip_depth > 0 {
             self.skip_depth -= 1;
@@ -711,7 +724,11 @@ impl XsdParser {
             return Ok(());
         }
 
-        if !self.is_xsd_element(name, prefix) {
+        let is_xsd = match (&prefix, &ending_default_ns) {
+            (None, Some(uri)) => uri == XSD_NAMESPACE,
+            _ => self.is_xsd_element(name, prefix),
+        };
+        if !is_xsd {
             return Ok(());
         }
 

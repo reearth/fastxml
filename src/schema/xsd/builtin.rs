@@ -7,7 +7,7 @@
 //! - GML geometry types (Point, LineString, Polygon, etc.)
 
 use crate::schema::types::{
-    AttributeDef, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef,
+    AttributeDef, ComplexType, ContentModel, ElementDef, SimpleType, TypeDef, WhiteSpace,
 };
 
 /// XSD namespace URI.
@@ -133,11 +133,19 @@ pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
         ),
         (
             xs::NORMALIZED_STRING.to_string(),
-            TypeDef::Simple(SimpleType::new("normalizedString").with_base(xs::STRING)),
+            TypeDef::Simple(
+                SimpleType::new("normalizedString")
+                    .with_base(xs::STRING)
+                    .with_white_space(WhiteSpace::Replace),
+            ),
         ),
         (
             xs::TOKEN.to_string(),
-            TypeDef::Simple(SimpleType::new("token").with_base(xs::NORMALIZED_STRING)),
+            TypeDef::Simple(
+                SimpleType::new("token")
+                    .with_base(xs::NORMALIZED_STRING)
+                    .with_white_space(WhiteSpace::Collapse),
+            ),
         ),
         (
             xs::LANGUAGE.to_string(),

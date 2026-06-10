@@ -15,6 +15,7 @@
 //! - `api` - Public API functions
 
 mod api;
+mod attributes;
 mod context;
 mod dom;
 mod facade;

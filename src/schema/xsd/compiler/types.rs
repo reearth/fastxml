@@ -1,7 +1,9 @@
 //! Type compilation - simple and complex type compilation.
 
 use crate::error::Result;
-use crate::schema::types::{AttributeDef, ComplexType, ContentModel, SimpleType, TypeDef};
+use crate::schema::types::{
+    AttributeDef, ComplexType, ContentModel, SimpleType, TypeDef, WhiteSpace,
+};
 
 use super::super::types::*;
 use super::XsdCompiler;
@@ -26,6 +28,10 @@ impl XsdCompiler {
                     compiled.base_type = Some(self.resolve_qname(base));
                 }
 
+                // Multiple pattern facets within one restriction step are
+                // OR-ed per XSD; combine them into a single alternation.
+                let mut patterns: Vec<String> = Vec::new();
+
                 // Process facets
                 for facet in &r.facets {
                     match facet {
@@ -33,7 +39,10 @@ impl XsdCompiler {
                             compiled.enumeration.push(v.clone());
                         }
                         XsdFacet::Pattern(p) => {
-                            compiled.pattern = Some(p.clone());
+                            patterns.push(p.clone());
+                        }
+                        XsdFacet::Length(n) => {
+                            compiled.length = Some(*n);
                         }
                         XsdFacet::MinLength(n) => {
                             compiled.min_length = Some(*n);
@@ -47,16 +56,65 @@ impl XsdCompiler {
                         XsdFacet::MaxInclusive(v) => {
                             compiled.max_inclusive = Some(v.clone());
                         }
-                        _ => {
-                            // Other facets not yet supported
+                        XsdFacet::MinExclusive(v) => {
+                            compiled.min_exclusive = Some(v.clone());
+                        }
+                        XsdFacet::MaxExclusive(v) => {
+                            compiled.max_exclusive = Some(v.clone());
+                        }
+                        XsdFacet::TotalDigits(n) => {
+                            compiled.total_digits = Some(*n);
+                        }
+                        XsdFacet::FractionDigits(n) => {
+                            compiled.fraction_digits = Some(*n);
+                        }
+                        XsdFacet::WhiteSpace(v) => {
+                            compiled.white_space = Some(match v {
+                                WhiteSpaceValue::Preserve => WhiteSpace::Preserve,
+                                WhiteSpaceValue::Replace => WhiteSpace::Replace,
+                                WhiteSpaceValue::Collapse => WhiteSpace::Collapse,
+                            });
+                        }
+                    }
+                }
+
+                if !patterns.is_empty() {
+                    compiled.pattern = Some(if patterns.len() == 1 {
+                        patterns.pop().unwrap()
+                    } else {
+                        patterns
+                            .iter()
+                            .map(|p| format!("(?:{})", p))
+                            .collect::<Vec<_>>()
+                            .join("|")
+                    });
+                }
+
+                // Restriction of an inline simple type (e.g. restricting an
+                // anonymous list): inherit its variety.
+                if let Some(inline) = &r.inline_base {
+                    if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
+                        compiled.item_type = inner.item_type;
+                        if compiled.base_type.is_none() {
+                            compiled.base_type = inner.base_type;
                         }
                     }
                 }
             }
             XsdSimpleTypeContent::List(list) => {
-                // List types - base type is the item type
                 if let Some(item_type) = &list.item_type {
-                    compiled.base_type = Some(format!("list({})", self.resolve_qname(item_type)));
+                    let resolved = self.resolve_qname(item_type);
+                    compiled.item_type = Some(resolved.clone());
+                    // Keep the legacy marker so PrimitiveKind::resolve does
+                    // not accidentally walk into the item type: a list's
+                    // value space is not its item's value space.
+                    compiled.base_type = Some(format!("list({})", resolved));
+                } else if let Some(inline) = &list.inline_type {
+                    if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
+                        let item = inner.base_type.unwrap_or_default();
+                        compiled.item_type = Some(item.clone());
+                        compiled.base_type = Some(format!("list({})", item));
+                    }
                 }
             }
             XsdSimpleTypeContent::Union(union) => {
@@ -67,6 +125,7 @@ impl XsdCompiler {
                         .iter()
                         .map(|q| self.resolve_qname(q))
                         .collect();
+                    compiled.member_types = members.clone();
                     compiled.base_type = Some(format!("union({})", members.join(", ")));
                 }
             }
@@ -147,11 +206,12 @@ impl XsdCompiler {
     }
 
     /// Compiles an attribute definition.
-    pub(crate) fn compile_attribute(&self, attr: &XsdAttribute) -> Result<AttributeDef> {
+    pub(crate) fn compile_attribute(&mut self, attr: &XsdAttribute) -> Result<AttributeDef> {
         // Handle attribute reference
         if let Some(ref_qname) = &attr.ref_ {
             let mut compiled = AttributeDef::new(ref_qname.local.clone());
             compiled.required = attr.use_ == AttributeUse::Required;
+            compiled.is_ref = true;
             return Ok(compiled);
         }
 
@@ -160,6 +220,10 @@ impl XsdCompiler {
 
         if let Some(type_ref) = &attr.type_ref {
             compiled.type_ref = Some(self.resolve_qname(type_ref));
+        } else if let Some(inline) = &attr.inline_type {
+            if let TypeDef::Simple(simple) = self.compile_simple_type(inline)? {
+                compiled.inline_type = Some(Box::new(simple));
+            }
         }
 
         compiled.required = attr.use_ == AttributeUse::Required;
