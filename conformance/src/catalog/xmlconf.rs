@@ -102,19 +102,17 @@ impl XmlConfCatalog {
             // Parse each included test file
             for (entity_name, file_path) in &entity_files {
                 let full_path = base_path.join(file_path);
-                if full_path.exists() {
-                    if let Ok(file_content) = fs::read_to_string(&full_path) {
-                        let file_base = full_path.parent().unwrap_or(&base_path).to_path_buf();
-                        let mut file_suites = Vec::new();
-                        if parse_catalog_content(&file_content, &file_base, &mut file_suites)
-                            .is_ok()
-                        {
-                            for mut suite in file_suites {
-                                if suite.name == "Unknown" {
-                                    suite.name = entity_name.clone();
-                                }
-                                suites.push(suite);
+                if full_path.exists()
+                    && let Ok(file_content) = fs::read_to_string(&full_path)
+                {
+                    let file_base = full_path.parent().unwrap_or(&base_path).to_path_buf();
+                    let mut file_suites = Vec::new();
+                    if parse_catalog_content(&file_content, &file_base, &mut file_suites).is_ok() {
+                        for mut suite in file_suites {
+                            if suite.name == "Unknown" {
+                                suite.name = entity_name.clone();
                             }
+                            suites.push(suite);
                         }
                     }
                 }
@@ -138,20 +136,18 @@ impl XmlConfCatalog {
 
             for (name, rel_path) in &known_test_files {
                 let full_path = base_path.join(rel_path);
-                if full_path.exists() {
-                    if let Ok(file_content) = fs::read_to_string(&full_path) {
-                        let file_base = full_path.parent().unwrap_or(&base_path).to_path_buf();
-                        let mut file_suites = Vec::new();
-                        if parse_catalog_content(&file_content, &file_base, &mut file_suites)
-                            .is_ok()
-                        {
-                            for mut suite in file_suites {
-                                if suite.name == "Unknown" {
-                                    suite.name = name.to_string();
-                                }
-                                if !suite.tests.is_empty() {
-                                    suites.push(suite);
-                                }
+                if full_path.exists()
+                    && let Ok(file_content) = fs::read_to_string(&full_path)
+                {
+                    let file_base = full_path.parent().unwrap_or(&base_path).to_path_buf();
+                    let mut file_suites = Vec::new();
+                    if parse_catalog_content(&file_content, &file_base, &mut file_suites).is_ok() {
+                        for mut suite in file_suites {
+                            if suite.name == "Unknown" {
+                                suite.name = name.to_string();
+                            }
+                            if !suite.tests.is_empty() {
+                                suites.push(suite);
                             }
                         }
                     }
@@ -206,11 +202,11 @@ fn extract_entity_files(content: &str) -> Vec<(String, String)> {
             if parts.len() >= 4 && parts[2] == "SYSTEM" {
                 let name = parts[1].to_string();
                 // Extract path from quoted string
-                if let Some(start) = line.find('"') {
-                    if let Some(end) = line[start + 1..].find('"') {
-                        let path = line[start + 1..start + 1 + end].to_string();
-                        entities.push((name, path));
-                    }
+                if let Some(start) = line.find('"')
+                    && let Some(end) = line[start + 1..].find('"')
+                {
+                    let path = line[start + 1..start + 1 + end].to_string();
+                    entities.push((name, path));
                 }
             }
         }
@@ -267,10 +263,10 @@ fn parse_catalog_content(
                             .unwrap_or_else(|| "Unknown".to_string());
 
                         // Save previous suite if exists
-                        if let Some(suite) = current_suite.take() {
-                            if !suite.tests.is_empty() {
-                                suites.push(suite);
-                            }
+                        if let Some(suite) = current_suite.take()
+                            && !suite.tests.is_empty()
+                        {
+                            suites.push(suite);
                         }
 
                         current_suite = Some(TestSuite {
@@ -304,10 +300,10 @@ fn parse_catalog_content(
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
                 if local_name == "TESTCASES" {
-                    if let Some(suite) = current_suite.take() {
-                        if !suite.tests.is_empty() {
-                            suites.push(suite);
-                        }
+                    if let Some(suite) = current_suite.take()
+                        && !suite.tests.is_empty()
+                    {
+                        suites.push(suite);
                     }
                     base_stack.pop();
                     current_base = base_stack
@@ -323,10 +319,10 @@ fn parse_catalog_content(
     }
 
     // Don't forget the last suite
-    if let Some(suite) = current_suite.take() {
-        if !suite.tests.is_empty() {
-            suites.push(suite);
-        }
+    if let Some(suite) = current_suite.take()
+        && !suite.tests.is_empty()
+    {
+        suites.push(suite);
     }
 
     Ok(())

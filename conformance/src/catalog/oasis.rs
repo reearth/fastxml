@@ -91,26 +91,24 @@ impl XPathTestSuite {
                         }
                         "expected" | "result" => {
                             let attrs = parse_attributes(&e)?;
-                            if let Some(ref mut test) = current_test {
-                                if let Some(type_str) = attrs.get("type") {
-                                    test.expected = Some(match type_str.as_str() {
-                                        "error" => ExpectedResult::Error,
-                                        "boolean" => ExpectedResult::Boolean(
-                                            attrs
-                                                .get("value")
-                                                .map_or(false, |v| v == "true" || v == "1"),
-                                        ),
-                                        "number" => ExpectedResult::Number(
-                                            attrs
-                                                .get("value")
-                                                .and_then(|v| v.parse().ok())
-                                                .unwrap_or(0.0),
-                                        ),
-                                        _ => ExpectedResult::String(
-                                            attrs.get("value").cloned().unwrap_or_default(),
-                                        ),
-                                    });
-                                }
+                            if let Some(ref mut test) = current_test
+                                && let Some(type_str) = attrs.get("type")
+                            {
+                                test.expected = Some(match type_str.as_str() {
+                                    "error" => ExpectedResult::Error,
+                                    "boolean" => ExpectedResult::Boolean(
+                                        attrs.get("value").is_some_and(|v| v == "true" || v == "1"),
+                                    ),
+                                    "number" => ExpectedResult::Number(
+                                        attrs
+                                            .get("value")
+                                            .and_then(|v| v.parse().ok())
+                                            .unwrap_or(0.0),
+                                    ),
+                                    _ => ExpectedResult::String(
+                                        attrs.get("value").cloned().unwrap_or_default(),
+                                    ),
+                                });
                             }
                             in_element = Some("expected".to_string());
                             text_buffer.clear();
@@ -133,35 +131,35 @@ impl XPathTestSuite {
 
                     match local_name {
                         "test" | "test-case" => {
-                            if let Some(builder) = current_test.take() {
-                                if let Some(test) = builder.build(&base_path) {
-                                    tests.push(test);
-                                }
+                            if let Some(builder) = current_test.take()
+                                && let Some(test) = builder.build(&base_path)
+                            {
+                                tests.push(test);
                             }
                         }
                         "xpath" | "expression" | "expr" => {
-                            if let Some(ref mut test) = current_test {
-                                if !text_buffer.trim().is_empty() {
-                                    test.xpath = Some(text_buffer.trim().to_string());
-                                }
+                            if let Some(ref mut test) = current_test
+                                && !text_buffer.trim().is_empty()
+                            {
+                                test.xpath = Some(text_buffer.trim().to_string());
                             }
                             in_element = None;
                         }
                         "expected" | "result" => {
-                            if let Some(ref mut test) = current_test {
-                                if test.expected.is_none() && !text_buffer.trim().is_empty() {
-                                    test.expected = Some(ExpectedResult::String(
-                                        text_buffer.trim().to_string(),
-                                    ));
-                                }
+                            if let Some(ref mut test) = current_test
+                                && test.expected.is_none()
+                                && !text_buffer.trim().is_empty()
+                            {
+                                test.expected =
+                                    Some(ExpectedResult::String(text_buffer.trim().to_string()));
                             }
                             in_element = None;
                         }
                         "input" | "input-file" => {
-                            if let Some(ref mut test) = current_test {
-                                if !text_buffer.trim().is_empty() {
-                                    test.input_file = Some(text_buffer.trim().to_string());
-                                }
+                            if let Some(ref mut test) = current_test
+                                && !text_buffer.trim().is_empty()
+                            {
+                                test.input_file = Some(text_buffer.trim().to_string());
                             }
                             in_element = None;
                         }
