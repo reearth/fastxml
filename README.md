@@ -600,14 +600,20 @@ demonstrations of both the modern and compatibility APIs.
 
 ## Conformance
 
-Conformance test results as of v0.8.2. See [conformance/](conformance/) for details.
+Conformance test results as of v0.9.0. See [conformance/](conformance/) for details.
 
 | Test Suite | Category | Pass Rate |
 |------------|----------|-----------|
 | W3C XML | valid documents | 89.9% |
 | W3C XML | invalid documents | 91.2% |
-| W3C XSD | schema compilation | 96.8% |
-| W3C XSD | instance validation | 70.3% |
+| W3C XSD | schema compilation | 79.2% |
+| W3C XSD | instance validation (DOM) | 94.1% |
+| W3C XSD | instance validation (streaming) | 93.1% |
+
+Note: numbers from v0.8.2 and earlier are not comparable — the test
+catalog parser used to misread the expected outcome of each test
+(`<expected validity="...">` was ignored), so both pass rates and
+failure counts were measured against the wrong expectations.
 
 ```bash
 # Run conformance tests (requires test data download)
