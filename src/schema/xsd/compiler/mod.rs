@@ -4,6 +4,7 @@
 //! representation (CompiledSchema).
 
 mod cache;
+mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod substitution;
@@ -109,6 +110,8 @@ impl XsdCompiler {
         // Build performance optimization caches
         self.build_transitive_substitution_groups(&mut result);
         self.build_type_children_cache(&mut result);
+
+        validity::check_schema_validity(&result)?;
 
         Ok(result)
     }

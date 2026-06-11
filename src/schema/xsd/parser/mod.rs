@@ -38,6 +38,25 @@ pub struct XsdParser {
     /// namespace). Tracks `xmlns="..."` overrides so unprefixed XSD elements
     /// are recognized even when the schema root uses a prefix.
     default_ns_stack: Vec<Option<String>>,
+    /// Per-open-XSD-element child bookkeeping for structural rules
+    /// (annotation placement, notation placement).
+    child_state_stack: Vec<ChildState>,
+    /// `id` attribute values seen in this schema document (must be unique).
+    seen_ids: std::collections::HashSet<String>,
+    /// Identity constraint names seen (unique/key/keyref share one symbol
+    /// space and must be unique schema-wide).
+    seen_constraint_names: std::collections::HashSet<String>,
+}
+
+/// Child bookkeeping for one open XSD element.
+#[derive(Debug)]
+pub(super) struct ChildState {
+    /// Local name of the element
+    pub(super) name: String,
+    /// Number of non-annotation children seen so far
+    pub(super) children_seen: u32,
+    /// Number of annotation children seen so far
+    pub(super) annotations: u32,
 }
 
 impl XsdParser {
@@ -50,6 +69,9 @@ impl XsdParser {
             current_text: String::new(),
             skip_depth: 0,
             default_ns_stack: Vec::new(),
+            child_state_stack: Vec::new(),
+            seen_ids: std::collections::HashSet::new(),
+            seen_constraint_names: std::collections::HashSet::new(),
         }
     }
 

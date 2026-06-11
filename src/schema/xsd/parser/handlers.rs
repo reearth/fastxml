@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::schema::xsd::types::*;
 
-use super::XsdParser;
+use super::{ChildState, XsdParser};
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
 
@@ -88,6 +88,8 @@ impl XsdParser {
 
         let local = self.xsd_local_name(name);
         let attr_map = super::helpers::parse_attributes(attrs);
+
+        self.check_structural_rules(local, &attr_map)?;
 
         match local {
             "schema" => {
@@ -190,6 +192,126 @@ impl XsdParser {
             }
         }
 
+        Ok(())
+    }
+
+    /// Enforces schema-for-schemas structural rules at element start:
+    /// `id` attribute validity and document-wide uniqueness, annotation
+    /// placement (at most one, first child, except under xs:schema /
+    /// xs:redefine), and xs:notation placement (top level only).
+    fn check_structural_rules(
+        &mut self,
+        local: &str,
+        attrs: &HashMap<String, String>,
+    ) -> Result<()> {
+        use crate::schema::error::SchemaError;
+        use crate::schema::xsd::primitive::PrimitiveKind;
+
+        // id attributes are xs:ID: valid NCName, unique per document.
+        if let Some(id) = attrs.get("id") {
+            if PrimitiveKind::Ncname.validate(id).is_err() {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("id attribute '{}' is not a valid NCName", id),
+                }
+                .into());
+            }
+            if !self.seen_ids.insert(id.clone()) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("duplicate id attribute value '{}'", id),
+                }
+                .into());
+            }
+        }
+
+        // Inside a simple-type restriction, only facets / annotation /
+        // an inline simpleType are allowed as children.
+        if matches!(self.stack.last(), Some(StackFrame::SimpleRestriction(_)))
+            && !matches!(
+                local,
+                "annotation"
+                    | "simpleType"
+                    | "enumeration"
+                    | "pattern"
+                    | "length"
+                    | "minLength"
+                    | "maxLength"
+                    | "minInclusive"
+                    | "maxInclusive"
+                    | "minExclusive"
+                    | "maxExclusive"
+                    | "totalDigits"
+                    | "fractionDigits"
+                    | "whiteSpace"
+                    | "assertion" // XSD 1.1 facet; ignored but not rejected
+            )
+        {
+            return Err(SchemaError::InvalidSchema {
+                message: format!("element '{}' is not allowed inside a simple type restriction", local),
+            }
+            .into());
+        }
+
+        // Identity constraints: only allowed inside xs:element, with
+        // schema-wide unique names.
+        if matches!(local, "unique" | "key" | "keyref") {
+            if !matches!(self.stack.last(), Some(StackFrame::Element(_))) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'{}' is only allowed inside an element declaration", local),
+                }
+                .into());
+            }
+            if let Some(name) = attrs.get("name")
+                && !self.seen_constraint_names.insert(name.clone())
+            {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("duplicate identity constraint name '{}'", name),
+                }
+                .into());
+            }
+        }
+
+        if let Some(parent) = self.child_state_stack.last_mut() {
+            let parent_allows_repeat =
+                parent.name == "schema" || parent.name == "redefine";
+            if local == "annotation" {
+                if !parent_allows_repeat {
+                    if parent.annotations >= 1 {
+                        return Err(SchemaError::InvalidSchema {
+                            message: format!(
+                                "multiple annotation elements in '{}'",
+                                parent.name
+                            ),
+                        }
+                        .into());
+                    }
+                    if parent.children_seen > 0 {
+                        return Err(SchemaError::InvalidSchema {
+                            message: format!(
+                                "annotation must be the first child of '{}'",
+                                parent.name
+                            ),
+                        }
+                        .into());
+                    }
+                }
+                parent.annotations += 1;
+            } else {
+                if local == "notation" && !parent_allows_repeat {
+                    return Err(SchemaError::InvalidSchema {
+                        message: "notation is only allowed at the top level of a schema"
+                            .to_string(),
+                    }
+                    .into());
+                }
+                parent.children_seen += 1;
+            }
+        }
+
+        self.child_state_stack.push(ChildState {
+            name: local.to_string(),
+            children_seen: 0,
+            annotations: 0,
+        });
         Ok(())
     }
 
@@ -770,8 +892,9 @@ impl XsdParser {
         if self.skip_depth > 0 {
             self.skip_depth -= 1;
             if self.skip_depth == 0 {
-                // Pop the annotation frame
+                // Pop the annotation frame (and its child bookkeeping)
                 self.stack.pop();
+                self.child_state_stack.pop();
             }
             return Ok(());
         }
@@ -783,6 +906,8 @@ impl XsdParser {
         if !is_xsd {
             return Ok(());
         }
+
+        self.child_state_stack.pop();
 
         let local = self.xsd_local_name(name);
 
