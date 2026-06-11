@@ -125,6 +125,8 @@ pub struct DomSchemaValidator {
     pub(crate) max_errors: usize,
     /// Memoized facet constraints per named simple type
     pub(crate) facet_cache: std::cell::RefCell<crate::schema::xsd::facets::FacetCache>,
+    /// Interned error strings (messages repeat heavily on invalid files)
+    pub(crate) error_strings: std::cell::RefCell<std::collections::HashSet<std::sync::Arc<str>>>,
 }
 
 impl DomSchemaValidator {
@@ -136,6 +138,7 @@ impl DomSchemaValidator {
             options: ValidationOptions::default(),
             max_errors: 0,
             facet_cache: Default::default(),
+            error_strings: Default::default(),
         }
     }
 
@@ -149,6 +152,11 @@ impl DomSchemaValidator {
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
+    }
+
+    /// Interns an error's strings through the validator-lifetime pool.
+    fn intern_error(&self, error: StructuredError) -> StructuredError {
+        error.interned(&mut self.error_strings.borrow_mut())
     }
 
     /// Validates the document and returns any errors found.
@@ -171,7 +179,7 @@ impl DomSchemaValidator {
             let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
                 .with_level(ErrorLevel::Error);
             if self.should_add_error(&errors) {
-                errors.push(error);
+                errors.push(self.intern_error(error));
             }
         }
 
@@ -190,7 +198,7 @@ impl DomSchemaValidator {
                     error = error.with_column(column);
                 }
                 if self.should_add_error(&errors) {
-                    errors.push(error);
+                    errors.push(self.intern_error(error));
                 }
             }
         }
@@ -303,7 +311,7 @@ impl DomSchemaValidator {
                             .with_node_name(&name)
                             .with_level(ErrorLevel::Error);
                         if self.should_add_error(errors) {
-                            errors.push(error);
+                            errors.push(self.intern_error(error));
                         }
                     }
                 }
@@ -320,7 +328,7 @@ impl DomSchemaValidator {
                     .with_node_name(&name)
                     .with_level(ErrorLevel::Error);
                 if self.should_add_error(errors) {
-                    errors.push(error);
+                    errors.push(self.intern_error(error));
                 }
             }
 
@@ -341,7 +349,7 @@ impl DomSchemaValidator {
                         .with_node_name(&name)
                         .with_level(ErrorLevel::Error);
                     if self.should_add_error(errors) {
-                        errors.push(error);
+                        errors.push(self.intern_error(error));
                     }
                 } else if !node.get_child_elements().is_empty()
                     || !self.collect_text_content(node).trim().is_empty()
@@ -355,7 +363,7 @@ impl DomSchemaValidator {
                         .with_node_name(&name)
                         .with_level(ErrorLevel::Error);
                     if self.should_add_error(errors) {
-                        errors.push(error);
+                        errors.push(self.intern_error(error));
                     }
                 }
             }
@@ -411,7 +419,7 @@ impl DomSchemaValidator {
                             .with_node_name(&name)
                             .with_level(ErrorLevel::Error);
                         if self.should_add_error(errors) {
-                            errors.push(error);
+                            errors.push(self.intern_error(error));
                         }
                     }
                     if let Some(max) = w.max_occurs {
@@ -428,7 +436,7 @@ impl DomSchemaValidator {
                                 .with_node_name(&name)
                                 .with_level(ErrorLevel::Error);
                             if self.should_add_error(errors) {
-                                errors.push(error);
+                                errors.push(self.intern_error(error));
                             }
                         }
                     }
@@ -481,7 +489,7 @@ impl DomSchemaValidator {
                 .with_level(ErrorLevel::Error);
 
             if self.should_add_error(errors) {
-                errors.push(error);
+                errors.push(self.intern_error(error));
             }
             ParentContext::default()
         } else {
@@ -546,7 +554,7 @@ impl DomSchemaValidator {
                 .with_node_name(&name)
                 .with_level(ErrorLevel::Error);
             if self.should_add_error(errors) {
-                errors.push(error);
+                errors.push(self.intern_error(error));
             }
         }
     }

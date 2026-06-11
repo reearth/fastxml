@@ -41,20 +41,24 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .map(|n| n.name.clone())
+            .map(|n| n.name.to_string())
             .unwrap_or_default()
     }
 
     /// Returns the namespace prefix (if any).
     pub fn get_prefix(&self) -> Option<String> {
         let nodes = self.nodes.read();
-        nodes.get(self.id).and_then(|n| n.prefix.clone())
+        nodes
+            .get(self.id)
+            .and_then(|n| n.prefix.as_deref().map(str::to_string))
     }
 
     /// Returns the namespace URI (if any).
     pub fn get_namespace_uri(&self) -> Option<String> {
         let nodes = self.nodes.read();
-        nodes.get(self.id).and_then(|n| n.namespace_uri.clone())
+        nodes
+            .get(self.id)
+            .and_then(|n| n.namespace_uri.as_deref().map(str::to_string))
     }
 
     /// Returns the namespace (if any).
@@ -63,7 +67,7 @@ impl XmlNode {
         nodes.get(self.id).and_then(|n| {
             n.namespace_uri
                 .as_ref()
-                .map(|uri| Namespace::new(n.prefix.clone().unwrap_or_default(), uri.clone()))
+                .map(|uri| Namespace::new(n.prefix.as_deref().unwrap_or_default(), uri.as_ref()))
         })
     }
 
@@ -126,7 +130,7 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .and_then(|n| n.attributes.get(name).cloned())
+            .and_then(|n| n.attrs().get(name).cloned())
     }
 
     /// Returns an attribute value by name and namespace.
@@ -137,15 +141,15 @@ impl XmlNode {
         let node = nodes.get(self.id)?;
 
         // Try exact match first
-        if let Some(value) = node.attributes.get(name) {
+        if let Some(value) = node.attrs().get(name) {
             return Some(value.clone());
         }
 
         // Try with namespace prefix lookup
-        for ns in &node.namespace_decls {
+        for ns in node.ns_decls() {
             if ns.uri() == ns_uri {
                 let prefixed_name = format!("{}:{}", ns.prefix(), name);
-                if let Some(value) = node.attributes.get(&prefixed_name) {
+                if let Some(value) = node.attrs().get(&prefixed_name) {
                     return Some(value.clone());
                 }
             }
@@ -159,7 +163,7 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .map(|n| n.attributes.clone())
+            .map(|n| n.attrs().clone())
             .unwrap_or_default()
     }
 
@@ -169,7 +173,7 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .and_then(|n| n.attribute_ns_info.get(local_name).cloned())
+            .and_then(|n| n.attr_ns_info().get(local_name).cloned())
     }
 
     /// Returns namespace declarations on this element.
@@ -177,7 +181,7 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .map(|n| n.namespace_decls.clone())
+            .map(|n| n.ns_decls().to_vec())
             .unwrap_or_default()
     }
 
@@ -256,20 +260,24 @@ impl XmlNode {
     /// Returns the line number (if available).
     pub fn line(&self) -> Option<usize> {
         let nodes = self.nodes.read();
-        nodes.get(self.id).and_then(|n| n.line)
+        nodes
+            .get(self.id)
+            .and_then(|n| n.line.map(|v| v.get() as usize))
     }
 
     /// Returns the column number (if available).
     pub fn column(&self) -> Option<usize> {
         let nodes = self.nodes.read();
-        nodes.get(self.id).and_then(|n| n.column)
+        nodes
+            .get(self.id)
+            .and_then(|n| n.column.map(|v| v.get() as usize))
     }
 
     /// Sets an attribute value.
     pub fn set_attribute(&self, name: &str, value: &str) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.attributes.insert(name.to_string(), value.to_string());
+            node.attrs_mut().insert(name.to_string(), value.to_string());
         }
     }
 
@@ -279,7 +287,7 @@ impl XmlNode {
     pub fn remove_attribute(&self, name: &str) -> Option<String> {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            return node.attributes.shift_remove(name);
+            return node.attrs_mut().shift_remove(name);
         }
         None
     }
@@ -311,7 +319,7 @@ impl XmlNode {
     pub fn set_name(&self, name: &str) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.name = name.to_string();
+            node.name = std::sync::Arc::from(name);
         }
     }
 
@@ -319,7 +327,7 @@ impl XmlNode {
     pub fn set_prefix(&self, prefix: Option<&str>) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.prefix = prefix.map(|s| s.to_string());
+            node.prefix = prefix.map(std::sync::Arc::from);
         }
     }
 
@@ -327,7 +335,7 @@ impl XmlNode {
     pub fn set_namespace_uri(&self, uri: Option<&str>) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.namespace_uri = uri.map(|s| s.to_string());
+            node.namespace_uri = uri.map(std::sync::Arc::from);
         }
     }
 
@@ -335,7 +343,7 @@ impl XmlNode {
     pub fn add_namespace_decl(&self, prefix: &str, uri: &str) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.namespace_decls
+            node.ns_decls_mut()
                 .push(Namespace::new(prefix.to_string(), uri.to_string()));
         }
     }

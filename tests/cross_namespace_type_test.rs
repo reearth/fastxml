@@ -28,7 +28,7 @@ fn test_validates_correctly_when_schema_uses_default_namespace_with_conflicting_
         .expect("Validation should not fail")
         .into_entries();
 
-    let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+    let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
 
     assert!(
         error_messages.is_empty(),
@@ -61,7 +61,7 @@ fn test_other_namespace_wall_surface_has_own_children_not_bldg_children() {
         .expect("Validation should not fail")
         .into_entries();
 
-    let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
+    let error_messages: Vec<String> = errors.iter().map(|e| e.message.to_string()).collect();
     assert!(
         error_messages.is_empty(),
         "other:WallSurface should accept its own children (lining, otherMaterial). Errors: {:?}",

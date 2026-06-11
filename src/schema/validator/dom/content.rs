@@ -72,7 +72,7 @@ impl DomSchemaValidator {
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
                 if self.should_add_error(errors) {
-                    errors.push(error);
+                    errors.push(self.intern_error(error));
                 }
             }
         }
@@ -129,7 +129,7 @@ impl DomSchemaValidator {
                                 .with_level(ErrorLevel::Error);
 
                             if self.should_add_error(errors) {
-                                errors.push(error);
+                                errors.push(self.intern_error(error));
                             }
                         }
                     }
@@ -174,7 +174,7 @@ impl DomSchemaValidator {
                     .with_level(ErrorLevel::Error);
 
                 if self.should_add_error(errors) {
-                    errors.push(error);
+                    errors.push(self.intern_error(error));
                 }
             }
 
@@ -197,7 +197,7 @@ impl DomSchemaValidator {
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
                 if self.should_add_error(errors) {
-                    errors.push(error);
+                    errors.push(self.intern_error(error));
                 }
             }
         }
@@ -218,7 +218,7 @@ impl DomSchemaValidator {
                 .with_level(ErrorLevel::Error);
 
             if self.should_add_error(errors) {
-                errors.push(error);
+                errors.push(self.intern_error(error));
             }
         }
     }

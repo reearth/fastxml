@@ -69,6 +69,8 @@ pub struct OnePassSchemaValidator {
     /// Memoized inherited-element lists per complex type name
     pub(crate) elements_cache:
         std::collections::HashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
+    /// Interned error strings (messages repeat heavily on invalid files)
+    pub(crate) error_strings: std::collections::HashSet<std::sync::Arc<str>>,
 }
 
 impl OnePassSchemaValidator {
@@ -89,6 +91,7 @@ impl OnePassSchemaValidator {
             identity_scopes: Vec::new(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
+            error_strings: Default::default(),
         }
     }
 
@@ -158,6 +161,7 @@ impl OnePassSchemaValidator {
     }
 
     pub(crate) fn add_error(&mut self, error: StructuredError) {
+        let error = error.interned(&mut self.error_strings);
         if self.should_collect_more() {
             self.errors.push(error);
         }

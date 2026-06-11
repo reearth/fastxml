@@ -279,8 +279,10 @@ impl std::fmt::Display for ErrorLevel {
 /// Structured error for schema validation, compatible with libxml's StructuredError.
 #[derive(Debug, Clone)]
 pub struct StructuredError {
-    /// Error message
-    pub message: String,
+    /// Error message. Stored as a shared string: validators intern
+    /// repeated messages so a million identical errors hold one
+    /// allocation.
+    pub message: std::sync::Arc<str>,
     /// Location information (line, column, byte_offset, xpath)
     pub location: ErrorLocation,
     /// Error type classification
@@ -288,7 +290,7 @@ pub struct StructuredError {
     /// Error severity level
     pub level: ErrorLevel,
     /// Name of the element or attribute that caused the error
-    pub node_name: Option<String>,
+    pub node_name: Option<std::sync::Arc<str>>,
     /// Expected value or type (for type mismatch errors)
     pub expected: Option<String>,
     /// Actual value found (for type mismatch errors)
@@ -298,7 +300,7 @@ pub struct StructuredError {
 impl Default for StructuredError {
     fn default() -> Self {
         Self {
-            message: String::new(),
+            message: std::sync::Arc::from(""),
             location: ErrorLocation::default(),
             error_type: ValidationErrorType::Other,
             level: ErrorLevel::Error,
@@ -309,14 +311,40 @@ impl Default for StructuredError {
     }
 }
 
+/// Returns the pooled copy of `s`, inserting it on first sight.
+pub(crate) fn intern_arc(
+    pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+    s: &std::sync::Arc<str>,
+) -> std::sync::Arc<str> {
+    if let Some(existing) = pool.get(s.as_ref()) {
+        std::sync::Arc::clone(existing)
+    } else {
+        pool.insert(std::sync::Arc::clone(s));
+        std::sync::Arc::clone(s)
+    }
+}
+
 impl StructuredError {
     /// Creates a new error with the given message and type.
     pub fn new(message: impl Into<String>, error_type: ValidationErrorType) -> Self {
         Self {
-            message: message.into(),
+            message: std::sync::Arc::from(message.into()),
             error_type,
             ..Default::default()
         }
+    }
+
+    /// Interns the message and node name through `pool`, so identical
+    /// strings across many errors share one allocation.
+    pub(crate) fn interned(
+        mut self,
+        pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+    ) -> Self {
+        self.message = intern_arc(pool, &self.message);
+        if let Some(name) = self.node_name.take() {
+            self.node_name = Some(intern_arc(pool, &name));
+        }
+        self
     }
 
     /// Sets the line number.
@@ -351,7 +379,7 @@ impl StructuredError {
 
     /// Sets the node name.
     pub fn with_node_name(mut self, name: impl Into<String>) -> Self {
-        self.node_name = Some(name.into());
+        self.node_name = Some(std::sync::Arc::from(name.into()));
         self
     }
 

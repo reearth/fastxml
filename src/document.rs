@@ -156,7 +156,7 @@ impl XmlDocument {
             let nodes = self.nodes.read();
             if let Some(root) = nodes.get(root_id) {
                 let mut resolver = self.namespace_resolver.write();
-                for ns in &root.namespace_decls {
+                for ns in root.ns_decls() {
                     resolver.register(ns.prefix(), ns.uri());
                 }
             }
@@ -240,9 +240,27 @@ pub struct DocumentBuilder {
     node_stack: Vec<NodeId>,
     /// Next available node ID
     next_id: NodeId,
+    /// Interned strings for names / prefixes / namespace URIs, so the 2M
+    /// nodes of a large document share a few hundred allocations
+    strings: std::collections::HashSet<std::sync::Arc<str>>,
+}
+
+/// Converts a usize source position to the compact node representation.
+fn to_position(value: Option<usize>) -> Option<std::num::NonZeroU32> {
+    value.and_then(|v| std::num::NonZeroU32::new(v.min(u32::MAX as usize) as u32))
 }
 
 impl DocumentBuilder {
+    /// Returns an interned copy of `s`, shared across the document.
+    fn intern(&mut self, s: &str) -> std::sync::Arc<str> {
+        if let Some(existing) = self.strings.get(s) {
+            return std::sync::Arc::clone(existing);
+        }
+        let arc: std::sync::Arc<str> = std::sync::Arc::from(s);
+        self.strings.insert(std::sync::Arc::clone(&arc));
+        arc
+    }
+
     /// Creates a new document builder.
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(64);
@@ -253,6 +271,7 @@ impl DocumentBuilder {
             root_element_id: None,
             node_stack: vec![0], // Start with document node
             next_id: 1,
+            strings: std::collections::HashSet::new(),
         }
     }
 
@@ -272,27 +291,27 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::element(
-            id,
-            name.to_string(),
-            prefix.map(|s| s.to_string()),
-            namespace_uri.map(|s| s.to_string()),
-        );
+        let interned_name = self.intern(name);
+        let interned_prefix = prefix.map(|s| self.intern(s));
+        let interned_ns = namespace_uri.map(|s| self.intern(s));
+        let mut node = NodeData::element(id, interned_name, interned_prefix, interned_ns);
 
         for (key, value) in attributes {
-            node.attributes.insert(key.to_string(), value.to_string());
+            node.attrs_mut().insert(key.to_string(), value.to_string());
         }
 
         for (local_name, attr_prefix, attr_ns_uri) in attribute_ns_info {
-            node.attribute_ns_info.insert(
+            node.attr_ns_info_mut().insert(
                 local_name.to_string(),
                 (attr_prefix.to_string(), attr_ns_uri.to_string()),
             );
         }
 
-        node.namespace_decls = namespace_decls;
-        node.line = line;
-        node.column = column;
+        if !namespace_decls.is_empty() {
+            *node.ns_decls_mut() = namespace_decls;
+        }
+        node.line = to_position(line);
+        node.column = to_position(column);
 
         let parent_id = *self.node_stack.last().unwrap_or(&0);
         node.parent = Some(parent_id);

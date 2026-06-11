@@ -372,7 +372,7 @@ mod structured_error_tests {
     #[test]
     fn test_structured_error_new() {
         let err = StructuredError::new("test error", ValidationErrorType::UnknownElement);
-        assert_eq!(err.message, "test error");
+        assert_eq!(err.message.as_ref(), "test error");
         assert_eq!(err.error_type, ValidationErrorType::UnknownElement);
     }
 
@@ -391,7 +391,7 @@ mod structured_error_tests {
         assert_eq!(err.column(), Some(5));
         assert_eq!(err.level, ErrorLevel::Warning);
         assert_eq!(err.element_path(), Some("/root/child"));
-        assert_eq!(err.node_name, Some("child".to_string()));
+        assert_eq!(err.node_name.as_deref(), Some("child"));
         assert_eq!(err.expected, Some("string".to_string()));
         assert_eq!(err.found, Some("number".to_string()));
     }
@@ -460,7 +460,7 @@ mod structured_error_tests {
     #[test]
     fn test_structured_error_default() {
         let err = StructuredError::default();
-        assert_eq!(err.message, "");
+        assert_eq!(err.message.as_ref(), "");
         assert_eq!(err.line(), None);
         assert_eq!(err.column(), None);
         assert_eq!(err.error_type, ValidationErrorType::Other);

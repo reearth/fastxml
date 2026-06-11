@@ -135,7 +135,7 @@ fn test_streaming_validator_make_error() {
     let validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     let error = validator.make_error(ValidationErrorType::UnknownElement, "test error");
-    assert_eq!(error.message, "test error");
+    assert_eq!(error.message.as_ref(), "test error");
     assert_eq!(error.error_type, ValidationErrorType::UnknownElement);
 }
 
@@ -342,7 +342,7 @@ fn test_streaming_validator_into_errors() {
 
     let errors = validator.into_errors();
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].message, "test error");
+    assert_eq!(errors[0].message.as_ref(), "test error");
 }
 
 #[test]
