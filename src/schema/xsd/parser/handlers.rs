@@ -255,7 +255,8 @@ impl XsdParser {
         }
 
         // Identity constraints: only allowed inside xs:element, with
-        // schema-wide unique names.
+        // schema-wide unique NCName names; refer is keyref-only (and
+        // required there).
         if matches!(local, "unique" | "key" | "keyref") {
             if !matches!(self.stack.last(), Some(StackFrame::Element(_))) {
                 return Err(SchemaError::InvalidSchema {
@@ -263,13 +264,41 @@ impl XsdParser {
                 }
                 .into());
             }
-            if let Some(name) = attrs.get("name")
-                && !self.seen_constraint_names.insert(name.clone())
+            let Some(name) = attrs.get("name") else {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'{}' requires a 'name' attribute", local),
+                }
+                .into());
+            };
+            if crate::schema::xsd::primitive::PrimitiveKind::Ncname
+                .validate(name)
+                .is_err()
             {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("identity constraint name '{}' is not a valid NCName", name),
+                }
+                .into());
+            }
+            if !self.seen_constraint_names.insert(name.clone()) {
                 return Err(SchemaError::InvalidSchema {
                     message: format!("duplicate identity constraint name '{}'", name),
                 }
                 .into());
+            }
+            match (local, attrs.contains_key("refer")) {
+                ("keyref", false) => {
+                    return Err(SchemaError::InvalidSchema {
+                        message: "keyref requires a 'refer' attribute".to_string(),
+                    }
+                    .into());
+                }
+                ("unique" | "key", true) => {
+                    return Err(SchemaError::InvalidSchema {
+                        message: format!("'{}' does not allow a 'refer' attribute", local),
+                    }
+                    .into());
+                }
+                _ => {}
             }
         }
 
@@ -315,6 +344,8 @@ impl XsdParser {
             particles: 0,
             derivations: 0,
             any_attributes: 0,
+            selectors: 0,
+            fields: 0,
         });
         Ok(())
     }
@@ -353,6 +384,17 @@ impl XsdParser {
             "element" | "attribute" => {
                 if !attrs.contains_key("name") && !attrs.contains_key("ref") {
                     return err(format!("{} requires a 'name' or 'ref' attribute", local));
+                }
+                if attrs.contains_key("default") && attrs.contains_key("fixed") {
+                    return err(format!("{} cannot have both 'default' and 'fixed'", local));
+                }
+                if local == "attribute"
+                    && attrs.contains_key("default")
+                    && attrs.get("use").is_some_and(|u| u != "optional")
+                {
+                    return err(
+                        "attribute with a default value must have use='optional'".to_string()
+                    );
                 }
             }
             _ => {}
@@ -432,6 +474,28 @@ impl XsdParser {
                     parent.particles += 1;
                 }
             }
+            // Identity constraints admit annotation, one selector, fields.
+            "unique" | "key" | "keyref" => match local {
+                "selector" => {
+                    if parent.selectors > 0 {
+                        return err("only one selector is allowed".to_string());
+                    }
+                    parent.selectors += 1;
+                }
+                "field" => {
+                    if parent.selectors == 0 {
+                        return err("selector must precede field".to_string());
+                    }
+                    parent.fields += 1;
+                }
+                "annotation" => {}
+                _ => {
+                    return err(format!(
+                        "element '{}' is not allowed inside {}",
+                        local, parent.name
+                    ));
+                }
+            },
             // Elements whose only legal child is annotation.
             "notation" | "import" | "include" | "selector" | "field" | "any" | "anyAttribute" => {
                 if local != "annotation" {
@@ -1039,7 +1103,18 @@ impl XsdParser {
             return Ok(());
         }
 
-        self.child_state_stack.pop();
+        if let Some(state) = self.child_state_stack.pop()
+            && matches!(state.name.as_str(), "unique" | "key" | "keyref")
+            && (state.selectors != 1 || state.fields == 0)
+        {
+            return Err(crate::schema::error::SchemaError::InvalidSchema {
+                message: format!(
+                    "'{}' requires exactly one selector and at least one field",
+                    state.name
+                ),
+            }
+            .into());
+        }
 
         let local = self.xsd_local_name(name);
 

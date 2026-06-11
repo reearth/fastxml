@@ -8,14 +8,203 @@ use crate::schema::types::{CompiledSchema, SimpleType, TypeDef};
 use crate::schema::xsd::primitive::PrimitiveKind;
 use crate::schema::xsd::value_compare::compare_values;
 
-/// Checks every compiled simple type against schema-for-schemas constraints.
+/// Checks every compiled type against schema-for-schemas constraints.
 pub(crate) fn check_schema_validity(schema: &CompiledSchema) -> Result<()> {
     for (name, type_def) in &schema.types {
-        if let TypeDef::Simple(st) = type_def {
-            check_simple_type(schema, name, st)?;
+        match type_def {
+            TypeDef::Simple(st) => check_simple_type(schema, name, st)?,
+            TypeDef::Complex(ct) => {
+                check_complex_restriction(schema, name, ct)?;
+                if let Some(elements) = content_elements(&ct.content) {
+                    for elem in elements {
+                        check_value_constraints(schema, elem)?;
+                    }
+                }
+            }
         }
     }
+    for elem in schema.elements.values() {
+        check_value_constraints(schema, elem)?;
+    }
     Ok(())
+}
+
+/// An element's default/fixed value must be a valid instance of its type.
+fn check_value_constraints(
+    schema: &CompiledSchema,
+    elem: &crate::schema::types::ElementDef,
+) -> Result<()> {
+    let Some(value) = elem.default.as_deref().or(elem.fixed.as_deref()) else {
+        return Ok(());
+    };
+    let simple = match elem.type_ref.as_deref().and_then(|t| schema.get_type(t)) {
+        Some(TypeDef::Simple(st)) => st,
+        _ => return Ok(()),
+    };
+    if let Some(kind) = PrimitiveKind::resolve(schema, simple)
+        && kind.validate(value).is_err()
+    {
+        return Err(invalid(format!(
+            "element '{}': default/fixed value '{}' is not valid for its type",
+            elem.name, value
+        )));
+    }
+    Ok(())
+}
+
+/// Pragmatic particle-restriction legality (a subset of the rcase-* rules):
+/// a complex type derived by restriction must accept a subset of its base.
+fn check_complex_restriction(
+    schema: &CompiledSchema,
+    name: &str,
+    ct: &crate::schema::types::ComplexType,
+) -> Result<()> {
+    use crate::schema::types::{ContentModel, ProcessContents, WildcardNamespace};
+
+    if ct.derivation != Some(crate::schema::types::DerivationMethod::Restriction) {
+        return Ok(());
+    }
+    let Some(base_name) = ct.base_type.as_deref() else {
+        return Ok(());
+    };
+    let Some(TypeDef::Complex(base)) = schema.get_type(base_name) else {
+        return Ok(());
+    };
+    // Self-reference via placeholder or unrelated lookup
+    if std::ptr::eq(base, ct) {
+        return Ok(());
+    }
+
+    // Wildcard rules: a restriction cannot introduce a wildcard, weaken its
+    // processContents, or widen its namespace constraint.
+    if let Some(ref dw) = ct.wildcard {
+        match &base.wildcard {
+            None => {
+                // Only flag when the base genuinely has element content
+                // (an empty base could not legally be restricted anyway).
+                if !matches!(base.content, ContentModel::Empty) {
+                    return Err(invalid(format!(
+                        "type '{}': restriction introduces a wildcard not present in base '{}'",
+                        name, base_name
+                    )));
+                }
+            }
+            Some(bw) => {
+                let strength = |pc: ProcessContents| match pc {
+                    ProcessContents::Strict => 3u8,
+                    ProcessContents::Lax => 2,
+                    ProcessContents::Skip => 1,
+                };
+                if strength(dw.process_contents) < strength(bw.process_contents) {
+                    return Err(invalid(format!(
+                        "type '{}': restriction weakens wildcard processContents of base '{}'",
+                        name, base_name
+                    )));
+                }
+                let subset = match (&dw.namespace, &bw.namespace) {
+                    (_, WildcardNamespace::Any) => true,
+                    (WildcardNamespace::Any, _) => false,
+                    (WildcardNamespace::Other, WildcardNamespace::Other) => {
+                        dw.target_namespace == bw.target_namespace
+                    }
+                    (WildcardNamespace::List(d), WildcardNamespace::List(b)) => {
+                        d.iter().all(|u| b.contains(u))
+                    }
+                    (WildcardNamespace::List(d), WildcardNamespace::Other) => d.iter().all(|u| {
+                        !u.is_empty() && Some(u.as_str()) != bw.target_namespace.as_deref()
+                    }),
+                    (WildcardNamespace::Other, WildcardNamespace::List(_)) => false,
+                };
+                if !subset {
+                    return Err(invalid(format!(
+                        "type '{}': restriction widens wildcard namespace of base '{}'",
+                        name, base_name
+                    )));
+                }
+            }
+        }
+    }
+
+    // Element rules on the flattened content models.
+    let derived_elems = content_elements(&ct.content);
+    let base_elems = content_elements(&base.content);
+    let (Some(derived_elems), Some(base_elems)) = (derived_elems, base_elems) else {
+        return Ok(());
+    };
+
+    for d in derived_elems {
+        match base_elems.iter().find(|b| b.name == d.name) {
+            None => {
+                // A substitution-group member may stand in for its head.
+                let substitutes_into_base = {
+                    let mut current = d.name.as_str();
+                    let mut found = false;
+                    for _ in 0..16 {
+                        match schema.substitution_group_heads.get(current) {
+                            Some(head) => {
+                                let head_local = head.rsplit(':').next().unwrap_or(head);
+                                if base_elems.iter().any(|b| {
+                                    b.name.rsplit(':').next().unwrap_or(&b.name) == head_local
+                                }) {
+                                    found = true;
+                                    break;
+                                }
+                                current = head;
+                            }
+                            None => break,
+                        }
+                    }
+                    found
+                };
+                if base.wildcard.is_none() && !substitutes_into_base {
+                    return Err(invalid(format!(
+                        "type '{}': restriction adds element '{}' not present in base '{}'",
+                        name, d.name, base_name
+                    )));
+                }
+            }
+            // A base wildcard can absorb additional occurrences, so the
+            // pairwise occurrence comparison only holds without one.
+            Some(b) if base.wildcard.is_none() => {
+                // Occurrence range must narrow, never widen. Flattening
+                // turns choice members into min=0, so only compare minima
+                // when both content models are sequences.
+                let both_sequences = matches!(ct.content, ContentModel::Sequence(_))
+                    && matches!(base.content, ContentModel::Sequence(_));
+                if both_sequences && d.min_occurs < b.min_occurs {
+                    return Err(invalid(format!(
+                        "type '{}': restriction lowers minOccurs of element '{}' below base '{}'",
+                        name, d.name, base_name
+                    )));
+                }
+                let widened = match (d.max_occurs, b.max_occurs) {
+                    (None, Some(_)) => true,
+                    (Some(dm), Some(bm)) => dm > bm,
+                    _ => false,
+                };
+                if widened {
+                    return Err(invalid(format!(
+                        "type '{}': restriction raises maxOccurs of element '{}' above base '{}'",
+                        name, d.name, base_name
+                    )));
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// The immediate flattened element list of a content model, when it has one.
+fn content_elements(
+    content: &crate::schema::types::ContentModel,
+) -> Option<&[crate::schema::types::ElementDef]> {
+    use crate::schema::types::ContentModel;
+    match content {
+        ContentModel::Sequence(e) | ContentModel::Choice(e) | ContentModel::All(e) => Some(e),
+        _ => None,
+    }
 }
 
 fn invalid(message: String) -> crate::error::Error {
