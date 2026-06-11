@@ -892,6 +892,50 @@ fn run_transform_reader_subprocess(content: &[u8], iterations: usize, file_path:
 // Normal Mode Benchmarks (print to console)
 // =============================================================================
 
+/// Prints a consolidated CPU + memory table for all benchmarked modes, so a
+/// single invocation answers both questions at once.
+fn print_summary_table(summary: &[(&str, JsonValue)], content_size: usize) {
+    if summary.is_empty() {
+        return;
+    }
+    println!("\n  Summary (avg per iteration):");
+    println!(
+        "    {:<20} {:>10} {:>12} {:>12} {:>10}",
+        "mode", "time", "throughput", "memory", "errors"
+    );
+    for (label, result) in summary {
+        // Validating modes report the validation time separately.
+        let time_ms = result["validate_time_ms"]
+            .as_f64()
+            .unwrap_or_else(|| result["parse_time_ms"].as_f64().unwrap_or(0.0));
+        let time = if time_ms >= 1000.0 {
+            format!("{:.2}s", time_ms / 1000.0)
+        } else {
+            format!("{:.0}ms", time_ms)
+        };
+        let thpt = if time_ms > 0.0 {
+            format!(
+                "{:.1} MB/s",
+                content_size as f64 / (time_ms / 1000.0) / (1024.0 * 1024.0)
+            )
+        } else {
+            "-".to_string()
+        };
+        let mem = result["memory_delta_bytes"]
+            .as_u64()
+            .map(|m| format!("Δ {}", format_bytes(m as usize)))
+            .unwrap_or_else(|| "-".to_string());
+        let errors = result["validation_errors"]
+            .as_u64()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "    {:<20} {:>10} {:>12} {:>12} {:>10}",
+            label, time, thpt, mem, errors
+        );
+    }
+}
+
 fn print_json_result(result: &JsonValue, prefix: &str) {
     let mode = result["mode"].as_str().unwrap_or("unknown");
     let time_ms = result["parse_time_ms"].as_f64().unwrap_or(0.0);
@@ -1417,10 +1461,13 @@ fn run_file_benchmark(
 
     match mode {
         ProcessingMode::Both => {
+            let mut summary: Vec<(&str, JsonValue)> = Vec::new();
+
             // Run DOM in subprocess for clean memory measurement
             println!("\n  [DOM] (subprocess)");
             if let Some(result) = run_subprocess(InternalMode::Dom, inputs, iterations, cache_dir) {
                 print_json_result(&result, "");
+                summary.push(("dom", result));
             } else {
                 // Fallback to direct execution
                 run_dom_benchmark(content, iterations, schema_info.as_ref());
@@ -1432,6 +1479,7 @@ fn run_file_benchmark(
                 run_subprocess(InternalMode::Streaming, inputs, iterations, cache_dir)
             {
                 print_json_result(&result, "");
+                summary.push(("streaming", result));
             } else {
                 // Fallback to direct execution
                 run_streaming_benchmark(
@@ -1447,6 +1495,7 @@ fn run_file_benchmark(
                 run_subprocess(InternalMode::Transform, inputs, iterations, cache_dir)
             {
                 print_json_result(&result, "");
+                summary.push(("transform", result));
             } else {
                 run_transform_benchmark(content, iterations);
             }
@@ -1468,6 +1517,7 @@ fn run_file_benchmark(
                     run_subprocess(InternalMode::DomValidate, inputs, iterations, cache_dir)
                 {
                     print_json_result(&result, "");
+                    summary.push(("dom+validate", result));
                 }
 
                 println!("\n  [Streaming + Validate] (subprocess)");
@@ -1478,6 +1528,7 @@ fn run_file_benchmark(
                     cache_dir,
                 ) {
                     print_json_result(&result, "");
+                    summary.push(("streaming+validate", result));
                 }
 
                 // libxml comparison in subprocess
@@ -1498,6 +1549,8 @@ fn run_file_benchmark(
                     }
                 }
             }
+
+            print_summary_table(&summary, content.len());
         }
         ProcessingMode::Dom => {
             run_dom_benchmark(content, iterations, schema_info.as_ref());
