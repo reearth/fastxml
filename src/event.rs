@@ -140,6 +140,8 @@ pub(crate) struct StreamingParser<R: BufRead> {
     reader: Reader<PositionTrackingReader<R>>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
     interner: StringInterner,
+    /// General entities declared in the internal DTD subset
+    entities: std::collections::HashMap<String, String>,
 }
 
 impl<R: BufRead> StreamingParser<R> {
@@ -154,6 +156,7 @@ impl<R: BufRead> StreamingParser<R> {
             reader: xml_reader,
             handlers: Vec::new(),
             interner: StringInterner::new(),
+            entities: std::collections::HashMap::new(),
         }
     }
 
@@ -191,11 +194,13 @@ impl<R: BufRead> StreamingParser<R> {
 
             match event_result {
                 Ok(Event::Start(ref e)) => {
-                    let event = convert_start_event(e, line, column, &mut self.interner)?;
+                    let event =
+                        convert_start_event(e, line, column, &mut self.interner, &self.entities)?;
                     on_event(&event)?;
                 }
                 Ok(Event::Empty(ref e)) => {
-                    let start_event = convert_start_event(e, line, column, &mut self.interner)?;
+                    let start_event =
+                        convert_start_event(e, line, column, &mut self.interner, &self.entities)?;
                     on_event(&start_event)?;
 
                     // For empty elements, also dispatch end event
@@ -223,11 +228,16 @@ impl<R: BufRead> StreamingParser<R> {
                     on_event(&event)?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e.unescape().map_err(|e| {
-                        crate::parser::error::ParseError::TextDecodeError {
+                    let text = e
+                        .unescape_with(|name| {
+                            self.entities
+                                .get(name)
+                                .map(String::as_str)
+                                .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
+                        })
+                        .map_err(|e| crate::parser::error::ParseError::TextDecodeError {
                             message: e.to_string(),
-                        }
-                    })?;
+                        })?;
                     if !text.is_empty() {
                         let event = XmlEvent::Text(text.into_owned());
                         on_event(&event)?;
@@ -274,8 +284,11 @@ impl<R: BufRead> StreamingParser<R> {
                     };
                     on_event(&event)?;
                 }
-                Ok(Event::DocType(_)) => {
-                    // Skip DOCTYPE
+                Ok(Event::DocType(ref e)) => {
+                    // Collect internal-subset general entity declarations
+                    if let Ok(text) = std::str::from_utf8(e.as_ref()) {
+                        self.entities = crate::parser::entities::parse_internal_entities(text);
+                    }
                 }
                 Ok(Event::Eof) => {
                     let event = XmlEvent::Eof;
@@ -338,6 +351,7 @@ fn convert_start_event(
     line: usize,
     column: usize,
     interner: &mut StringInterner,
+    entities: &std::collections::HashMap<String, String>,
 ) -> Result<XmlEvent> {
     let name_bytes = e.name().as_ref().to_vec();
     let full_name = std::str::from_utf8(&name_bytes)?;
@@ -349,11 +363,16 @@ fn convert_start_event(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr.unescape_value().map_err(|e| {
-            crate::parser::error::ParseError::AttributeDecodeError {
+        let value = attr
+            .unescape_value_with(|name| {
+                entities
+                    .get(name)
+                    .map(String::as_str)
+                    .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
+            })
+            .map_err(|e| crate::parser::error::ParseError::AttributeDecodeError {
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         if key == "xmlns" {
             namespace_decls.push(Namespace::default_ns(value.as_ref()));
