@@ -166,7 +166,7 @@ impl XsdParser {
                 self.handle_any(&attr_map)?;
             }
             "anyAttribute" => {
-                self.stack.push(StackFrame::AnyAttribute);
+                self.handle_any_attribute(&attr_map)?;
             }
             // Facets
             "enumeration" | "pattern" | "minLength" | "maxLength" | "length" | "minInclusive"
@@ -208,6 +208,9 @@ impl XsdParser {
                 "qualified" => FormDefault::Qualified,
                 _ => FormDefault::Unqualified,
             };
+        }
+        if let Some(bd) = attrs.get("blockDefault") {
+            self.schema.block_default = Some(parse_derivation_control(bd));
         }
         if let Some(v) = attrs.get("version") {
             self.schema.version = Some(v.clone());
@@ -404,6 +407,7 @@ impl XsdParser {
                 particle: None,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::ComplexContentRestriction(restriction));
@@ -413,6 +417,7 @@ impl XsdParser {
                 facets: Vec::new(),
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::SimpleContentRestriction(restriction));
@@ -447,6 +452,7 @@ impl XsdParser {
                 base,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::SimpleContentExtension(extension));
@@ -457,6 +463,7 @@ impl XsdParser {
                 particle: None,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::ComplexContentExtension(extension));
@@ -606,6 +613,28 @@ impl XsdParser {
         }
 
         self.stack.push(StackFrame::Any(any));
+        Ok(())
+    }
+
+    pub(super) fn handle_any_attribute(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let mut any = XsdAny::default();
+        if let Some(ns) = attrs.get("namespace") {
+            any.namespace = match ns.as_str() {
+                "##any" => NamespaceConstraint::Any,
+                "##other" => NamespaceConstraint::Other,
+                "##targetNamespace" => NamespaceConstraint::TargetNamespace,
+                "##local" => NamespaceConstraint::Local,
+                _ => NamespaceConstraint::List(ns.split_whitespace().map(String::from).collect()),
+            };
+        }
+        if let Some(pc) = attrs.get("processContents") {
+            any.process_contents = match pc.as_str() {
+                "lax" => ProcessContentsMode::Lax,
+                "skip" => ProcessContentsMode::Skip,
+                _ => ProcessContentsMode::Strict,
+            };
+        }
+        self.stack.push(StackFrame::AnyAttribute(any));
         Ok(())
     }
 
@@ -853,8 +882,18 @@ impl XsdParser {
             StackFrame::Any(any) => {
                 self.finish_any(any)?;
             }
-            StackFrame::AnyAttribute => {
-                // Ignored
+            StackFrame::AnyAttribute(any) => {
+                if let Some(parent) = self.stack.last_mut() {
+                    match parent {
+                        StackFrame::ComplexType(ct) => ct.any_attribute = Some(any),
+                        StackFrame::AttributeGroup(ag) => ag.any_attribute = Some(any),
+                        StackFrame::SimpleContentExtension(ext) => ext.any_attribute = Some(any),
+                        StackFrame::SimpleContentRestriction(r) => r.any_attribute = Some(any),
+                        StackFrame::ComplexContentExtension(ext) => ext.any_attribute = Some(any),
+                        StackFrame::ComplexContentRestriction(r) => r.any_attribute = Some(any),
+                        _ => {}
+                    }
+                }
             }
             StackFrame::Annotation | StackFrame::Documentation | StackFrame::AppInfo => {
                 // Skip

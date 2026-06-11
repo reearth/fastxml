@@ -19,6 +19,8 @@ pub struct XsdSchema {
     pub attribute_form_default: FormDefault,
     /// Schema version
     pub version: Option<String>,
+    /// Default block constraint for elements/types (blockDefault attribute)
+    pub block_default: Option<super::complex::DerivationControl>,
     /// Import declarations
     pub imports: Vec<XsdImport>,
     /// Include declarations

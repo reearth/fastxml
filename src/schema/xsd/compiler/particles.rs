@@ -70,7 +70,10 @@ impl XsdCompiler {
     pub(crate) fn compile_sequence(&mut self, seq: &XsdSequence) -> Result<Vec<ElementDef>> {
         let mut elements = Vec::new();
         let seq_max = seq.max_occurs.to_option();
-        let seq_min_zero = seq.min_occurs == Occurs::Count(0);
+        let seq_min = match seq.min_occurs {
+            Occurs::Count(n) => n,
+            Occurs::Unbounded => 1,
+        };
 
         for item in &seq.particles {
             match item {
@@ -78,10 +81,9 @@ impl XsdCompiler {
                     let mut compiled = self.compile_element(elem)?;
                     // Propagate sequence's maxOccurs to child element
                     compiled.max_occurs = Self::multiply_occurs(compiled.max_occurs, seq_max);
-                    // If sequence is optional (minOccurs=0), child is also optional
-                    if seq_min_zero {
-                        compiled.min_occurs = 0;
-                    }
+                    // A sequence repeated n times requires each child n
+                    // times (and 0 makes children optional).
+                    compiled.min_occurs = compiled.min_occurs.saturating_mul(seq_min);
                     elements.push(compiled);
                 }
                 XsdParticleItem::Sequence(nested) => {
@@ -89,9 +91,7 @@ impl XsdCompiler {
                     // Propagate this sequence's occurs to nested results
                     for e in &mut nested_elems {
                         e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
-                        if seq_min_zero {
-                            e.min_occurs = 0;
-                        }
+                        e.min_occurs = e.min_occurs.saturating_mul(seq_min);
                     }
                     elements.extend(nested_elems);
                 }
@@ -100,9 +100,7 @@ impl XsdCompiler {
                     // Propagate this sequence's occurs to nested results
                     for e in &mut nested_elems {
                         e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
-                        if seq_min_zero {
-                            e.min_occurs = 0;
-                        }
+                        e.min_occurs = e.min_occurs.saturating_mul(seq_min);
                     }
                     elements.extend(nested_elems);
                 }
@@ -111,9 +109,7 @@ impl XsdCompiler {
                     // Propagate this sequence's occurs to the group's members.
                     for e in &mut group_elems {
                         e.max_occurs = Self::multiply_occurs(e.max_occurs, seq_max);
-                        if seq_min_zero {
-                            e.min_occurs = 0;
-                        }
+                        e.min_occurs = e.min_occurs.saturating_mul(seq_min);
                     }
                     elements.extend(group_elems);
                 }

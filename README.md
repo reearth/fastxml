@@ -607,8 +607,8 @@ Conformance test results as of v0.9.0. See [conformance/](conformance/) for deta
 | W3C XML | valid documents | 89.9% |
 | W3C XML | invalid documents | 91.2% |
 | W3C XSD | schema compilation | 79.7% |
-| W3C XSD | instance validation (DOM) | 97.4% |
-| W3C XSD | instance validation (streaming) | 97.0% |
+| W3C XSD | instance validation (DOM) | 97.8% |
+| W3C XSD | instance validation (streaming) | 97.4% |
 
 XSD tests are evaluated against XSD 1.0 expectations; XSD 1.1-only test
 groups are excluded.

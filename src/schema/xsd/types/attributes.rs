@@ -14,6 +14,8 @@ pub struct XsdAttributeGroup {
     pub attributes: Vec<XsdAttribute>,
     /// Nested attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<super::particles::XsdAny>,
 }
 
 impl XsdAttributeGroup {
@@ -24,6 +26,7 @@ impl XsdAttributeGroup {
             ref_: None,
             attributes: Vec::new(),
             attribute_groups: Vec::new(),
+            any_attribute: None,
         }
     }
 
@@ -34,6 +37,7 @@ impl XsdAttributeGroup {
             ref_: Some(ref_name),
             attributes: Vec::new(),
             attribute_groups: Vec::new(),
+            any_attribute: None,
         }
     }
 }

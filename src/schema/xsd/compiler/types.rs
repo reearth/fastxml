@@ -304,7 +304,8 @@ impl XsdCompiler {
         let mut compiled = ComplexType::new(&name);
         compiled.is_abstract = ct.is_abstract;
         compiled.mixed = ct.mixed;
-        compiled.block = compile_block_set(ct.block.as_ref());
+        compiled.block =
+            compile_block_set(ct.block.as_ref().or(self.current_block_default.as_ref()));
 
         // Record the derivation base and method (used for xsi:type checks)
         match &ct.content {
@@ -366,13 +367,109 @@ impl XsdCompiler {
             }
         }
 
-        // Handle attribute groups
-        for ag_ref in &ct.attribute_groups {
-            // Attribute groups would need resolution - for now just note them
-            tracing::debug!("Attribute group reference: {}", ag_ref);
+        // Expand attribute group references (including groups referenced
+        // from inside simpleContent/complexContent derivations).
+        let mut group_refs: Vec<&QName> = ct.attribute_groups.iter().collect();
+        let derivation_groups: Option<&[QName]> = match &ct.content {
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => Some(&ext.attribute_groups),
+                XsdSimpleContentDerivation::Restriction(r) => Some(&r.attribute_groups),
+            },
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => Some(&ext.attribute_groups),
+                XsdComplexContentDerivation::Restriction(r) => Some(&r.attribute_groups),
+            },
+            _ => None,
+        };
+        group_refs.extend(derivation_groups.into_iter().flatten());
+        let mut visited = std::collections::HashSet::new();
+        let mut group_wildcard: Option<WildcardConstraint> = None;
+        for ag_ref in group_refs {
+            self.expand_attribute_group(
+                ag_ref,
+                &mut compiled.attributes,
+                &mut group_wildcard,
+                &mut visited,
+            )?;
         }
 
+        // Attribute wildcard: directly declared, from a derivation, or from
+        // an expanded attribute group.
+        let any_attribute = ct.any_attribute.as_ref().or(match &ct.content {
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => ext.any_attribute.as_ref(),
+                XsdSimpleContentDerivation::Restriction(r) => r.any_attribute.as_ref(),
+            },
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => ext.any_attribute.as_ref(),
+                XsdComplexContentDerivation::Restriction(r) => r.any_attribute.as_ref(),
+            },
+            _ => None,
+        });
+        compiled.attr_wildcard = any_attribute
+            .map(|any| self.compile_wildcard(any))
+            .or(group_wildcard);
+
         Ok(TypeDef::Complex(compiled))
+    }
+
+    /// Expands an attribute group reference into attribute definitions,
+    /// following nested group references.
+    fn expand_attribute_group(
+        &mut self,
+        ag_ref: &QName,
+        out: &mut Vec<AttributeDef>,
+        wildcard: &mut Option<WildcardConstraint>,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Result<()> {
+        if !visited.insert(ag_ref.local.clone()) {
+            return Ok(());
+        }
+        let ns = self.current_target_ns.clone().unwrap_or_default();
+        let key = crate::schema::types::NsName::new(ns, ag_ref.local.clone());
+        let group = match self.attribute_groups.get(&key) {
+            Some(g) => g.clone(),
+            None => {
+                // Fall back to any namespace with the same local name.
+                match self
+                    .attribute_groups
+                    .iter()
+                    .find(|(k, _)| k.local_name == ag_ref.local)
+                    .map(|(_, g)| g.clone())
+                {
+                    Some(g) => g,
+                    None => {
+                        // Unresolvable reference (e.g. xs:redefine, which is
+                        // not supported): the attribute model is incomplete,
+                        // so admit unknown attributes leniently instead of
+                        // reporting false "not allowed" errors.
+                        if wildcard.is_none() {
+                            *wildcard = Some(WildcardConstraint {
+                                namespace: WildcardNamespace::Any,
+                                process_contents: ProcessContents::Lax,
+                                min_occurs: 0,
+                                max_occurs: None,
+                                target_namespace: None,
+                            });
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        };
+        for attr in &group.attributes {
+            out.push(self.compile_attribute(attr)?);
+        }
+        if wildcard.is_none() {
+            *wildcard = group
+                .any_attribute
+                .as_ref()
+                .map(|a| self.compile_wildcard(a));
+        }
+        for nested in &group.attribute_groups {
+            self.expand_attribute_group(nested, out, wildcard, visited)?;
+        }
+        Ok(())
     }
 
     /// Compiles complex type content.

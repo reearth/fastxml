@@ -85,6 +85,13 @@ pub(crate) struct DocIdState {
     /// Identity constraint tasks (scoping element x constraint), evaluated
     /// after traversal
     constraint_tasks: Vec<identity::ConstraintTask>,
+    /// Primitive value-space kind per simple-typed element node, recorded
+    /// during traversal so identity-constraint tuples can be compared in
+    /// the right value space.
+    pub(crate) node_kinds: std::collections::HashMap<
+        crate::node::NodeId,
+        crate::schema::xsd::primitive::PrimitiveKind,
+    >,
 }
 
 impl DocIdState {
@@ -152,7 +159,12 @@ impl DomSchemaValidator {
         }
 
         // Evaluate identity constraints (unique / key / keyref)
-        for message in identity::validate_identity_constraints(doc, &ids.constraint_tasks) {
+        for message in identity::validate_identity_constraints(
+            &self.schema,
+            doc,
+            &ids.constraint_tasks,
+            &ids.node_kinds,
+        ) {
             let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
                 .with_level(ErrorLevel::Error);
             if self.should_add_error(&errors) {
@@ -496,12 +508,21 @@ impl DomSchemaValidator {
         // control attributes so they aren't matched against declared
         // attributes that happen to share a local name (e.g. "type").
         let attrs = node.get_attributes();
-        let filtered: Vec<(&str, &str)> = attrs
+        let ns_info: Vec<Option<(String, String)>> = attrs
             .iter()
-            .filter(
-                |(k, _)| !matches!(node.get_attribute_ns_info(k), Some((_, ns)) if ns == XSI_NS),
-            )
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .map(|(k, _)| node.get_attribute_ns_info(k))
+            .collect();
+        let filtered: Vec<(&str, Option<&str>, &str)> = attrs
+            .iter()
+            .zip(ns_info.iter())
+            .filter(|(_, info)| !matches!(info, Some((_, ns)) if ns == XSI_NS))
+            .map(|((k, v), info)| {
+                (
+                    k.as_str(),
+                    info.as_ref().map(|(_, ns)| ns.as_str()),
+                    v.as_str(),
+                )
+            })
             .collect();
         let result = super::attributes::validate_element_attributes(
             &self.schema,

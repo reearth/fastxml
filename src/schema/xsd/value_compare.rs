@@ -80,6 +80,73 @@ pub fn compare_values(kind: Option<PrimitiveKind>, a: &str, b: &str) -> Option<O
     }
 }
 
+/// Produces a canonical string for a lexical value in the given value
+/// space, so equal values compare equal as strings (used by identity
+/// constraint tuples). Unknown kinds return the input unchanged.
+pub(crate) fn canonical_value(kind: Option<PrimitiveKind>, v: &str) -> String {
+    let v = v.trim();
+    match kind {
+        Some(
+            PrimitiveKind::Decimal
+            | PrimitiveKind::Integer
+            | PrimitiveKind::Long
+            | PrimitiveKind::Int
+            | PrimitiveKind::Short
+            | PrimitiveKind::Byte
+            | PrimitiveKind::NonNegativeInteger
+            | PrimitiveKind::PositiveInteger
+            | PrimitiveKind::NonPositiveInteger
+            | PrimitiveKind::NegativeInteger
+            | PrimitiveKind::UnsignedLong
+            | PrimitiveKind::UnsignedInt
+            | PrimitiveKind::UnsignedShort
+            | PrimitiveKind::UnsignedByte,
+        ) => match parse_decimal(v) {
+            Some(d) => {
+                let int = if d.int_digits.is_empty() {
+                    "0"
+                } else {
+                    d.int_digits
+                };
+                let mut out = String::new();
+                if d.negative {
+                    out.push('-');
+                }
+                out.push_str(int);
+                if !d.frac_digits.is_empty() {
+                    out.push('.');
+                    out.push_str(d.frac_digits);
+                }
+                out
+            }
+            None => v.to_string(),
+        },
+        Some(PrimitiveKind::Float | PrimitiveKind::Double) => match parse_xsd_float(v) {
+            Some(f) => format!("{f}"),
+            None => v.to_string(),
+        },
+        Some(
+            PrimitiveKind::Date
+            | PrimitiveKind::DateTime
+            | PrimitiveKind::Time
+            | PrimitiveKind::GYear
+            | PrimitiveKind::GYearMonth
+            | PrimitiveKind::GMonth
+            | PrimitiveKind::GMonthDay
+            | PrimitiveKind::GDay,
+        ) => match temporal_key(kind.unwrap(), v) {
+            Some(k) => format!("{k}"),
+            None => v.to_string(),
+        },
+        Some(PrimitiveKind::Boolean) => match v {
+            "1" => "true".to_string(),
+            "0" => "false".to_string(),
+            other => other.to_string(),
+        },
+        _ => v.to_string(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Decimal
 // ---------------------------------------------------------------------------

@@ -34,6 +34,30 @@ pub(crate) fn collect_attributes<'a>(
     out
 }
 
+/// Returns the attribute wildcard (xs:anyAttribute) in effect for a complex
+/// type, walking the derivation base chain (nearest declaration wins).
+fn collect_attr_wildcard<'a>(
+    schema: &'a CompiledSchema,
+    complex: &'a ComplexType,
+) -> Option<&'a crate::schema::types::WildcardConstraint> {
+    let mut current = complex;
+    for _ in 0..16 {
+        if let Some(ref w) = current.attr_wildcard {
+            return Some(w);
+        }
+        let base = match &current.content {
+            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
+            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
+            _ => current.base_type.as_deref(),
+        };
+        match base.and_then(|b| schema.get_type(b)) {
+            Some(TypeDef::Complex(c)) => current = c,
+            _ => break,
+        }
+    }
+    None
+}
+
 /// Resolves the attribute declaration an `AttributeDef` ultimately refers
 /// to: a `ref` is followed to the global attribute declaration.
 fn resolve_ref<'a>(schema: &'a CompiledSchema, attr: &'a AttributeDef) -> &'a AttributeDef {
@@ -123,19 +147,33 @@ pub(crate) struct AttrValidation {
     pub idrefs: Vec<String>,
 }
 
+/// The XML namespace: `xml:lang`, `xml:space`, `xml:base`, `xml:id` are
+/// always allowed without declaration.
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+
 /// Validates an element's attributes against the attribute declarations of
-/// its complex type. Returns error messages for invalid or missing-required
-/// attributes, plus any ID/IDREF values for document-level checks.
+/// its complex type. Returns error messages for invalid, undeclared, or
+/// missing-required attributes, plus any ID/IDREF values for document-level
+/// checks.
+///
+/// `attributes` yields `(name, namespace, value)` triples; the namespace is
+/// used for `xs:anyAttribute` wildcard matching.
 pub(crate) fn validate_element_attributes<'a>(
     schema: &CompiledSchema,
     complex: &ComplexType,
-    attributes: impl Iterator<Item = (&'a str, &'a str)> + Clone,
+    attributes: impl Iterator<Item = (&'a str, Option<&'a str>, &'a str)> + Clone,
 ) -> AttrValidation {
     let defs = collect_attributes(schema, complex);
+    let wildcard = collect_attr_wildcard(schema, complex);
     let mut out = AttrValidation::default();
 
-    for (name, value) in attributes.clone() {
-        if is_exempt_attribute(name) {
+    // xs:anyType places no constraints on attributes.
+    if complex.name == "anyType" {
+        return out;
+    }
+
+    for (name, ns, value) in attributes.clone() {
+        if is_exempt_attribute(name) || ns == Some(XML_NS) {
             continue;
         }
         let local = name.rsplit(':').next().unwrap_or(name);
@@ -144,6 +182,42 @@ pub(crate) fn validate_element_attributes<'a>(
                 out.errors.push(msg);
             }
             collect_id_values(schema, resolve_ref(schema, def), value, &mut out);
+            continue;
+        }
+
+        // Undeclared attribute: admitted only by a matching wildcard.
+        match wildcard {
+            Some(w) if w.matches(ns) => match w.process_contents {
+                crate::schema::types::ProcessContents::Skip => {}
+                crate::schema::types::ProcessContents::Lax
+                | crate::schema::types::ProcessContents::Strict => {
+                    let global = schema
+                        .attributes
+                        .get(name)
+                        .or_else(|| schema.attributes.get(local));
+                    match global {
+                        Some(def) => {
+                            if let Some(msg) = validate_attribute_value(schema, def, value) {
+                                out.errors.push(msg);
+                            }
+                            collect_id_values(schema, def, value, &mut out);
+                        }
+                        None if w.process_contents
+                            == crate::schema::types::ProcessContents::Strict =>
+                        {
+                            out.errors.push(format!(
+                                "attribute '{}' matched a strict wildcard but is not declared",
+                                name
+                            ));
+                        }
+                        None => {}
+                    }
+                }
+            },
+            _ => {
+                out.errors
+                    .push(format!("attribute '{}' is not allowed", name));
+            }
         }
     }
 
@@ -151,7 +225,7 @@ pub(crate) fn validate_element_attributes<'a>(
         if def.required
             && !attributes
                 .clone()
-                .any(|(n, _)| n.rsplit(':').next().unwrap_or(n) == def.name || n == def.name)
+                .any(|(n, _, _)| n.rsplit(':').next().unwrap_or(n) == def.name || n == def.name)
         {
             out.errors
                 .push(format!("required attribute '{}' is missing", def.name));

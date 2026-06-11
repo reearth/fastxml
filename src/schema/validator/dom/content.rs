@@ -178,6 +178,11 @@ impl DomSchemaValidator {
                 }
             }
 
+            // Record the node's value-space kind for identity constraints
+            if let Some(kind) = constraints.value_kind {
+                ids.node_kinds.insert(node.id(), kind);
+            }
+
             // Track ID/IDREF values carried as element content
             let mut id_values = super::super::attributes::AttrValidation::default();
             super::super::attributes::push_id_values_from_constraints(

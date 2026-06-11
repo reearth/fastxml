@@ -37,6 +37,8 @@ impl OnePassSchemaValidator {
         let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
 
         let elem_known = elem_def.is_some();
+        let elem_constraints: Vec<crate::schema::types::CompiledConstraint> =
+            elem_def.map(|e| e.constraints.clone()).unwrap_or_default();
         let nilled = attributes
             .iter()
             .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
@@ -216,8 +218,213 @@ impl OnePassSchemaValidator {
             ctx.fixed_value = elem_fixed;
         }
 
+        // Identity constraints: open scopes declared on this element, and
+        // match this element against the selectors of enclosing scopes.
+        self.identity_element_start(&elem_constraints, attributes);
+
         // Validate attributes
         self.validate_attributes(name, attributes);
+    }
+
+    /// Handles identity-constraint bookkeeping at element start.
+    fn identity_element_start(
+        &mut self,
+        elem_constraints: &[crate::schema::types::CompiledConstraint],
+        attributes: &[(&str, &str)],
+    ) {
+        let depth = self.state.element_stack.len();
+
+        // Path of local names for elements on the stack (depth 1..=depth).
+        let local_names: Vec<&str> = self
+            .state
+            .element_stack
+            .iter()
+            .map(|ctx| ctx.name.rsplit(':').next().unwrap_or(ctx.name.as_ref()))
+            .collect();
+
+        for scope in &mut self.identity_scopes {
+            // Selector match: relative path from just below the scope.
+            if depth > scope.depth {
+                let rel = &local_names[scope.depth..depth];
+                if super::identity::selector_matches(&scope.selector, rel) {
+                    let mut fields = vec![super::identity::FieldState::Unset; scope.fields.len()];
+                    // Attribute fields on the selected node resolve now.
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if field.steps.is_empty()
+                            && let Some(ref attr) = field.attr
+                        {
+                            let value = attributes.iter().find_map(|&(n, v)| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            });
+                            if let Some(v) = value {
+                                fields[i] = super::identity::FieldState::Set(v.trim().to_string());
+                            }
+                        }
+                    }
+                    scope
+                        .selected
+                        .push(super::identity::SelectedState { depth, fields });
+                }
+            }
+
+            // Attribute fields on elements below a selected node.
+            for selected in &mut scope.selected {
+                if depth > selected.depth {
+                    let rel = &local_names[selected.depth..depth];
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if let Some(ref attr) = field.attr
+                            && super::identity::field_steps_match(field, rel)
+                        {
+                            let value = attributes.iter().find_map(|&(n, v)| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            });
+                            if let Some(v) = value {
+                                selected.fields[i] = match selected.fields[i] {
+                                    super::identity::FieldState::Unset => {
+                                        super::identity::FieldState::Set(v.trim().to_string())
+                                    }
+                                    _ => super::identity::FieldState::Multiple,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Open new scopes for constraints declared on this element.
+        for constraint in elem_constraints {
+            if let Some(scope) = super::identity::ScopeState::new(constraint, depth) {
+                self.identity_scopes.push(scope);
+            }
+        }
+    }
+
+    /// Handles identity-constraint bookkeeping at element end. `ended_depth`
+    /// is the stack depth the element had; `ctx` is its popped context.
+    fn identity_element_end(&mut self, ended_depth: usize, ctx: &ElementContext) {
+        use crate::schema::types::CompiledConstraintType;
+        use crate::schema::xsd::constraints::{ConstraintType, IdentityConstraint, KeyValue};
+
+        let text = ctx.text_content.trim().to_string();
+        let ended_local = ctx
+            .name
+            .rsplit(':')
+            .next()
+            .unwrap_or(ctx.name.as_ref())
+            .to_string();
+
+        // Local names of the still-open ancestors (depth 1..ended_depth).
+        let local_names: Vec<String> = self
+            .state
+            .element_stack
+            .iter()
+            .map(|c| {
+                c.name
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(c.name.as_ref())
+                    .to_string()
+            })
+            .collect();
+
+        let mut errors: Vec<String> = Vec::new();
+
+        for scope in &mut self.identity_scopes {
+            // Element-text fields below a selected node.
+            for selected in &mut scope.selected {
+                if ended_depth > selected.depth {
+                    let mut rel: Vec<&str> = local_names[selected.depth..ended_depth - 1]
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect();
+                    rel.push(&ended_local);
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if field.attr.is_none()
+                            && !field.steps.is_empty()
+                            && super::identity::field_steps_match(field, &rel)
+                        {
+                            selected.fields[i] = match selected.fields[i] {
+                                super::identity::FieldState::Unset => {
+                                    super::identity::FieldState::Set(text.clone())
+                                }
+                                _ => super::identity::FieldState::Multiple,
+                            };
+                        }
+                    }
+                }
+            }
+
+            // Finalize selected nodes that end here.
+            let mut finished = Vec::new();
+            scope.selected.retain(|selected| {
+                if selected.depth == ended_depth {
+                    finished.push(selected.fields.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+
+            for mut fields in finished {
+                // A `.` field takes the selected node's own text content.
+                for (i, field) in scope.fields.iter().enumerate() {
+                    if field.attr.is_none() && field.steps.is_empty() {
+                        fields[i] = super::identity::FieldState::Set(text.clone());
+                    }
+                }
+                if fields
+                    .iter()
+                    .any(|f| matches!(f, super::identity::FieldState::Multiple))
+                {
+                    errors.push(format!(
+                        "{} '{}': a field matches more than one node",
+                        match scope.constraint.constraint_type {
+                            CompiledConstraintType::Key => "key",
+                            CompiledConstraintType::Unique => "unique",
+                            CompiledConstraintType::KeyRef => "keyref",
+                        },
+                        scope.constraint.name
+                    ));
+                    continue;
+                }
+                let values: Vec<String> = fields
+                    .into_iter()
+                    .map(|f| match f {
+                        super::identity::FieldState::Set(v) => v,
+                        _ => String::new(), // unset = null (empty per KeyValue)
+                    })
+                    .collect();
+                let value = KeyValue::new(values);
+                let ic = IdentityConstraint {
+                    name: scope.constraint.name.clone(),
+                    constraint_type: match scope.constraint.constraint_type {
+                        CompiledConstraintType::Unique => ConstraintType::Unique,
+                        CompiledConstraintType::Key => ConstraintType::Key,
+                        CompiledConstraintType::KeyRef => ConstraintType::KeyRef,
+                    },
+                    selector: scope.constraint.selector_xpath.clone(),
+                    fields: scope.constraint.field_xpaths.clone(),
+                    refer: scope.constraint.refer.clone(),
+                };
+                if scope.is_keyref() {
+                    self.constraint_validator.add_keyref_value(&ic, value);
+                } else if let Err(e) = self.constraint_validator.add_key_value(&ic, value) {
+                    errors.push(e.to_string());
+                }
+            }
+        }
+
+        // Close scopes whose scoping element ends here.
+        self.identity_scopes
+            .retain(|scope| scope.depth != ended_depth);
+
+        for message in errors {
+            let error = self
+                .make_error(ValidationErrorType::IdentityConstraint, message)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
     }
 
     /// Validates attributes on an element against the attribute
@@ -253,10 +460,22 @@ impl OnePassSchemaValidator {
                 return;
             };
 
+            // Resolve each attribute's namespace from its prefix using the
+            // in-scope namespace declarations (unprefixed attributes are in
+            // no namespace).
+            let with_ns: Vec<(&str, Option<&str>, &str)> = attributes
+                .iter()
+                .map(|&(name, value)| {
+                    let ns = name
+                        .split_once(':')
+                        .and_then(|(prefix, _)| self.state.resolve_prefix(prefix));
+                    (name, ns, value)
+                })
+                .collect();
             super::super::attributes::validate_element_attributes(
                 &self.schema,
                 complex,
-                attributes.iter().copied(),
+                with_ns.iter().copied(),
             )
         };
 
@@ -341,6 +560,11 @@ impl OnePassSchemaValidator {
     pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
+            // Identity constraint bookkeeping (works on the popped depth)
+            if !self.identity_scopes.is_empty() {
+                let ended_depth = self.state.element_stack.len() + 1;
+                self.identity_element_end(ended_depth, &ctx);
+            }
             // A subtree admitted by a skip wildcard is not validated.
             if ctx.wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
                 return;

@@ -91,6 +91,12 @@ fn w3c_xsd_conformance_dom() {
             }
         }
 
+        // Prefer compiling all valid-expected documents together so
+        // cross-document declarations resolve (imports, strict wildcards).
+        if let Some(combined) = compile_group_schemas(group) {
+            compiled_schema = Some(combined);
+        }
+
         if let Some(ref schema) = compiled_schema {
             for instance in &group.instances {
                 if !instance.path.exists() {
@@ -231,6 +237,12 @@ fn w3c_xsd_conformance_streaming() {
             }
         }
 
+        // Prefer compiling all valid-expected documents together so
+        // cross-document declarations resolve (imports, strict wildcards).
+        if let Some(combined) = compile_group_schemas(group) {
+            compiled_schema = Some(combined);
+        }
+
         if let Some(ref schema) = compiled_schema {
             for instance in &group.instances {
                 if !instance.path.exists() {
@@ -303,6 +315,31 @@ fn w3c_xsd_conformance_streaming() {
     );
     eprintln!("Total: {}", report.total);
     eprintln!("Skipped: {}", report.skipped);
+}
+
+/// Compiles all valid-expected schema documents of a group together,
+/// resolving file imports, so cross-document declarations are visible.
+fn compile_group_schemas(
+    group: &fastxml_conformance::catalog::xsdtests::SchemaTestGroup,
+) -> Option<Arc<fastxml::schema::Schema>> {
+    let mut builder = fastxml::schema::Schema::builder();
+    let mut have_docs = false;
+    for schema_doc in &group.schemas {
+        if schema_doc.expected != SchemaValidity::Valid || !schema_doc.path.exists() {
+            continue;
+        }
+        if let Ok(content) = fs::read(&schema_doc.path) {
+            builder = builder.add(schema_doc.path.to_string_lossy(), content);
+            have_docs = true;
+        }
+    }
+    if !have_docs {
+        return None;
+    }
+    builder
+        .resolve_with(&fastxml::schema::FileFetcher::new())
+        .ok()
+        .map(Arc::new)
 }
 
 /// Find suite.xml in the test data directory.

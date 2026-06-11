@@ -536,6 +536,8 @@ pub struct ComplexType {
     pub attributes: Vec<AttributeDef>,
     /// Element wildcard (xs:any) anywhere in the content model
     pub wildcard: Option<WildcardConstraint>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub attr_wildcard: Option<WildcardConstraint>,
     /// Whether this type is abstract
     pub is_abstract: bool,
     /// Whether content is mixed (text + elements)
@@ -553,6 +555,7 @@ impl ComplexType {
             content: ContentModel::Empty,
             attributes: Vec::new(),
             wildcard: None,
+            attr_wildcard: None,
             is_abstract: false,
             mixed: false,
         }
@@ -568,6 +571,7 @@ impl ComplexType {
             content: ContentModel::Sequence(elements),
             attributes: Vec::new(),
             wildcard: None,
+            attr_wildcard: None,
             is_abstract: false,
             mixed: false,
         }

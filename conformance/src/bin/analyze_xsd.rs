@@ -39,20 +39,39 @@ fn main() {
 
     for test_set in &suite.test_sets {
         for group in &test_set.groups {
-            let mut compiled_schema = None;
-
+            // Compile all valid-expected schema documents of the group
+            // together so cross-document declarations resolve.
+            let mut builder = fastxml::schema::Schema::builder();
+            let mut have_docs = false;
             for schema_doc in &group.schemas {
-                if !schema_doc.path.exists() {
+                if schema_doc.expected != SchemaValidity::Valid || !schema_doc.path.exists() {
                     continue;
                 }
-                let content = match fs::read(&schema_doc.path) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                if let Ok(schema) = fastxml::schema::Schema::from_xsd(&content)
-                    && schema_doc.expected == SchemaValidity::Valid
-                {
-                    compiled_schema = Some(Arc::new(schema));
+                if let Ok(content) = fs::read(&schema_doc.path) {
+                    builder = builder.add(schema_doc.path.to_string_lossy(), content);
+                    have_docs = true;
+                }
+            }
+            let mut compiled_schema = if have_docs {
+                builder
+                    .resolve_with(&fastxml::schema::FileFetcher::new())
+                    .ok()
+                    .map(Arc::new)
+            } else {
+                None
+            };
+            // Fall back to individually compiled documents when the combined
+            // resolve fails (e.g. an import points outside the test data).
+            if compiled_schema.is_none() {
+                for schema_doc in &group.schemas {
+                    if schema_doc.expected != SchemaValidity::Valid || !schema_doc.path.exists() {
+                        continue;
+                    }
+                    if let Ok(content) = fs::read(&schema_doc.path)
+                        && let Ok(schema) = fastxml::schema::Schema::from_xsd(&content)
+                    {
+                        compiled_schema = Some(Arc::new(schema));
+                    }
                 }
             }
 
