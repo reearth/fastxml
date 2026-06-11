@@ -232,6 +232,8 @@ pub struct FacetConstraints {
     pub fraction_digits: Option<usize>,
     /// Whitespace handling mode
     pub whitespace: WhitespaceHandling,
+    /// Explicit timezone requirement (XSD 1.1)
+    pub explicit_timezone: Option<crate::schema::types::ExplicitTimezone>,
     /// Primitive value space the type bottoms out in (drives range
     /// comparison and length semantics). `None` for string-family types.
     pub value_kind: Option<PrimitiveKind>,
@@ -297,6 +299,9 @@ impl FacetConstraints {
             }
             if let Some(ref p) = current.pattern {
                 c.patterns.push(p.clone());
+            }
+            if c.explicit_timezone.is_none() {
+                c.explicit_timezone = current.explicit_timezone;
             }
 
             if let Some(ref item_type) = current.item_type {
@@ -466,10 +471,33 @@ impl<'a> FacetValidator<'a> {
         // Range and digit constraints in the type's value space
         self.validate_numeric_constraints(value)?;
 
+        // Explicit timezone requirement (XSD 1.1)
+        self.validate_explicit_timezone(value)?;
+
         // Item-level checks for list types
         self.validate_list_items(value)?;
 
         Ok(())
+    }
+
+    /// Validates the XSD 1.1 explicitTimezone facet on temporal values.
+    fn validate_explicit_timezone(&self, value: &str) -> std::result::Result<(), FacetError> {
+        use crate::schema::types::ExplicitTimezone;
+        let Some(req) = self.constraints.explicit_timezone else {
+            return Ok(());
+        };
+        let has_tz = crate::schema::xsd::primitive::has_timezone(value.trim());
+        match req {
+            ExplicitTimezone::Required if !has_tz => Err(FacetError::PatternMismatch {
+                value: value.to_string(),
+                pattern: "explicitTimezone=required".to_string(),
+            }),
+            ExplicitTimezone::Prohibited if has_tz => Err(FacetError::PatternMismatch {
+                value: value.to_string(),
+                pattern: "explicitTimezone=prohibited".to_string(),
+            }),
+            _ => Ok(()),
+        }
     }
 
     /// Validates each item of a list value against the list's item type.

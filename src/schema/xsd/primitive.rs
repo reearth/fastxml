@@ -56,6 +56,9 @@ pub enum PrimitiveKind {
     Id,
     Idref,
     Entity,
+    DateTimeStamp,
+    DayTimeDuration,
+    YearMonthDuration,
 }
 
 impl PrimitiveKind {
@@ -106,6 +109,10 @@ impl PrimitiveKind {
             "ID" => Self::Id,
             "IDREF" => Self::Idref,
             "ENTITY" => Self::Entity,
+            // XSD 1.1 datatypes
+            "dateTimeStamp" => Self::DateTimeStamp,
+            "dayTimeDuration" => Self::DayTimeDuration,
+            "yearMonthDuration" => Self::YearMonthDuration,
             _ => return None,
         })
     }
@@ -221,6 +228,9 @@ impl PrimitiveKind {
             Self::Ncname | Self::Id | Self::Idref | Self::Entity => validate_ncname(v),
             Self::Nmtoken => validate_nmtoken(v),
             Self::Language => validate_language(v),
+            Self::DateTimeStamp => validate_datetimestamp(v),
+            Self::DayTimeDuration => validate_daytimeduration(v),
+            Self::YearMonthDuration => validate_yearmonthduration(v),
             // Lexical space not enforced — essentially any string is a URI
             // reference, so reject nothing.
             Self::AnyUri => Ok(()),
@@ -947,6 +957,66 @@ fn validate_language(v: &str) -> Result<(), PrimitiveError> {
     validate_with_regex(v, language_regex(), "language")
 }
 
+/// `xs:dateTimeStamp` (XSD 1.1): a dateTime whose timezone is required.
+fn validate_datetimestamp(v: &str) -> Result<(), PrimitiveError> {
+    validate_datetime(v)?;
+    if v.ends_with('Z') || has_trailing_offset(v) {
+        Ok(())
+    } else {
+        Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "dateTimeStamp requires an explicit timezone",
+        })
+    }
+}
+
+/// Whether a temporal lexical value ends in a `±HH:MM` offset.
+pub(crate) fn has_trailing_offset(v: &str) -> bool {
+    let bytes = v.as_bytes();
+    bytes.len() > 6 && {
+        let tail = &bytes[bytes.len() - 6..];
+        (tail[0] == b'+' || tail[0] == b'-')
+            && tail[1].is_ascii_digit()
+            && tail[2].is_ascii_digit()
+            && tail[3] == b':'
+            && tail[4].is_ascii_digit()
+            && tail[5].is_ascii_digit()
+    }
+}
+
+/// Whether a temporal lexical value carries any timezone (Z or offset).
+pub(crate) fn has_timezone(v: &str) -> bool {
+    v.ends_with('Z') || has_trailing_offset(v)
+}
+
+/// `xs:dayTimeDuration` (XSD 1.1): a duration without year/month fields.
+fn validate_daytimeduration(v: &str) -> Result<(), PrimitiveError> {
+    validate_duration(v)?;
+    // No Y, and no M before the T (months); minutes after T are fine.
+    let date_part = v.split('T').next().unwrap_or(v);
+    if date_part.contains('Y') || date_part.contains('M') {
+        Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "dayTimeDuration cannot have year or month fields",
+        })
+    } else {
+        Ok(())
+    }
+}
+
+/// `xs:yearMonthDuration` (XSD 1.1): a duration with only year/month fields.
+fn validate_yearmonthduration(v: &str) -> Result<(), PrimitiveError> {
+    validate_duration(v)?;
+    if v.contains('T') || v.split('T').next().unwrap_or(v).contains('D') {
+        Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "yearMonthDuration can only have year and month fields",
+        })
+    } else {
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Whitespace collapse helper
 // ---------------------------------------------------------------------------
@@ -1065,6 +1135,42 @@ mod tests {
             _ => panic!("xs:token should be SimpleType"),
         };
         assert_eq!(PrimitiveKind::resolve(&s, &token), None);
+    }
+
+    #[test]
+    fn xsd11_datatypes() {
+        // dateTimeStamp requires a timezone
+        assert!(
+            PrimitiveKind::DateTimeStamp
+                .validate("2026-06-11T10:00:00Z")
+                .is_ok()
+        );
+        assert!(
+            PrimitiveKind::DateTimeStamp
+                .validate("2026-06-11T10:00:00+09:00")
+                .is_ok()
+        );
+        assert!(
+            PrimitiveKind::DateTimeStamp
+                .validate("2026-06-11T10:00:00")
+                .is_err()
+        );
+
+        // dayTimeDuration: no year/month fields
+        assert!(
+            PrimitiveKind::DayTimeDuration
+                .validate("P3DT4H5M6S")
+                .is_ok()
+        );
+        assert!(PrimitiveKind::DayTimeDuration.validate("PT1H").is_ok());
+        assert!(PrimitiveKind::DayTimeDuration.validate("P1Y").is_err());
+        assert!(PrimitiveKind::DayTimeDuration.validate("P1M").is_err());
+        assert!(PrimitiveKind::DayTimeDuration.validate("PT1M").is_ok());
+
+        // yearMonthDuration: only year/month fields
+        assert!(PrimitiveKind::YearMonthDuration.validate("P1Y2M").is_ok());
+        assert!(PrimitiveKind::YearMonthDuration.validate("P3D").is_err());
+        assert!(PrimitiveKind::YearMonthDuration.validate("PT1H").is_err());
     }
 
     #[test]
