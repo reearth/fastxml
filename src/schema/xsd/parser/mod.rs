@@ -64,6 +64,10 @@ pub(super) struct ChildState {
     pub(super) derivations: u32,
     /// Number of anyAttribute children (at most one per scope)
     pub(super) any_attributes: u32,
+    /// Number of selector children (identity constraints)
+    pub(super) selectors: u32,
+    /// Number of field children (identity constraints)
+    pub(super) fields: u32,
 }
 
 impl XsdParser {
