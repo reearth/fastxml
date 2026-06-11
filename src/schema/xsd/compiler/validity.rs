@@ -45,8 +45,7 @@ fn check_simple_type(schema: &CompiledSchema, name: &str, st: &SimpleType) -> Re
                 | PrimitiveKind::Idref
                 | PrimitiveKind::Entity
         );
-        if !length_ok
-            && (st.length.is_some() || st.min_length.is_some() || st.max_length.is_some())
+        if !length_ok && (st.length.is_some() || st.min_length.is_some() || st.max_length.is_some())
         {
             return Err(invalid(format!(
                 "type '{}': length facets are not applicable to its base type",

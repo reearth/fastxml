@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::schema::xsd::types::*;
 
-use super::{ChildState, XsdParser};
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
+use super::{ChildState, XsdParser};
 
 /// Parses a `block` / `final` attribute value into a [`DerivationControl`].
 fn parse_derivation_control(value: &str) -> DerivationControl {
@@ -246,7 +246,10 @@ impl XsdParser {
             )
         {
             return Err(SchemaError::InvalidSchema {
-                message: format!("element '{}' is not allowed inside a simple type restriction", local),
+                message: format!(
+                    "element '{}' is not allowed inside a simple type restriction",
+                    local
+                ),
             }
             .into());
         }
@@ -271,16 +274,12 @@ impl XsdParser {
         }
 
         if let Some(parent) = self.child_state_stack.last_mut() {
-            let parent_allows_repeat =
-                parent.name == "schema" || parent.name == "redefine";
+            let parent_allows_repeat = parent.name == "schema" || parent.name == "redefine";
             if local == "annotation" {
                 if !parent_allows_repeat {
                     if parent.annotations >= 1 {
                         return Err(SchemaError::InvalidSchema {
-                            message: format!(
-                                "multiple annotation elements in '{}'",
-                                parent.name
-                            ),
+                            message: format!("multiple annotation elements in '{}'", parent.name),
                         }
                         .into());
                     }

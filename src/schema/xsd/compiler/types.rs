@@ -164,6 +164,12 @@ impl XsdCompiler {
                             compiled.enumeration.push(v.clone());
                         }
                         XsdFacet::Pattern(p) => {
+                            if let Err(e) = crate::schema::xsd::regex_check::check_xsd_regex(p) {
+                                return Err(crate::schema::error::SchemaError::InvalidSchema {
+                                    message: format!("invalid pattern '{}': {}", p, e),
+                                }
+                                .into());
+                            }
                             patterns.push(p.clone());
                         }
                         XsdFacet::Length(n) => {
