@@ -30,9 +30,16 @@ impl DomSchemaValidator {
         &self,
         node: &XmlNode,
         elem: &ElementDef,
+        ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
         let text_content = self.collect_text_content(node);
+
+        // An empty element with a default/fixed value constraint takes the
+        // constraint value — nothing further to check.
+        if text_content.is_empty() && (elem.default.is_some() || elem.fixed.is_some()) {
+            return;
+        }
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -40,6 +47,35 @@ impl DomSchemaValidator {
         } else {
             elem.inline_type.clone()
         };
+
+        // Fixed value constraint: non-empty content must match.
+        if let Some(ref fixed) = elem.fixed {
+            let kind = match &type_def {
+                Some(TypeDef::Simple(simple)) => PrimitiveKind::resolve(&self.schema, simple),
+                _ => None,
+            };
+            let text = text_content.trim();
+            if text != fixed.trim()
+                && crate::schema::xsd::value_compare::compare_values(kind, text, fixed)
+                    != Some(std::cmp::Ordering::Equal)
+            {
+                let node_name = node.get_name();
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' must have the fixed value '{}', found '{}'",
+                            node_name, fixed, text
+                        ),
+                        node,
+                    )
+                    .with_node_name(&node_name)
+                    .with_level(ErrorLevel::Error);
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
+        }
 
         match type_def {
             Some(TypeDef::Simple(simple)) => {
@@ -52,6 +88,7 @@ impl DomSchemaValidator {
                     &simple,
                     &text_content,
                     elem.nillable,
+                    ids,
                     errors,
                 );
             }
@@ -65,6 +102,7 @@ impl DomSchemaValidator {
                             &simple,
                             &text_content,
                             elem.nillable,
+                            ids,
                             errors,
                         );
                     }
@@ -109,13 +147,19 @@ impl DomSchemaValidator {
         simple: &SimpleType,
         text_content: &str,
         nillable: bool,
+        ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
+        // Skip everything for an empty, nillable element: `xsi:nil="true"`
+        // legitimately leaves the content empty.
+        if text_content.is_empty() && nillable {
+            return;
+        }
+
         // User-declared facets (minLength, pattern, enumeration, …).
-        // Skip on empty content — facet constraints like minLength=0 would
-        // pass, but more importantly we don't want a spurious extra error on
-        // top of any primitive-level "empty value" error.
-        if !text_content.is_empty() {
+        // Empty content is still checked — a pattern or enumeration facet
+        // can legitimately reject the empty string.
+        {
             let constraints = self.create_facet_constraints(simple);
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(text_content) {
@@ -133,15 +177,33 @@ impl DomSchemaValidator {
                     errors.push(error);
                 }
             }
+
+            // Record the node's value-space kind for identity constraints
+            if let Some(kind) = constraints.value_kind {
+                ids.node_kinds.insert(node.id(), kind);
+            }
+
+            // Track ID/IDREF values carried as element content
+            let mut id_values = super::super::attributes::AttrValidation::default();
+            super::super::attributes::push_id_values_from_constraints(
+                &constraints,
+                text_content,
+                &mut id_values,
+            );
+            for message in ids.record(id_values.ids, id_values.idrefs, node.line(), node.column()) {
+                let node_name = node.get_name();
+                let error = self
+                    .make_error(ValidationErrorType::IdentityConstraint, message, node)
+                    .with_node_name(&node_name)
+                    .with_level(ErrorLevel::Error);
+                if self.should_add_error(errors) {
+                    errors.push(error);
+                }
+            }
         }
 
         // Built-in primitive lexical/value-space check (e.g., xs:integer
-        // rejecting "1.5" or "", xs:int rejecting 2147483648). Skip for an
-        // empty, nillable element: `xsi:nil="true"` legitimately leaves the
-        // content empty and it must not be checked against the primitive type.
-        if text_content.is_empty() && nillable {
-            return;
-        }
+        // rejecting "1.5" or "", xs:int rejecting 2147483648).
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(text_content)
         {
@@ -163,28 +225,7 @@ impl DomSchemaValidator {
 
     /// Creates FacetConstraints from a SimpleType definition.
     pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        let mut constraints = FacetConstraints::new();
-
-        if let Some(min_len) = simple.min_length {
-            constraints = constraints.with_min_length(min_len as usize);
-        }
-        if let Some(max_len) = simple.max_length {
-            constraints = constraints.with_max_length(max_len as usize);
-        }
-        if let Some(ref min_inc) = simple.min_inclusive {
-            constraints = constraints.with_min_inclusive(min_inc.clone());
-        }
-        if let Some(ref max_inc) = simple.max_inclusive {
-            constraints = constraints.with_max_inclusive(max_inc.clone());
-        }
-        if !simple.enumeration.is_empty() {
-            constraints = constraints.with_enumeration(simple.enumeration.clone());
-        }
-        if let Some(ref pattern) = simple.pattern {
-            constraints = constraints.with_pattern(pattern.clone());
-        }
-
-        constraints
+        FacetConstraints::from_simple_type(&self.schema, simple)
     }
 
     /// Creates a structured error with context.

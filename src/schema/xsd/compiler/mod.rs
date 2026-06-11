@@ -4,6 +4,7 @@
 //! representation (CompiledSchema).
 
 mod cache;
+pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod substitution;
 mod types;
@@ -29,6 +30,10 @@ pub struct XsdCompiler {
     /// Named model group definitions, keyed by (namespace URI, local name), for
     /// resolving `<xs:group ref="...">` during particle compilation.
     pub(crate) groups: HashMap<NsName, XsdParticle>,
+    /// Named attribute group definitions for `<xs:attributeGroup ref>` resolution.
+    pub(crate) attribute_groups: HashMap<NsName, XsdAttributeGroup>,
+    /// blockDefault of the schema currently being compiled
+    pub(crate) current_block_default: Option<DerivationControl>,
     /// Group names currently being expanded, used to break cyclic group refs.
     pub(crate) group_expansion: HashSet<NsName>,
     /// Current target namespace
@@ -45,6 +50,8 @@ impl XsdCompiler {
             substitution_groups: HashMap::new(),
             namespace_bindings: HashMap::new(),
             groups: HashMap::new(),
+            attribute_groups: HashMap::new(),
+            current_block_default: None,
             group_expansion: HashSet::new(),
             current_target_ns: None,
             current_target_prefix: None,
@@ -176,11 +183,18 @@ impl XsdCompiler {
                 self.groups.insert(key, particle.clone());
             }
         }
+        for ag in &schema.attribute_groups {
+            if let Some(name) = &ag.name {
+                let key = NsName::new(ns.clone(), name.clone());
+                self.attribute_groups.insert(key, ag.clone());
+            }
+        }
     }
 
     /// Compiles a single schema into the result.
     fn compile_schema(&mut self, schema: XsdSchema, result: &mut CompiledSchema) -> Result<()> {
         self.current_target_ns = schema.target_namespace.clone();
+        self.current_block_default = schema.block_default.clone();
 
         // Find the prefix for THIS schema's target namespace.
         // First try the schema's OWN bindings (deterministic for each schema),

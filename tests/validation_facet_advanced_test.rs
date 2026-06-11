@@ -217,12 +217,12 @@ mod pattern_validation {
 
         let validator = FacetValidator::new(&constraints);
 
-        // When patterns are not compiled, validation falls back to on-the-fly compilation
-        // which should return InvalidPattern error
+        // Patterns the regex engine cannot express are skipped rather than
+        // turned into validation errors, so values pass the pattern facet.
         let result = validator.validate("test");
         assert!(
-            matches!(result, Err(FacetError::InvalidPattern { .. })),
-            "Invalid pattern regex should return InvalidPattern error, got: {:?}",
+            result.is_ok(),
+            "Unsupported pattern regex should be skipped, got: {:?}",
             result
         );
     }

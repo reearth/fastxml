@@ -355,6 +355,10 @@ fn test_streaming_validator_min_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        derivation: None,
+        block: Default::default(),
+        wildcard: None,
+        attr_wildcard: None,
         content: ContentModel::Sequence(vec![
             ElementDef::new("required_child").with_occurs(1, Some(1)),
         ]),

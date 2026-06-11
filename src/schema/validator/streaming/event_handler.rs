@@ -66,6 +66,27 @@ impl XmlEventHandler for OnePassSchemaValidator {
             self.add_error(error);
         }
 
+        // Resolve IDREF references against the IDs seen in the document
+        let unresolved: Vec<_> = self
+            .pending_idrefs
+            .drain(..)
+            .filter(|(idref, _, _)| !self.seen_ids.contains(idref))
+            .collect();
+        for (idref, line, column) in unresolved {
+            let mut error = StructuredError::new(
+                format!("IDREF '{}' does not match any ID in the document", idref),
+                ValidationErrorType::IdentityConstraint,
+            )
+            .with_level(ErrorLevel::Error);
+            if let Some(line) = line {
+                error = error.with_line(line);
+            }
+            if let Some(column) = column {
+                error = error.with_column(column);
+            }
+            self.add_error(error);
+        }
+
         // Validate keyref constraints
         if let Err(constraint_errors) = self.constraint_validator.validate_keyrefs() {
             for err in constraint_errors {

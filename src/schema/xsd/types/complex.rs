@@ -1,7 +1,7 @@
 //! XSD complex type definitions.
 
 use super::elements::XsdAttribute;
-use super::particles::XsdParticle;
+use super::particles::{XsdAny, XsdParticle};
 use super::qname::QName;
 use super::simple::XsdFacet;
 
@@ -16,6 +16,8 @@ pub struct XsdComplexType {
     pub attributes: Vec<XsdAttribute>,
     /// Attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<XsdAny>,
     /// Whether this type is abstract
     pub is_abstract: bool,
     /// Whether content is mixed (text + elements)
@@ -34,6 +36,7 @@ impl XsdComplexType {
             content: XsdComplexContent::Empty,
             attributes: Vec::new(),
             attribute_groups: Vec::new(),
+            any_attribute: None,
             is_abstract: false,
             mixed: false,
             block: None,
@@ -48,6 +51,7 @@ impl XsdComplexType {
             content: XsdComplexContent::Empty,
             attributes: Vec::new(),
             attribute_groups: Vec::new(),
+            any_attribute: None,
             is_abstract: false,
             mixed: false,
             block: None,
@@ -94,6 +98,8 @@ pub struct XsdSimpleContentExtension {
     pub attributes: Vec<XsdAttribute>,
     /// Additional attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<XsdAny>,
 }
 
 /// Simple content restriction.
@@ -107,6 +113,8 @@ pub struct XsdSimpleContentRestriction {
     pub attributes: Vec<XsdAttribute>,
     /// Attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<XsdAny>,
 }
 
 /// Complex content definition.
@@ -138,6 +146,8 @@ pub struct XsdComplexContentExtension {
     pub attributes: Vec<XsdAttribute>,
     /// Additional attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<XsdAny>,
 }
 
 /// Complex content restriction.
@@ -151,6 +161,8 @@ pub struct XsdComplexContentRestriction {
     pub attributes: Vec<XsdAttribute>,
     /// Attribute group references
     pub attribute_groups: Vec<QName>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub any_attribute: Option<XsdAny>,
 }
 
 /// Derivation control (block/final).

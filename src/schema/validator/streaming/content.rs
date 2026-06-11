@@ -25,6 +25,9 @@ impl OnePassSchemaValidator {
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
         let elem_def = self.lookup_element_optimized(name, prefix, namespace);
         let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
+        let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
+        let elem_default = elem_def.and_then(|e| e.default.clone());
+        let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
         // Construct qname only when needed for error messages or when prefix exists
         let qname_owned: Option<String> = match prefix {
@@ -33,8 +36,26 @@ impl OnePassSchemaValidator {
         };
         let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
 
+        let elem_known = elem_def.is_some();
+        let elem_constraints: Vec<crate::schema::types::CompiledConstraint> =
+            elem_def.map(|e| e.constraints.clone()).unwrap_or_default();
+        let nilled = attributes
+            .iter()
+            .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
+
         // Check if this element is expected by the parent (inline element definition)
         let is_expected_by_parent = self.is_element_expected_by_parent(name);
+
+        // Wildcard handling: a skip wildcard admits this whole subtree
+        // without validation; a lax wildcard admits undeclared elements.
+        let wildcard_mode = self.parent_wildcard_mode(name, namespace, is_expected_by_parent);
+        if wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Skip);
+            }
+            return;
+        }
 
         let schema_has_elements = !self.schema.elements.is_empty();
 
@@ -44,21 +65,25 @@ impl OnePassSchemaValidator {
         // For example, gml:exterior in Solid (SurfacePropertyType) vs Polygon (AbstractRingPropertyType)
         if is_expected_by_parent {
             // Try inline element first - declared in parent's type definition
-            let (inline_type_ref, inline_flattened) = self.get_inline_element_info(name);
+            let (inline_type_ref, inline_flattened, inline_anon_type) =
+                self.get_inline_element_info(name);
 
             // Use inline type if available, otherwise fall back to global element
-            let (type_ref, flattened_children) =
-                if inline_type_ref.is_some() || inline_flattened.is_some() {
-                    (inline_type_ref, inline_flattened)
-                } else if let Some(elem) = elem_def {
-                    // Fall back to global element
-                    (
-                        elem.type_ref.clone(),
-                        self.get_flattened_children_for_element(elem),
-                    )
-                } else {
-                    (None, None)
-                };
+            let (type_ref, flattened_children, anon_type) = if inline_type_ref.is_some()
+                || inline_flattened.is_some()
+                || inline_anon_type.is_some()
+            {
+                (inline_type_ref, inline_flattened, inline_anon_type)
+            } else if let Some(elem) = elem_def {
+                // Fall back to global element
+                (
+                    elem.type_ref.clone(),
+                    self.get_flattened_children_for_element(elem),
+                    elem.inline_type.clone(),
+                )
+            } else {
+                (None, None, None)
+            };
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -71,12 +96,14 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
             let type_ref = elem.type_ref.clone();
             let flattened_children = self.get_flattened_children_for_element(elem);
+            let anon_type = elem.inline_type.clone();
 
             // Check max_occurs against parent's expected constraints
             self.validate_max_occurs(name);
@@ -89,7 +116,15 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.flattened_children = flattened_children;
+                ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
+            }
+        } else if wildcard_mode == Some(crate::schema::types::ProcessContents::Lax) {
+            // Undeclared element admitted by a lax wildcard; its subtree
+            // keeps lax processing.
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+                ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Lax);
             }
         } else {
             // Element not found in schema
@@ -105,31 +140,375 @@ impl OnePassSchemaValidator {
             }
         }
 
+        // xsi:type substitution: validate the element against the named type
+        // instead of the declared one (when the substitution is allowed).
+        if let Some(xsi_type) = attributes
+            .iter()
+            .find(|&&(n, _)| n == "xsi:type")
+            .map(|&(_, v)| v)
+        {
+            let declared = self
+                .state
+                .current_element()
+                .and_then(|ctx| ctx.type_ref.clone());
+            match super::super::xsi_type::resolve_xsi_type(
+                &self.schema,
+                declared.as_deref(),
+                xsi_type,
+            ) {
+                Ok(substituted) => {
+                    let flattened = match self.schema.get_type(&substituted) {
+                        Some(TypeDef::Complex(complex)) => {
+                            Some(Arc::new(self.compute_flattened_children(complex)))
+                        }
+                        _ => None,
+                    };
+                    if let Some(ctx) = self.state.current_element_mut() {
+                        ctx.type_ref = Some(substituted);
+                        if flattened.is_some() {
+                            ctx.flattened_children = flattened;
+                        }
+                    }
+                }
+                Err(message) => {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidAttributeValue,
+                            format!("element '{}': {}", qname, message),
+                        )
+                        .with_node_name(qname)
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+        }
+
+        // An abstract element may not appear in the instance directly.
+        if elem_abstract {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidContent,
+                    format!(
+                        "element '{}' is abstract and cannot be used directly",
+                        qname
+                    ),
+                )
+                .with_node_name(qname)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+
+        // xsi:nil handling: only nillable declarations may carry it.
+        if nilled && elem_known && !elem_nillable {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidAttributeValue,
+                    format!(
+                        "element '{}' is not nillable but has xsi:nil=\"true\"",
+                        qname
+                    ),
+                )
+                .with_node_name(qname)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+        if let Some(ctx) = self.state.current_element_mut() {
+            ctx.nilled = nilled;
+            ctx.default_value = elem_default;
+            ctx.fixed_value = elem_fixed;
+        }
+
+        // Identity constraints: open scopes declared on this element, and
+        // match this element against the selectors of enclosing scopes.
+        self.identity_element_start(&elem_constraints, attributes);
+
         // Validate attributes
         self.validate_attributes(name, attributes);
     }
 
-    /// Validates attributes on an element.
+    /// Handles identity-constraint bookkeeping at element start.
+    fn identity_element_start(
+        &mut self,
+        elem_constraints: &[crate::schema::types::CompiledConstraint],
+        attributes: &[(&str, &str)],
+    ) {
+        let depth = self.state.element_stack.len();
+
+        // Path of local names for elements on the stack (depth 1..=depth).
+        let local_names: Vec<&str> = self
+            .state
+            .element_stack
+            .iter()
+            .map(|ctx| ctx.name.rsplit(':').next().unwrap_or(ctx.name.as_ref()))
+            .collect();
+
+        for scope in &mut self.identity_scopes {
+            // Selector match: relative path from just below the scope.
+            if depth > scope.depth {
+                let rel = &local_names[scope.depth..depth];
+                if super::identity::selector_matches(&scope.selector, rel) {
+                    let mut fields = vec![super::identity::FieldState::Unset; scope.fields.len()];
+                    // Attribute fields on the selected node resolve now.
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if field.steps.is_empty()
+                            && let Some(ref attr) = field.attr
+                        {
+                            let value = attributes.iter().find_map(|&(n, v)| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            });
+                            if let Some(v) = value {
+                                fields[i] = super::identity::FieldState::Set(v.trim().to_string());
+                            }
+                        }
+                    }
+                    scope
+                        .selected
+                        .push(super::identity::SelectedState { depth, fields });
+                }
+            }
+
+            // Attribute fields on elements below a selected node.
+            for selected in &mut scope.selected {
+                if depth > selected.depth {
+                    let rel = &local_names[selected.depth..depth];
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if let Some(ref attr) = field.attr
+                            && super::identity::field_steps_match(field, rel)
+                        {
+                            let value = attributes.iter().find_map(|&(n, v)| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            });
+                            if let Some(v) = value {
+                                selected.fields[i] = match selected.fields[i] {
+                                    super::identity::FieldState::Unset => {
+                                        super::identity::FieldState::Set(v.trim().to_string())
+                                    }
+                                    _ => super::identity::FieldState::Multiple,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Open new scopes for constraints declared on this element.
+        for constraint in elem_constraints {
+            if let Some(scope) = super::identity::ScopeState::new(constraint, depth) {
+                self.identity_scopes.push(scope);
+            }
+        }
+    }
+
+    /// Handles identity-constraint bookkeeping at element end. `ended_depth`
+    /// is the stack depth the element had; `ctx` is its popped context.
+    fn identity_element_end(&mut self, ended_depth: usize, ctx: &ElementContext) {
+        use crate::schema::types::CompiledConstraintType;
+        use crate::schema::xsd::constraints::{ConstraintType, IdentityConstraint, KeyValue};
+
+        let text = ctx.text_content.trim().to_string();
+        let ended_local = ctx
+            .name
+            .rsplit(':')
+            .next()
+            .unwrap_or(ctx.name.as_ref())
+            .to_string();
+
+        // Local names of the still-open ancestors (depth 1..ended_depth).
+        let local_names: Vec<String> = self
+            .state
+            .element_stack
+            .iter()
+            .map(|c| {
+                c.name
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(c.name.as_ref())
+                    .to_string()
+            })
+            .collect();
+
+        let mut errors: Vec<String> = Vec::new();
+
+        for scope in &mut self.identity_scopes {
+            // Element-text fields below a selected node.
+            for selected in &mut scope.selected {
+                if ended_depth > selected.depth {
+                    let mut rel: Vec<&str> = local_names[selected.depth..ended_depth - 1]
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect();
+                    rel.push(&ended_local);
+                    for (i, field) in scope.fields.iter().enumerate() {
+                        if field.attr.is_none()
+                            && !field.steps.is_empty()
+                            && super::identity::field_steps_match(field, &rel)
+                        {
+                            selected.fields[i] = match selected.fields[i] {
+                                super::identity::FieldState::Unset => {
+                                    super::identity::FieldState::Set(text.clone())
+                                }
+                                _ => super::identity::FieldState::Multiple,
+                            };
+                        }
+                    }
+                }
+            }
+
+            // Finalize selected nodes that end here.
+            let mut finished = Vec::new();
+            scope.selected.retain(|selected| {
+                if selected.depth == ended_depth {
+                    finished.push(selected.fields.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+
+            for mut fields in finished {
+                // A `.` field takes the selected node's own text content.
+                for (i, field) in scope.fields.iter().enumerate() {
+                    if field.attr.is_none() && field.steps.is_empty() {
+                        fields[i] = super::identity::FieldState::Set(text.clone());
+                    }
+                }
+                if fields
+                    .iter()
+                    .any(|f| matches!(f, super::identity::FieldState::Multiple))
+                {
+                    errors.push(format!(
+                        "{} '{}': a field matches more than one node",
+                        match scope.constraint.constraint_type {
+                            CompiledConstraintType::Key => "key",
+                            CompiledConstraintType::Unique => "unique",
+                            CompiledConstraintType::KeyRef => "keyref",
+                        },
+                        scope.constraint.name
+                    ));
+                    continue;
+                }
+                let values: Vec<String> = fields
+                    .into_iter()
+                    .map(|f| match f {
+                        super::identity::FieldState::Set(v) => v,
+                        _ => String::new(), // unset = null (empty per KeyValue)
+                    })
+                    .collect();
+                let value = KeyValue::new(values);
+                let ic = IdentityConstraint {
+                    name: scope.constraint.name.clone(),
+                    constraint_type: match scope.constraint.constraint_type {
+                        CompiledConstraintType::Unique => ConstraintType::Unique,
+                        CompiledConstraintType::Key => ConstraintType::Key,
+                        CompiledConstraintType::KeyRef => ConstraintType::KeyRef,
+                    },
+                    selector: scope.constraint.selector_xpath.clone(),
+                    fields: scope.constraint.field_xpaths.clone(),
+                    refer: scope.constraint.refer.clone(),
+                };
+                if scope.is_keyref() {
+                    self.constraint_validator.add_keyref_value(&ic, value);
+                } else if let Err(e) = self.constraint_validator.add_key_value(&ic, value) {
+                    errors.push(e.to_string());
+                }
+            }
+        }
+
+        // Close scopes whose scoping element ends here.
+        self.identity_scopes
+            .retain(|scope| scope.depth != ended_depth);
+
+        for message in errors {
+            let error = self
+                .make_error(ValidationErrorType::IdentityConstraint, message)
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+    }
+
+    /// Validates attributes on an element against the attribute
+    /// declarations of its complex type.
     pub(crate) fn validate_attributes(
         &mut self,
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
-        for &(attr_name, attr_value) in attributes {
-            // Skip namespace declarations
-            if attr_name.starts_with("xmlns") {
-                continue;
-            }
+        let result = {
+            // Resolve the element's complex type: explicit type_ref first,
+            // then an inline (anonymous) type from the parent's content model.
+            let inline_owned;
+            let type_def: Option<&TypeDef> = match self
+                .state
+                .current_element()
+                .and_then(|ctx| ctx.type_ref.as_deref())
+            {
+                Some(tr) => self.schema.get_type(tr),
+                None => {
+                    if let Some(ctx) = self.state.current_element()
+                        && ctx.inline_type.is_some()
+                    {
+                        ctx.inline_type.as_ref()
+                    } else {
+                        inline_owned = self.get_element_inline_type(element_name);
+                        inline_owned.as_ref()
+                    }
+                }
+            };
 
-            // Skip schema location attributes
-            if attr_name.contains("schemaLocation") {
-                continue;
-            }
+            let Some(TypeDef::Complex(complex)) = type_def else {
+                return;
+            };
 
-            // In strict mode, check if attribute is known
-            // For now, we don't have attribute definitions easily accessible
-            // so we'll skip this validation
-            let _ = (element_name, attr_value);
+            // Resolve each attribute's namespace from its prefix using the
+            // in-scope namespace declarations (unprefixed attributes are in
+            // no namespace).
+            let with_ns: Vec<(&str, Option<&str>, &str)> = attributes
+                .iter()
+                .map(|&(name, value)| {
+                    let ns = name
+                        .split_once(':')
+                        .and_then(|(prefix, _)| self.state.resolve_prefix(prefix));
+                    (name, ns, value)
+                })
+                .collect();
+            super::super::attributes::validate_element_attributes(
+                &self.schema,
+                complex,
+                with_ns.iter().copied(),
+            )
+        };
+
+        for message in result.errors {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidAttributeValue,
+                    format!("element '{}': {}", element_name, message),
+                )
+                .with_node_name(element_name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+        self.record_ids(result.ids, result.idrefs);
+    }
+
+    /// Records `xs:ID` values (checking document-wide uniqueness) and
+    /// `xs:IDREF` values (resolved at the end of the document).
+    pub(crate) fn record_ids(&mut self, ids: Vec<String>, idrefs: Vec<String>) {
+        for id in ids {
+            if !self.seen_ids.insert(id.clone()) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::IdentityConstraint,
+                        format!("duplicate ID value '{}'", id),
+                    )
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+        }
+        for idref in idrefs {
+            self.pending_idrefs
+                .push((idref, self.current_line, self.current_column));
         }
     }
 
@@ -140,10 +519,109 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Returns the wildcard processing mode the parent applies to this
+    /// element: a propagated lax/skip subtree mode, or the parent content
+    /// model's wildcard when the element is not declared there.
+    fn parent_wildcard_mode(
+        &self,
+        name: &Arc<str>,
+        namespace: Option<&str>,
+        is_expected_by_parent: bool,
+    ) -> Option<crate::schema::types::ProcessContents> {
+        let len = self.state.element_stack.len();
+        if len < 2 {
+            return None;
+        }
+        let parent = self.state.element_stack.get(len - 2)?;
+        if let Some(mode) = parent.wildcard_mode {
+            // Inside a skipped subtree everything is skipped; inside a lax
+            // subtree undeclared elements stay lax.
+            match mode {
+                crate::schema::types::ProcessContents::Skip => return Some(mode),
+                crate::schema::types::ProcessContents::Lax if !is_expected_by_parent => {
+                    return Some(mode);
+                }
+                _ => {}
+            }
+        }
+        if is_expected_by_parent {
+            return None;
+        }
+        let fc = parent.flattened_children.as_ref()?;
+        let w = fc.wildcard.as_ref()?;
+        if !fc.constraints.contains_key(name.as_ref()) && w.matches(namespace) {
+            Some(w.process_contents)
+        } else {
+            None
+        }
+    }
+
     /// Validates an element when it closes.
     pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
+            // Identity constraint bookkeeping (works on the popped depth)
+            if !self.identity_scopes.is_empty() {
+                let ended_depth = self.state.element_stack.len() + 1;
+                self.identity_element_end(ended_depth, &ctx);
+            }
+            // A subtree admitted by a skip wildcard is not validated.
+            if ctx.wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
+                return;
+            }
+
+            // Wildcard occurrence bounds, decidable only when the wildcard
+            // is the sole particle of the content model.
+            if let Some(fc) = &ctx.flattened_children
+                && let Some(w) = &fc.wildcard
+                && fc.constraints.is_empty()
+            {
+                let matched: u32 = ctx.child_counts.iter().map(|(_, c)| *c).sum();
+                if matched < w.min_occurs {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::TooFewOccurrences,
+                            format!(
+                                "element '{}' requires at least {} wildcard-matched child element(s), found {}",
+                                ctx.name, w.min_occurs, matched
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+                if let Some(max) = w.max_occurs
+                    && matched > max
+                {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::TooManyOccurrences,
+                            format!(
+                                "element '{}' allows at most {} wildcard-matched child element(s), found {}",
+                                ctx.name, max, matched
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+
+            // A nilled element must be empty.
+            if ctx.nilled && (!ctx.text_content.trim().is_empty() || !ctx.child_counts.is_empty()) {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' has xsi:nil=\"true\" but is not empty",
+                            ctx.name
+                        ),
+                    )
+                    .with_node_name(ctx.name.as_ref())
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+
             // Always run type validation — primitive types (e.g., xs:integer)
             // need to reject empty content, while types whose lexical space
             // allows empty (xs:string and derivatives) pass through cheaply.
@@ -164,6 +642,17 @@ impl OnePassSchemaValidator {
                 self.validate_text_against_type_def(ctx, &type_def);
                 return;
             }
+        }
+
+        // Elements admitted by a wildcard have no declared type to check.
+        if ctx.wildcard_mode.is_some() && ctx.type_ref.is_none() && ctx.inline_type.is_none() {
+            return;
+        }
+
+        // Inline (anonymous) type captured at element start
+        if let Some(inline_type) = ctx.inline_type.clone() {
+            self.validate_text_against_type_def(ctx, &inline_type);
+            return;
         }
 
         // If no type_ref, try to get inline type from element definition
@@ -215,10 +704,43 @@ impl OnePassSchemaValidator {
     /// runs both user-declared facet constraints and (when applicable) the
     /// built-in primitive lexical/value-space check.
     fn validate_text_against_simple_type(&mut self, ctx: &ElementContext, simple: &SimpleType) {
-        // User-declared facets. Skip on empty content so we don't double up
-        // on top of any primitive-level "empty value" error.
-        if !ctx.text_content.is_empty() {
+        // Skip everything for an empty element that is nillable or carries a
+        // default/fixed value constraint (the constraint value applies).
+        if ctx.text_content.is_empty()
+            && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some())
+        {
+            return;
+        }
+
+        // User-declared facets. Empty content is still checked — a pattern
+        // or enumeration facet can legitimately reject the empty string.
+        {
             let constraints = self.create_facet_constraints(simple);
+
+            // Fixed value constraint: non-empty content must match.
+            if let Some(ref fixed) = ctx.fixed_value {
+                let text = ctx.text_content.trim();
+                if text != fixed.trim()
+                    && crate::schema::xsd::value_compare::compare_values(
+                        constraints.value_kind,
+                        text,
+                        fixed,
+                    ) != Some(std::cmp::Ordering::Equal)
+                {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "element '{}' must have the fixed value '{}', found '{}'",
+                                ctx.name, fixed, text
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(&ctx.text_content) {
                 let error = self
@@ -233,14 +755,18 @@ impl OnePassSchemaValidator {
                     .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
+
+            // Track ID/IDREF values carried as element content
+            let mut id_values = super::super::attributes::AttrValidation::default();
+            super::super::attributes::push_id_values_from_constraints(
+                &constraints,
+                &ctx.text_content,
+                &mut id_values,
+            );
+            self.record_ids(id_values.ids, id_values.idrefs);
         }
 
-        // Built-in primitive lexical/value-space check. Skip for an empty,
-        // nillable element: `xsi:nil="true"` legitimately leaves the content
-        // empty and it must not be checked against the primitive type.
-        if ctx.text_content.is_empty() && ctx.nillable {
-            return;
-        }
+        // Built-in primitive lexical/value-space check.
         if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
             && let Err(prim_error) = kind.validate(&ctx.text_content)
         {

@@ -64,12 +64,9 @@ fn download_and_extract_tar_gz(url: &str, dest_dir: &Path) -> io::Result<()> {
     eprintln!("Downloading: {}", url);
 
     // Download the file
-    let response = ureq::get(url).call().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to download {}: {}", url, e),
-        )
-    })?;
+    let response = ureq::get(url)
+        .call()
+        .map_err(|e| io::Error::other(format!("Failed to download {}: {}", url, e)))?;
 
     // Create a temporary file for the download
     let temp_file = tempfile::NamedTempFile::new()?;
@@ -105,10 +102,10 @@ fn clone_git_repo(url: &str, dest_dir: &Path) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to clone git repository: {}", url),
-        ));
+        return Err(io::Error::other(format!(
+            "Failed to clone git repository: {}",
+            url
+        )));
     }
 
     eprintln!("Done!");

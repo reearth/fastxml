@@ -193,6 +193,25 @@ fn parse_suite_xml(content: &str) -> Result<Vec<String>, XsdTestError> {
 }
 
 /// Parse a test set file.
+///
+/// The W3C XSD test suite format nests documents and expectations inside
+/// `schemaTest`/`instanceTest` elements:
+///
+/// ```xml
+/// <testGroup name="...">
+///   <schemaTest name="...">
+///     <schemaDocument xlink:href="..."/>
+///     <expected validity="valid"/>
+///   </schemaTest>
+///   <instanceTest name="...">
+///     <instanceDocument xlink:href="..."/>
+///     <expected validity="invalid"/>
+///   </instanceTest>
+/// </testGroup>
+/// ```
+///
+/// `expected` may carry a `version` attribute (e.g. "1.0", "1.1") when the
+/// outcome differs between XSD versions; we target XSD 1.0.
 fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
     let base_path = path.parent().unwrap_or(Path::new("."));
     let content = fs::read_to_string(path).map_err(XsdTestError::Io)?;
@@ -200,104 +219,146 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
     let mut reader = Reader::from_str(&content);
     reader.config_mut().trim_text(true);
 
+    #[derive(PartialEq)]
+    enum TestCtx {
+        None,
+        Schema,
+        Instance,
+    }
+
     let mut groups = Vec::new();
     let mut current_group: Option<SchemaTestGroup> = None;
+    let mut ctx = TestCtx::None;
+    let mut pending_docs: Vec<PathBuf> = Vec::new();
+    let mut pending_name = String::new();
+    // (version, validity) pairs from <expected> elements
+    let mut pending_expected: Vec<(Option<String>, String)> = Vec::new();
 
     loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => {
+        let event = reader.read_event();
+        match event {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 let local_name_bytes = e.local_name();
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
                 match local_name {
+                    "testSet" => {
+                        // A 1.1-only test set doesn't apply to an XSD 1.0
+                        // processor at all.
+                        let attrs = parse_attributes(e)?;
+                        if attrs
+                            .get("version")
+                            .is_some_and(|v| !v.split_whitespace().any(|t| t == "1.0"))
+                        {
+                            return Ok(TestSet {
+                                name: path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string(),
+                                path: path.to_path_buf(),
+                                groups: Vec::new(),
+                            });
+                        }
+                    }
                     "testGroup" => {
-                        let attrs = parse_attributes(&e)?;
-                        current_group = Some(SchemaTestGroup {
+                        let attrs = parse_attributes(e)?;
+                        // Skip groups that don't apply to XSD 1.0 (the suite
+                        // marks 1.1-only groups with version="1.1").
+                        let applies = attrs
+                            .get("version")
+                            .is_none_or(|v| v.split_whitespace().any(|t| t == "1.0"));
+                        current_group = applies.then(|| SchemaTestGroup {
                             name: attrs.get("name").cloned().unwrap_or_default(),
                             description: None,
                             schemas: Vec::new(),
                             instances: Vec::new(),
                         });
                     }
-                    "schemaTest" | "schemaDocument" => {
-                        if let Some(ref mut group) = current_group {
-                            let attrs = parse_attributes(&e)?;
-                            if let Some(href) = attrs.get("href").or(attrs.get("xlink:href")) {
-                                let expected = attrs
-                                    .get("validity")
-                                    .map_or(SchemaValidity::Valid, |s| SchemaValidity::from_str(s));
-                                group.schemas.push(SchemaDocument {
-                                    path: base_path.join(href),
-                                    expected,
-                                });
-                            }
+                    "schemaTest" => {
+                        ctx = TestCtx::Schema;
+                        pending_docs.clear();
+                        pending_expected.clear();
+                    }
+                    "instanceTest" => {
+                        ctx = TestCtx::Instance;
+                        let attrs = parse_attributes(e)?;
+                        pending_name = attrs.get("name").cloned().unwrap_or_default();
+                        pending_docs.clear();
+                        pending_expected.clear();
+                    }
+                    "schemaDocument" | "instanceDocument" => {
+                        let attrs = parse_attributes(e)?;
+                        if let Some(href) = attrs.get("href").or(attrs.get("xlink:href")) {
+                            pending_docs.push(base_path.join(href));
                         }
                     }
-                    "instanceTest" | "instanceDocument" => {
-                        if let Some(ref mut group) = current_group {
-                            let attrs = parse_attributes(&e)?;
-                            if let Some(href) = attrs.get("href").or(attrs.get("xlink:href")) {
-                                let name = attrs.get("name").cloned().unwrap_or_default();
-                                let expected =
-                                    attrs.get("validity").map_or(InstanceValidity::Valid, |s| {
-                                        InstanceValidity::from_str(s)
-                                    });
-                                group.instances.push(InstanceTest {
-                                    name,
-                                    path: base_path.join(href),
-                                    expected,
-                                });
-                            }
+                    "expected" => {
+                        let attrs = parse_attributes(e)?;
+                        if let Some(validity) = attrs.get("validity") {
+                            pending_expected
+                                .push((attrs.get("version").cloned(), validity.clone()));
                         }
                     }
                     _ => {}
                 }
-            }
-            Ok(Event::Empty(e)) => {
-                let local_name_bytes = e.local_name();
-                let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
-                // Handle self-closing elements
-                if local_name == "schemaDocument" {
-                    if let Some(ref mut group) = current_group {
-                        let attrs = parse_attributes(&e)?;
-                        if let Some(href) = attrs.get("href").or(attrs.get("xlink:href")) {
-                            let expected = attrs
-                                .get("validity")
-                                .map_or(SchemaValidity::Valid, |s| SchemaValidity::from_str(s));
-                            group.schemas.push(SchemaDocument {
-                                path: base_path.join(href),
-                                expected,
-                            });
-                        }
-                    }
-                } else if local_name == "instanceDocument" {
-                    if let Some(ref mut group) = current_group {
-                        let attrs = parse_attributes(&e)?;
-                        if let Some(href) = attrs.get("href").or(attrs.get("xlink:href")) {
-                            let name = attrs.get("name").cloned().unwrap_or_default();
-                            let expected = attrs
-                                .get("validity")
-                                .map_or(InstanceValidity::Valid, |s| InstanceValidity::from_str(s));
-                            group.instances.push(InstanceTest {
-                                name,
-                                path: base_path.join(href),
-                                expected,
-                            });
-                        }
-                    }
+                // Self-closing schemaTest/instanceTest cannot contain documents;
+                // reset context so stray expected elements are not misattributed.
+                if matches!(event, Ok(Event::Empty(_)))
+                    && (local_name == "schemaTest" || local_name == "instanceTest")
+                {
+                    ctx = TestCtx::None;
                 }
             }
             Ok(Event::End(e)) => {
                 let local_name_bytes = e.local_name();
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
-                if local_name == "testGroup" {
-                    if let Some(group) = current_group.take() {
-                        if !group.schemas.is_empty() || !group.instances.is_empty() {
+                match local_name {
+                    "schemaTest" => {
+                        if ctx == TestCtx::Schema
+                            && let Some(ref mut group) = current_group
+                        {
+                            let validity = select_expected(&pending_expected);
+                            for doc in pending_docs.drain(..) {
+                                group.schemas.push(SchemaDocument {
+                                    path: doc,
+                                    expected: validity.map_or(
+                                        SchemaValidity::Indeterminate,
+                                        SchemaValidity::from_str,
+                                    ),
+                                });
+                            }
+                        }
+                        ctx = TestCtx::None;
+                    }
+                    "instanceTest" => {
+                        if ctx == TestCtx::Instance
+                            && let Some(ref mut group) = current_group
+                        {
+                            let validity = select_expected(&pending_expected);
+                            for doc in pending_docs.drain(..) {
+                                group.instances.push(InstanceTest {
+                                    name: pending_name.clone(),
+                                    path: doc,
+                                    expected: validity.map_or(
+                                        InstanceValidity::Indeterminate,
+                                        InstanceValidity::from_str,
+                                    ),
+                                });
+                            }
+                        }
+                        ctx = TestCtx::None;
+                    }
+                    "testGroup" => {
+                        if let Some(group) = current_group.take()
+                            && (!group.schemas.is_empty() || !group.instances.is_empty())
+                        {
                             groups.push(group);
                         }
                     }
+                    _ => {}
                 }
             }
             Ok(Event::Eof) => break,
@@ -315,6 +376,24 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
         path: path.to_path_buf(),
         groups,
     })
+}
+
+/// Select the expected validity that applies to XSD 1.0.
+///
+/// Preference order: an unversioned `<expected>`, then one whose `version`
+/// mentions "1.0". Entries for other versions only (e.g. "1.1") yield `None`,
+/// which callers treat as indeterminate (skipped).
+fn select_expected(expected: &[(Option<String>, String)]) -> Option<&str> {
+    if let Some((_, v)) = expected.iter().find(|(ver, _)| ver.is_none()) {
+        return Some(v);
+    }
+    if let Some((_, v)) = expected.iter().find(|(ver, _)| {
+        ver.as_deref()
+            .is_some_and(|s| s.split_whitespace().any(|t| t == "1.0"))
+    }) {
+        return Some(v);
+    }
+    None
 }
 
 /// Parse attributes from an element.

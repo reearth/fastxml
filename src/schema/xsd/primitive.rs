@@ -49,6 +49,13 @@ pub enum PrimitiveKind {
     Base64Binary,
     AnyUri,
     QName,
+    Name,
+    Ncname,
+    Nmtoken,
+    Language,
+    Id,
+    Idref,
+    Entity,
 }
 
 impl PrimitiveKind {
@@ -89,9 +96,29 @@ impl PrimitiveKind {
             "hexBinary" => Self::HexBinary,
             "base64Binary" => Self::Base64Binary,
             "anyURI" => Self::AnyUri,
-            "QName" => Self::QName,
+            // NOTATION shares QName's lexical space (and, like QName, its
+            // length facets are ignored per the XSD errata).
+            "QName" | "NOTATION" => Self::QName,
+            "Name" => Self::Name,
+            "NCName" => Self::Ncname,
+            "NMTOKEN" => Self::Nmtoken,
+            "language" => Self::Language,
+            "ID" => Self::Id,
+            "IDREF" => Self::Idref,
+            "ENTITY" => Self::Entity,
             _ => return None,
         })
+    }
+
+    /// True when this kind is `xs:ID` (document-wide uniqueness applies).
+    pub fn is_id(&self) -> bool {
+        matches!(self, Self::Id)
+    }
+
+    /// True when this kind is `xs:IDREF` (must reference an ID in the
+    /// document).
+    pub fn is_idref(&self) -> bool {
+        matches!(self, Self::Idref)
     }
 
     /// Resolves a [`SimpleType`] to its base built-in primitive kind by
@@ -181,18 +208,22 @@ impl PrimitiveKind {
             Self::Date => validate_date(v),
             Self::DateTime => validate_datetime(v),
             Self::GYear => validate_gyear(v),
-            // Lexical space not yet enforced — accept (FacetValidator still
-            // handles any user-declared facets on these types).
-            Self::Time
-            | Self::GYearMonth
-            | Self::GMonth
-            | Self::GMonthDay
-            | Self::GDay
-            | Self::Duration
-            | Self::HexBinary
-            | Self::Base64Binary
-            | Self::AnyUri
-            | Self::QName => Ok(()),
+            Self::Time => validate_time(v),
+            Self::GYearMonth => validate_gyearmonth(v),
+            Self::GMonth => validate_gmonth(v),
+            Self::GMonthDay => validate_gmonthday(v),
+            Self::GDay => validate_gday(v),
+            Self::Duration => validate_duration(v),
+            Self::HexBinary => validate_hexbinary(v),
+            Self::Base64Binary => validate_base64binary(v),
+            Self::QName => validate_qname(v),
+            Self::Name => validate_name(v),
+            Self::Ncname | Self::Id | Self::Idref | Self::Entity => validate_ncname(v),
+            Self::Nmtoken => validate_nmtoken(v),
+            Self::Language => validate_language(v),
+            // Lexical space not enforced — essentially any string is a URI
+            // reference, so reject nothing.
+            Self::AnyUri => Ok(()),
         }
     }
 }
@@ -607,6 +638,315 @@ fn validate_timezone(tz: &str, raw: &str) -> Result<(), PrimitiveError> {
     Ok(())
 }
 
+/// `xs:time` lexical space: `HH:MM:SS(.fff)?(Z|±HH:MM)?`.
+fn time_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(r"^([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?$")
+            .unwrap()
+    })
+}
+
+fn validate_time(v: &str) -> Result<(), PrimitiveError> {
+    let caps = time_regex()
+        .captures(v)
+        .ok_or_else(|| PrimitiveError::InvalidLexical {
+            kind: "time",
+            value: v.to_string(),
+        })?;
+    let hour: u32 = caps.get(1).unwrap().as_str().parse().unwrap();
+    let minute: u32 = caps.get(2).unwrap().as_str().parse().unwrap();
+    let second: u32 = caps.get(3).unwrap().as_str().parse().unwrap();
+    let end_of_day = hour == 24 && minute == 0 && second == 0 && !v.contains('.');
+    if (!end_of_day && hour > 23) || minute > 59 || second > 60 {
+        return Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "time of day out of range",
+        });
+    }
+    if let Some(tz) = caps.get(4) {
+        validate_timezone(tz.as_str(), v)?;
+    }
+    Ok(())
+}
+
+/// `xs:gYearMonth` lexical space: `-?YYYY-MM(Z|±HH:MM)?`.
+fn gyearmonth_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^-?([0-9]{4,})-([0-9]{2})(Z|[+-][0-9]{2}:[0-9]{2})?$").unwrap())
+}
+
+fn validate_gyearmonth(v: &str) -> Result<(), PrimitiveError> {
+    let caps = gyearmonth_regex()
+        .captures(v)
+        .ok_or_else(|| PrimitiveError::InvalidLexical {
+            kind: "gYearMonth",
+            value: v.to_string(),
+        })?;
+    let month: u32 = caps.get(2).unwrap().as_str().parse().unwrap();
+    if !(1..=12).contains(&month) {
+        return Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "month must be between 01 and 12",
+        });
+    }
+    if let Some(tz) = caps.get(3) {
+        validate_timezone(tz.as_str(), v)?;
+    }
+    Ok(())
+}
+
+/// `xs:gMonth` lexical space: `--MM(Z|±HH:MM)?` (the pre-errata `--MM--`
+/// form is also accepted).
+fn gmonth_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^--([0-9]{2})(?:--)?(Z|[+-][0-9]{2}:[0-9]{2})?$").unwrap())
+}
+
+fn validate_gmonth(v: &str) -> Result<(), PrimitiveError> {
+    let caps = gmonth_regex()
+        .captures(v)
+        .ok_or_else(|| PrimitiveError::InvalidLexical {
+            kind: "gMonth",
+            value: v.to_string(),
+        })?;
+    let month: u32 = caps.get(1).unwrap().as_str().parse().unwrap();
+    if !(1..=12).contains(&month) {
+        return Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "month must be between 01 and 12",
+        });
+    }
+    if let Some(tz) = caps.get(2) {
+        validate_timezone(tz.as_str(), v)?;
+    }
+    Ok(())
+}
+
+/// `xs:gMonthDay` lexical space: `--MM-DD(Z|±HH:MM)?`.
+fn gmonthday_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^--([0-9]{2})-([0-9]{2})(Z|[+-][0-9]{2}:[0-9]{2})?$").unwrap())
+}
+
+fn validate_gmonthday(v: &str) -> Result<(), PrimitiveError> {
+    let caps = gmonthday_regex()
+        .captures(v)
+        .ok_or_else(|| PrimitiveError::InvalidLexical {
+            kind: "gMonthDay",
+            value: v.to_string(),
+        })?;
+    let month: u32 = caps.get(1).unwrap().as_str().parse().unwrap();
+    let day: u32 = caps.get(2).unwrap().as_str().parse().unwrap();
+    // Use a leap year so --02-29 is allowed.
+    validate_year_month_day(2000, month, day, v)?;
+    if let Some(tz) = caps.get(3) {
+        validate_timezone(tz.as_str(), v)?;
+    }
+    Ok(())
+}
+
+/// `xs:gDay` lexical space: `---DD(Z|±HH:MM)?`.
+fn gday_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^---([0-9]{2})(Z|[+-][0-9]{2}:[0-9]{2})?$").unwrap())
+}
+
+fn validate_gday(v: &str) -> Result<(), PrimitiveError> {
+    let caps = gday_regex()
+        .captures(v)
+        .ok_or_else(|| PrimitiveError::InvalidLexical {
+            kind: "gDay",
+            value: v.to_string(),
+        })?;
+    let day: u32 = caps.get(1).unwrap().as_str().parse().unwrap();
+    if !(1..=31).contains(&day) {
+        return Err(PrimitiveError::OutOfRange {
+            value: v.to_string(),
+            constraint: "day must be between 01 and 31",
+        });
+    }
+    if let Some(tz) = caps.get(2) {
+        validate_timezone(tz.as_str(), v)?;
+    }
+    Ok(())
+}
+
+/// `xs:duration` lexical space (XSD 1.0 §3.2.6): `-?PnYnMnDTnHnMn(.n)?S` —
+/// at least one field must be present, a `T` must be followed by at least
+/// one time field, and only seconds may carry a fraction.
+fn duration_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(
+            r"^-?P(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\.[0-9]+)?S)?)?$",
+        )
+        .unwrap()
+    })
+}
+
+fn validate_duration(v: &str) -> Result<(), PrimitiveError> {
+    let invalid = || PrimitiveError::InvalidLexical {
+        kind: "duration",
+        value: v.to_string(),
+    };
+    if !duration_regex().is_match(v) {
+        return Err(invalid());
+    }
+    // The regex admits "P" and trailing "T" with no fields; rule those out.
+    let body = v.strip_prefix('-').unwrap_or(v);
+    if body == "P" || body.ends_with('T') {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn validate_hexbinary(v: &str) -> Result<(), PrimitiveError> {
+    if v.len().is_multiple_of(2) && v.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(PrimitiveError::InvalidLexical {
+            kind: "hexBinary",
+            value: v.to_string(),
+        })
+    }
+}
+
+fn validate_base64binary(v: &str) -> Result<(), PrimitiveError> {
+    let invalid = || PrimitiveError::InvalidLexical {
+        kind: "base64Binary",
+        value: v.to_string(),
+    };
+    // XSD allows single spaces between the base64 characters.
+    let chars: Vec<u8> = v.bytes().filter(|b| *b != b' ').collect();
+    if !chars.len().is_multiple_of(4) {
+        return Err(invalid());
+    }
+    let padding = chars.iter().rev().take_while(|&&b| b == b'=').count();
+    if padding > 2 {
+        return Err(invalid());
+    }
+    let body = &chars[..chars.len() - padding];
+    if !body
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+    {
+        return Err(invalid());
+    }
+    // The character right before "=" / "==" padding is constrained.
+    if padding > 0 {
+        let last = *body.last().ok_or_else(invalid)?;
+        if padding == 2 && !b"AQgw".contains(&last) {
+            return Err(invalid());
+        }
+        if padding == 1 && !b"AEIMQUYcgkosw048".contains(&last) {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+/// Loose `xs:QName` lexical check: `NCName(:NCName)?` with an ASCII-oriented
+/// NCName approximation (non-ASCII characters are accepted as name chars).
+fn validate_qname(v: &str) -> Result<(), PrimitiveError> {
+    let invalid = || PrimitiveError::InvalidLexical {
+        kind: "QName",
+        value: v.to_string(),
+    };
+    if v.is_empty() {
+        return Err(invalid());
+    }
+    let mut parts = v.split(':');
+    let (first, second) = (parts.next(), parts.next());
+    if parts.next().is_some() {
+        return Err(invalid()); // more than one colon
+    }
+    for part in [first, second].into_iter().flatten() {
+        let mut chars = part.chars();
+        let Some(start) = chars.next() else {
+            return Err(invalid()); // empty prefix or local part
+        };
+        if start.is_ascii() && !(start.is_ascii_alphabetic() || start == '_') {
+            return Err(invalid());
+        }
+        if chars.any(|c| {
+            c.is_ascii() && !(c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        }) {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+/// XML 1.0 NameStartChar.
+fn is_name_start_char(c: char) -> bool {
+    matches!(c,
+        ':' | '_' | 'A'..='Z' | 'a'..='z'
+        | '\u{C0}'..='\u{D6}' | '\u{D8}'..='\u{F6}' | '\u{F8}'..='\u{2FF}'
+        | '\u{370}'..='\u{37D}' | '\u{37F}'..='\u{1FFF}' | '\u{200C}'..='\u{200D}'
+        | '\u{2070}'..='\u{218F}' | '\u{2C00}'..='\u{2FEF}' | '\u{3001}'..='\u{D7FF}'
+        | '\u{F900}'..='\u{FDCF}' | '\u{FDF0}'..='\u{FFFD}' | '\u{10000}'..='\u{EFFFF}')
+}
+
+/// XML 1.0 NameChar.
+fn is_name_char(c: char) -> bool {
+    is_name_start_char(c)
+        || matches!(c,
+            '-' | '.' | '0'..='9' | '\u{B7}'
+            | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}')
+}
+
+/// `xs:Name`: NameStartChar followed by NameChars.
+fn validate_name(v: &str) -> Result<(), PrimitiveError> {
+    let mut chars = v.chars();
+    let ok = match chars.next() {
+        Some(first) => is_name_start_char(first) && chars.all(is_name_char),
+        None => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(PrimitiveError::InvalidLexical {
+            kind: "Name",
+            value: v.to_string(),
+        })
+    }
+}
+
+/// `xs:NCName` (and ID / IDREF / ENTITY): a Name without colons.
+fn validate_ncname(v: &str) -> Result<(), PrimitiveError> {
+    if validate_name(v).is_ok() && !v.contains(':') {
+        Ok(())
+    } else {
+        Err(PrimitiveError::InvalidLexical {
+            kind: "NCName",
+            value: v.to_string(),
+        })
+    }
+}
+
+/// `xs:NMTOKEN`: one or more NameChars.
+fn validate_nmtoken(v: &str) -> Result<(), PrimitiveError> {
+    if !v.is_empty() && v.chars().all(is_name_char) {
+        Ok(())
+    } else {
+        Err(PrimitiveError::InvalidLexical {
+            kind: "NMTOKEN",
+            value: v.to_string(),
+        })
+    }
+}
+
+/// `xs:language` lexical space (RFC 3066 shape): `[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*`.
+fn language_regex() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^[a-zA-Z]{1,8}(?:-[a-zA-Z0-9]{1,8})*$").unwrap())
+}
+
+fn validate_language(v: &str) -> Result<(), PrimitiveError> {
+    validate_with_regex(v, language_regex(), "language")
+}
+
 // ---------------------------------------------------------------------------
 // Whitespace collapse helper
 // ---------------------------------------------------------------------------
@@ -700,15 +1040,44 @@ mod tests {
     }
 
     #[test]
-    fn resolve_returns_none_for_string_derivatives() {
+    fn resolve_string_family() {
         let s = schema();
-        // xs:NCName chain bottoms out at xs:string, which we deliberately do
-        // NOT map to a PrimitiveKind so empty xs:string content stays valid.
+        // xs:NCName now maps to its own kind for lexical validation; plain
+        // xs:string (and normalizedString/token) stay unmapped so empty
+        // string content remains valid.
         let ncname = match s.get_type("xs:NCName").unwrap() {
             TypeDef::Simple(simple) => simple.clone(),
             _ => panic!("xs:NCName should be SimpleType"),
         };
-        assert_eq!(PrimitiveKind::resolve(&s, &ncname), None);
+        assert_eq!(
+            PrimitiveKind::resolve(&s, &ncname),
+            Some(PrimitiveKind::Ncname)
+        );
+
+        let string = match s.get_type("xs:string").unwrap() {
+            TypeDef::Simple(simple) => simple.clone(),
+            _ => panic!("xs:string should be SimpleType"),
+        };
+        assert_eq!(PrimitiveKind::resolve(&s, &string), None);
+
+        let token = match s.get_type("xs:token").unwrap() {
+            TypeDef::Simple(simple) => simple.clone(),
+            _ => panic!("xs:token should be SimpleType"),
+        };
+        assert_eq!(PrimitiveKind::resolve(&s, &token), None);
+    }
+
+    #[test]
+    fn name_family_lexical() {
+        assert!(PrimitiveKind::Ncname.validate("abc-1").is_ok());
+        assert!(PrimitiveKind::Ncname.validate("a:b").is_err());
+        assert!(PrimitiveKind::Ncname.validate("1abc").is_err());
+        assert!(PrimitiveKind::Ncname.validate("").is_err());
+        assert!(PrimitiveKind::Name.validate("a:b").is_ok());
+        assert!(PrimitiveKind::Nmtoken.validate("123-abc").is_ok());
+        assert!(PrimitiveKind::Nmtoken.validate("a b").is_err());
+        assert!(PrimitiveKind::Language.validate("en-US").is_ok());
+        assert!(PrimitiveKind::Language.validate("verylonglang").is_err());
     }
 
     // ---- Boolean ----

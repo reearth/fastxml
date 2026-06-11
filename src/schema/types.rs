@@ -55,6 +55,8 @@ pub struct FlattenedChildren {
     /// Ordered element names for sequence validation.
     /// Using Arc<[String]> to make cloning cheap (pointer copy instead of deep clone).
     pub ordered_elements: Arc<[String]>,
+    /// Element wildcard (xs:any) in the content model, if present
+    pub wildcard: Option<WildcardConstraint>,
 }
 
 impl FlattenedChildren {
@@ -64,6 +66,7 @@ impl FlattenedChildren {
             constraints: HashMap::new(),
             content_model_type: ContentModelType::Empty,
             ordered_elements: Arc::from([]),
+            wildcard: None,
         }
     }
 
@@ -73,6 +76,7 @@ impl FlattenedChildren {
             constraints: HashMap::new(),
             content_model_type,
             ordered_elements: Arc::from([]),
+            wildcard: None,
         }
     }
 }
@@ -332,6 +336,10 @@ pub struct ElementDef {
     pub substitution_group: Option<String>,
     /// Whether the element is nillable
     pub nillable: bool,
+    /// Default value applied when the element is empty
+    pub default: Option<String>,
+    /// Fixed value the element content must match
+    pub fixed: Option<String>,
     /// Identity constraints (unique, key, keyref)
     pub constraints: Vec<CompiledConstraint>,
 }
@@ -348,6 +356,8 @@ impl ElementDef {
             is_abstract: false,
             substitution_group: None,
             nillable: false,
+            default: None,
+            fixed: None,
             constraints: Vec::new(),
         }
     }
@@ -398,6 +408,8 @@ pub struct SimpleType {
     pub enumeration: Vec<String>,
     /// Pattern restriction
     pub pattern: Option<String>,
+    /// Exact length restriction
+    pub length: Option<u32>,
     /// Min length restriction
     pub min_length: Option<u32>,
     /// Max length restriction
@@ -406,6 +418,31 @@ pub struct SimpleType {
     pub min_inclusive: Option<String>,
     /// Maximum value (inclusive)
     pub max_inclusive: Option<String>,
+    /// Minimum value (exclusive)
+    pub min_exclusive: Option<String>,
+    /// Maximum value (exclusive)
+    pub max_exclusive: Option<String>,
+    /// Total digits restriction
+    pub total_digits: Option<u32>,
+    /// Fraction digits restriction
+    pub fraction_digits: Option<u32>,
+    /// Item type for list types (`<xs:list itemType="..."/>`)
+    pub item_type: Option<String>,
+    /// Member types for union types (`<xs:union memberTypes="..."/>`)
+    pub member_types: Vec<String>,
+    /// Whitespace normalization declared by a whiteSpace facet
+    pub white_space: Option<WhiteSpace>,
+}
+
+/// Whitespace normalization mode declared by an `xs:whiteSpace` facet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhiteSpace {
+    /// Preserve all whitespace as-is
+    Preserve,
+    /// Replace tab/newline/carriage-return with spaces
+    Replace,
+    /// Collapse whitespace runs and trim
+    Collapse,
 }
 
 impl SimpleType {
@@ -416,10 +453,18 @@ impl SimpleType {
             base_type: None,
             enumeration: Vec::new(),
             pattern: None,
+            length: None,
             min_length: None,
             max_length: None,
             min_inclusive: None,
             max_inclusive: None,
+            min_exclusive: None,
+            max_exclusive: None,
+            total_digits: None,
+            fraction_digits: None,
+            item_type: None,
+            member_types: Vec::new(),
+            white_space: None,
         }
     }
 
@@ -438,6 +483,40 @@ impl SimpleType {
         self.base_type = Some(base.into());
         self
     }
+
+    /// Sets the whiteSpace facet.
+    pub fn with_white_space(mut self, ws: WhiteSpace) -> Self {
+        self.white_space = Some(ws);
+        self
+    }
+}
+
+/// How a type is derived from its base type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivationMethod {
+    /// Derived by extension
+    Extension,
+    /// Derived by restriction
+    Restriction,
+}
+
+/// Derivation methods blocked by a `block` attribute.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlockSet {
+    /// `block` includes `extension` (or `#all`)
+    pub extension: bool,
+    /// `block` includes `restriction` (or `#all`)
+    pub restriction: bool,
+}
+
+impl BlockSet {
+    /// Whether the given derivation method is blocked.
+    pub fn blocks(&self, method: DerivationMethod) -> bool {
+        match method {
+            DerivationMethod::Extension => self.extension,
+            DerivationMethod::Restriction => self.restriction,
+        }
+    }
 }
 
 /// A complex type definition.
@@ -447,10 +526,18 @@ pub struct ComplexType {
     pub name: String,
     /// Base type (for extension or restriction)
     pub base_type: Option<String>,
+    /// How this type derives from `base_type`
+    pub derivation: Option<DerivationMethod>,
+    /// Derivation methods blocked for xsi:type substitution
+    pub block: BlockSet,
     /// Content model
     pub content: ContentModel,
     /// Attribute definitions
     pub attributes: Vec<AttributeDef>,
+    /// Element wildcard (xs:any) anywhere in the content model
+    pub wildcard: Option<WildcardConstraint>,
+    /// Attribute wildcard (xs:anyAttribute)
+    pub attr_wildcard: Option<WildcardConstraint>,
     /// Whether this type is abstract
     pub is_abstract: bool,
     /// Whether content is mixed (text + elements)
@@ -463,8 +550,12 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            derivation: None,
+            block: BlockSet::default(),
             content: ContentModel::Empty,
             attributes: Vec::new(),
+            wildcard: None,
+            attr_wildcard: None,
             is_abstract: false,
             mixed: false,
         }
@@ -475,8 +566,12 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            derivation: None,
+            block: BlockSet::default(),
             content: ContentModel::Sequence(elements),
             attributes: Vec::new(),
+            wildcard: None,
+            attr_wildcard: None,
             is_abstract: false,
             mixed: false,
         }
@@ -515,6 +610,53 @@ pub enum ContentModel {
     },
 }
 
+/// A compiled element wildcard (`xs:any`).
+#[derive(Debug, Clone)]
+pub struct WildcardConstraint {
+    /// Namespace constraint
+    pub namespace: WildcardNamespace,
+    /// How matched content is processed
+    pub process_contents: ProcessContents,
+    /// Minimum number of matched elements
+    pub min_occurs: u32,
+    /// Maximum number of matched elements (None = unbounded)
+    pub max_occurs: Option<u32>,
+    /// The schema's target namespace (used by `##other`)
+    pub target_namespace: Option<String>,
+}
+
+impl WildcardConstraint {
+    /// Whether an element in `ns` is admitted by this wildcard.
+    pub fn matches(&self, ns: Option<&str>) -> bool {
+        match &self.namespace {
+            WildcardNamespace::Any => true,
+            WildcardNamespace::Other => {
+                // ##other: a namespace other than the target namespace;
+                // absent namespaces are not admitted.
+                match ns {
+                    Some(ns) => Some(ns) != self.target_namespace.as_deref(),
+                    None => false,
+                }
+            }
+            WildcardNamespace::List(uris) => uris
+                .iter()
+                .any(|u| (u.is_empty() && ns.is_none()) || Some(u.as_str()) == ns),
+        }
+    }
+}
+
+/// Namespace constraint of a wildcard.
+#[derive(Debug, Clone)]
+pub enum WildcardNamespace {
+    /// `##any`
+    Any,
+    /// `##other` (any namespace other than the target namespace)
+    Other,
+    /// An explicit list of namespace URIs (the empty string means
+    /// "no namespace", from `##local`)
+    List(Vec<String>),
+}
+
 /// How to process wildcard content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessContents {
@@ -533,12 +675,16 @@ pub struct AttributeDef {
     pub name: String,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Inline simple type definition
+    pub inline_type: Option<Box<SimpleType>>,
     /// Whether the attribute is required
     pub required: bool,
     /// Default value
     pub default: Option<String>,
     /// Fixed value
     pub fixed: Option<String>,
+    /// Whether this is a reference to a globally declared attribute
+    pub is_ref: bool,
 }
 
 impl AttributeDef {
@@ -547,9 +693,11 @@ impl AttributeDef {
         Self {
             name: name.into(),
             type_ref: None,
+            inline_type: None,
             required: false,
             default: None,
             fixed: None,
+            is_ref: false,
         }
     }
 

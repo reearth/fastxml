@@ -46,7 +46,7 @@ pub(crate) enum StackFrame {
     /// Parsing xs:any
     Any(XsdAny),
     /// Parsing xs:anyAttribute (ignored for now)
-    AnyAttribute,
+    AnyAttribute(XsdAny),
     /// Parsing annotation (skipped)
     Annotation,
     /// Parsing documentation (skipped)

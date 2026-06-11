@@ -109,6 +109,8 @@ impl OnePassSchemaValidator {
             ordered.push(elem.name.clone());
         }
         flattened.ordered_elements = Arc::from(ordered);
+        flattened.wildcard =
+            crate::schema::xsd::compiler::inherited_wildcard(complex, &self.schema);
 
         flattened
     }
@@ -152,28 +154,7 @@ impl OnePassSchemaValidator {
 
     /// Creates FacetConstraints from a SimpleType definition.
     pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        let mut constraints = FacetConstraints::new();
-
-        if let Some(min_len) = simple.min_length {
-            constraints = constraints.with_min_length(min_len as usize);
-        }
-        if let Some(max_len) = simple.max_length {
-            constraints = constraints.with_max_length(max_len as usize);
-        }
-        if let Some(ref min_inc) = simple.min_inclusive {
-            constraints = constraints.with_min_inclusive(min_inc.clone());
-        }
-        if let Some(ref max_inc) = simple.max_inclusive {
-            constraints = constraints.with_max_inclusive(max_inc.clone());
-        }
-        if !simple.enumeration.is_empty() {
-            constraints = constraints.with_enumeration(simple.enumeration.clone());
-        }
-        if let Some(ref pattern) = simple.pattern {
-            constraints = constraints.with_pattern(pattern.clone());
-        }
-
-        constraints
+        FacetConstraints::from_simple_type(&self.schema, simple)
     }
 
     /// Checks if an element is expected by its parent (defined in parent's content model).
@@ -195,16 +176,20 @@ impl OnePassSchemaValidator {
     pub(crate) fn get_inline_element_info(
         &self,
         name: &str,
-    ) -> (Option<String>, Option<Arc<FlattenedChildren>>) {
+    ) -> (
+        Option<String>,
+        Option<Arc<FlattenedChildren>>,
+        Option<TypeDef>,
+    ) {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
-            return (None, None);
+            return (None, None, None);
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
         let parent_ctx = match self.state.element_stack.get(parent_idx) {
             Some(p) => p,
-            None => return (None, None),
+            None => return (None, None, None),
         };
 
         // Use parent's type_ref from ElementContext directly (already resolved during parent's validation)
@@ -240,7 +225,7 @@ impl OnePassSchemaValidator {
         };
 
         let Some(TypeDef::Complex(complex)) = type_def else {
-            return (None, None);
+            return (None, None, None);
         };
 
         // Collect all elements including inherited ones
@@ -254,13 +239,14 @@ impl OnePassSchemaValidator {
             if elem.name == name {
                 // Found the inline element - get its type info
                 let type_ref = elem.type_ref.clone();
+                let inline_type = elem.inline_type.clone();
 
                 // Get flattened children for this inline element
                 let flattened_children = if let Some(ref tr) = type_ref {
                     // Try namespace-aware cache first
                     if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(tr) {
                         if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
-                            return (type_ref, Some(Arc::clone(cached)));
+                            return (type_ref, Some(Arc::clone(cached)), inline_type);
                         }
                     }
                     // Fallback: compute at runtime
@@ -279,11 +265,11 @@ impl OnePassSchemaValidator {
                     None
                 };
 
-                return (type_ref, flattened_children);
+                return (type_ref, flattened_children, inline_type);
             }
         }
 
-        (None, None)
+        (None, None, None)
     }
 
     /// Gets inline type definition for an element (either global or from parent's content model).

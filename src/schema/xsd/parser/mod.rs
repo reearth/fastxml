@@ -34,6 +34,10 @@ pub struct XsdParser {
     current_text: String,
     /// Depth counter for skipping annotation content
     skip_depth: usize,
+    /// Default-namespace URI in scope per open element (None = no default
+    /// namespace). Tracks `xmlns="..."` overrides so unprefixed XSD elements
+    /// are recognized even when the schema root uses a prefix.
+    default_ns_stack: Vec<Option<String>>,
 }
 
 impl XsdParser {
@@ -45,6 +49,7 @@ impl XsdParser {
             xsd_prefix: None, // Not yet detected
             current_text: String::new(),
             skip_depth: 0,
+            default_ns_stack: Vec::new(),
         }
     }
 
@@ -60,6 +65,14 @@ impl XsdParser {
 
     /// Checks if the element name matches an XSD element.
     fn is_xsd_element(&self, _name: &str, prefix: Option<&str>) -> bool {
+        // An unprefixed element with an explicit default namespace in scope
+        // is judged by that namespace (handles `xmlns="...XMLSchema"`
+        // overrides on individual declarations).
+        if prefix.is_none() {
+            if let Some(Some(uri)) = self.default_ns_stack.last() {
+                return uri == helpers::XSD_NAMESPACE;
+            }
+        }
         match (&self.xsd_prefix, prefix) {
             // XSD prefix detected as "xs" or "xsd", element has same prefix
             (Some(Some(xsd_prefix)), Some(p)) => p == xsd_prefix,

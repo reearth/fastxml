@@ -9,6 +9,23 @@ use super::XsdParser;
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
 
+/// Parses a `block` / `final` attribute value into a [`DerivationControl`].
+fn parse_derivation_control(value: &str) -> DerivationControl {
+    if value.trim() == "#all" {
+        return DerivationControl::All;
+    }
+    let types = value
+        .split_whitespace()
+        .filter_map(|t| match t {
+            "extension" => Some(DerivationType::Extension),
+            "restriction" => Some(DerivationType::Restriction),
+            "substitution" => Some(DerivationType::Substitution),
+            _ => None,
+        })
+        .collect();
+    DerivationControl::List(types)
+}
+
 impl XsdParser {
     /// Handles a start element event.
     pub(super) fn handle_start(
@@ -18,6 +35,15 @@ impl XsdParser {
         attrs: &[(&str, &str)],
         namespace_decls: &[crate::namespace::Namespace],
     ) -> Result<()> {
+        // Track the default namespace in scope for this element (an
+        // `xmlns="..."` declaration overrides the inherited one).
+        let default_ns = namespace_decls
+            .iter()
+            .find(|ns| ns.prefix().is_empty())
+            .map(|ns| Some(ns.uri().to_string()))
+            .unwrap_or_else(|| self.default_ns_stack.last().cloned().flatten());
+        self.default_ns_stack.push(default_ns);
+
         // Check for XSD namespace binding (only if not yet detected)
         if self.xsd_prefix.is_none() {
             // First pass: look for default namespace (empty prefix) - preferred
@@ -140,7 +166,7 @@ impl XsdParser {
                 self.handle_any(&attr_map)?;
             }
             "anyAttribute" => {
-                self.stack.push(StackFrame::AnyAttribute);
+                self.handle_any_attribute(&attr_map)?;
             }
             // Facets
             "enumeration" | "pattern" | "minLength" | "maxLength" | "length" | "minInclusive"
@@ -182,6 +208,9 @@ impl XsdParser {
                 "qualified" => FormDefault::Qualified,
                 _ => FormDefault::Unqualified,
             };
+        }
+        if let Some(bd) = attrs.get("blockDefault") {
+            self.schema.block_default = Some(parse_derivation_control(bd));
         }
         if let Some(v) = attrs.get("version") {
             self.schema.version = Some(v.clone());
@@ -243,6 +272,12 @@ impl XsdParser {
         }
         if attrs.get("mixed").is_some_and(|v| v == "true") {
             ct.mixed = true;
+        }
+        if let Some(block) = attrs.get("block") {
+            ct.block = Some(parse_derivation_control(block));
+        }
+        if let Some(final_) = attrs.get("final") {
+            ct.final_ = Some(parse_derivation_control(final_));
         }
 
         self.stack.push(StackFrame::ComplexType(ct));
@@ -372,6 +407,7 @@ impl XsdParser {
                 particle: None,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::ComplexContentRestriction(restriction));
@@ -381,6 +417,7 @@ impl XsdParser {
                 facets: Vec::new(),
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::SimpleContentRestriction(restriction));
@@ -415,6 +452,7 @@ impl XsdParser {
                 base,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::SimpleContentExtension(extension));
@@ -425,6 +463,7 @@ impl XsdParser {
                 particle: None,
                 attributes: Vec::new(),
                 attribute_groups: Vec::new(),
+                any_attribute: None,
             };
             self.stack
                 .push(StackFrame::ComplexContentExtension(extension));
@@ -577,6 +616,28 @@ impl XsdParser {
         Ok(())
     }
 
+    pub(super) fn handle_any_attribute(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let mut any = XsdAny::default();
+        if let Some(ns) = attrs.get("namespace") {
+            any.namespace = match ns.as_str() {
+                "##any" => NamespaceConstraint::Any,
+                "##other" => NamespaceConstraint::Other,
+                "##targetNamespace" => NamespaceConstraint::TargetNamespace,
+                "##local" => NamespaceConstraint::Local,
+                _ => NamespaceConstraint::List(ns.split_whitespace().map(String::from).collect()),
+            };
+        }
+        if let Some(pc) = attrs.get("processContents") {
+            any.process_contents = match pc.as_str() {
+                "lax" => ProcessContentsMode::Lax,
+                "skip" => ProcessContentsMode::Skip,
+                _ => ProcessContentsMode::Strict,
+            };
+        }
+        self.stack.push(StackFrame::AnyAttribute(any));
+        Ok(())
+    }
+
     /// Validates that existing facets in a restriction are consistent with a new facet.
     fn validate_facet_consistency(facets: &[XsdFacet], new_facet: &XsdFacet) -> Result<()> {
         use crate::schema::error::SchemaError;
@@ -701,6 +762,10 @@ impl XsdParser {
 
     /// Handles an end element event.
     pub(super) fn handle_end(&mut self, name: &str, prefix: Option<&str>) -> Result<()> {
+        // Pop this element's default-namespace scope (pushed in handle_start)
+        // and use it to judge whether this is an XSD element.
+        let ending_default_ns = self.default_ns_stack.pop().flatten();
+
         // Handle annotation skipping
         if self.skip_depth > 0 {
             self.skip_depth -= 1;
@@ -711,7 +776,11 @@ impl XsdParser {
             return Ok(());
         }
 
-        if !self.is_xsd_element(name, prefix) {
+        let is_xsd = match (&prefix, &ending_default_ns) {
+            (None, Some(uri)) => uri == XSD_NAMESPACE,
+            _ => self.is_xsd_element(name, prefix),
+        };
+        if !is_xsd {
             return Ok(());
         }
 
@@ -813,8 +882,18 @@ impl XsdParser {
             StackFrame::Any(any) => {
                 self.finish_any(any)?;
             }
-            StackFrame::AnyAttribute => {
-                // Ignored
+            StackFrame::AnyAttribute(any) => {
+                if let Some(parent) = self.stack.last_mut() {
+                    match parent {
+                        StackFrame::ComplexType(ct) => ct.any_attribute = Some(any),
+                        StackFrame::AttributeGroup(ag) => ag.any_attribute = Some(any),
+                        StackFrame::SimpleContentExtension(ext) => ext.any_attribute = Some(any),
+                        StackFrame::SimpleContentRestriction(r) => r.any_attribute = Some(any),
+                        StackFrame::ComplexContentExtension(ext) => ext.any_attribute = Some(any),
+                        StackFrame::ComplexContentRestriction(r) => r.any_attribute = Some(any),
+                        _ => {}
+                    }
+                }
             }
             StackFrame::Annotation | StackFrame::Documentation | StackFrame::AppInfo => {
                 // Skip

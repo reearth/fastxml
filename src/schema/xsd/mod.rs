@@ -51,6 +51,7 @@ pub mod parser;
 pub mod primitive;
 pub mod resolver;
 pub mod types;
+pub mod value_compare;
 
 use crate::error::Result;
 use crate::schema::fetcher::SchemaFetcher;
