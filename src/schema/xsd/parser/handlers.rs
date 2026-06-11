@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::schema::xsd::types::*;
 
-use super::XsdParser;
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
+use super::{ChildState, XsdParser};
 
 /// Parses a `block` / `final` attribute value into a [`DerivationControl`].
 fn parse_derivation_control(value: &str) -> DerivationControl {
@@ -88,6 +88,8 @@ impl XsdParser {
 
         let local = self.xsd_local_name(name);
         let attr_map = super::helpers::parse_attributes(attrs);
+
+        self.check_structural_rules(local, &attr_map)?;
 
         match local {
             "schema" => {
@@ -188,6 +190,258 @@ impl XsdParser {
             _ => {
                 // Unknown element, ignore
             }
+        }
+
+        Ok(())
+    }
+
+    /// Enforces schema-for-schemas structural rules at element start:
+    /// `id` attribute validity and document-wide uniqueness, annotation
+    /// placement (at most one, first child, except under xs:schema /
+    /// xs:redefine), and xs:notation placement (top level only).
+    fn check_structural_rules(
+        &mut self,
+        local: &str,
+        attrs: &HashMap<String, String>,
+    ) -> Result<()> {
+        use crate::schema::error::SchemaError;
+        use crate::schema::xsd::primitive::PrimitiveKind;
+
+        // id attributes are xs:ID: valid NCName, unique per document.
+        if let Some(id) = attrs.get("id") {
+            if PrimitiveKind::Ncname.validate(id).is_err() {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("id attribute '{}' is not a valid NCName", id),
+                }
+                .into());
+            }
+            if !self.seen_ids.insert(id.clone()) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("duplicate id attribute value '{}'", id),
+                }
+                .into());
+            }
+        }
+
+        // Inside a simple-type restriction, only facets / annotation /
+        // an inline simpleType are allowed as children.
+        if matches!(self.stack.last(), Some(StackFrame::SimpleRestriction(_)))
+            && !matches!(
+                local,
+                "annotation"
+                    | "simpleType"
+                    | "enumeration"
+                    | "pattern"
+                    | "length"
+                    | "minLength"
+                    | "maxLength"
+                    | "minInclusive"
+                    | "maxInclusive"
+                    | "minExclusive"
+                    | "maxExclusive"
+                    | "totalDigits"
+                    | "fractionDigits"
+                    | "whiteSpace"
+                    | "assertion" // XSD 1.1 facet; ignored but not rejected
+            )
+        {
+            return Err(SchemaError::InvalidSchema {
+                message: format!(
+                    "element '{}' is not allowed inside a simple type restriction",
+                    local
+                ),
+            }
+            .into());
+        }
+
+        // Identity constraints: only allowed inside xs:element, with
+        // schema-wide unique names.
+        if matches!(local, "unique" | "key" | "keyref") {
+            if !matches!(self.stack.last(), Some(StackFrame::Element(_))) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'{}' is only allowed inside an element declaration", local),
+                }
+                .into());
+            }
+            if let Some(name) = attrs.get("name")
+                && !self.seen_constraint_names.insert(name.clone())
+            {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("duplicate identity constraint name '{}'", name),
+                }
+                .into());
+            }
+        }
+
+        if let Some(parent) = self.child_state_stack.last_mut() {
+            let parent_allows_repeat = parent.name == "schema" || parent.name == "redefine";
+            if local == "annotation" {
+                if !parent_allows_repeat {
+                    if parent.annotations >= 1 {
+                        return Err(SchemaError::InvalidSchema {
+                            message: format!("multiple annotation elements in '{}'", parent.name),
+                        }
+                        .into());
+                    }
+                    if parent.children_seen > 0 {
+                        return Err(SchemaError::InvalidSchema {
+                            message: format!(
+                                "annotation must be the first child of '{}'",
+                                parent.name
+                            ),
+                        }
+                        .into());
+                    }
+                }
+                parent.annotations += 1;
+            } else {
+                if local == "notation" && !parent_allows_repeat {
+                    return Err(SchemaError::InvalidSchema {
+                        message: "notation is only allowed at the top level of a schema"
+                            .to_string(),
+                    }
+                    .into());
+                }
+                parent.children_seen += 1;
+            }
+        }
+
+        self.check_content_model_rules(local, attrs)?;
+
+        self.child_state_stack.push(ChildState {
+            name: local.to_string(),
+            children_seen: 0,
+            annotations: 0,
+            particles: 0,
+            derivations: 0,
+            any_attributes: 0,
+        });
+        Ok(())
+    }
+
+    /// Enforces per-element content rules from the schema for schemas:
+    /// which children an XSD element admits, how many, and which attributes
+    /// are required.
+    fn check_content_model_rules(
+        &mut self,
+        local: &str,
+        attrs: &HashMap<String, String>,
+    ) -> Result<()> {
+        use crate::schema::error::SchemaError;
+
+        let err =
+            |message: String| -> Result<()> { Err(SchemaError::InvalidSchema { message }.into()) };
+
+        // Required attributes on the element itself.
+        match local {
+            "notation" => {
+                // Per the XSD 1.0 errata, at least one of public/system.
+                if !attrs.contains_key("name")
+                    || (!attrs.contains_key("public") && !attrs.contains_key("system"))
+                {
+                    return err(
+                        "notation requires 'name' and at least one of 'public'/'system'"
+                            .to_string(),
+                    );
+                }
+            }
+            "selector" | "field" => {
+                if !attrs.contains_key("xpath") {
+                    return err(format!("{} requires an 'xpath' attribute", local));
+                }
+            }
+            "element" | "attribute" => {
+                if !attrs.contains_key("name") && !attrs.contains_key("ref") {
+                    return err(format!("{} requires a 'name' or 'ref' attribute", local));
+                }
+            }
+            _ => {}
+        }
+
+        let is_particle = matches!(local, "group" | "all" | "choice" | "sequence");
+
+        let Some(parent) = self.child_state_stack.last_mut() else {
+            return Ok(());
+        };
+
+        if local == "anyAttribute" {
+            if parent.any_attributes > 0 {
+                return err(format!(
+                    "at most one anyAttribute is allowed in '{}'",
+                    parent.name
+                ));
+            }
+            parent.any_attributes += 1;
+        }
+
+        match parent.name.as_str() {
+            // complexType admits one of: simpleContent | complexContent |
+            // one particle (plus attributes etc.).
+            "complexType" => {
+                if matches!(local, "simpleContent" | "complexContent") {
+                    // children_seen already includes this child
+                    if parent.derivations > 0 || parent.particles > 0 || parent.children_seen > 1 {
+                        return err(format!(
+                            "complexType with {} content cannot have other children",
+                            local
+                        ));
+                    }
+                    parent.derivations += 1;
+                } else if is_particle {
+                    if parent.derivations > 0 || parent.particles > 0 {
+                        return err(format!(
+                            "complexType allows only one content child, found extra '{}'",
+                            local
+                        ));
+                    }
+                    parent.particles += 1;
+                } else if local != "annotation" && parent.derivations > 0 {
+                    // simpleContent/complexContent must be the only child;
+                    // attributes belong inside the derivation.
+                    return err(format!(
+                        "complexType with simpleContent/complexContent cannot also contain '{}'",
+                        local
+                    ));
+                }
+            }
+            // simpleContent / complexContent admit exactly one
+            // restriction/extension (plus annotation).
+            "simpleContent" | "complexContent" => {
+                if matches!(local, "restriction" | "extension") {
+                    if parent.derivations > 0 {
+                        return err(format!("{} allows only one derivation child", parent.name));
+                    }
+                    parent.derivations += 1;
+                } else if local != "annotation" {
+                    return err(format!(
+                        "element '{}' is not allowed inside {}",
+                        local, parent.name
+                    ));
+                }
+            }
+            // A complex-content extension/restriction admits at most one
+            // particle.
+            "extension" | "restriction" => {
+                if is_particle {
+                    if parent.particles > 0 {
+                        return err(format!(
+                            "{} allows only one particle child, found extra '{}'",
+                            parent.name, local
+                        ));
+                    }
+                    parent.particles += 1;
+                }
+            }
+            // Elements whose only legal child is annotation.
+            "notation" | "import" | "include" | "selector" | "field" | "any" | "anyAttribute" => {
+                if local != "annotation" {
+                    return err(format!(
+                        "element '{}' is not allowed inside {}",
+                        local, parent.name
+                    ));
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -770,8 +1024,9 @@ impl XsdParser {
         if self.skip_depth > 0 {
             self.skip_depth -= 1;
             if self.skip_depth == 0 {
-                // Pop the annotation frame
+                // Pop the annotation frame (and its child bookkeeping)
                 self.stack.pop();
+                self.child_state_stack.pop();
             }
             return Ok(());
         }
@@ -783,6 +1038,8 @@ impl XsdParser {
         if !is_xsd {
             return Ok(());
         }
+
+        self.child_state_stack.pop();
 
         let local = self.xsd_local_name(name);
 

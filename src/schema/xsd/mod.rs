@@ -49,6 +49,7 @@ pub mod error;
 pub mod facets;
 pub mod parser;
 pub mod primitive;
+pub(crate) mod regex_check;
 pub mod resolver;
 pub mod types;
 pub mod value_compare;

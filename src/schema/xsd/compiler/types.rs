@@ -118,6 +118,34 @@ fn find_wildcard_in_items(items: &[XsdParticleItem]) -> Option<FoundWildcard<'_>
     None
 }
 
+/// Checks cos-element-consistent: within one content model, element
+/// declarations sharing a name must have the same type reference.
+fn check_element_consistency(content: &ContentModel) -> Result<()> {
+    let elements = match content {
+        ContentModel::Sequence(e) | ContentModel::Choice(e) | ContentModel::All(e) => e,
+        ContentModel::ComplexExtension { elements, .. } => elements,
+        _ => return Ok(()),
+    };
+    let mut seen: std::collections::HashMap<&str, &Option<String>> =
+        std::collections::HashMap::new();
+    for elem in elements {
+        if let Some(previous) = seen.get(elem.name.as_str()) {
+            if **previous != elem.type_ref && previous.is_some() && elem.type_ref.is_some() {
+                return Err(crate::schema::error::SchemaError::InvalidSchema {
+                    message: format!(
+                        "element '{}' is declared multiple times with different types",
+                        elem.name
+                    ),
+                }
+                .into());
+            }
+        } else {
+            seen.insert(elem.name.as_str(), &elem.type_ref);
+        }
+    }
+    Ok(())
+}
+
 /// Maps a parsed `block` attribute to the compiled [`BlockSet`].
 fn compile_block_set(control: Option<&DerivationControl>) -> BlockSet {
     match control {
@@ -164,6 +192,12 @@ impl XsdCompiler {
                             compiled.enumeration.push(v.clone());
                         }
                         XsdFacet::Pattern(p) => {
+                            if let Err(e) = crate::schema::xsd::regex_check::check_xsd_regex(p) {
+                                return Err(crate::schema::error::SchemaError::InvalidSchema {
+                                    message: format!("invalid pattern '{}': {}", p, e),
+                                }
+                                .into());
+                            }
                             patterns.push(p.clone());
                         }
                         XsdFacet::Length(n) => {
@@ -321,7 +355,29 @@ impl XsdCompiler {
             },
             XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
                 XsdComplexContentDerivation::Extension(ext) => {
-                    compiled.base_type = Some(self.resolve_qname(&ext.base));
+                    let base = self.resolve_qname(&ext.base);
+                    // cos-all-limited: an xs:all group must constitute the
+                    // whole content type; extending a base that already has
+                    // element content with an xs:all is invalid.
+                    if let Some(XsdParticle::All(all)) = &ext.particle
+                        && !all.elements.is_empty()
+                        && matches!(
+                            self.type_cache.get(&base),
+                            Some(TypeDef::Complex(b)) if !matches!(
+                                b.content,
+                                ContentModel::Empty | ContentModel::SimpleContent { .. }
+                            )
+                        )
+                    {
+                        return Err(crate::schema::error::SchemaError::InvalidSchema {
+                            message: format!(
+                                "cannot extend '{}' (which has element content) with an xs:all group",
+                                base
+                            ),
+                        }
+                        .into());
+                    }
+                    compiled.base_type = Some(base);
                     compiled.derivation = Some(DerivationMethod::Extension);
                 }
                 XsdComplexContentDerivation::Restriction(r) => {
@@ -334,6 +390,10 @@ impl XsdCompiler {
 
         // Compile content model
         compiled.content = self.compile_complex_content(&ct.content)?;
+
+        // cos-element-consistent: element declarations with the same name in
+        // one content model must have the same type.
+        check_element_consistency(&compiled.content)?;
 
         // Record any element wildcard found in the content model
         compiled.wildcard = find_wildcard_in_content(&ct.content).map(|w| {

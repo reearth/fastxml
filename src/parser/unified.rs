@@ -96,7 +96,10 @@ impl<'a> Parser<'a> {
     /// streaming without buffering, use [`for_each_event`](Self::for_each_event).
     pub fn events(self) -> Result<Vec<XmlEvent>> {
         match self.source {
-            Source::Bytes(bytes) => collect_events(bytes),
+            Source::Bytes(bytes) => {
+                let utf8 = super::encoding::to_utf8(bytes);
+                collect_events(utf8.as_ref())
+            }
             Source::Reader(reader) => collect_events(reader),
         }
     }
@@ -122,7 +125,8 @@ impl<'a> Parser<'a> {
     {
         match self.source {
             Source::Bytes(bytes) => {
-                let mut parser = StreamingParser::new(bytes);
+                let utf8 = super::encoding::to_utf8(bytes);
+                let mut parser = StreamingParser::new(utf8.as_ref());
                 parser.for_each_event(on_event)
             }
             Source::Reader(reader) => {

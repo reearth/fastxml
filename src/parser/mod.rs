@@ -5,6 +5,9 @@ mod unified;
 
 pub use unified::Parser;
 
+pub(crate) mod encoding;
+pub(crate) mod entities;
+
 use std::collections::HashMap;
 use std::io::BufRead;
 
@@ -122,6 +125,7 @@ pub(crate) fn parse_with_options<T: AsRef<[u8]>>(
     xml: T,
     options: &ParserOptions,
 ) -> Result<XmlDocument> {
+    let xml = encoding::to_utf8(xml.as_ref());
     let tracking_reader = PositionTrackingReader::new(xml.as_ref());
     let mut reader = Reader::from_reader(tracking_reader);
     configure_reader(&mut reader, options);
@@ -154,6 +158,7 @@ fn parse_from_reader<R: BufRead>(
     let mut buf = Vec::with_capacity(options.buffer_size);
     let mut memory_used = 0usize;
     let mut ns_stack = NamespaceStack::new();
+    let mut entity_map: HashMap<String, String> = HashMap::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -161,13 +166,29 @@ fn parse_from_reader<R: BufRead>(
                 check_memory(options, &mut memory_used, e.len())?;
                 let line = reader.get_ref().line();
                 let column = reader.get_ref().column();
-                process_start_element(&mut builder, e, reader, &mut ns_stack, line, column)?;
+                process_start_element(
+                    &mut builder,
+                    e,
+                    reader,
+                    &mut ns_stack,
+                    line,
+                    column,
+                    &entity_map,
+                )?;
             }
             Ok(Event::Empty(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
                 let line = reader.get_ref().line();
                 let column = reader.get_ref().column();
-                process_start_element(&mut builder, e, reader, &mut ns_stack, line, column)?;
+                process_start_element(
+                    &mut builder,
+                    e,
+                    reader,
+                    &mut ns_stack,
+                    line,
+                    column,
+                    &entity_map,
+                )?;
                 ns_stack.pop_scope();
                 builder.end_element();
             }
@@ -176,11 +197,16 @@ fn parse_from_reader<R: BufRead>(
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
-                let text = e.unescape().map_err(|e| {
-                    crate::parser::error::ParseError::TextDecodeError {
+                let text = e
+                    .unescape_with(|name| {
+                        entity_map
+                            .get(name)
+                            .map(String::as_str)
+                            .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
+                    })
+                    .map_err(|e| crate::parser::error::ParseError::TextDecodeError {
                         message: e.to_string(),
-                    }
-                })?;
+                    })?;
                 if !text.is_empty() {
                     check_memory(options, &mut memory_used, text.len())?;
                     builder.text(&text);
@@ -206,8 +232,12 @@ fn parse_from_reader<R: BufRead>(
             Ok(Event::Decl(ref _e)) => {
                 // XML declaration - we could extract version/encoding if needed
             }
-            Ok(Event::DocType(_)) => {
-                // DOCTYPE - skip for now
+            Ok(Event::DocType(ref e)) => {
+                // Collect internal-subset general entity declarations so
+                // entity references in content/attributes resolve.
+                if let Ok(text) = std::str::from_utf8(e.as_ref()) {
+                    entity_map = entities::parse_internal_entities(text);
+                }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -236,6 +266,7 @@ fn check_memory(options: &ParserOptions, used: &mut usize, additional: usize) ->
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_start_element<R: BufRead>(
     builder: &mut DocumentBuilder,
     e: &BytesStart<'_>,
@@ -243,6 +274,7 @@ fn process_start_element<R: BufRead>(
     ns_stack: &mut NamespaceStack,
     line: usize,
     column: usize,
+    entity_map: &HashMap<String, String>,
 ) -> Result<()> {
     // Push a new scope for this element
     ns_stack.push_scope();
@@ -257,11 +289,16 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        let value = attr.unescape_value().map_err(|e| {
-            crate::parser::error::ParseError::AttributeDecodeError {
+        let value = attr
+            .unescape_value_with(|name| {
+                entity_map
+                    .get(name)
+                    .map(String::as_str)
+                    .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
+            })
+            .map_err(|e| crate::parser::error::ParseError::AttributeDecodeError {
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         if key == "xmlns" {
             // Default namespace declaration

@@ -13,6 +13,7 @@ documentation = "https://docs.rs/fastxml"
 [dependencies]
 # XML parsing
 quick-xml = { version = "0.37", features = ["serialize"] }
+encoding_rs = "0.8"
 
 # Error handling
 thiserror = "2"

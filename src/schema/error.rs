@@ -64,6 +64,11 @@ pub enum SchemaError {
         /// The URI that caused the circular dependency
         uri: String,
     },
+    /// The schema document violates a schema-for-schemas constraint
+    InvalidSchema {
+        /// What is wrong
+        message: String,
+    },
 }
 
 impl std::fmt::Display for SchemaError {
@@ -122,6 +127,9 @@ impl std::fmt::Display for SchemaError {
                     "failed to resolve '{}' against '{}': {}",
                     relative, base, message
                 )
+            }
+            SchemaError::InvalidSchema { message } => {
+                write!(f, "invalid schema: {}", message)
             }
             SchemaError::CircularDependency { uri } => {
                 write!(f, "circular dependency in schema imports: {}", uri)

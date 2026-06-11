@@ -42,12 +42,18 @@ impl Occurs {
                     s
                 ));
             }
-            s.parse::<u32>().map(Occurs::Count).map_err(|_| {
-                format!(
+            match s.parse::<u32>() {
+                Ok(n) => Ok(Occurs::Count(n)),
+                // XSD places no upper limit on occurs values; clamp counts
+                // beyond u32 instead of rejecting the (valid) schema.
+                Err(_) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) => {
+                    Ok(Occurs::Count(u32::MAX))
+                }
+                Err(_) => Err(format!(
                     "invalid occurs value '{}': must be a non-negative integer or 'unbounded'",
                     s
-                )
-            })
+                )),
+            }
         }
     }
 }
