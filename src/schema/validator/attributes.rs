@@ -3,7 +3,7 @@
 use crate::schema::types::{
     AttributeDef, CompiledSchema, ComplexType, ContentModel, SimpleType, TypeDef,
 };
-use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
+use crate::schema::xsd::facets::{FacetCache, FacetConstraints, FacetValidator};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
 /// Collects the attribute declarations of a complex type, walking the
@@ -100,6 +100,7 @@ pub(crate) fn validate_attribute_value(
     schema: &CompiledSchema,
     attr: &AttributeDef,
     value: &str,
+    cache: &mut FacetCache,
 ) -> Option<String> {
     let attr = resolve_ref(schema, attr);
 
@@ -114,7 +115,7 @@ pub(crate) fn validate_attribute_value(
 
     let simple = attribute_simple_type(schema, attr)?;
 
-    let constraints = FacetConstraints::from_simple_type(schema, simple);
+    let constraints = cache.get(schema, simple);
     let validator = FacetValidator::new(&constraints);
     if let Err(e) = validator.validate(value) {
         return Some(format!("attribute '{}': {}", attr.name, e));
@@ -162,6 +163,7 @@ pub(crate) fn validate_element_attributes<'a>(
     schema: &CompiledSchema,
     complex: &ComplexType,
     attributes: impl Iterator<Item = (&'a str, Option<&'a str>, &'a str)> + Clone,
+    cache: &mut FacetCache,
 ) -> AttrValidation {
     let defs = collect_attributes(schema, complex);
     let wildcard = collect_attr_wildcard(schema, complex);
@@ -178,10 +180,10 @@ pub(crate) fn validate_element_attributes<'a>(
         }
         let local = name.rsplit(':').next().unwrap_or(name);
         if let Some(def) = defs.iter().find(|d| d.name == local || d.name == name) {
-            if let Some(msg) = validate_attribute_value(schema, def, value) {
+            if let Some(msg) = validate_attribute_value(schema, def, value, cache) {
                 out.errors.push(msg);
             }
-            collect_id_values(schema, resolve_ref(schema, def), value, &mut out);
+            collect_id_values(schema, resolve_ref(schema, def), value, &mut out, cache);
             continue;
         }
 
@@ -197,10 +199,10 @@ pub(crate) fn validate_element_attributes<'a>(
                         .or_else(|| schema.attributes.get(local));
                     match global {
                         Some(def) => {
-                            if let Some(msg) = validate_attribute_value(schema, def, value) {
+                            if let Some(msg) = validate_attribute_value(schema, def, value, cache) {
                                 out.errors.push(msg);
                             }
-                            collect_id_values(schema, def, value, &mut out);
+                            collect_id_values(schema, def, value, &mut out, cache);
                         }
                         None if w.process_contents
                             == crate::schema::types::ProcessContents::Strict =>
@@ -241,6 +243,7 @@ fn collect_id_values(
     attr: &AttributeDef,
     value: &str,
     out: &mut AttrValidation,
+    cache: &mut FacetCache,
 ) {
     let Some(simple) = attribute_simple_type(schema, attr) else {
         // No resolvable type, but xml:id-style direct refs are rare; also
@@ -252,7 +255,7 @@ fn collect_id_values(
         push_id_values(kind, None, false, value, out);
         return;
     };
-    let constraints = FacetConstraints::from_simple_type(schema, simple);
+    let constraints = cache.get(schema, simple);
     push_id_values_from_constraints(&constraints, value, out);
 }
 

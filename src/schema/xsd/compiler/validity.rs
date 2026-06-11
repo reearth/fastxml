@@ -140,7 +140,13 @@ fn check_complex_restriction(
                     let mut current = d.name.as_str();
                     let mut found = false;
                     for _ in 0..16 {
-                        match schema.substitution_group_heads.get(current) {
+                        // Heads may be registered under qualified or local
+                        // names; try both at every hop.
+                        let head = schema.substitution_group_heads.get(current).or_else(|| {
+                            let local = current.rsplit(':').next().unwrap_or(current);
+                            schema.substitution_group_heads.get(local)
+                        });
+                        match head {
                             Some(head) => {
                                 let head_local = head.rsplit(':').next().unwrap_or(head);
                                 if base_elems.iter().any(|b| {
@@ -156,7 +162,11 @@ fn check_complex_restriction(
                     }
                     found
                 };
-                if base.wildcard.is_none() && !substitutes_into_base {
+                // An element reference we cannot resolve at all most
+                // likely lives in an unresolved import; don't reject the
+                // schema based on incomplete knowledge.
+                let unknown_ref = schema.get_element(&d.name).is_none();
+                if base.wildcard.is_none() && !substitutes_into_base && !unknown_ref {
                     return Err(invalid(format!(
                         "type '{}': restriction adds element '{}' not present in base '{}'",
                         name, d.name, base_name

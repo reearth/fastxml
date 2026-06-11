@@ -223,9 +223,12 @@ impl DomSchemaValidator {
         }
     }
 
-    /// Creates FacetConstraints from a SimpleType definition.
-    pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        FacetConstraints::from_simple_type(&self.schema, simple)
+    /// Returns (memoized) FacetConstraints for a SimpleType definition.
+    pub(crate) fn create_facet_constraints(
+        &self,
+        simple: &SimpleType,
+    ) -> std::sync::Arc<FacetConstraints> {
+        self.facet_cache.borrow_mut().get(&self.schema, simple)
     }
 
     /// Creates a structured error with context.

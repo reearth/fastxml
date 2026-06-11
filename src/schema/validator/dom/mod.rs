@@ -123,6 +123,8 @@ pub struct DomSchemaValidator {
     pub(crate) mode: ValidationMode,
     pub(crate) options: ValidationOptions,
     pub(crate) max_errors: usize,
+    /// Memoized facet constraints per named simple type
+    pub(crate) facet_cache: std::cell::RefCell<crate::schema::xsd::facets::FacetCache>,
 }
 
 impl DomSchemaValidator {
@@ -133,6 +135,7 @@ impl DomSchemaValidator {
             mode: ValidationMode::Strict,
             options: ValidationOptions::default(),
             max_errors: 0,
+            facet_cache: Default::default(),
         }
     }
 
@@ -528,6 +531,7 @@ impl DomSchemaValidator {
             &self.schema,
             complex,
             filtered.iter().copied(),
+            &mut self.facet_cache.borrow_mut(),
         );
         let mut messages = result.errors;
         messages.extend(ids.record(result.ids, result.idrefs, node.line(), node.column()));

@@ -407,6 +407,36 @@ impl FacetConstraints {
     }
 }
 
+/// A memoizing cache for compiled facet constraints, keyed by type name.
+///
+/// Building [`FacetConstraints`] walks the base-type chain and compiles
+/// regex patterns, which is far too expensive to repeat per text node or
+/// attribute. Named types (the common case in real schemas) are built once;
+/// anonymous types fall back to a fresh build.
+#[derive(Debug, Default)]
+pub(crate) struct FacetCache {
+    by_name: std::collections::HashMap<String, Arc<FacetConstraints>>,
+}
+
+impl FacetCache {
+    /// Returns the constraints for `simple`, memoized by type name.
+    pub(crate) fn get(
+        &mut self,
+        schema: &CompiledSchema,
+        simple: &SimpleType,
+    ) -> Arc<FacetConstraints> {
+        if simple.name.is_empty() {
+            return Arc::new(FacetConstraints::from_simple_type(schema, simple));
+        }
+        if let Some(cached) = self.by_name.get(&simple.name) {
+            return Arc::clone(cached);
+        }
+        let built = Arc::new(FacetConstraints::from_simple_type(schema, simple));
+        self.by_name.insert(simple.name.clone(), Arc::clone(&built));
+        built
+    }
+}
+
 /// Facet validator for simple type values.
 pub struct FacetValidator<'a> {
     constraints: &'a FacetConstraints,

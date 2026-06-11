@@ -64,6 +64,11 @@ pub struct OnePassSchemaValidator {
     pub(crate) pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
     /// In-scope identity constraints being tracked
     pub(crate) identity_scopes: Vec<identity::ScopeState>,
+    /// Memoized facet constraints per named simple type
+    pub(crate) facet_cache: crate::schema::xsd::facets::FacetCache,
+    /// Memoized inherited-element lists per complex type name
+    pub(crate) elements_cache:
+        std::collections::HashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
 }
 
 impl OnePassSchemaValidator {
@@ -82,6 +87,8 @@ impl OnePassSchemaValidator {
             seen_ids: std::collections::HashSet::new(),
             pending_idrefs: Vec::new(),
             identity_scopes: Vec::new(),
+            facet_cache: Default::default(),
+            elements_cache: Default::default(),
         }
     }
 
