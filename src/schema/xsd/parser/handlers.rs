@@ -306,11 +306,144 @@ impl XsdParser {
             }
         }
 
+        self.check_content_model_rules(local, attrs)?;
+
         self.child_state_stack.push(ChildState {
             name: local.to_string(),
             children_seen: 0,
             annotations: 0,
+            particles: 0,
+            derivations: 0,
+            any_attributes: 0,
         });
+        Ok(())
+    }
+
+    /// Enforces per-element content rules from the schema for schemas:
+    /// which children an XSD element admits, how many, and which attributes
+    /// are required.
+    fn check_content_model_rules(
+        &mut self,
+        local: &str,
+        attrs: &HashMap<String, String>,
+    ) -> Result<()> {
+        use crate::schema::error::SchemaError;
+
+        let err =
+            |message: String| -> Result<()> { Err(SchemaError::InvalidSchema { message }.into()) };
+
+        // Required attributes on the element itself.
+        match local {
+            "notation" => {
+                // Per the XSD 1.0 errata, at least one of public/system.
+                if !attrs.contains_key("name")
+                    || (!attrs.contains_key("public") && !attrs.contains_key("system"))
+                {
+                    return err(
+                        "notation requires 'name' and at least one of 'public'/'system'"
+                            .to_string(),
+                    );
+                }
+            }
+            "selector" | "field" => {
+                if !attrs.contains_key("xpath") {
+                    return err(format!("{} requires an 'xpath' attribute", local));
+                }
+            }
+            "element" | "attribute" => {
+                if !attrs.contains_key("name") && !attrs.contains_key("ref") {
+                    return err(format!("{} requires a 'name' or 'ref' attribute", local));
+                }
+            }
+            _ => {}
+        }
+
+        let is_particle = matches!(local, "group" | "all" | "choice" | "sequence");
+
+        let Some(parent) = self.child_state_stack.last_mut() else {
+            return Ok(());
+        };
+
+        if local == "anyAttribute" {
+            if parent.any_attributes > 0 {
+                return err(format!(
+                    "at most one anyAttribute is allowed in '{}'",
+                    parent.name
+                ));
+            }
+            parent.any_attributes += 1;
+        }
+
+        match parent.name.as_str() {
+            // complexType admits one of: simpleContent | complexContent |
+            // one particle (plus attributes etc.).
+            "complexType" => {
+                if matches!(local, "simpleContent" | "complexContent") {
+                    // children_seen already includes this child
+                    if parent.derivations > 0 || parent.particles > 0 || parent.children_seen > 1 {
+                        return err(format!(
+                            "complexType with {} content cannot have other children",
+                            local
+                        ));
+                    }
+                    parent.derivations += 1;
+                } else if is_particle {
+                    if parent.derivations > 0 || parent.particles > 0 {
+                        return err(format!(
+                            "complexType allows only one content child, found extra '{}'",
+                            local
+                        ));
+                    }
+                    parent.particles += 1;
+                } else if local != "annotation" && parent.derivations > 0 {
+                    // simpleContent/complexContent must be the only child;
+                    // attributes belong inside the derivation.
+                    return err(format!(
+                        "complexType with simpleContent/complexContent cannot also contain '{}'",
+                        local
+                    ));
+                }
+            }
+            // simpleContent / complexContent admit exactly one
+            // restriction/extension (plus annotation).
+            "simpleContent" | "complexContent" => {
+                if matches!(local, "restriction" | "extension") {
+                    if parent.derivations > 0 {
+                        return err(format!("{} allows only one derivation child", parent.name));
+                    }
+                    parent.derivations += 1;
+                } else if local != "annotation" {
+                    return err(format!(
+                        "element '{}' is not allowed inside {}",
+                        local, parent.name
+                    ));
+                }
+            }
+            // A complex-content extension/restriction admits at most one
+            // particle.
+            "extension" | "restriction" => {
+                if is_particle {
+                    if parent.particles > 0 {
+                        return err(format!(
+                            "{} allows only one particle child, found extra '{}'",
+                            parent.name, local
+                        ));
+                    }
+                    parent.particles += 1;
+                }
+            }
+            // Elements whose only legal child is annotation.
+            "notation" | "import" | "include" | "selector" | "field" | "any" | "anyAttribute" => {
+                if local != "annotation" {
+                    return err(format!(
+                        "element '{}' is not allowed inside {}",
+                        local, parent.name
+                    ));
+                }
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 

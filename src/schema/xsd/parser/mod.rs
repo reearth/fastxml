@@ -57,6 +57,13 @@ pub(super) struct ChildState {
     pub(super) children_seen: u32,
     /// Number of annotation children seen so far
     pub(super) annotations: u32,
+    /// Number of particle children (group/all/choice/sequence)
+    pub(super) particles: u32,
+    /// Number of content-derivation children (simpleContent/complexContent
+    /// in a complexType, restriction/extension in a content element)
+    pub(super) derivations: u32,
+    /// Number of anyAttribute children (at most one per scope)
+    pub(super) any_attributes: u32,
 }
 
 impl XsdParser {
