@@ -180,7 +180,7 @@ impl DomSchemaValidator {
             );
             let mut index = self.aggregate_index.borrow_mut();
             if let Some(&idx) = index.get(&key) {
-                errors[idx].count += 1;
+                errors[idx].record_occurrence(error.location.line, error.location.column);
                 return;
             }
             if self.should_add_error(errors) {

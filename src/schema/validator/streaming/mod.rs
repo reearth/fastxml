@@ -191,7 +191,7 @@ impl OnePassSchemaValidator {
                 error.node_name.clone(),
             );
             if let Some(&idx) = self.aggregate_index.get(&key) {
-                self.errors[idx].count += 1;
+                self.errors[idx].record_occurrence(error.location.line, error.location.column);
                 return;
             }
             if self.should_collect_more() {

@@ -485,8 +485,10 @@ let report = Validator::from_reader(reader)
 
 On error-dense documents, `.aggregate_errors()` collapses identical errors
 into one entry whose `count` records the occurrences (memory stays bounded:
-a million identical violations become one entry). Each entry keeps its
-first occurrence's location, and `Display` appends `(×N)`:
+a million identical violations become one entry). Every occurrence's
+position is preserved — the first in `location`, the rest as compact
+`(line, column)` pairs in `more_positions` — and `Display` appends the
+count and line range:
 
 ```rust
 let report = Validator::from_reader(reader)
@@ -495,7 +497,7 @@ let report = Validator::from_reader(reader)
     .run()?;
 
 for error in report.errors() {
-    println!("{error}"); // e.g. "[error] /root/item: ... (×4831)"
+    println!("{error}"); // e.g. "[error] /root/item: ... (×4831, lines 2522-1111318)"
 }
 ```
 

@@ -82,6 +82,29 @@ fn without_aggregation_all_errors_are_kept() {
 }
 
 #[test]
+fn aggregated_errors_keep_all_positions() {
+    let report = Validator::from(XML)
+        .schema(schema())
+        .aggregate_errors()
+        .run()
+        .unwrap();
+    let repeated = report
+        .errors()
+        .into_iter()
+        .find(|e| e.count == 5)
+        .expect("aggregated entry");
+
+    // First occurrence's position is in `location`; the other four are
+    // recorded as (line, column) pairs.
+    assert_eq!(repeated.location.line, Some(2));
+    let more = repeated.more_positions.as_deref().expect("positions");
+    assert_eq!(more.len(), 4);
+    let lines: Vec<u32> = more.iter().map(|&(l, _)| l).collect();
+    assert_eq!(lines, vec![3, 4, 5, 6]);
+    assert_eq!(repeated.line_range(), Some((2, 6)));
+}
+
+#[test]
 fn aggregated_error_display_shows_count() {
     let report = Validator::from(XML)
         .schema(schema())
@@ -93,5 +116,9 @@ fn aggregated_error_display_shows_count() {
         .into_iter()
         .find(|e| e.count == 5)
         .expect("aggregated entry");
-    assert!(repeated.to_string().contains("×5"), "display: {}", repeated);
+    assert!(
+        repeated.to_string().contains("×5, lines 2-6"),
+        "display: {}",
+        repeated
+    );
 }
