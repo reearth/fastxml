@@ -299,6 +299,20 @@ impl XsdCompiler {
         Ok(compiled)
     }
 
+    /// Compiles one element particle for the automaton tree. Unlike
+    /// [`Self::compile_element`], a reference keeps its qualified name
+    /// (`gml:boundedBy`, not `boundedBy`) so same-local-name particles from
+    /// different namespaces don't look identical to the UPA check.
+    fn compile_element_for_tree(&mut self, elem: &XsdElement) -> Result<ElementDef> {
+        let mut def = self.compile_element(elem)?;
+        if let Some(ref_qname) = &elem.ref_
+            && let Some(prefix) = &ref_qname.prefix
+        {
+            def.name = format!("{}:{}", prefix, ref_qname.local);
+        }
+        Ok(def)
+    }
+
     /// Compiles a particle into the nested [`Particle`] tree used by the
     /// content-model automaton. Unlike [`Self::compile_particle`], the
     /// compositor structure and group occurrence bounds are preserved.
@@ -324,7 +338,7 @@ impl XsdCompiler {
             XsdParticle::All(all) => {
                 let mut elements = Vec::new();
                 for elem in &all.elements {
-                    elements.push(self.compile_element(elem)?);
+                    elements.push(self.compile_element_for_tree(elem)?);
                 }
                 return Ok(Some(Particle::All {
                     min: all.min_occurs.to_option().unwrap_or(1),
@@ -346,7 +360,7 @@ impl XsdCompiler {
         for item in items {
             let child = match item {
                 XsdParticleItem::Element(elem) => {
-                    Some(Particle::Element(self.compile_element(elem)?))
+                    Some(Particle::Element(self.compile_element_for_tree(elem)?))
                 }
                 XsdParticleItem::Sequence(nested) => {
                     self.compile_particle_tree(&XsdParticle::Sequence(nested.clone()))?

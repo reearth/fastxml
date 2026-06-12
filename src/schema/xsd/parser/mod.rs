@@ -10,13 +10,13 @@ mod stack_frame;
 use std::collections::HashMap;
 
 use crate::error::Result;
-use crate::event::{XmlEvent, XmlEventHandler};
+use crate::event::{RawEvent, XmlEventHandler};
 use crate::position::PositionTrackingReader;
 
 use super::types::*;
 
 pub use helpers::XSD_NAMESPACE;
-use helpers::convert_start_event;
+use helpers::split_start_event;
 use stack_frame::StackFrame;
 
 /// XSD Parser that implements XmlEventHandler.
@@ -144,25 +144,23 @@ impl Default for XsdParser {
 }
 
 impl XmlEventHandler for XsdParser {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
+    fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
         match event {
-            XmlEvent::StartElement {
+            RawEvent::StartElement {
                 name,
                 prefix,
                 attributes,
                 namespace_decls,
                 ..
             } => {
-                let attrs: Vec<(&str, &str)> = attributes
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
-                self.handle_start(name, prefix.as_deref(), &attrs, namespace_decls)?;
+                let attrs: Vec<(&str, &str)> =
+                    attributes.iter().map(|(k, v)| (*k, v.as_ref())).collect();
+                self.handle_start(name, *prefix, &attrs, namespace_decls)?;
             }
-            XmlEvent::EndElement { name, prefix } => {
-                self.handle_end(name, prefix.as_deref())?;
+            RawEvent::EndElement { name, prefix } => {
+                self.handle_end(name, *prefix)?;
             }
-            XmlEvent::Text(text) => {
+            RawEvent::Text(text) => {
                 self.current_text.push_str(text);
             }
             _ => {}
@@ -208,28 +206,25 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
         match event_result {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 let is_empty = matches!(event_result, Ok(Event::Empty(_)));
-                let xml_event = convert_start_event(e, line, column)?;
-                xsd_parser.handle(&xml_event)?;
+                let (name, prefix, attributes, namespace_decls) = split_start_event(e)?;
+                xsd_parser.handle(&RawEvent::StartElement {
+                    name,
+                    prefix,
+                    attributes: &attributes,
+                    namespace_decls: &namespace_decls,
+                    line: Some(line),
+                    column: Some(column),
+                })?;
 
                 if is_empty {
-                    if let XmlEvent::StartElement { name, prefix, .. } = &xml_event {
-                        let end_event = XmlEvent::EndElement {
-                            name: name.clone(),
-                            prefix: prefix.clone(),
-                        };
-                        xsd_parser.handle(&end_event)?;
-                    }
+                    xsd_parser.handle(&RawEvent::EndElement { name, prefix })?;
                 }
             }
             Ok(Event::End(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let full_name = std::str::from_utf8(&name_bytes)?;
+                let qname = e.name();
+                let full_name = std::str::from_utf8(qname.as_ref())?;
                 let (prefix, name) = crate::namespace::split_qname(full_name);
-                let event = XmlEvent::EndElement {
-                    name: name.into(),
-                    prefix: prefix.map(|p| p.into()),
-                };
-                xsd_parser.handle(&event)?;
+                xsd_parser.handle(&RawEvent::EndElement { name, prefix })?;
             }
             Ok(Event::Text(ref e)) => {
                 let text = e.unescape().map_err(|e| {
@@ -238,12 +233,11 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
                     }
                 })?;
                 if !text.is_empty() {
-                    let event = XmlEvent::Text(text.into_owned());
-                    xsd_parser.handle(&event)?;
+                    xsd_parser.handle(&RawEvent::Text(&text))?;
                 }
             }
             Ok(Event::Eof) => {
-                xsd_parser.handle(&XmlEvent::Eof)?;
+                xsd_parser.handle(&RawEvent::Eof)?;
                 break;
             }
             Ok(_) => {}

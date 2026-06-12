@@ -2,10 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use compact_str::CompactString;
-
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
-use crate::event::{XmlEvent, XmlEventHandler};
+use crate::event::{RawEvent, XmlEventHandler};
 use crate::schema::fetcher::SchemaFetcher;
 
 use super::streaming::OnePassSchemaValidator;
@@ -28,7 +26,7 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
         }
     }
 
-    fn initialize_from_attributes(&mut self, attributes: &[(CompactString, CompactString)]) {
+    fn initialize_from_attributes(&mut self, attributes: &[(&str, std::borrow::Cow<'_, str>)]) {
         if self.initialized {
             return;
         }
@@ -37,8 +35,8 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
         // Look for xsi:schemaLocation
         let schema_location = attributes
             .iter()
-            .find(|(k, _)| k == "xsi:schemaLocation" || k == "schemaLocation")
-            .map(|(_, v)| v.as_str());
+            .find(|(k, _)| *k == "xsi:schemaLocation" || *k == "schemaLocation")
+            .map(|(_, v)| v.as_ref());
 
         let schema = if let Some(loc_value) = schema_location {
             // Parse schemaLocation value (namespace/URL pairs)
@@ -114,9 +112,9 @@ impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
 }
 
 impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidatorWithSharedErrors<F> {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
+    fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
         // Initialize on first StartElement
-        if let XmlEvent::StartElement { attributes, .. } = event {
+        if let RawEvent::StartElement { attributes, .. } = event {
             if !self.initialized {
                 self.initialize_from_attributes(attributes);
             }
@@ -155,12 +153,11 @@ mod tests {
             LazySchemaValidatorWithSharedErrors::new(fetcher, Arc::clone(&shared_errors));
 
         // Handle element without schemaLocation
-        let _ = validator.handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        let _ = validator.handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         });

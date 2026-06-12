@@ -20,12 +20,12 @@ use crate::position::PositionTrackingReader;
 /// Caches frequently used strings (element names, prefixes) to avoid
 /// repeated allocations for the same string values.
 #[derive(Debug, Default)]
-struct StringInterner {
+pub(crate) struct StringInterner {
     cache: rustc_hash::FxHashMap<Box<str>, Arc<str>>,
 }
 
 impl StringInterner {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             cache: rustc_hash::FxHashMap::default(),
         }
@@ -35,7 +35,7 @@ impl StringInterner {
     ///
     /// If the string is already interned, returns the existing Arc.
     /// Otherwise, creates a new Arc and caches it.
-    fn intern(&mut self, s: &str) -> Arc<str> {
+    pub(crate) fn intern(&mut self, s: &str) -> Arc<str> {
         if let Some(interned) = self.cache.get(s) {
             Arc::clone(interned)
         } else {
@@ -105,6 +105,114 @@ pub enum XmlEvent {
     Eof,
 }
 
+/// A borrowed XML event, valid only for the duration of the handler call.
+///
+/// This is what the streaming engine produces internally: names, text, and
+/// attribute values borrow straight from the parser buffer (or its
+/// unescaped copy), so dispatching an event allocates nothing for the
+/// common cases. Handlers that need owned events materialize an
+/// [`XmlEvent`] via [`RawEvent::to_xml_event`].
+#[derive(Debug)]
+pub(crate) enum RawEvent<'a> {
+    /// Start of an element
+    StartElement {
+        /// Local name of the element
+        name: &'a str,
+        /// Namespace prefix (if any)
+        prefix: Option<&'a str>,
+        /// Attributes (namespace declarations excluded)
+        attributes: &'a [(&'a str, std::borrow::Cow<'a, str>)],
+        /// Namespace declarations on this element
+        namespace_decls: &'a [Namespace],
+        /// Line number (1-indexed)
+        line: Option<usize>,
+        /// Column number (1-indexed)
+        column: Option<usize>,
+    },
+    /// End of an element
+    EndElement {
+        /// Local name of the element
+        name: &'a str,
+        /// Namespace prefix (if any)
+        prefix: Option<&'a str>,
+    },
+    /// Text content (unescaped)
+    Text(&'a str),
+    /// CDATA content
+    CData(&'a str),
+    /// Comment
+    Comment(&'a str),
+    /// Processing instruction
+    ProcessingInstruction {
+        /// Target name
+        target: &'a str,
+        /// Instruction content
+        content: Option<&'a str>,
+    },
+    /// XML declaration
+    Declaration {
+        /// XML version
+        version: Option<String>,
+        /// Document encoding
+        encoding: Option<String>,
+        /// Standalone declaration
+        standalone: Option<bool>,
+    },
+    /// End of document
+    Eof,
+}
+
+impl RawEvent<'_> {
+    /// Materializes an owned [`XmlEvent`], interning names through
+    /// `interner`.
+    pub(crate) fn to_xml_event(&self, interner: &mut StringInterner) -> XmlEvent {
+        match self {
+            RawEvent::StartElement {
+                name,
+                prefix,
+                attributes,
+                namespace_decls,
+                line,
+                column,
+            } => XmlEvent::StartElement {
+                name: interner.intern(name),
+                prefix: prefix.map(|p| interner.intern(p)),
+                namespace: None,
+                attributes: attributes
+                    .iter()
+                    .map(|(k, v)| (CompactString::from(*k), CompactString::from(v.as_ref())))
+                    .collect(),
+                namespace_decls: namespace_decls.to_vec(),
+                line: *line,
+                column: *column,
+            },
+            RawEvent::EndElement { name, prefix } => XmlEvent::EndElement {
+                name: interner.intern(name),
+                prefix: prefix.map(|p| interner.intern(p)),
+            },
+            RawEvent::Text(t) => XmlEvent::Text(t.to_string()),
+            RawEvent::CData(t) => XmlEvent::CData(t.to_string()),
+            RawEvent::Comment(t) => XmlEvent::Comment(t.to_string()),
+            RawEvent::ProcessingInstruction { target, content } => {
+                XmlEvent::ProcessingInstruction {
+                    target: target.to_string(),
+                    content: content.map(|c| c.to_string()),
+                }
+            }
+            RawEvent::Declaration {
+                version,
+                encoding,
+                standalone,
+            } => XmlEvent::Declaration {
+                version: version.clone(),
+                encoding: encoding.clone(),
+                standalone: *standalone,
+            },
+            RawEvent::Eof => XmlEvent::Eof,
+        }
+    }
+}
+
 /// Trait for handling XML events.
 ///
 /// Implement this trait to process XML events during streaming parsing.
@@ -113,10 +221,11 @@ pub enum XmlEvent {
 /// Internal engine API; the public streaming entry point is
 /// [`Parser`](crate::Parser).
 pub(crate) trait XmlEventHandler: Send + Any {
-    /// Called for each XML event.
+    /// Called for each XML event. The event borrows from the parser
+    /// buffer and is only valid for the duration of the call.
     ///
     /// Return `Ok(())` to continue processing, or an error to stop.
-    fn handle(&mut self, event: &XmlEvent) -> Result<()>;
+    fn handle(&mut self, event: &RawEvent<'_>) -> Result<()>;
 
     /// Called when parsing is complete.
     ///
@@ -138,7 +247,6 @@ pub(crate) trait XmlEventHandler: Send + Any {
 pub(crate) struct StreamingParser<R: BufRead> {
     reader: Reader<PositionTrackingReader<R>>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
-    interner: StringInterner,
     /// General entities declared in the internal DTD subset
     entities: std::collections::HashMap<String, String>,
 }
@@ -154,7 +262,6 @@ impl<R: BufRead> StreamingParser<R> {
         Self {
             reader: xml_reader,
             handlers: Vec::new(),
-            interner: StringInterner::new(),
             entities: std::collections::HashMap::new(),
         }
     }
@@ -182,7 +289,7 @@ impl<R: BufRead> StreamingParser<R> {
     /// Parses the document, dispatching events to all handlers.
     fn drive_loop<F>(&mut self, mut on_event: F) -> Result<()>
     where
-        F: FnMut(&XmlEvent) -> Result<()>,
+        F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
         let mut buffer = Vec::with_capacity(8 * 1024);
 
@@ -193,38 +300,35 @@ impl<R: BufRead> StreamingParser<R> {
 
             match event_result {
                 Ok(Event::Start(ref e)) => {
-                    let event =
-                        convert_start_event(e, line, column, &mut self.interner, &self.entities)?;
-                    on_event(&event)?;
+                    let (name, prefix, attributes, namespace_decls) =
+                        split_start_event(e, &self.entities)?;
+                    on_event(&RawEvent::StartElement {
+                        name,
+                        prefix,
+                        attributes: &attributes,
+                        namespace_decls: &namespace_decls,
+                        line: Some(line),
+                        column: Some(column),
+                    })?;
                 }
                 Ok(Event::Empty(ref e)) => {
-                    let start_event =
-                        convert_start_event(e, line, column, &mut self.interner, &self.entities)?;
-                    on_event(&start_event)?;
-
-                    // For empty elements, also dispatch end event
-                    if let XmlEvent::StartElement {
-                        ref name,
-                        ref prefix,
-                        ..
-                    } = start_event
-                    {
-                        let end_event = XmlEvent::EndElement {
-                            name: name.clone(),
-                            prefix: prefix.clone(),
-                        };
-                        on_event(&end_event)?;
-                    }
+                    let (name, prefix, attributes, namespace_decls) =
+                        split_start_event(e, &self.entities)?;
+                    on_event(&RawEvent::StartElement {
+                        name,
+                        prefix,
+                        attributes: &attributes,
+                        namespace_decls: &namespace_decls,
+                        line: Some(line),
+                        column: Some(column),
+                    })?;
+                    on_event(&RawEvent::EndElement { name, prefix })?;
                 }
                 Ok(Event::End(ref e)) => {
                     let qname = e.name();
                     let full_name = std::str::from_utf8(qname.as_ref())?;
                     let (prefix, name) = crate::namespace::split_qname(full_name);
-                    let event = XmlEvent::EndElement {
-                        name: self.interner.intern(name),
-                        prefix: prefix.map(|p| self.interner.intern(p)),
-                    };
-                    on_event(&event)?;
+                    on_event(&RawEvent::EndElement { name, prefix })?;
                 }
                 Ok(Event::Text(ref e)) => {
                     let text = e
@@ -238,30 +342,26 @@ impl<R: BufRead> StreamingParser<R> {
                             message: e.to_string(),
                         })?;
                     if !text.is_empty() {
-                        let event = XmlEvent::Text(text.into_owned());
-                        on_event(&event)?;
+                        on_event(&RawEvent::Text(&text))?;
                     }
                 }
                 Ok(Event::CData(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
-                    let event = XmlEvent::CData(text.to_string());
-                    on_event(&event)?;
+                    on_event(&RawEvent::CData(text))?;
                 }
                 Ok(Event::Comment(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
-                    let event = XmlEvent::Comment(text.to_string());
-                    on_event(&event)?;
+                    on_event(&RawEvent::Comment(text))?;
                 }
                 Ok(Event::PI(ref e)) => {
                     let content = std::str::from_utf8(e.as_ref())?;
-                    let parts: Vec<&str> = content.splitn(2, char::is_whitespace).collect();
-                    let target = parts.first().unwrap_or(&"").to_string();
-                    let pi_content = parts.get(1).map(|s| s.trim().to_string());
-                    let event = XmlEvent::ProcessingInstruction {
+                    let mut parts = content.splitn(2, char::is_whitespace);
+                    let target = parts.next().unwrap_or("");
+                    let pi_content = parts.next().map(str::trim);
+                    on_event(&RawEvent::ProcessingInstruction {
                         target,
                         content: pi_content,
-                    };
-                    on_event(&event)?;
+                    })?;
                 }
                 Ok(Event::Decl(ref e)) => {
                     let version = e
@@ -276,12 +376,11 @@ impl<R: BufRead> StreamingParser<R> {
                         .standalone()
                         .and_then(|r| r.ok())
                         .map(|v| v.as_ref() == b"yes");
-                    let event = XmlEvent::Declaration {
+                    on_event(&RawEvent::Declaration {
                         version,
                         encoding,
                         standalone,
-                    };
-                    on_event(&event)?;
+                    })?;
                 }
                 Ok(Event::DocType(ref e)) => {
                     // Collect internal-subset general entity declarations
@@ -290,8 +389,7 @@ impl<R: BufRead> StreamingParser<R> {
                     }
                 }
                 Ok(Event::Eof) => {
-                    let event = XmlEvent::Eof;
-                    on_event(&event)?;
+                    on_event(&RawEvent::Eof)?;
                     break;
                 }
                 Err(e) => {
@@ -337,31 +435,37 @@ impl<R: BufRead> StreamingParser<R> {
     /// duration of the call, so it may capture and mutate local state (e.g.
     /// accumulate into a `Vec` or counter). Registered handlers are not invoked
     /// by this method.
-    pub fn for_each_event<F>(&mut self, on_event: F) -> Result<()>
+    pub fn for_each_event<F>(&mut self, mut on_event: F) -> Result<()>
     where
         F: FnMut(&XmlEvent) -> Result<()>,
     {
-        self.drive_loop(on_event)
+        let mut interner = StringInterner::new();
+        self.drive_loop(|raw| on_event(&raw.to_xml_event(&mut interner)))
     }
 }
 
-fn convert_start_event(
-    e: &quick_xml::events::BytesStart<'_>,
-    line: usize,
-    column: usize,
-    interner: &mut StringInterner,
-    entities: &std::collections::HashMap<String, String>,
-) -> Result<XmlEvent> {
-    let qname = e.name();
-    let full_name = std::str::from_utf8(qname.as_ref())?;
+/// Splits a start tag into name parts, attributes, and namespace
+/// declarations, borrowing from the parser buffer wherever possible.
+#[allow(clippy::type_complexity)]
+fn split_start_event<'a>(
+    e: &'a quick_xml::events::BytesStart<'a>,
+    entities: &'a std::collections::HashMap<String, String>,
+) -> Result<(
+    &'a str,
+    Option<&'a str>,
+    smallvec::SmallVec<[(&'a str, std::borrow::Cow<'a, str>); 8]>,
+    smallvec::SmallVec<[Namespace; 2]>,
+)> {
+    let full_name = std::str::from_utf8(e.name().into_inner())?;
     let (prefix, name) = crate::namespace::split_qname(full_name);
 
-    let mut namespace_decls = Vec::new();
-    let mut attributes = Vec::new();
+    let mut namespace_decls: smallvec::SmallVec<[Namespace; 2]> = smallvec::SmallVec::new();
+    let mut attributes: smallvec::SmallVec<[(&str, std::borrow::Cow<str>); 8]> =
+        smallvec::SmallVec::new();
 
     for attr_result in e.attributes() {
         let attr = attr_result?;
-        let key = std::str::from_utf8(attr.key.as_ref())?;
+        let key = std::str::from_utf8(attr.key.into_inner())?;
         let value = attr
             .unescape_value_with(|name| {
                 entities
@@ -378,35 +482,28 @@ fn convert_start_event(
         } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
             namespace_decls.push(Namespace::new(ns_prefix, value.as_ref()));
         } else {
-            attributes.push((
-                CompactString::from(key),
-                CompactString::from(value.as_ref()),
-            ));
+            attributes.push((key, value));
         }
     }
 
-    Ok(XmlEvent::StartElement {
-        name: interner.intern(name),
-        prefix: prefix.map(|p| interner.intern(p)),
-        namespace: None, // Would need namespace resolution
-        attributes,
-        namespace_decls,
-        line: Some(line),
-        column: Some(column),
-    })
+    Ok((name, prefix, attributes, namespace_decls))
 }
 
 /// A simple handler that collects all events (used by the in-crate tests).
 #[cfg(test)]
 struct EventCollector {
     events: Vec<XmlEvent>,
+    interner: StringInterner,
 }
 
 #[cfg(test)]
 impl EventCollector {
     /// Creates a new event collector.
     fn new() -> Self {
-        Self { events: Vec::new() }
+        Self {
+            events: Vec::new(),
+            interner: StringInterner::new(),
+        }
     }
 
     /// Takes ownership of the collected events.
@@ -417,8 +514,8 @@ impl EventCollector {
 
 #[cfg(test)]
 impl XmlEventHandler for EventCollector {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        self.events.push(event.clone());
+    fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
+        self.events.push(event.to_xml_event(&mut self.interner));
         Ok(())
     }
 
@@ -451,44 +548,42 @@ mod tests {
 
         // Simulate events
         collector
-            .handle(&XmlEvent::StartElement {
-                name: Arc::from("root"),
+            .handle(&RawEvent::StartElement {
+                name: "root",
                 prefix: None,
-                namespace: None,
-                attributes: vec![],
-                namespace_decls: vec![],
+                attributes: &[],
+                namespace_decls: &[],
                 line: Some(1),
                 column: Some(1),
             })
             .unwrap();
 
         collector
-            .handle(&XmlEvent::StartElement {
-                name: Arc::from("child"),
+            .handle(&RawEvent::StartElement {
+                name: "child",
                 prefix: None,
-                namespace: None,
-                attributes: vec![],
-                namespace_decls: vec![],
+                attributes: &[],
+                namespace_decls: &[],
                 line: Some(1),
                 column: Some(1),
             })
             .unwrap();
 
         collector
-            .handle(&XmlEvent::EndElement {
-                name: Arc::from("child"),
+            .handle(&RawEvent::EndElement {
+                name: "child",
                 prefix: None,
             })
             .unwrap();
 
         collector
-            .handle(&XmlEvent::EndElement {
-                name: Arc::from("root"),
+            .handle(&RawEvent::EndElement {
+                name: "root",
                 prefix: None,
             })
             .unwrap();
 
-        collector.handle(&XmlEvent::Eof).unwrap();
+        collector.handle(&RawEvent::Eof).unwrap();
 
         let events = collector.into_events();
         assert_eq!(events.len(), 5);
