@@ -296,6 +296,10 @@ pub struct StructuredError {
     pub expected: Option<std::sync::Arc<str>>,
     /// Actual value found (for type mismatch errors)
     pub found: Option<std::sync::Arc<str>>,
+    /// How many identical occurrences this entry represents. Always 1
+    /// unless error aggregation is enabled on the validator, where
+    /// repeated identical errors collapse into one entry with a count.
+    pub count: u32,
 }
 
 impl Default for StructuredError {
@@ -308,6 +312,7 @@ impl Default for StructuredError {
             node_name: None,
             expected: None,
             found: None,
+            count: 1,
         }
     }
 }
@@ -499,6 +504,10 @@ impl std::fmt::Display for StructuredError {
 
         if let (Some(expected), Some(found)) = (&self.expected, &self.found) {
             write!(f, " (expected: {}, found: {})", expected, found)?;
+        }
+
+        if self.count > 1 {
+            write!(f, " (\u{00d7}{})", self.count)?;
         }
 
         Ok(())

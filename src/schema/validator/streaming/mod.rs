@@ -37,6 +37,10 @@ pub struct ValidationOptions {
     /// Disabling this can improve performance but may cause false positives/negatives
     /// for elements that use substitution groups.
     pub skip_substitution_groups: bool,
+
+    /// Collapse identical errors into one entry with a count, keeping
+    /// memory bounded on error-dense documents.
+    pub aggregate_errors: bool,
 }
 
 /// One-pass streaming schema validator.
@@ -71,6 +75,10 @@ pub struct OnePassSchemaValidator {
         rustc_hash::FxHashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// (message, node_name) -> index into `errors`, used when
+    /// `aggregate_errors` is on.
+    pub(crate) aggregate_index:
+        rustc_hash::FxHashMap<(std::sync::Arc<str>, Option<std::sync::Arc<str>>), usize>,
     /// Interned element/namespace names, so per-element qualified names and
     /// namespace URIs don't allocate on every start tag.
     pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
@@ -97,6 +105,7 @@ impl OnePassSchemaValidator {
             facet_cache: Default::default(),
             elements_cache: Default::default(),
             error_strings: Default::default(),
+            aggregate_index: Default::default(),
             name_pool: Default::default(),
             qname_buf: String::new(),
         }
@@ -111,6 +120,12 @@ impl OnePassSchemaValidator {
     /// Sets the maximum number of errors to collect (builder pattern).
     ///
     /// Set to 0 for unlimited errors (default).
+    /// Collapses identical errors into one entry with a count (builder).
+    pub fn with_aggregate_errors(mut self) -> Self {
+        self.options.aggregate_errors = true;
+        self
+    }
+
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
@@ -169,6 +184,23 @@ impl OnePassSchemaValidator {
 
     pub(crate) fn add_error(&mut self, error: StructuredError) {
         let error = error.interned(&mut self.error_strings);
+        if self.options.aggregate_errors {
+            // Identical errors collapse into the first occurrence's entry.
+            // Messages are interned, so equal content means equal Arcs.
+            let key = (
+                std::sync::Arc::clone(&error.message),
+                error.node_name.clone(),
+            );
+            if let Some(&idx) = self.aggregate_index.get(&key) {
+                self.errors[idx].count += 1;
+                return;
+            }
+            if self.should_collect_more() {
+                self.aggregate_index.insert(key, self.errors.len());
+                self.errors.push(error);
+            }
+            return;
+        }
         if self.should_collect_more() {
             self.errors.push(error);
         }

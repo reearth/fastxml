@@ -56,9 +56,7 @@ impl DomSchemaValidator {
                             )
                             .with_node_name(&qname)
                             .with_level(ErrorLevel::Error);
-                        if self.should_add_error(errors) {
-                            errors.push(self.intern_error(error));
-                        }
+                        self.push_error(errors, error);
                     }
                 }
                 StepResult::NotExpected { expected } => {
@@ -87,9 +85,7 @@ impl DomSchemaValidator {
                             .with_expected(expected_list)
                             .with_found(qname.clone())
                             .with_level(ErrorLevel::Error);
-                        if self.should_add_error(errors) {
-                            errors.push(self.intern_error(error));
-                        }
+                        self.push_error(errors, error);
                     }
                 }
             }
@@ -138,9 +134,7 @@ impl DomSchemaValidator {
                         .with_level(ErrorLevel::Error)
                 }
             };
-            if self.should_add_error(errors) {
-                errors.push(self.intern_error(error));
-            }
+            self.push_error(errors, error);
         }
         true
     }
@@ -183,9 +177,7 @@ impl DomSchemaValidator {
                     .with_found("none".to_string())
                     .with_level(ErrorLevel::Error);
 
-                if self.should_add_error(errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(errors, error);
             }
             return;
         }
@@ -219,9 +211,7 @@ impl DomSchemaValidator {
                         .with_found(format!("{} occurrence(s)", actual_count))
                         .with_level(ErrorLevel::Error);
 
-                    if self.should_add_error(errors) {
-                        errors.push(self.intern_error(error));
-                    }
+                    self.push_error(errors, error);
                 }
             }
         }
@@ -256,9 +246,7 @@ impl DomSchemaValidator {
                         .with_node_name(child_name)
                         .with_level(ErrorLevel::Error);
 
-                    if self.should_add_error(errors) {
-                        errors.push(self.intern_error(error));
-                    }
+                    self.push_error(errors, error);
                 }
             }
         }
@@ -327,9 +315,7 @@ impl DomSchemaValidator {
                         .with_node_name(&node_name)
                         .with_level(ErrorLevel::Error);
 
-                    if self.should_add_error(errors) {
-                        errors.push(self.intern_error(error));
-                    }
+                    self.push_error(errors, error);
                     return;
                 }
             }
