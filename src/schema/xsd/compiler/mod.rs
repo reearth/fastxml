@@ -7,6 +7,7 @@ mod cache;
 mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;
+mod redefine;
 mod substitution;
 mod types;
 
@@ -66,6 +67,11 @@ impl XsdCompiler {
     /// compiled and their types/elements are merged. If the same type/element is
     /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
+        let mut schemas = schemas;
+        // Apply xs:redefine before anything is registered: originals are
+        // renamed and redefinitions take their place.
+        redefine::apply_redefines(&mut schemas);
+
         let mut result = CompiledSchema::new();
 
         // Note: We intentionally do NOT deduplicate by targetNamespace here.

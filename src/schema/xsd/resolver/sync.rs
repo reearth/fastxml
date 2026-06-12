@@ -61,7 +61,17 @@ impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
                         uri: current_uri.clone(),
                     }
                 })?;
-                (schema.imports.clone(), schema.includes.clone())
+                {
+                    // xs:redefine references a schema document exactly like
+                    // xs:include does; fetch those locations too.
+                    let mut includes = schema.includes.clone();
+                    includes.extend(schema.redefines.iter().map(|r| {
+                        crate::schema::xsd::types::XsdInclude {
+                            schema_location: r.schema_location.clone(),
+                        }
+                    }));
+                    (schema.imports.clone(), includes)
+                }
             };
 
             // Process imports
@@ -161,7 +171,17 @@ impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
                         uri: current_uri.clone(),
                     }
                 })?;
-                (schema.imports.clone(), schema.includes.clone())
+                {
+                    // xs:redefine references a schema document exactly like
+                    // xs:include does; fetch those locations too.
+                    let mut includes = schema.includes.clone();
+                    includes.extend(schema.redefines.iter().map(|r| {
+                        crate::schema::xsd::types::XsdInclude {
+                            schema_location: r.schema_location.clone(),
+                        }
+                    }));
+                    (schema.imports.clone(), includes)
+                }
             };
 
             // Process imports

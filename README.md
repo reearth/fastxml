@@ -481,6 +481,24 @@ let report = Validator::from_reader(reader)
     .run()?;
 ```
 
+### Aggregated Errors
+
+On error-dense documents, `.aggregate_errors()` collapses identical errors
+into one entry whose `count` records the occurrences (memory stays bounded:
+a million identical violations become one entry). Each entry keeps its
+first occurrence's location, and `Display` appends `(×N)`:
+
+```rust
+let report = Validator::from_reader(reader)
+    .schema(schema)
+    .aggregate_errors()
+    .run()?;
+
+for error in report.errors() {
+    println!("{error}"); // e.g. "[error] /root/item: ... (×4831)"
+}
+```
+
 ### Auto-detect Schema
 
 Omit `.schema(..)` and the schema is resolved from the document's `xsi:schemaLocation`, using the default fetcher (requires the `ureq` feature):
@@ -609,7 +627,7 @@ demonstrations of both the modern and compatibility APIs.
 | Wildcards (xs:any / xs:anyAttribute) | ✅ |
 | Attribute/model groups | ✅ |
 | import/include | ✅ |
-| redefine | ⚠️ Partial (redefined attribute groups fall back to lax validation) |
+| redefine | ✅ |
 | Built-in XSD and GML types | ✅ |
 | Identity constraints (unique/key/keyref) | ✅ |
 | Substitution groups | ✅ |
@@ -679,8 +697,6 @@ Known issues and planned improvements, roughly in priority order:
 - Invalid-schema rejection (52.3%): deeper particle-restriction legality
   (nested compositor mapping), dangling-reference detection, and
   schema-for-schemas edge cases.
-- Proper `xs:redefine` support (currently falls back to lax validation for
-  redefined attribute groups).
 - XSD 1.1: assertions (`xs:assert`), conditional type assignment
   (`xs:alternative`), `openContent`, `xs:override`. Datatypes are done.
 
@@ -695,9 +711,7 @@ Known issues and planned improvements, roughly in priority order:
   ~270 MB/s on schema-rich CityGML (the event pipeline is already
   zero-copy; remaining cost is per-element schema lookups and per-value
   facet checks).
-- Error aggregation API: each collected error costs 136 bytes inline plus
-  shared strings; error-dense documents would benefit from
-  deduplicated/counted error reporting.
+
 
 ## Development
 
