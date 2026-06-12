@@ -32,7 +32,6 @@ fn test_node_type_clone_eq() {
 #[test]
 fn test_node_data_document() {
     let node = NodeData::document();
-    assert_eq!(node.id, 0);
     assert_eq!(node.node_type, NodeType::Document);
     assert!(node.name.is_empty());
     assert!(node.prefix.is_none());
@@ -40,19 +39,17 @@ fn test_node_data_document() {
     assert!(node.content.is_none());
     assert!(node.attrs().is_empty());
     assert!(node.ns_decls().is_empty());
-    assert!(node.parent.is_none());
+    assert!(node.parent().is_none());
     assert!(node.children.is_empty());
 }
 
 #[test]
 fn test_node_data_element() {
     let node = NodeData::element(
-        1,
         "test".into(),
         Some("ns".into()),
         Some("http://example.com".into()),
     );
-    assert_eq!(node.id, 1);
     assert_eq!(node.node_type, NodeType::Element);
     assert_eq!(node.name.as_ref(), "test");
     assert_eq!(node.prefix.as_deref(), Some("ns"));
@@ -61,24 +58,21 @@ fn test_node_data_element() {
 
 #[test]
 fn test_node_data_text() {
-    let node = NodeData::text(2, "hello world".to_string());
-    assert_eq!(node.id, 2);
+    let node = NodeData::text("hello world".to_string());
     assert_eq!(node.node_type, NodeType::Text);
     assert_eq!(node.content, Some("hello world".to_string()));
 }
 
 #[test]
 fn test_node_data_cdata() {
-    let node = NodeData::cdata(3, "<special>".to_string());
-    assert_eq!(node.id, 3);
+    let node = NodeData::cdata("<special>".to_string());
     assert_eq!(node.node_type, NodeType::CData);
     assert_eq!(node.content, Some("<special>".to_string()));
 }
 
 #[test]
 fn test_node_data_comment() {
-    let node = NodeData::comment(4, "a comment".to_string());
-    assert_eq!(node.id, 4);
+    let node = NodeData::comment("a comment".to_string());
     assert_eq!(node.node_type, NodeType::Comment);
     assert_eq!(node.content, Some("a comment".to_string()));
 }
@@ -86,8 +80,7 @@ fn test_node_data_comment() {
 #[test]
 fn test_node_data_processing_instruction() {
     let node =
-        NodeData::processing_instruction(5, "xml".to_string(), Some("version=\"1.0\"".to_string()));
-    assert_eq!(node.id, 5);
+        NodeData::processing_instruction("xml".to_string(), Some("version=\"1.0\"".to_string()));
     assert_eq!(node.node_type, NodeType::ProcessingInstruction);
     assert_eq!(node.name.as_ref(), "xml");
     assert_eq!(node.content, Some("version=\"1.0\"".to_string()));
@@ -95,7 +88,7 @@ fn test_node_data_processing_instruction() {
 
 #[test]
 fn test_node_data_processing_instruction_no_content() {
-    let node = NodeData::processing_instruction(6, "target".to_string(), None);
+    let node = NodeData::processing_instruction("target".to_string(), None);
     assert_eq!(node.node_type, NodeType::ProcessingInstruction);
     assert_eq!(node.name.as_ref(), "target");
     assert!(node.content.is_none());
@@ -103,8 +96,7 @@ fn test_node_data_processing_instruction_no_content() {
 
 #[test]
 fn test_node_data_attribute() {
-    let node = NodeData::attribute(7, "id".to_string(), "123".to_string(), None, None);
-    assert_eq!(node.id, 7);
+    let node = NodeData::attribute("id".to_string(), "123".to_string(), None, None);
     assert_eq!(node.node_type, NodeType::Attribute);
     assert_eq!(node.name.as_ref(), "id");
     assert_eq!(node.content, Some("123".to_string()));
@@ -112,12 +104,8 @@ fn test_node_data_attribute() {
 
 #[test]
 fn test_node_data_namespace_node() {
-    let node = NodeData::namespace_node(
-        8,
-        "gml".to_string(),
-        "http://www.opengis.net/gml".to_string(),
-    );
-    assert_eq!(node.id, 8);
+    let node =
+        NodeData::namespace_node("gml".to_string(), "http://www.opengis.net/gml".to_string());
     assert_eq!(node.node_type, NodeType::Namespace);
     assert_eq!(node.name.as_ref(), "gml");
     assert_eq!(node.content, Some("http://www.opengis.net/gml".to_string()));
@@ -125,25 +113,25 @@ fn test_node_data_namespace_node() {
 
 #[test]
 fn test_node_data_qname_with_prefix() {
-    let node = NodeData::element(1, "name".into(), Some("ns".into()), None);
+    let node = NodeData::element("name".into(), Some("ns".into()), None);
     assert_eq!(node.qname(), "ns:name");
 }
 
 #[test]
 fn test_node_data_qname_without_prefix() {
-    let node = NodeData::element(1, "name".into(), None, None);
+    let node = NodeData::element("name".into(), None, None);
     assert_eq!(node.qname(), "name");
 }
 
 #[test]
 fn test_node_data_qname_with_empty_prefix() {
-    let node = NodeData::element(1, "name".into(), Some("".into()), None);
+    let node = NodeData::element("name".into(), Some("".into()), None);
     assert_eq!(node.qname(), "name");
 }
 
 #[test]
 fn test_node_data_debug() {
-    let node = NodeData::element(1, "test".into(), None, None);
+    let node = NodeData::element("test".into(), None, None);
     let debug = format!("{:?}", node);
     assert!(debug.contains("NodeData"));
     assert!(debug.contains("test"));
