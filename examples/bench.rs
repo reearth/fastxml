@@ -1644,6 +1644,15 @@ fn main() {
                     && let (Some(export_dir), Some(entry_filename)) =
                         (schema_info.export_dir, schema_info.entry_filename)
                 {
+                    // Point libxml at the exported catalog so it resolves the
+                    // original schema URLs offline (some, like xAL, are
+                    // unreachable for libxml's own fetcher). Safe: this
+                    // process is single-threaded and libxml has not
+                    // initialized yet.
+                    let catalog = export_dir.join("catalog.xml");
+                    if catalog.exists() {
+                        unsafe { std::env::set_var("XML_CATALOG_FILES", &catalog) };
+                    }
                     let schema_path = export_dir.join(&entry_filename);
                     libxml_bench::run_libxml_validate_subprocess(
                         &content,

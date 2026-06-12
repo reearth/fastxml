@@ -125,11 +125,49 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
 
     let entry_filename = entry_uri.and_then(|uri| uri_to_filename.get(&uri).cloned());
 
+    // Also write an OASIS XML catalog mapping the original URIs to the
+    // exported files, so catalog-aware tools (libxml2/xmllint via
+    // XML_CATALOG_FILES) can resolve the unmodified schema URLs offline —
+    // including URLs that are no longer fetchable by tools without
+    // redirect/TLS support.
+    write_catalog(output_dir, &uri_to_filename)?;
+
     Ok(ExportResult {
         schema_count: uri_to_filename.len(),
         uri_to_filename,
         entry_filename,
     })
+}
+
+/// Writes `catalog.xml` (OASIS XML Catalogs format) into the export
+/// directory, mapping each original schema URI to its local filename.
+fn write_catalog(output_dir: &Path, uri_to_filename: &HashMap<String, String>) -> Result<()> {
+    let mut entries: Vec<(&String, &String)> = uri_to_filename.iter().collect();
+    entries.sort();
+
+    let mut catalog = String::from(
+        "<?xml version=\"1.0\"?>\n<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\">\n",
+    );
+    for (uri, filename) in entries {
+        let uri = xml_escape_attr(uri);
+        let filename = xml_escape_attr(filename);
+        // <uri> covers namespace/schemaLocation lookups; <system> covers
+        // system-identifier lookups. Emit both so any resolver path hits.
+        catalog.push_str(&format!("  <uri name=\"{uri}\" uri=\"{filename}\"/>\n"));
+        catalog.push_str(&format!(
+            "  <system systemId=\"{uri}\" uri=\"{filename}\"/>\n"
+        ));
+    }
+    catalog.push_str("</catalog>\n");
+
+    std::fs::write(output_dir.join("catalog.xml"), catalog)?;
+    Ok(())
+}
+
+fn xml_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
 }
 
 /// Recursively resolves imports and includes from a schema.
