@@ -392,8 +392,8 @@ mod structured_error_tests {
         assert_eq!(err.level, ErrorLevel::Warning);
         assert_eq!(err.element_path(), Some("/root/child"));
         assert_eq!(err.node_name.as_deref(), Some("child"));
-        assert_eq!(err.expected, Some("string".to_string()));
-        assert_eq!(err.found, Some("number".to_string()));
+        assert_eq!(err.expected.as_deref(), Some("string"));
+        assert_eq!(err.found.as_deref(), Some("number"));
     }
 
     #[test]
