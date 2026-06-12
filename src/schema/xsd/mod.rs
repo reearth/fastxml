@@ -44,6 +44,7 @@
 pub mod builtin;
 pub mod compiler;
 pub mod constraints;
+pub mod content_automaton;
 pub mod content_model;
 pub mod error;
 pub mod facets;

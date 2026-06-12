@@ -50,6 +50,9 @@ impl OnePassSchemaValidator {
         // without validation; a lax wildcard admits undeclared elements.
         let wildcard_mode = self.parent_wildcard_mode(name, namespace, is_expected_by_parent);
         if wildcard_mode == Some(crate::schema::types::ProcessContents::Skip) {
+            // The skipped child still consumes a slot in the parent's
+            // content model.
+            self.step_parent_automaton(qname, name, namespace, false);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Skip);
@@ -88,11 +91,15 @@ impl OnePassSchemaValidator {
                 fallback.unwrap_or_default()
             };
 
-            // Check max_occurs against parent's expected constraints
-            self.validate_max_occurs(name);
+            // Content-model automaton replaces the count-based occurrence
+            // and order checks when the parent's type has one.
+            if !self.step_parent_automaton(qname, name, namespace, true) {
+                // Check max_occurs against parent's expected constraints
+                self.validate_max_occurs(name);
 
-            // Check sequence order against parent's expected constraints
-            self.validate_sequence_order(name);
+                // Check sequence order against parent's expected constraints
+                self.validate_sequence_order(name);
+            }
 
             // Update current element context with type info
             if let Some(ctx) = self.state.current_element_mut() {
@@ -108,11 +115,13 @@ impl OnePassSchemaValidator {
             let flattened_children = self.get_flattened_children_for_element(elem);
             let anon_type = elem.inline_type.clone();
 
-            // Check max_occurs against parent's expected constraints
-            self.validate_max_occurs(name);
+            if !self.step_parent_automaton(qname, name, namespace, true) {
+                // Check max_occurs against parent's expected constraints
+                self.validate_max_occurs(name);
 
-            // Check sequence order against parent's expected constraints
-            self.validate_sequence_order(name);
+                // Check sequence order against parent's expected constraints
+                self.validate_sequence_order(name);
+            }
 
             // Update current element context with type info
             if let Some(ctx) = self.state.current_element_mut() {
@@ -124,7 +133,8 @@ impl OnePassSchemaValidator {
             }
         } else if wildcard_mode == Some(crate::schema::types::ProcessContents::Lax) {
             // Undeclared element admitted by a lax wildcard; its subtree
-            // keeps lax processing.
+            // keeps lax processing. It still consumes a content-model slot.
+            self.step_parent_automaton(qname, name, namespace, false);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Lax);
@@ -631,8 +641,12 @@ impl OnePassSchemaValidator {
             // allows empty (xs:string and derivatives) pass through cheaply.
             self.validate_text_content_against_type(&ctx);
 
-            // Validate required children were present (minOccurs)
-            self.validate_min_occurs(&ctx);
+            // Validate required children were present: the content-model
+            // automaton's acceptance check when available, count-based
+            // minOccurs otherwise.
+            if !self.finish_automaton(&ctx) {
+                self.validate_min_occurs(&ctx);
+            }
         }
     }
 

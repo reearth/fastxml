@@ -365,6 +365,7 @@ fn test_streaming_validator_min_occurs() {
         attributes: Vec::new(),
         is_abstract: false,
         mixed: false,
+        particle: None,
     };
 
     schema.elements.insert(

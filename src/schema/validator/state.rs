@@ -41,6 +41,8 @@ pub(crate) struct ElementContext {
     pub flattened_children: Option<Arc<FlattenedChildren>>,
     /// Current position in expected sequence for sequence order validation.
     pub sequence_index: usize,
+    /// Content-model automaton cursor (when the type has an automaton).
+    pub automaton_state: crate::schema::xsd::content_automaton::AutomatonState,
     /// Whether the element's declaration is `nillable="true"`. When true and the
     /// element is empty, primitive lexical/value-space checks are skipped so an
     /// `xsi:nil` element (e.g. an empty `xs:int`) is not rejected as invalid.
@@ -71,6 +73,7 @@ impl ElementContext {
             type_ref: None,
             flattened_children: None,
             sequence_index: 0,
+            automaton_state: Default::default(),
             nillable: false,
             nilled: false,
             default_value: None,

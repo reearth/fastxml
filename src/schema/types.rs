@@ -62,6 +62,10 @@ pub struct FlattenedChildren {
     pub ordered_elements: Arc<[String]>,
     /// Element wildcard (xs:any) in the content model, if present
     pub wildcard: Option<WildcardConstraint>,
+    /// Deterministic content-model automaton built from the (inheritance-
+    /// merged) particle tree; None when the content contains xs:all or the
+    /// base chain could not be resolved (count-based fallback is used).
+    pub automaton: Option<Arc<crate::schema::xsd::content_automaton::ContentAutomaton>>,
 }
 
 impl FlattenedChildren {
@@ -72,6 +76,7 @@ impl FlattenedChildren {
             content_model_type: ContentModelType::Empty,
             ordered_elements: Arc::from([]),
             wildcard: None,
+            automaton: None,
         }
     }
 
@@ -82,6 +87,7 @@ impl FlattenedChildren {
             content_model_type,
             ordered_elements: Arc::from([]),
             wildcard: None,
+            automaton: None,
         }
     }
 }
@@ -561,6 +567,9 @@ pub struct ComplexType {
     pub is_abstract: bool,
     /// Whether content is mixed (text + elements)
     pub mixed: bool,
+    /// Nested particle tree of this type's own content (excluding the
+    /// base chain), used to build the content-model automaton
+    pub particle: Option<std::sync::Arc<Particle>>,
 }
 
 impl ComplexType {
@@ -577,6 +586,7 @@ impl ComplexType {
             attr_wildcard: None,
             is_abstract: false,
             mixed: false,
+            particle: None,
         }
     }
 
@@ -593,8 +603,47 @@ impl ComplexType {
             attr_wildcard: None,
             is_abstract: false,
             mixed: false,
+            particle: None,
         }
     }
+}
+
+/// A compiled content-model particle preserving the nested compositor
+/// structure. [`ContentModel`] flattens compositors for the legacy
+/// count-based checks; this tree is what the content-model automaton is
+/// built from, so cross-compositor rules (choice totals, sequence-as-unit
+/// occurrence counting) can be enforced.
+#[derive(Debug, Clone)]
+pub enum Particle {
+    /// An element declaration (occurrence bounds live on the def)
+    Element(ElementDef),
+    /// An `xs:any` wildcard (occurrence bounds live on the constraint)
+    Wildcard(WildcardConstraint),
+    /// `xs:sequence`
+    Sequence {
+        /// Minimum occurrences of the whole group
+        min: u32,
+        /// Maximum occurrences of the whole group (None = unbounded)
+        max: Option<u32>,
+        /// Child particles in order
+        items: Vec<Particle>,
+    },
+    /// `xs:choice`
+    Choice {
+        /// Minimum occurrences of the whole group
+        min: u32,
+        /// Maximum occurrences of the whole group (None = unbounded)
+        max: Option<u32>,
+        /// Alternative particles
+        items: Vec<Particle>,
+    },
+    /// `xs:all` (validated by counting, not by the automaton)
+    All {
+        /// Minimum occurrences of the group (0 or 1)
+        min: u32,
+        /// Member elements
+        elements: Vec<ElementDef>,
+    },
 }
 
 /// Content model for complex types.

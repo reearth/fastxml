@@ -2,7 +2,8 @@
 
 use crate::error::Result;
 use crate::schema::types::{
-    CompiledConstraint, CompiledConstraintType, ContentModel, ElementDef, NsName, ProcessContents,
+    CompiledConstraint, CompiledConstraintType, ContentModel, ElementDef, NsName, Particle,
+    ProcessContents,
 };
 
 use super::super::types::*;
@@ -296,5 +297,130 @@ impl XsdCompiler {
         }
 
         Ok(compiled)
+    }
+
+    /// Compiles a particle into the nested [`Particle`] tree used by the
+    /// content-model automaton. Unlike [`Self::compile_particle`], the
+    /// compositor structure and group occurrence bounds are preserved.
+    ///
+    /// Returns `None` when the tree cannot be faithfully represented (an
+    /// unresolvable group reference) — the caller then skips building an
+    /// automaton instead of building a wrong one.
+    pub(crate) fn compile_particle_tree(
+        &mut self,
+        particle: &XsdParticle,
+    ) -> Result<Option<Particle>> {
+        let (min, max, items): (u32, Option<u32>, &[XsdParticleItem]) = match particle {
+            XsdParticle::Sequence(seq) => (
+                seq.min_occurs.to_option().unwrap_or(1),
+                seq.max_occurs.to_option(),
+                &seq.particles,
+            ),
+            XsdParticle::Choice(choice) => (
+                choice.min_occurs.to_option().unwrap_or(1),
+                choice.max_occurs.to_option(),
+                &choice.particles,
+            ),
+            XsdParticle::All(all) => {
+                let mut elements = Vec::new();
+                for elem in &all.elements {
+                    elements.push(self.compile_element(elem)?);
+                }
+                return Ok(Some(Particle::All {
+                    min: all.min_occurs.to_option().unwrap_or(1),
+                    elements,
+                }));
+            }
+            XsdParticle::GroupRef(group_ref) => {
+                return self.compile_group_ref_tree(group_ref);
+            }
+            XsdParticle::Any(any) => {
+                let mut wc = self.compile_wildcard(any);
+                wc.min_occurs = any.min_occurs.to_option().unwrap_or(1);
+                wc.max_occurs = any.max_occurs.to_option();
+                return Ok(Some(Particle::Wildcard(wc)));
+            }
+        };
+
+        let mut children = Vec::with_capacity(items.len());
+        for item in items {
+            let child = match item {
+                XsdParticleItem::Element(elem) => {
+                    Some(Particle::Element(self.compile_element(elem)?))
+                }
+                XsdParticleItem::Sequence(nested) => {
+                    self.compile_particle_tree(&XsdParticle::Sequence(nested.clone()))?
+                }
+                XsdParticleItem::Choice(nested) => {
+                    self.compile_particle_tree(&XsdParticle::Choice(nested.clone()))?
+                }
+                XsdParticleItem::GroupRef(group_ref) => {
+                    match self.compile_group_ref_tree(group_ref)? {
+                        Some(p) => Some(p),
+                        // Unresolvable group: give up on the whole tree.
+                        None => return Ok(None),
+                    }
+                }
+                XsdParticleItem::Any(any) => {
+                    let mut wc = self.compile_wildcard(any);
+                    wc.min_occurs = any.min_occurs.to_option().unwrap_or(1);
+                    wc.max_occurs = any.max_occurs.to_option();
+                    Some(Particle::Wildcard(wc))
+                }
+            };
+            match child {
+                Some(c) => children.push(c),
+                None => return Ok(None),
+            }
+        }
+
+        Ok(Some(match particle {
+            XsdParticle::Choice(_) => Particle::Choice {
+                min,
+                max,
+                items: children,
+            },
+            _ => Particle::Sequence {
+                min,
+                max,
+                items: children,
+            },
+        }))
+    }
+
+    /// Resolves a group reference into its particle tree, applying the
+    /// reference site's occurrence bounds to the group compositor.
+    fn compile_group_ref_tree(&mut self, group_ref: &XsdGroupRef) -> Result<Option<Particle>> {
+        let ns_uri = match &group_ref.name.prefix {
+            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
+            None => self.current_target_ns.clone(),
+        }
+        .unwrap_or_default();
+        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+
+        let Some(particle) = self.groups.get(&key).cloned() else {
+            return Ok(None);
+        };
+        // Break cycles like expand_group_ref_to_elements does.
+        if !self.group_expansion.insert(key.clone()) {
+            return Ok(None);
+        }
+        let result = self.compile_particle_tree(&particle);
+        self.group_expansion.remove(&key);
+        let Some(inner) = result? else {
+            return Ok(None);
+        };
+
+        // The ref site's occurrence bounds repeat the whole group.
+        let min = group_ref.min_occurs.to_option().unwrap_or(1);
+        let max = group_ref.max_occurs.to_option();
+        if min == 1 && max == Some(1) {
+            return Ok(Some(inner));
+        }
+        Ok(Some(Particle::Sequence {
+            min,
+            max,
+            items: vec![inner],
+        }))
     }
 }
