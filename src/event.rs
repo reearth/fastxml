@@ -4,7 +4,6 @@
 //! that enables single-pass parsing with optional validation.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
 
