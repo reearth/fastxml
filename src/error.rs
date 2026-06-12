@@ -317,6 +317,11 @@ impl Default for StructuredError {
     }
 }
 
+/// Index from (message, node name) to position in an error vec, used by
+/// validators when error aggregation is enabled.
+pub(crate) type ErrorAggregateIndex =
+    rustc_hash::FxHashMap<(std::sync::Arc<str>, Option<std::sync::Arc<str>>), usize>;
+
 /// Returns the pooled copy of `s`, inserting it on first sight.
 pub(crate) fn intern_arc(
     pool: &mut rustc_hash::FxHashSet<std::sync::Arc<str>>,

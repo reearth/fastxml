@@ -25,7 +25,7 @@ const XML: &str = r#"<root>
 </root>"#;
 
 fn schema() -> Schema {
-    Schema::from_xsd(SCHEMA.as_bytes().to_vec()).unwrap()
+    Schema::from_xsd(SCHEMA.as_bytes()).unwrap()
 }
 
 #[test]

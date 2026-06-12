@@ -129,9 +129,7 @@ pub struct DomSchemaValidator {
     pub(crate) error_strings: std::cell::RefCell<rustc_hash::FxHashSet<std::sync::Arc<str>>>,
     /// (message, node_name) -> index into the error vec, used when
     /// `aggregate_errors` is on.
-    pub(crate) aggregate_index: std::cell::RefCell<
-        rustc_hash::FxHashMap<(std::sync::Arc<str>, Option<std::sync::Arc<str>>), usize>,
-    >,
+    pub(crate) aggregate_index: std::cell::RefCell<crate::error::ErrorAggregateIndex>,
 }
 
 impl DomSchemaValidator {

@@ -77,8 +77,7 @@ pub struct OnePassSchemaValidator {
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
     /// `aggregate_errors` is on.
-    pub(crate) aggregate_index:
-        rustc_hash::FxHashMap<(std::sync::Arc<str>, Option<std::sync::Arc<str>>), usize>,
+    pub(crate) aggregate_index: crate::error::ErrorAggregateIndex,
     /// Interned element/namespace names, so per-element qualified names and
     /// namespace URIs don't allocate on every start tag.
     pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
