@@ -74,6 +74,7 @@ fn test_dom_validator_min_occurs() {
         attributes: Vec::new(),
         is_abstract: false,
         mixed: false,
+        particle: None,
     };
 
     schema.elements.insert(
@@ -109,6 +110,7 @@ fn test_dom_validator_max_occurs() {
         attributes: Vec::new(),
         is_abstract: false,
         mixed: false,
+        particle: None,
     };
 
     schema.elements.insert(

@@ -383,19 +383,24 @@ impl DomSchemaValidator {
             // Get flattened children for validation
             let flattened = self.get_flattened_children_for_element(elem);
             if let Some(ref fc) = flattened {
-                // Validate min_occurs for all children
-                self.validate_min_occurs_batch(node, &child_counts, fc, errors);
+                // The content-model automaton replaces the count-based
+                // checks when the type has one.
+                if !self.validate_with_automaton(node, &child_counts, fc, nilled, errors) {
+                    // Validate min_occurs for all children
+                    self.validate_min_occurs_batch(node, &child_counts, fc, errors);
 
-                // Validate max_occurs for all children
-                self.validate_max_occurs_batch(node, &child_counts, fc, errors);
+                    // Validate max_occurs for all children
+                    self.validate_max_occurs_batch(node, &child_counts, fc, errors);
 
-                // Validate sequence order for sequence content models
-                self.validate_sequence_order(node, fc, errors);
+                    // Validate sequence order for sequence content models
+                    self.validate_sequence_order(node, fc, errors);
+                }
 
                 // Validate wildcard occurrence bounds. Without a full
                 // content-model automaton this is only decidable when the
                 // wildcard is the sole particle (no declared siblings).
-                if let Some(ref w) = fc.wildcard
+                if fc.automaton.is_none()
+                    && let Some(ref w) = fc.wildcard
                     && fc.constraints.is_empty()
                 {
                     let matched = node

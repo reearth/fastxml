@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::schema::types::{
     CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
-    NsName, TypeDef,
+    NsName, Particle, TypeDef,
 };
 
 use super::XsdCompiler;
@@ -105,6 +105,85 @@ impl XsdCompiler {
         }
     }
 
+    /// Computes the inheritance-merged particle tree for a complex type:
+    /// extensions append their own particle after the base chain's.
+    ///
+    /// `Ok(None)` means "no element content"; `Err(())` means the chain
+    /// cannot be resolved faithfully (unknown base) so no automaton should
+    /// be built.
+    #[allow(clippy::result_unit_err)]
+    fn effective_particle(
+        &self,
+        complex: &ComplexType,
+        schema: &CompiledSchema,
+        depth: usize,
+    ) -> Result<Option<Particle>, ()> {
+        if depth > 16 {
+            return Err(());
+        }
+        use crate::schema::types::DerivationMethod;
+
+        if complex.derivation == Some(DerivationMethod::Extension)
+            && let Some(base_name) = &complex.base_type
+        {
+            // xs:anyType as base contributes nothing.
+            let base_local = base_name
+                .split_once(':')
+                .map(|(_, l)| l)
+                .unwrap_or(base_name);
+            let base_part = if base_local == "anyType" {
+                None
+            } else {
+                let base = self
+                    .resolve_to_ns(base_name)
+                    .and_then(|ns| schema.get_type_by_ns(&ns.namespace_uri, &ns.local_name))
+                    .or_else(|| schema.get_type(base_name));
+                match base {
+                    Some(TypeDef::Complex(b)) => self.effective_particle(b, schema, depth + 1)?,
+                    Some(_) => None, // simple base: no element content
+                    None => return Err(()),
+                }
+            };
+            let own = complex.particle.as_deref().cloned();
+            return Ok(match (base_part, own) {
+                (None, None) => None,
+                (Some(b), None) => Some(b),
+                (None, Some(o)) => Some(o),
+                (Some(b), Some(o)) => Some(Particle::Sequence {
+                    min: 1,
+                    max: Some(1),
+                    items: vec![b, o],
+                }),
+            });
+        }
+
+        // Restrictions and underived types: the own particle is the whole
+        // content.
+        Ok(complex.particle.as_deref().cloned())
+    }
+
+    /// Builds the content-model automaton for a complex type, if its
+    /// content is automaton-friendly.
+    fn build_type_automaton(
+        &self,
+        complex: &ComplexType,
+        schema: &CompiledSchema,
+    ) -> Option<crate::schema::xsd::content_automaton::ContentAutomaton> {
+        let particle = self.effective_particle(complex, schema, 0).ok()??;
+        let subst = |head: &str| -> Vec<String> {
+            if let Some(members) = schema.transitive_substitution_groups.get(head) {
+                return (**members).clone();
+            }
+            if let Some((_, local)) = head.split_once(':')
+                && let Some(members) = schema.transitive_substitution_groups.get(local)
+            {
+                return (**members).clone();
+            }
+            Vec::new()
+        };
+        crate::schema::xsd::content_automaton::build_automaton(&particle, &subst)
+    }
+
     /// Flattens the child element constraints for a complex type.
     /// Uses namespace-aware base type resolution.
     fn flatten_type_children_ns(
@@ -132,6 +211,7 @@ impl XsdCompiler {
                 .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
         }
         flattened.wildcard = inherited_wildcard(complex, schema);
+        flattened.automaton = self.build_type_automaton(complex, schema).map(Arc::new);
 
         flattened
     }

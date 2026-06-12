@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
-use crate::event::{XmlEvent, XmlEventHandler};
+use crate::event::{RawEvent, XmlEventHandler};
 
 use super::OnePassSchemaValidator;
 
@@ -19,12 +19,11 @@ fn intern_str(pool: &mut rustc_hash::FxHashSet<Arc<str>>, s: &str) -> Arc<str> {
 }
 
 impl XmlEventHandler for OnePassSchemaValidator {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
+    fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
         match event {
-            XmlEvent::StartElement {
+            RawEvent::StartElement {
                 name,
                 prefix,
-                namespace,
                 attributes,
                 namespace_decls,
                 line,
@@ -35,6 +34,8 @@ impl XmlEventHandler for OnePassSchemaValidator {
                 self.state.push_namespaces(namespace_decls);
                 // Use prefixed name to distinguish elements with same local name but different namespaces
                 // e.g., gml:boundedBy vs brid:boundedBy
+                let interned_name = intern_str(&mut self.name_pool, name);
+                let interned_prefix = prefix.map(|p| intern_str(&mut self.name_pool, p));
                 let qualified_name = match prefix {
                     Some(p) if !p.is_empty() => {
                         self.qname_buf.clear();
@@ -43,27 +44,23 @@ impl XmlEventHandler for OnePassSchemaValidator {
                         self.qname_buf.push_str(name);
                         intern_str(&mut self.name_pool, &self.qname_buf)
                     }
-                    _ => Arc::clone(name),
+                    _ => Arc::clone(&interned_name),
                 };
-                let ns = namespace
-                    .as_ref()
-                    .map(|s| intern_str(&mut self.name_pool, s));
-                self.state.push_element(qualified_name, ns);
-                let attrs: smallvec::SmallVec<[(&str, &str); 8]> = attributes
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
-                // Pass Arc<str> references directly
-                self.validate_element(name, prefix.as_ref(), namespace.as_deref(), &attrs);
+                // Streaming events carry no resolved namespace URI.
+                self.state.push_element(qualified_name, None);
+                let attrs: smallvec::SmallVec<[(&str, &str); 8]> =
+                    attributes.iter().map(|(k, v)| (*k, v.as_ref())).collect();
+                self.validate_element(&interned_name, interned_prefix.as_ref(), None, &attrs);
             }
-            XmlEvent::EndElement { name, .. } => {
-                self.validate_element_end(name);
+            RawEvent::EndElement { name, .. } => {
+                let interned_name = intern_str(&mut self.name_pool, name);
+                self.validate_element_end(&interned_name);
                 self.state.pop_namespaces();
             }
-            XmlEvent::Text(text) => {
+            RawEvent::Text(text) => {
                 self.validate_text_content(text);
             }
-            XmlEvent::CData(text) => {
+            RawEvent::CData(text) => {
                 self.validate_text_content(text);
             }
             _ => {}

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::error::{ErrorLevel, StructuredError, ValidationErrorType};
-use crate::event::{XmlEvent, XmlEventHandler};
+use crate::event::{RawEvent, XmlEventHandler};
 use crate::namespace::Namespace;
 use crate::schema::types::{
     CompiledSchema, ComplexType, ContentModel, ContentModelType, FlattenedChildren,
@@ -184,12 +184,11 @@ fn test_streaming_validator_with_schema_elements() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // Valid element
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "root".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "root",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: Some(1),
         column: Some(1),
     });
@@ -210,12 +209,11 @@ fn test_streaming_validator_unknown_element_strict() {
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "unknown".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "unknown",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: Some(1),
         column: Some(1),
     });
@@ -244,12 +242,11 @@ fn test_streaming_validator_unknown_element_lenient() {
     let mut validator =
         OnePassSchemaValidator::new(Arc::new(schema)).set_mode(ValidationMode::Lenient);
 
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "unknown".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "unknown",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: Some(1),
         column: Some(1),
     });
@@ -263,17 +260,16 @@ fn test_streaming_validator_text_content() {
     let schema = CompiledSchema::new();
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "test".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "test",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: None,
         column: Some(1),
     });
 
-    let _ = validator.handle(&XmlEvent::Text("content".to_string()));
+    let _ = validator.handle(&RawEvent::Text("content"));
 
     // Check that text was collected
     let ctx = validator.state.current_element().unwrap();
@@ -285,17 +281,16 @@ fn test_streaming_validator_cdata_content() {
     let schema = CompiledSchema::new();
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "test".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "test",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: None,
         column: Some(1),
     });
 
-    let _ = validator.handle(&XmlEvent::CData("cdata content".to_string()));
+    let _ = validator.handle(&RawEvent::CData("cdata content"));
 
     // Check that CDATA was collected as text
     let ctx = validator.state.current_element().unwrap();
@@ -308,12 +303,11 @@ fn test_streaming_validator_finish_unclosed_element() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // Start element but don't close it
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "unclosed".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "unclosed",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: None,
         column: Some(1),
     });
@@ -365,6 +359,7 @@ fn test_streaming_validator_min_occurs() {
         attributes: Vec::new(),
         is_abstract: false,
         mixed: false,
+        particle: None,
     };
 
     schema.elements.insert(
@@ -379,19 +374,18 @@ fn test_streaming_validator_min_occurs() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     // Start parent element
-    let _ = validator.handle(&XmlEvent::StartElement {
-        name: "parent".into(),
+    let _ = validator.handle(&RawEvent::StartElement {
+        name: "parent",
         prefix: None,
-        namespace: None,
-        attributes: vec![],
-        namespace_decls: vec![],
+        attributes: &[],
+        namespace_decls: &[],
         line: Some(1),
         column: Some(1),
     });
 
     // End parent without adding required child
-    let _ = validator.handle(&XmlEvent::EndElement {
-        name: "parent".into(),
+    let _ = validator.handle(&RawEvent::EndElement {
+        name: "parent",
         prefix: None,
     });
 
@@ -411,25 +405,24 @@ fn test_streaming_validator() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
 
-    validator.handle(&XmlEvent::Eof).unwrap();
+    validator.handle(&RawEvent::Eof).unwrap();
     validator.finish().unwrap();
 
     assert!(validator.is_valid());
@@ -467,12 +460,11 @@ fn test_streaming_validator_with_prefix() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
-            prefix: Some("ns".into()),
-            namespace: Some("http://example.com".to_string()),
-            attributes: vec![],
-            namespace_decls: vec![Namespace::new(
+        .handle(&RawEvent::StartElement {
+            name: "root",
+            prefix: Some("ns"),
+            attributes: &[],
+            namespace_decls: &[Namespace::new(
                 "ns".to_string(),
                 "http://example.com".to_string(),
             )],
@@ -482,9 +474,9 @@ fn test_streaming_validator_with_prefix() {
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
-            prefix: Some("ns".into()),
+        .handle(&RawEvent::EndElement {
+            name: "root",
+            prefix: Some("ns"),
         })
         .unwrap();
 
@@ -498,27 +490,23 @@ fn test_streaming_validator_with_attributes() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![
-                ("id".into(), "1".into()),
-                ("xmlns:ns".into(), "http://example.com".into()),
-                (
-                    "xsi:schemaLocation".into(),
-                    "http://example.com schema.xsd".into(),
-                ),
+            attributes: &[
+                ("id", "1".into()),
+                ("xmlns:ns", "http://example.com".into()),
+                ("xsi:schemaLocation", "http://example.com schema.xsd".into()),
             ],
-            namespace_decls: vec![],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
@@ -533,62 +521,57 @@ fn test_streaming_validator_nested_elements() {
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "child".into(),
+        .handle(&RawEvent::StartElement {
+            name: "child",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "grandchild".into(),
+        .handle(&RawEvent::StartElement {
+            name: "grandchild",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         })
         .unwrap();
 
-    validator
-        .handle(&XmlEvent::Text("content".to_string()))
-        .unwrap();
+    validator.handle(&RawEvent::Text("content")).unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "grandchild".into(),
+        .handle(&RawEvent::EndElement {
+            name: "grandchild",
             prefix: None,
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "child".into(),
+        .handle(&RawEvent::EndElement {
+            name: "child",
             prefix: None,
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
@@ -604,32 +587,31 @@ fn test_streaming_validator_other_events() {
 
     // ProcessingInstruction
     validator
-        .handle(&XmlEvent::ProcessingInstruction {
-            target: "xml".to_string(),
-            content: Some("version=\"1.0\"".to_string()),
+        .handle(&RawEvent::ProcessingInstruction {
+            target: "xml",
+            content: Some("version=\"1.0\""),
         })
         .unwrap();
 
     // Comment
     validator
-        .handle(&XmlEvent::Comment("This is a comment".to_string()))
+        .handle(&RawEvent::Comment("This is a comment"))
         .unwrap();
 
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: None,
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
@@ -691,12 +673,11 @@ fn test_inherited_elements_from_base_type() {
 
     // Start root element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -704,54 +685,52 @@ fn test_inherited_elements_from_base_type() {
 
     // Add inherited element (baseElement) - this should be valid!
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "baseElement".into(),
+        .handle(&RawEvent::StartElement {
+            name: "baseElement",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::Text("inherited content".to_string()))
+        .handle(&RawEvent::Text("inherited content"))
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "baseElement".into(),
+        .handle(&RawEvent::EndElement {
+            name: "baseElement",
             prefix: None,
         })
         .unwrap();
 
     // Add direct extension element (extElement)
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "extElement".into(),
+        .handle(&RawEvent::StartElement {
+            name: "extElement",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(3),
             column: Some(1),
         })
         .unwrap();
 
-    validator.handle(&XmlEvent::Text("42".to_string())).unwrap();
+    validator.handle(&RawEvent::Text("42")).unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "extElement".into(),
+        .handle(&RawEvent::EndElement {
+            name: "extElement",
             prefix: None,
         })
         .unwrap();
 
     // End root
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
@@ -833,12 +812,11 @@ fn test_multi_level_inheritance() {
 
     // Start root
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "root".into(),
+        .handle(&RawEvent::StartElement {
+            name: "root",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -846,68 +824,65 @@ fn test_multi_level_inheritance() {
 
     // Add grandparent-level element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "grandparentElem".into(),
+        .handle(&RawEvent::StartElement {
+            name: "grandparentElem",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
-    validator.handle(&XmlEvent::Text("gp".to_string())).unwrap();
+    validator.handle(&RawEvent::Text("gp")).unwrap();
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "grandparentElem".into(),
+        .handle(&RawEvent::EndElement {
+            name: "grandparentElem",
             prefix: None,
         })
         .unwrap();
 
     // Add parent-level element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "parentElem".into(),
+        .handle(&RawEvent::StartElement {
+            name: "parentElem",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(3),
             column: Some(1),
         })
         .unwrap();
-    validator.handle(&XmlEvent::Text("p".to_string())).unwrap();
+    validator.handle(&RawEvent::Text("p")).unwrap();
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "parentElem".into(),
+        .handle(&RawEvent::EndElement {
+            name: "parentElem",
             prefix: None,
         })
         .unwrap();
 
     // Add child-level element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "childElem".into(),
+        .handle(&RawEvent::StartElement {
+            name: "childElem",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(4),
             column: Some(1),
         })
         .unwrap();
-    validator.handle(&XmlEvent::Text("c".to_string())).unwrap();
+    validator.handle(&RawEvent::Text("c")).unwrap();
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "childElem".into(),
+        .handle(&RawEvent::EndElement {
+            name: "childElem",
             prefix: None,
         })
         .unwrap();
 
     // End root
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "root".into(),
+        .handle(&RawEvent::EndElement {
+            name: "root",
             prefix: None,
         })
         .unwrap();
@@ -998,12 +973,11 @@ fn test_substitution_group_basic() {
 
     // Start parent element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "parent".into(),
+        .handle(&RawEvent::StartElement {
+            name: "parent",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -1011,28 +985,27 @@ fn test_substitution_group_basic() {
 
     // Use substitute element (ReliefFeature instead of _CityObject)
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "ReliefFeature".into(),
+        .handle(&RawEvent::StartElement {
+            name: "ReliefFeature",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "ReliefFeature".into(),
+        .handle(&RawEvent::EndElement {
+            name: "ReliefFeature",
             prefix: None,
         })
         .unwrap();
 
     // End parent
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "parent".into(),
+        .handle(&RawEvent::EndElement {
+            name: "parent",
             prefix: None,
         })
         .unwrap();
@@ -1146,12 +1119,11 @@ fn test_substitution_group_max_occurs() {
 
     // Start parent
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "parent".into(),
+        .handle(&RawEvent::StartElement {
+            name: "parent",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -1163,28 +1135,24 @@ fn test_substitution_group_max_occurs() {
         .enumerate()
     {
         validator
-            .handle(&XmlEvent::StartElement {
-                name: (*name).into(),
+            .handle(&RawEvent::StartElement {
+                name,
                 prefix: None,
-                namespace: None,
-                attributes: vec![],
-                namespace_decls: vec![],
+                attributes: &[],
+                namespace_decls: &[],
                 line: Some(i + 2),
                 column: Some(1),
             })
             .unwrap();
         validator
-            .handle(&XmlEvent::EndElement {
-                name: (*name).into(),
-                prefix: None,
-            })
+            .handle(&RawEvent::EndElement { name, prefix: None })
             .unwrap();
     }
 
     // End parent
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "parent".into(),
+        .handle(&RawEvent::EndElement {
+            name: "parent",
             prefix: None,
         })
         .unwrap();
@@ -1239,12 +1207,11 @@ fn test_choice_content_model_basic() {
 
     // Start boundedBy
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "boundedBy".into(),
+        .handle(&RawEvent::StartElement {
+            name: "boundedBy",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -1252,28 +1219,27 @@ fn test_choice_content_model_basic() {
 
     // Add Envelope (one of the choices)
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "Envelope".into(),
+        .handle(&RawEvent::StartElement {
+            name: "Envelope",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "Envelope".into(),
+        .handle(&RawEvent::EndElement {
+            name: "Envelope",
             prefix: None,
         })
         .unwrap();
 
     // End boundedBy
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "boundedBy".into(),
+        .handle(&RawEvent::EndElement {
+            name: "boundedBy",
             prefix: None,
         })
         .unwrap();
@@ -1436,12 +1402,11 @@ fn test_substitution_group_with_prefixed_elements() {
 
     // Start exterior element
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "exterior".into(),
+        .handle(&RawEvent::StartElement {
+            name: "exterior",
             prefix: None,
-            namespace: None,
-            attributes: vec![],
-            namespace_decls: vec![],
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -1451,28 +1416,27 @@ fn test_substitution_group_with_prefixed_elements() {
     // Note: In actual XML parsing, 'name' is the local name only,
     // and 'prefix' is passed separately
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "LinearRing".into(),  // Local name only
-            prefix: Some("gml".into()), // Prefix passed separately
-            namespace: Some("http://www.opengis.net/gml".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
+        .handle(&RawEvent::StartElement {
+            name: "LinearRing",  // Local name only
+            prefix: Some("gml"), // Prefix passed separately
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "LinearRing".into(),
-            prefix: Some("gml".into()),
+        .handle(&RawEvent::EndElement {
+            name: "LinearRing",
+            prefix: Some("gml"),
         })
         .unwrap();
 
     // End exterior
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "exterior".into(),
+        .handle(&RawEvent::EndElement {
+            name: "exterior",
             prefix: None,
         })
         .unwrap();
@@ -1566,12 +1530,11 @@ fn test_same_local_name_different_namespaces() {
 
     // Start brid:boundedBy (expects WallSurface or RoofSurface)
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "boundedBy".into(),
-            prefix: Some("brid".into()),
-            namespace: Some("http://www.opengis.net/citygml/bridge/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
+        .handle(&RawEvent::StartElement {
+            name: "boundedBy",
+            prefix: Some("brid"),
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(1),
             column: Some(1),
         })
@@ -1579,29 +1542,28 @@ fn test_same_local_name_different_namespaces() {
 
     // Add WallSurface (valid for brid:boundedBy)
     validator
-        .handle(&XmlEvent::StartElement {
-            name: "WallSurface".into(),
-            prefix: Some("brid".into()),
-            namespace: Some("http://www.opengis.net/citygml/bridge/2.0".into()),
-            attributes: vec![],
-            namespace_decls: vec![],
+        .handle(&RawEvent::StartElement {
+            name: "WallSurface",
+            prefix: Some("brid"),
+            attributes: &[],
+            namespace_decls: &[],
             line: Some(2),
             column: Some(1),
         })
         .unwrap();
 
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "WallSurface".into(),
-            prefix: Some("brid".into()),
+        .handle(&RawEvent::EndElement {
+            name: "WallSurface",
+            prefix: Some("brid"),
         })
         .unwrap();
 
     // End brid:boundedBy
     validator
-        .handle(&XmlEvent::EndElement {
-            name: "boundedBy".into(),
-            prefix: Some("brid".into()),
+        .handle(&RawEvent::EndElement {
+            name: "boundedBy",
+            prefix: Some("brid"),
         })
         .unwrap();
 

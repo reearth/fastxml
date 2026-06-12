@@ -2,10 +2,7 @@
 
 use std::collections::HashMap;
 
-use compact_str::CompactString;
-
 use crate::error::Result;
-use crate::event::XmlEvent;
 use crate::schema::xsd::types::Occurs;
 
 /// XSD namespace URI.
@@ -74,14 +71,18 @@ pub(super) fn parse_facet_length(name: &str, value: &str) -> Result<u32> {
     })
 }
 
-/// Converts a quick_xml start event to our XmlEvent type.
-pub(super) fn convert_start_event(
-    e: &quick_xml::events::BytesStart<'_>,
-    line: usize,
-    column: usize,
-) -> Result<XmlEvent> {
-    let name_bytes = e.name().as_ref().to_vec();
-    let full_name = std::str::from_utf8(&name_bytes)?;
+/// Splits a quick_xml start tag into borrowed name parts, attributes, and
+/// namespace declarations.
+#[allow(clippy::type_complexity)]
+pub(super) fn split_start_event<'a>(
+    e: &'a quick_xml::events::BytesStart<'a>,
+) -> Result<(
+    &'a str,
+    Option<&'a str>,
+    Vec<(&'a str, std::borrow::Cow<'a, str>)>,
+    Vec<crate::namespace::Namespace>,
+)> {
+    let full_name = std::str::from_utf8(e.name().into_inner())?;
     let (prefix, name) = crate::namespace::split_qname(full_name);
 
     let mut namespace_decls = Vec::new();
@@ -89,7 +90,7 @@ pub(super) fn convert_start_event(
 
     for attr_result in e.attributes() {
         let attr = attr_result?;
-        let key = std::str::from_utf8(attr.key.as_ref())?;
+        let key = std::str::from_utf8(attr.key.into_inner())?;
         let value = attr.unescape_value().map_err(|e| {
             crate::parser::error::ParseError::AttributeDecodeError {
                 message: e.to_string(),
@@ -101,20 +102,9 @@ pub(super) fn convert_start_event(
         } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
             namespace_decls.push(crate::namespace::Namespace::new(ns_prefix, value.as_ref()));
         } else {
-            attributes.push((
-                CompactString::from(key),
-                CompactString::from(value.as_ref()),
-            ));
+            attributes.push((key, value));
         }
     }
 
-    Ok(XmlEvent::StartElement {
-        name: name.into(),
-        prefix: prefix.map(|p| p.into()),
-        namespace: None,
-        attributes,
-        namespace_decls,
-        line: Some(line),
-        column: Some(column),
-    })
+    Ok((name, prefix, attributes, namespace_decls))
 }

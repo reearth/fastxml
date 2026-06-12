@@ -398,6 +398,23 @@ impl XsdCompiler {
         // Compile content model
         compiled.content = self.compile_complex_content(&ct.content)?;
 
+        // Preserve the nested particle tree for the content-model automaton.
+        // For extensions this is the extension's own part; the base chain is
+        // merged when the automaton is built.
+        let own_particle = match &ct.content {
+            XsdComplexContent::Particle(p) => Some(p),
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => ext.particle.as_ref(),
+                XsdComplexContentDerivation::Restriction(r) => r.particle.as_ref(),
+            },
+            _ => None,
+        };
+        compiled.particle = own_particle
+            .map(|p| self.compile_particle_tree(p))
+            .transpose()?
+            .flatten()
+            .map(std::sync::Arc::new);
+
         // cos-element-consistent: element declarations with the same name in
         // one content model must have the same type.
         check_element_consistency(&compiled.content)?;

@@ -111,6 +111,19 @@ impl XsdCompiler {
         self.build_transitive_substitution_groups(&mut result);
         self.build_type_children_cache(&mut result);
 
+        // Unique Particle Attribution: ambiguity discovered while building
+        // the content-model automata makes the schema invalid.
+        for (type_name, fc) in &result.type_children_cache {
+            if let Some(automaton) = &fc.automaton
+                && let Some(violation) = &automaton.upa_violation
+            {
+                return Err(crate::schema::error::SchemaError::InvalidSchema {
+                    message: format!("type '{}': {}", type_name, violation),
+                }
+                .into());
+            }
+        }
+
         validity::check_schema_validity(&result)?;
 
         Ok(result)

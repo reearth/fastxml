@@ -138,20 +138,25 @@ impl<'a> Parser<'a> {
 }
 
 fn collect_events<R: BufRead>(reader: R) -> Result<Vec<XmlEvent>> {
-    let collected = Arc::new(Mutex::new(Vec::new()));
+    let collected = Arc::new(Mutex::new((
+        Vec::new(),
+        crate::event::StringInterner::new(),
+    )));
     let mut parser = StreamingParser::new(reader);
     parser.add_handler(Box::new(CollectHandler(Arc::clone(&collected))));
     parser.parse()?;
-    let events = std::mem::take(&mut *collected.lock().unwrap());
+    let events = std::mem::take(&mut collected.lock().unwrap().0);
     Ok(events)
 }
 
 /// Collects every event into a shared buffer.
-struct CollectHandler(Arc<Mutex<Vec<XmlEvent>>>);
+struct CollectHandler(Arc<Mutex<(Vec<XmlEvent>, crate::event::StringInterner)>>);
 
 impl XmlEventHandler for CollectHandler {
-    fn handle(&mut self, event: &XmlEvent) -> Result<()> {
-        self.0.lock().unwrap().push(event.clone());
+    fn handle(&mut self, event: &crate::event::RawEvent<'_>) -> Result<()> {
+        let mut guard = self.0.lock().unwrap();
+        let (events, interner) = &mut *guard;
+        events.push(event.to_xml_event(interner));
         Ok(())
     }
 

@@ -4,11 +4,161 @@ use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
 use crate::schema::types::ContentModelType;
+use crate::schema::xsd::content_automaton::StepResult;
 
 use super::super::state::ElementContext;
 use super::OnePassSchemaValidator;
 
 impl OnePassSchemaValidator {
+    /// Advances the parent's content-model automaton with this child.
+    ///
+    /// Returns `true` when the parent has an automaton (the legacy
+    /// count-based occurrence/order checks should then be skipped).
+    /// `report` controls whether violations become errors — children
+    /// admitted via wildcard modes step silently except for occurrence
+    /// overflows.
+    pub(crate) fn step_parent_automaton(
+        &mut self,
+        qname: &str,
+        local: &str,
+        ns: Option<&str>,
+        report: bool,
+    ) -> bool {
+        let len = self.state.element_stack.len();
+        if len < 2 {
+            return false;
+        }
+        let parent_idx = len - 2;
+        let Some(parent) = self.state.element_stack.get(parent_idx) else {
+            return false;
+        };
+        let Some(fc) = &parent.flattened_children else {
+            return false;
+        };
+        let Some(automaton) = fc.automaton.clone() else {
+            return false;
+        };
+        let parent_name = parent.name.clone();
+
+        let result = {
+            let parent = match self.state.element_stack.get_mut(parent_idx) {
+                Some(p) => p,
+                None => return true,
+            };
+            automaton.step(&mut parent.automaton_state, qname, local, ns)
+        };
+
+        match result {
+            StepResult::Matched => {}
+            StepResult::TooMany { max } => {
+                if !self.options.skip_max_occurs {
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::TooManyOccurrences,
+                            format!(
+                                "element '{}' occurs more than the allowed {} time(s) in '{}'",
+                                qname, max, parent_name
+                            ),
+                        )
+                        .with_node_name(qname)
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+            StepResult::NotExpected { expected } => {
+                if report {
+                    let mut expected_list = expected.join(", ");
+                    if expected_list.is_empty() {
+                        expected_list = "no further elements".to_string();
+                    }
+                    let error = self
+                        .make_error(
+                            ValidationErrorType::InvalidContent,
+                            format!(
+                                "element '{}' is not expected here in '{}' (expected: {})",
+                                qname, parent_name, expected_list
+                            ),
+                        )
+                        .with_node_name(qname)
+                        .with_expected(expected_list)
+                        .with_found(qname.to_string())
+                        .with_level(ErrorLevel::Error);
+                    self.add_error(error);
+                }
+            }
+        }
+        true
+    }
+
+    /// Checks that the element's content can end here according to its
+    /// content-model automaton. Returns `true` when an automaton was
+    /// present (legacy minOccurs counting should then be skipped).
+    pub(crate) fn finish_automaton(&mut self, ctx: &ElementContext) -> bool {
+        let Some(fc) = &ctx.flattened_children else {
+            return false;
+        };
+        let Some(automaton) = &fc.automaton else {
+            return false;
+        };
+        // A nilled element is exempt from content checks (emptiness is
+        // enforced separately).
+        if ctx.nilled {
+            return true;
+        }
+        if let Err(err) = automaton.finish(&ctx.automaton_state) {
+            if !self.options.skip_min_occurs {
+                use crate::schema::xsd::content_automaton::FinishError;
+                let error = match err {
+                    FinishError::TooFew { name, min, found } => self
+                        .make_error(
+                            ValidationErrorType::TooFewOccurrences,
+                            format!(
+                                "element {} in '{}' occurs {} time(s), but minimum is {}",
+                                name, ctx.name, found, min
+                            ),
+                        )
+                        .with_node_name(ctx.name.as_ref())
+                        .with_level(ErrorLevel::Error),
+                    FinishError::Missing { expected } => {
+                        // Match the legacy distinction: if a missing particle's
+                        // name did occur (just not often enough, e.g. a repeated
+                        // group), report too-few rather than missing.
+                        let occurred = expected.iter().any(|n| {
+                            ctx.get_child_count(n) > 0
+                                || n.split_once(':')
+                                    .map(|(_, l)| ctx.get_child_count(l) > 0)
+                                    .unwrap_or(false)
+                        });
+                        let expected_list = expected.join(", ");
+                        let (error_type, message) = if occurred {
+                            (
+                                ValidationErrorType::TooFewOccurrences,
+                                format!(
+                                    "element '{}' has incomplete content: more of {} required",
+                                    ctx.name, expected_list
+                                ),
+                            )
+                        } else {
+                            (
+                                ValidationErrorType::MissingRequiredElement,
+                                format!(
+                                    "element '{}' has incomplete content (expected: {})",
+                                    ctx.name, expected_list
+                                ),
+                            )
+                        };
+                        self.make_error(error_type, message)
+                            .with_node_name(ctx.name.as_ref())
+                            .with_expected(expected_list)
+                            .with_level(ErrorLevel::Error)
+                    }
+                };
+                self.add_error(error);
+            }
+        }
+        true
+    }
+
     /// Validates max_occurs constraint for a child element.
     ///
     /// This method also considers substitution groups. If the child element is a

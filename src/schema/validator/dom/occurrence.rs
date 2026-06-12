@@ -6,10 +6,145 @@ use std::sync::Arc;
 use crate::error::{ErrorLevel, StructuredError, ValidationErrorType};
 use crate::node::XmlNode;
 use crate::schema::types::{ContentModelType, FlattenedChildren};
+use crate::schema::xsd::content_automaton::{AutomatonState, FinishError, StepResult};
 
 use super::DomSchemaValidator;
 
 impl DomSchemaValidator {
+    /// Validates this element's children against the type's content-model
+    /// automaton. Returns `true` when an automaton was present (the
+    /// count-based batch checks should then be skipped).
+    pub(crate) fn validate_with_automaton(
+        &self,
+        node: &XmlNode,
+        child_counts: &HashMap<String, u32>,
+        flattened: &FlattenedChildren,
+        nilled: bool,
+        errors: &mut Vec<StructuredError>,
+    ) -> bool {
+        let Some(automaton) = &flattened.automaton else {
+            return false;
+        };
+        if nilled {
+            // Emptiness of nilled elements is enforced separately.
+            return true;
+        }
+
+        let node_name = node.get_name();
+        let mut st = AutomatonState::default();
+
+        for child in node.get_child_elements() {
+            let local = child.get_name();
+            let qname = match child.get_prefix() {
+                Some(p) if !p.is_empty() => format!("{}:{}", p, local),
+                _ => local.clone(),
+            };
+            let ns = child.get_namespace_uri();
+
+            match automaton.step(&mut st, &qname, &local, ns.as_deref()) {
+                StepResult::Matched => {}
+                StepResult::TooMany { max } => {
+                    if !self.options.skip_max_occurs {
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::TooManyOccurrences,
+                                format!(
+                                    "element '{}' occurs more than the allowed {} time(s) in '{}'",
+                                    qname, max, node_name
+                                ),
+                                &child,
+                            )
+                            .with_node_name(&qname)
+                            .with_level(ErrorLevel::Error);
+                        if self.should_add_error(errors) {
+                            errors.push(self.intern_error(error));
+                        }
+                    }
+                }
+                StepResult::NotExpected { expected } => {
+                    // Undeclared children get their own "not declared"
+                    // error from the declaration checks; only declared
+                    // elements are reported as content-model violations
+                    // (mirrors the streaming validator).
+                    let declared = flattened.constraints.contains_key(&qname)
+                        || flattened.constraints.contains_key(&local)
+                        || self.schema.get_element(&qname).is_some();
+                    if declared {
+                        let mut expected_list = expected.join(", ");
+                        if expected_list.is_empty() {
+                            expected_list = "no further elements".to_string();
+                        }
+                        let error = self
+                            .make_error(
+                                ValidationErrorType::InvalidContent,
+                                format!(
+                                    "element '{}' is not expected here in '{}' (expected: {})",
+                                    qname, node_name, expected_list
+                                ),
+                                &child,
+                            )
+                            .with_node_name(&qname)
+                            .with_expected(expected_list)
+                            .with_found(qname.clone())
+                            .with_level(ErrorLevel::Error);
+                        if self.should_add_error(errors) {
+                            errors.push(self.intern_error(error));
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Err(err) = automaton.finish(&st)
+            && !self.options.skip_min_occurs
+        {
+            let error = match err {
+                FinishError::TooFew { name, min, found } => self
+                    .make_error(
+                        ValidationErrorType::TooFewOccurrences,
+                        format!(
+                            "element {} in '{}' occurs {} time(s), but minimum is {}",
+                            name, node_name, found, min
+                        ),
+                        node,
+                    )
+                    .with_node_name(&node_name)
+                    .with_level(ErrorLevel::Error),
+                FinishError::Missing { expected } => {
+                    let occurred = expected
+                        .iter()
+                        .any(|n| self.get_total_count(child_counts, n) > 0);
+                    let expected_list = expected.join(", ");
+                    let (error_type, message) = if occurred {
+                        (
+                            ValidationErrorType::TooFewOccurrences,
+                            format!(
+                                "element '{}' has incomplete content: more of {} required",
+                                node_name, expected_list
+                            ),
+                        )
+                    } else {
+                        (
+                            ValidationErrorType::MissingRequiredElement,
+                            format!(
+                                "element '{}' has incomplete content (expected: {})",
+                                node_name, expected_list
+                            ),
+                        )
+                    };
+                    self.make_error(error_type, message, node)
+                        .with_node_name(&node_name)
+                        .with_expected(expected_list)
+                        .with_level(ErrorLevel::Error)
+                }
+            };
+            if self.should_add_error(errors) {
+                errors.push(self.intern_error(error));
+            }
+        }
+        true
+    }
+
     /// Batch validates min_occurs for all children.
     pub(crate) fn validate_min_occurs_batch(
         &self,
