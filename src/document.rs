@@ -240,7 +240,7 @@ pub struct DocumentBuilder {
     next_id: NodeId,
     /// Interned strings for names / prefixes / namespace URIs, so the 2M
     /// nodes of a large document share a few hundred allocations
-    strings: std::collections::HashSet<std::sync::Arc<str>>,
+    strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
 }
 
 /// Converts a usize source position to the compact node representation.
@@ -269,7 +269,7 @@ impl DocumentBuilder {
             root_element_id: None,
             node_stack: vec![0], // Start with document node
             next_id: 1,
-            strings: std::collections::HashSet::new(),
+            strings: rustc_hash::FxHashSet::default(),
         }
     }
 

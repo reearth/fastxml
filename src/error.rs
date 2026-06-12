@@ -314,7 +314,7 @@ impl Default for StructuredError {
 
 /// Returns the pooled copy of `s`, inserting it on first sight.
 pub(crate) fn intern_arc(
-    pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+    pool: &mut rustc_hash::FxHashSet<std::sync::Arc<str>>,
     s: &std::sync::Arc<str>,
 ) -> std::sync::Arc<str> {
     if let Some(existing) = pool.get(s.as_ref()) {
@@ -340,7 +340,7 @@ impl StructuredError {
     /// many errors share one allocation.
     pub(crate) fn interned(
         mut self,
-        pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+        pool: &mut rustc_hash::FxHashSet<std::sync::Arc<str>>,
     ) -> Self {
         self.message = intern_arc(pool, &self.message);
         for field in [

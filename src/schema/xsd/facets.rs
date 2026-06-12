@@ -420,7 +420,7 @@ impl FacetConstraints {
 /// anonymous types fall back to a fresh build.
 #[derive(Debug, Default)]
 pub(crate) struct FacetCache {
-    by_name: std::collections::HashMap<String, Arc<FacetConstraints>>,
+    by_name: rustc_hash::FxHashMap<String, Arc<FacetConstraints>>,
 }
 
 impl FacetCache {

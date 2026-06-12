@@ -59,7 +59,7 @@ pub struct OnePassSchemaValidator {
     /// Options for controlling which validations are performed
     pub(crate) options: ValidationOptions,
     /// `xs:ID` values seen in the document (for uniqueness checking)
-    pub(crate) seen_ids: std::collections::HashSet<String>,
+    pub(crate) seen_ids: rustc_hash::FxHashSet<String>,
     /// `xs:IDREF` values with their locations, resolved at `finish()`
     pub(crate) pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
     /// In-scope identity constraints being tracked
@@ -68,9 +68,14 @@ pub struct OnePassSchemaValidator {
     pub(crate) facet_cache: crate::schema::xsd::facets::FacetCache,
     /// Memoized inherited-element lists per complex type name
     pub(crate) elements_cache:
-        std::collections::HashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
+        rustc_hash::FxHashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
     /// Interned error strings (messages repeat heavily on invalid files)
-    pub(crate) error_strings: std::collections::HashSet<std::sync::Arc<str>>,
+    pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// Interned element/namespace names, so per-element qualified names and
+    /// namespace URIs don't allocate on every start tag.
+    pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// Reusable buffer for building qualified names.
+    pub(crate) qname_buf: String,
 }
 
 impl OnePassSchemaValidator {
@@ -86,12 +91,14 @@ impl OnePassSchemaValidator {
             mode: ValidationMode::Strict,
             max_errors: 0,
             options: ValidationOptions::default(),
-            seen_ids: std::collections::HashSet::new(),
+            seen_ids: rustc_hash::FxHashSet::default(),
             pending_idrefs: Vec::new(),
             identity_scopes: Vec::new(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
             error_strings: Default::default(),
+            name_pool: Default::default(),
+            qname_buf: String::new(),
         }
     }
 
