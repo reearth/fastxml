@@ -934,6 +934,11 @@ fn print_summary_table(summary: &[(&str, JsonValue)], content_size: usize) {
             label, time, thpt, mem, errors
         );
     }
+    if summary.iter().any(|(label, _)| *label == "transform") {
+        println!(
+            "\n    Note: transform is streaming — only matched subtrees are buffered.\n    This benchmark uses //* (matches the root), deliberately buffering the\n    whole document as a worst case; narrow selectors use O(subtree) memory."
+        );
+    }
 }
 
 fn print_json_result(result: &JsonValue, prefix: &str) {
