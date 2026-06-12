@@ -11,7 +11,7 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 - 🦀 **Pure Rust** — No C dependencies, no unsafe code
 - 🔄 **libxml Compatible** — Consistent parsing/XPath results
-- 💾 **Memory Efficient** — Parse and validate gigabyte-scale XML with ~1 MB memory footprint
+- 💾 **Memory Efficient** — Stream gigabyte-scale XML with ~1.5 MB constant memory; streaming validation independent of document size
 - 🔍 **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling
 - 📋 **XSD Support** — Schema parsing with import resolution, built-in GML types
 - ⚡ **Async Support** — Async schema fetching and resolution with tokio
@@ -20,26 +20,41 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ## Performance
 
-Benchmark results as of v0.8.0 on PLATEAU DEM GML (907 MB, 31M nodes) — [benchmark code](examples/bench.rs):
+Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
+(Setagaya, 61 MB, 2.1M nodes; 51 XSD schemas / 1,994 types resolved) —
+[benchmark code](examples/bench.rs):
 
 **Parse only:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM | 7.11s | 128 MB/s | 4.19 GB |
-| fastxml DOM | 8.0s | 114 MB/s | 805 MB |
-| fastxml Streaming | 4.75s | 191 MB/s | **~1 MB** |
+| libxml DOM | 0.23s | 265 MB/s | 405 MB |
+| fastxml DOM | 0.51s | 119 MB/s | 535 MB |
+| fastxml Streaming | 0.40s | 150 MB/s | **~1.5 MB** |
 
 **Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM + validate | 11.10s | 82 MB/s | 3.64 GB |
-| fastxml DOM + validate | 38.2s | 24 MB/s | 1.96 GB |
-| fastxml Streaming + validate | 15.9s | 57 MB/s | **~25 MB** |
+| libxml DOM + validate | — | — | — |
+| fastxml DOM + validate | 2.0s | 31 MB/s | 597 MB |
+| fastxml Streaming + validate | 1.9s | 33 MB/s | **62 MB** |
 
-- **DOM**: 5.2x less memory than libxml
-- **Streaming parse + validate**: 57 MB/s throughput with ~25 MB memory regardless of file size
+- **Streaming parse** uses ~1.5 MB regardless of file size; streaming
+  validation adds the compiled schema and collected errors (62 MB here,
+  dominated by the 1,994 compiled types).
+- **libxml could not validate this dataset**: its schema compiler fails on
+  the CityGML 2.0 schema set because the imported xAL schema is no longer
+  downloadable, while fastxml resolves and validates the full set.
+- DOM memory depends on document shape: element-heavy files like this one
+  (2.1M nodes in 61 MB) favor libxml's C node structs, while text-heavy
+  files (e.g. 907 MB PLATEAU DEM, measured at v0.8.0) showed fastxml DOM at
+  805 MB vs libxml at 4.19 GB. fastxml's per-node overhead was further
+  reduced from 376 to 168 bytes after that measurement.
+
+Errors collected during validation share interned strings (messages,
+element paths, expected/found values), so error-dense documents stay
+memory-bounded.
 
 ## Installation
 
@@ -584,11 +599,15 @@ demonstrations of both the modern and compatibility APIs.
 | Simple types (restriction/list/union) | ✅ |
 | Type inheritance | ✅ |
 | Facets | ✅ |
+| Wildcards (xs:any / xs:anyAttribute) | ✅ |
 | Attribute/model groups | ✅ |
-| import/include/redefine | ✅ |
+| import/include | ✅ |
+| redefine | ⚠️ Partial (redefined attribute groups fall back to lax validation) |
 | Built-in XSD and GML types | ✅ |
 | Identity constraints (unique/key/keyref) | ✅ |
 | Substitution groups | ✅ |
+| XSD 1.1 datatypes (dateTimeStamp, dayTimeDuration, yearMonthDuration, explicitTimezone) | ✅ |
+| Other XSD 1.1 features (assertions, conditional type assignment, openContent, override) | ❌ |
 
 ### Not Supported
 
@@ -600,7 +619,8 @@ demonstrations of both the modern and compatibility APIs.
 
 ## Conformance
 
-Conformance test results as of v0.9.0. See [conformance/](conformance/) for details.
+Conformance test results on current main (post-v0.9.0). See
+[conformance/](conformance/) for details.
 
 | Test Suite | Category | Pass Rate |
 |------------|----------|-----------|
@@ -609,6 +629,11 @@ Conformance test results as of v0.9.0. See [conformance/](conformance/) for deta
 | W3C XSD | schema compilation | 89.0% |
 | W3C XSD | instance validation (DOM) | 97.8% |
 | W3C XSD | instance validation (streaming) | 97.4% |
+
+Schema compilation breaks down asymmetrically: every valid schema in the
+suite compiles (100%, zero false rejections), while only 52.3% of invalid
+schemas are rejected — fastxml is permissive toward malformed schemas
+rather than strict.
 
 XSD tests are evaluated against XSD 1.0 expectations; XSD 1.1-only test
 groups are excluded.
@@ -623,6 +648,46 @@ failure counts were measured against the wrong expectations.
 cargo run -p fastxml-conformance --bin download
 cargo test -p fastxml-conformance
 ```
+
+## Roadmap
+
+Known issues and planned improvements, roughly in priority order:
+
+**Validation correctness**
+
+- **DOM validator namespace handling**: child element declarations can be
+  resolved by local name across namespaces, producing false positives on
+  documents that reuse a local name in different namespaces (e.g. CityGML
+  `gen:value` vs. measure `value` — ~27k spurious errors on the benchmark
+  file where the streaming validator and libxml report none). The streaming
+  validator is unaffected.
+- **Streaming identity constraints**: keyref tuples are compared lexically,
+  not in the value space (the DOM validator already compares typed values).
+- **Content-model automaton**: occurrence checking counts per-element
+  instead of running the content model as an automaton, which misses
+  cross-element choice totals, sequence-as-unit counting, and UPA
+  violations (the largest remaining W3C conformance clusters).
+
+**Schema (XSD) coverage**
+
+- Invalid-schema rejection (52.3%): deeper particle-restriction legality
+  (nested compositor mapping), dangling-reference detection, and
+  schema-for-schemas edge cases.
+- Proper `xs:redefine` support (currently falls back to lax validation for
+  redefined attribute groups).
+- XSD 1.1: assertions (`xs:assert`), conditional type assignment
+  (`xs:alternative`), `openContent`, `xs:override`. Datatypes are done.
+
+**XML parsing**
+
+- Stricter not-well-formed detection (the underlying parser accepts some
+  malformed input that the W3C suite expects to be rejected).
+
+**Performance / memory**
+
+- Error aggregation API: each collected error costs 136 bytes inline plus
+  shared strings; error-dense documents would benefit from
+  deduplicated/counted error reporting.
 
 ## Development
 
