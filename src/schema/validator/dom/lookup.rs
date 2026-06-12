@@ -9,21 +9,36 @@ use crate::schema::types::{
 use super::DomSchemaValidator;
 
 impl DomSchemaValidator {
-    /// Looks up an element definition in the schema.
-    pub(crate) fn lookup_element(&self, name: &str, prefix: Option<&str>) -> Option<&ElementDef> {
-        // Try local name first
-        if let Some(elem) = self.schema.get_element(name) {
+    /// Looks up a global element declaration.
+    ///
+    /// The qualified name is tried first — multiple namespaces can declare
+    /// the same local name (bldg:WallSurface vs brid:WallSurface, gen:value
+    /// vs measure value), so a bare local-name hit must only be a fallback.
+    /// A namespace-URI lookup covers instances whose prefix differs from
+    /// the schema's.
+    pub(crate) fn lookup_element(
+        &self,
+        name: &str,
+        prefix: Option<&str>,
+        namespace_uri: Option<&str>,
+    ) -> Option<&ElementDef> {
+        if let Some(p) = prefix
+            && !p.is_empty()
+        {
+            let qname = format!("{}:{}", p, name);
+            if let Some(elem) = self.schema.get_element(&qname) {
+                return Some(elem);
+            }
+        }
+
+        if let Some(ns) = namespace_uri
+            && let Some(elem) = self.schema.get_element_by_ns(ns, name)
+        {
             return Some(elem);
         }
 
-        // Try with prefix
-        if let Some(p) = prefix {
-            if !p.is_empty() {
-                let qname = format!("{}:{}", p, name);
-                if let Some(elem) = self.schema.get_element(&qname) {
-                    return Some(elem);
-                }
-            }
+        if let Some(elem) = self.schema.get_element(name) {
+            return Some(elem);
         }
 
         None
@@ -34,8 +49,15 @@ impl DomSchemaValidator {
         &self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
-        // Try type reference first
+        // Try type reference first; the namespace-aware cache avoids
+        // cross-namespace collisions between same-local-name types.
         if let Some(ref type_ref) = elem.type_ref {
+            if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref)
+                && let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name)
+            {
+                return Some(Arc::clone(cached));
+            }
+
             if let Some(cached) = self.schema.type_children_cache.get(type_ref) {
                 return Some(Arc::clone(cached));
             }

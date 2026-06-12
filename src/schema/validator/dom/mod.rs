@@ -257,13 +257,25 @@ impl DomSchemaValidator {
     ) -> ParentContext {
         let name = node.get_name();
         let prefix = node.get_prefix();
+        let node_ns = node.get_namespace_uri();
 
-        // Look up element definition: global first, then the parent type's
-        // local declarations (searched from the end so a derived type's
-        // redeclaration shadows the base type's).
-        let elem_def = self.lookup_element(&name, prefix.as_deref()).or_else(|| {
-            parent_ctx.and_then(|ctx| ctx.elements.iter().rev().find(|e| e.name == *name))
-        });
+        // Look up the element declaration. A local declaration in the
+        // parent's type that carries type information wins over a global
+        // element with the same name — the same element name can be
+        // declared with different types in different content models (e.g.
+        // gml:exterior in Solid vs Polygon, or gen:value as xs:string vs
+        // the measure 'value' with required @uom). Bare references (no
+        // type info) fall back to the global declaration they point to.
+        // Local declarations are searched from the end so a derived type's
+        // redeclaration shadows the base type's.
+        let inline_def =
+            parent_ctx.and_then(|ctx| ctx.elements.iter().rev().find(|e| e.name == *name));
+        let elem_def = match inline_def {
+            Some(e) if e.type_ref.is_some() || e.inline_type.is_some() => Some(e),
+            _ => self
+                .lookup_element(&name, prefix.as_deref(), node_ns.as_deref())
+                .or(inline_def),
+        };
         let schema_has_elements = !self.schema.elements.is_empty();
 
         // Check if element is allowed by parent's type definition
