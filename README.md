@@ -36,21 +36,30 @@ Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
-| libxml DOM + validate | — | — | — |
+| libxml DOM + validate | 0.22s | 251 MB/s | 405 MB |
 | fastxml DOM + validate | 2.0s | 31 MB/s | 597 MB |
 | fastxml Streaming + validate | 1.9s | 33 MB/s | **62 MB** |
 
 - **Streaming parse** uses ~1.5 MB regardless of file size; streaming
   validation adds the compiled schema and collected errors (62 MB here,
   dominated by the 1,994 compiled types).
-- **libxml could not validate this dataset**: its schema compiler fails on
-  the CityGML 2.0 schema set because the imported xAL schema is no longer
-  downloadable, while fastxml resolves and validates the full set.
+- **libxml cannot fetch this schema set itself**: the CityGML 2.0 imports
+  include an xAL schema URL that now answers with a redirect libxml's
+  fetcher does not follow. The benchmark feeds libxml the schema set that
+  fastxml resolved and exported with rewritten imports
+  (`fastxml::schema::export`) — schema acquisition is part of what fastxml
+  automates.
+- On this file fastxml's streaming validator reports **0 errors**; libxml
+  reports one false positive (it fails to apply the
+  `app:appearanceMember → gml:featureMember` substitution group at the
+  document root).
 - DOM memory depends on document shape: element-heavy files like this one
-  (2.1M nodes in 61 MB) favor libxml's C node structs, while text-heavy
-  files (e.g. 907 MB PLATEAU DEM, measured at v0.8.0) showed fastxml DOM at
+  (2.1M nodes in 61 MB, ≈188 bytes/node for libxml vs ≈250 bytes/node for
+  fastxml) favor libxml's compact C node structs, while text-heavy files
+  (e.g. 907 MB PLATEAU DEM, measured at v0.8.0) showed fastxml DOM at
   805 MB vs libxml at 4.19 GB. fastxml's per-node overhead was further
-  reduced from 376 to 168 bytes after that measurement.
+  reduced from 376 to 168 bytes after that measurement; the remaining gap
+  is per-element attribute/namespace bookkeeping (see Roadmap).
 
 Errors collected during validation share interned strings (messages,
 element paths, expected/found values), so error-dense documents stay
@@ -685,6 +694,13 @@ Known issues and planned improvements, roughly in priority order:
 
 **Performance / memory**
 
+- Compact attribute storage: elements with attributes carry two `IndexMap`s
+  (values and per-attribute namespace info) whose fixed overhead dominates
+  the remaining DOM memory gap vs libxml on element-heavy files; a small
+  sorted list with interned names would close most of it.
+- Validation throughput: streaming validation runs at ~33 MB/s vs libxml's
+  ~250 MB/s on schema-rich CityGML; per-element type/attribute lookups are
+  the hot path.
 - Error aggregation API: each collected error costs 136 bytes inline plus
   shared strings; error-dense documents would benefit from
   deduplicated/counted error reporting.
