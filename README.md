@@ -29,16 +29,16 @@ Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM | 0.22s | 273 MB/s | 405 MB |
-| fastxml DOM | 0.36s | 169 MB/s | **367 MB** |
-| fastxml Streaming | 0.26s | 235 MB/s | **~1.5 MB** |
+| fastxml DOM | 0.35s | 174 MB/s | **367 MB** |
+| fastxml Streaming | 0.27s | 223 MB/s | **~1.5 MB** |
 
 **Parse + Schema Validation:**
 
 | Mode | Time | Throughput | Memory |
 |------|------|------------|--------|
 | libxml DOM + validate | 0.22s | 272 MB/s | 405 MB |
-| fastxml DOM + validate | 1.7s | 35 MB/s | 370 MB |
-| fastxml Streaming + validate | 1.7s | 36 MB/s | **~60 MB** |
+| fastxml DOM + validate | 1.7s | 36 MB/s | 370 MB |
+| fastxml Streaming + validate | 1.4s | 44 MB/s | **~60 MB** |
 
 - **fastxml DOM uses less memory than libxml** on this file (367 vs
   405 MB): nodes are 128 bytes plus a compact interned attribute list. On
@@ -613,6 +613,7 @@ demonstrations of both the modern and compatibility APIs.
 | Built-in XSD and GML types | ✅ |
 | Identity constraints (unique/key/keyref) | ✅ |
 | Substitution groups | ✅ |
+| Content-model automaton (choice totals, sequence-as-unit occurrence, UPA detection) | ✅ |
 | XSD 1.1 datatypes (dateTimeStamp, dayTimeDuration, yearMonthDuration, explicitTimezone) | ✅ |
 | Other XSD 1.1 features (assertions, conditional type assignment, openContent, override) | ❌ |
 
@@ -634,8 +635,8 @@ Conformance test results on current main (post-v0.9.0). See
 | W3C XML | valid documents | 98.5% |
 | W3C XML | invalid documents | 97.4% |
 | W3C XSD | schema compilation | 89.0% |
-| W3C XSD | instance validation (DOM) | 97.8% |
-| W3C XSD | instance validation (streaming) | 97.4% |
+| W3C XSD | instance validation (DOM) | 98.0% |
+| W3C XSD | instance validation (streaming) | 97.5% |
 
 Schema compilation breaks down asymmetrically: every valid schema in the
 suite compiles (100%, zero false rejections), while only 52.3% of invalid
@@ -665,15 +666,13 @@ Known issues and planned improvements, roughly in priority order:
 - **DOM validator namespace handling**: child element declarations can be
   resolved by local name across namespaces, producing false positives on
   documents that reuse a local name in different namespaces (e.g. CityGML
-  `gen:value` vs. measure `value` — ~27k spurious errors on the benchmark
+  `gen:value` vs. measure `value` — ~30k spurious errors on the benchmark
   file where the streaming validator and libxml report none). The streaming
-  validator is unaffected.
+  validator is unaffected. Namespace-aware element declarations (carrying
+  their target namespace through compilation) would fix this and several
+  conformance tails at once.
 - **Streaming identity constraints**: keyref tuples are compared lexically,
   not in the value space (the DOM validator already compares typed values).
-- **Content-model automaton**: occurrence checking counts per-element
-  instead of running the content model as an automaton, which misses
-  cross-element choice totals, sequence-as-unit counting, and UPA
-  violations (the largest remaining W3C conformance clusters).
 
 **Schema (XSD) coverage**
 
@@ -692,11 +691,10 @@ Known issues and planned improvements, roughly in priority order:
 
 **Performance / memory**
 
-- Validation throughput: streaming validation runs at ~36 MB/s vs libxml's
-  ~270 MB/s on schema-rich CityGML. The remaining cost is dominated by the
-  owned-event pipeline (a `String` per text node, owned attribute lists per
-  element); a zero-copy event path borrowing from the parser buffer is the
-  next big lever, followed by per-value facet checks.
+- Validation throughput: streaming validation runs at ~44 MB/s vs libxml's
+  ~270 MB/s on schema-rich CityGML (the event pipeline is already
+  zero-copy; remaining cost is per-element schema lookups and per-value
+  facet checks).
 - Error aggregation API: each collected error costs 136 bytes inline plus
   shared strings; error-dense documents would benefit from
   deduplicated/counted error reporting.
