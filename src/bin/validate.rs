@@ -90,7 +90,7 @@ impl From<&StructuredError> for ErrorInfo {
             line: err.line(),
             column: err.column(),
             level: err.level.to_string(),
-            message: err.message.clone(),
+            message: err.message.to_string(),
         }
     }
 }

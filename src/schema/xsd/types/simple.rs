@@ -96,6 +96,19 @@ pub enum XsdFacet {
     FractionDigits(u32),
     /// Whitespace handling
     WhiteSpace(WhiteSpaceValue),
+    /// Explicit timezone requirement (XSD 1.1)
+    ExplicitTimezone(ExplicitTimezoneValue),
+}
+
+/// explicitTimezone facet values (XSD 1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplicitTimezoneValue {
+    /// The value must carry a timezone
+    Required,
+    /// The value must not carry a timezone
+    Prohibited,
+    /// Either is fine
+    Optional,
 }
 
 /// Whitespace handling values.

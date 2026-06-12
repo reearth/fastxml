@@ -48,8 +48,9 @@ pub struct ErrorLocation {
     pub column: Option<usize>,
     /// Byte offset from the beginning of the input
     pub byte_offset: Option<usize>,
-    /// XPath-like path to the error location
-    pub xpath: Option<String>,
+    /// XPath-like path to the error location. Shared: validators intern
+    /// paths, which repeat heavily across errors in the same subtree.
+    pub xpath: Option<std::sync::Arc<str>>,
 }
 
 impl ErrorLocation {
@@ -88,8 +89,8 @@ impl ErrorLocation {
     }
 
     /// Sets the XPath-like path.
-    pub fn with_xpath(mut self, xpath: String) -> Self {
-        self.xpath = Some(xpath);
+    pub fn with_xpath(mut self, xpath: impl Into<String>) -> Self {
+        self.xpath = Some(std::sync::Arc::from(xpath.into()));
         self
     }
 
@@ -279,8 +280,10 @@ impl std::fmt::Display for ErrorLevel {
 /// Structured error for schema validation, compatible with libxml's StructuredError.
 #[derive(Debug, Clone)]
 pub struct StructuredError {
-    /// Error message
-    pub message: String,
+    /// Error message. Stored as a shared string: validators intern
+    /// repeated messages so a million identical errors hold one
+    /// allocation.
+    pub message: std::sync::Arc<str>,
     /// Location information (line, column, byte_offset, xpath)
     pub location: ErrorLocation,
     /// Error type classification
@@ -288,17 +291,17 @@ pub struct StructuredError {
     /// Error severity level
     pub level: ErrorLevel,
     /// Name of the element or attribute that caused the error
-    pub node_name: Option<String>,
+    pub node_name: Option<std::sync::Arc<str>>,
     /// Expected value or type (for type mismatch errors)
-    pub expected: Option<String>,
+    pub expected: Option<std::sync::Arc<str>>,
     /// Actual value found (for type mismatch errors)
-    pub found: Option<String>,
+    pub found: Option<std::sync::Arc<str>>,
 }
 
 impl Default for StructuredError {
     fn default() -> Self {
         Self {
-            message: String::new(),
+            message: std::sync::Arc::from(""),
             location: ErrorLocation::default(),
             error_type: ValidationErrorType::Other,
             level: ErrorLevel::Error,
@@ -309,14 +312,48 @@ impl Default for StructuredError {
     }
 }
 
+/// Returns the pooled copy of `s`, inserting it on first sight.
+pub(crate) fn intern_arc(
+    pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+    s: &std::sync::Arc<str>,
+) -> std::sync::Arc<str> {
+    if let Some(existing) = pool.get(s.as_ref()) {
+        std::sync::Arc::clone(existing)
+    } else {
+        pool.insert(std::sync::Arc::clone(s));
+        std::sync::Arc::clone(s)
+    }
+}
+
 impl StructuredError {
     /// Creates a new error with the given message and type.
     pub fn new(message: impl Into<String>, error_type: ValidationErrorType) -> Self {
         Self {
-            message: message.into(),
+            message: std::sync::Arc::from(message.into()),
             error_type,
             ..Default::default()
         }
+    }
+
+    /// Interns the shared string fields (message, node name, element path,
+    /// expected/found values) through `pool`, so identical strings across
+    /// many errors share one allocation.
+    pub(crate) fn interned(
+        mut self,
+        pool: &mut std::collections::HashSet<std::sync::Arc<str>>,
+    ) -> Self {
+        self.message = intern_arc(pool, &self.message);
+        for field in [
+            &mut self.node_name,
+            &mut self.location.xpath,
+            &mut self.expected,
+            &mut self.found,
+        ] {
+            if let Some(s) = field.take() {
+                *field = Some(intern_arc(pool, &s));
+            }
+        }
+        self
     }
 
     /// Sets the line number.
@@ -345,25 +382,25 @@ impl StructuredError {
 
     /// Sets the element path (stored in location.xpath).
     pub fn with_element_path(mut self, path: impl Into<String>) -> Self {
-        self.location.xpath = Some(path.into());
+        self.location.xpath = Some(std::sync::Arc::from(path.into()));
         self
     }
 
     /// Sets the node name.
     pub fn with_node_name(mut self, name: impl Into<String>) -> Self {
-        self.node_name = Some(name.into());
+        self.node_name = Some(std::sync::Arc::from(name.into()));
         self
     }
 
     /// Sets the expected value.
     pub fn with_expected(mut self, expected: impl Into<String>) -> Self {
-        self.expected = Some(expected.into());
+        self.expected = Some(std::sync::Arc::from(expected.into()));
         self
     }
 
     /// Sets the found value.
     pub fn with_found(mut self, found: impl Into<String>) -> Self {
-        self.found = Some(found.into());
+        self.found = Some(std::sync::Arc::from(found.into()));
         self
     }
 
@@ -389,7 +426,7 @@ impl StructuredError {
             self.location.byte_offset = Some(offset);
         }
         if let Some(ref xpath) = location.xpath {
-            self.location.xpath = Some(xpath.clone());
+            self.location.xpath = Some(std::sync::Arc::clone(xpath));
         }
         self
     }

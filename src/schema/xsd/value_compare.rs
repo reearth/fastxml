@@ -56,7 +56,16 @@ pub fn compare_values(kind: Option<PrimitiveKind>, a: &str, b: &str) -> Option<O
             let kind = kind.unwrap();
             Some(temporal_key(kind, a)?.total_cmp(&temporal_key(kind, b)?))
         }
-        Some(PrimitiveKind::Duration) => compare_durations(a, b),
+        // dateTimeStamp shares dateTime's value space
+        Some(PrimitiveKind::DateTimeStamp) => Some(
+            temporal_key(PrimitiveKind::DateTime, a)?
+                .total_cmp(&temporal_key(PrimitiveKind::DateTime, b)?),
+        ),
+        Some(
+            PrimitiveKind::Duration
+            | PrimitiveKind::DayTimeDuration
+            | PrimitiveKind::YearMonthDuration,
+        ) => compare_durations(a, b),
         Some(
             PrimitiveKind::Boolean
             | PrimitiveKind::HexBinary

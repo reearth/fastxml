@@ -173,7 +173,7 @@ impl XsdParser {
             // Facets
             "enumeration" | "pattern" | "minLength" | "maxLength" | "length" | "minInclusive"
             | "maxInclusive" | "minExclusive" | "maxExclusive" | "totalDigits"
-            | "fractionDigits" | "whiteSpace" => {
+            | "fractionDigits" | "whiteSpace" | "explicitTimezone" => {
                 self.handle_facet(local, &attr_map)?;
             }
             // Annotation elements (skip content)
@@ -242,6 +242,7 @@ impl XsdParser {
                     | "totalDigits"
                     | "fractionDigits"
                     | "whiteSpace"
+                    | "explicitTimezone"
                     | "assertion" // XSD 1.1 facet; ignored but not rejected
             )
         {
@@ -1054,6 +1055,11 @@ impl XsdParser {
                 "preserve" => WhiteSpaceValue::Preserve,
                 "replace" => WhiteSpaceValue::Replace,
                 _ => WhiteSpaceValue::Collapse,
+            }),
+            "explicitTimezone" => XsdFacet::ExplicitTimezone(match value.as_str() {
+                "required" => ExplicitTimezoneValue::Required,
+                "prohibited" => ExplicitTimezoneValue::Prohibited,
+                _ => ExplicitTimezoneValue::Optional,
             }),
             _ => return Ok(()),
         };

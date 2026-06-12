@@ -432,6 +432,19 @@ pub struct SimpleType {
     pub member_types: Vec<String>,
     /// Whitespace normalization declared by a whiteSpace facet
     pub white_space: Option<WhiteSpace>,
+    /// Explicit timezone requirement (XSD 1.1 explicitTimezone facet)
+    pub explicit_timezone: Option<ExplicitTimezone>,
+}
+
+/// explicitTimezone facet values (XSD 1.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplicitTimezone {
+    /// The value must carry a timezone
+    Required,
+    /// The value must not carry a timezone
+    Prohibited,
+    /// Either is fine
+    Optional,
 }
 
 /// Whitespace normalization mode declared by an `xs:whiteSpace` facet.
@@ -465,6 +478,7 @@ impl SimpleType {
             item_type: None,
             member_types: Vec::new(),
             white_space: None,
+            explicit_timezone: None,
         }
     }
 

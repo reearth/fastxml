@@ -333,7 +333,7 @@ fn test_error_location_with_xpath() {
     let loc = ErrorLocation::from_offset(100).with_xpath("/root/item[1]".to_string());
 
     assert_eq!(loc.byte_offset, Some(100));
-    assert_eq!(loc.xpath, Some("/root/item[1]".to_string()));
+    assert_eq!(loc.xpath.as_deref(), Some("/root/item[1]"));
     assert!(loc.to_string().contains("/root/item[1]"));
 }
 
@@ -423,7 +423,7 @@ fn test_error_location_structured_error_integration() {
     let extracted: ErrorLocation = (&err).into();
     assert_eq!(extracted.line, Some(42));
     assert_eq!(extracted.column, Some(10));
-    assert_eq!(extracted.xpath, Some("/root/item[3]".to_string()));
+    assert_eq!(extracted.xpath.as_deref(), Some("/root/item[3]"));
 }
 
 #[test]

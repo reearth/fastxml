@@ -152,9 +152,12 @@ impl OnePassSchemaValidator {
         elements
     }
 
-    /// Creates FacetConstraints from a SimpleType definition.
-    pub(crate) fn create_facet_constraints(&self, simple: &SimpleType) -> FacetConstraints {
-        FacetConstraints::from_simple_type(&self.schema, simple)
+    /// Returns (memoized) FacetConstraints for a SimpleType definition.
+    pub(crate) fn create_facet_constraints(
+        &mut self,
+        simple: &SimpleType,
+    ) -> std::sync::Arc<FacetConstraints> {
+        self.facet_cache.get(&self.schema, simple)
     }
 
     /// Checks if an element is expected by its parent (defined in parent's content model).
@@ -170,11 +173,31 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Returns the (memoized) inheritance-flattened element list of a named
+    /// complex type. Collecting it walks the base chain and clones every
+    /// `ElementDef`, far too expensive to repeat per instance element.
+    pub(crate) fn collect_elements_cached(
+        &mut self,
+        type_name: &str,
+    ) -> Option<Arc<Vec<ElementDef>>> {
+        if let Some(cached) = self.elements_cache.get(type_name) {
+            return Some(Arc::clone(cached));
+        }
+        let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_name) else {
+            return None;
+        };
+        let mut visited = std::collections::HashSet::new();
+        let collected = Arc::new(self.collect_elements_with_inheritance(complex, &mut visited));
+        self.elements_cache
+            .insert(type_name.to_string(), Arc::clone(&collected));
+        Some(collected)
+    }
+
     /// Gets type information for an inline element from the parent's content model.
     ///
     /// This searches through inherited elements as well when the parent type uses ComplexExtension.
     pub(crate) fn get_inline_element_info(
-        &self,
+        &mut self,
         name: &str,
     ) -> (
         Option<String>,
@@ -194,9 +217,14 @@ impl OnePassSchemaValidator {
 
         // Use parent's type_ref from ElementContext directly (already resolved during parent's validation)
         // This avoids issues with prefixed element names (e.g., brid:BridgePart vs BridgePart)
-        let type_def = if let Some(ref type_ref) = parent_ctx.type_ref {
-            self.schema.get_type(type_ref)
-        } else {
+        // Fast path: memoized inherited-element list by parent type name.
+        if let Some(type_ref) = parent_ctx.type_ref.clone() {
+            let Some(elements) = self.collect_elements_cached(&type_ref) else {
+                return (None, None, None);
+            };
+            return self.inline_info_from_elements(name, &elements);
+        }
+        let type_def = {
             // Fallback: try to look up parent element from schema
             let parent_name = &parent_ctx.name;
             let parent_elem = self.schema.get_element(parent_name.as_ref());
@@ -231,7 +259,19 @@ impl OnePassSchemaValidator {
         // Collect all elements including inherited ones
         let mut visited = std::collections::HashSet::new();
         let elements = self.collect_elements_with_inheritance(complex, &mut visited);
+        self.inline_info_from_elements(name, &elements)
+    }
 
+    /// Finds `name` in an inherited-element list and resolves its type info.
+    fn inline_info_from_elements(
+        &self,
+        name: &str,
+        elements: &[ElementDef],
+    ) -> (
+        Option<String>,
+        Option<Arc<FlattenedChildren>>,
+        Option<TypeDef>,
+    ) {
         // Search from the end to prioritize derived type's elements over base type's
         // This is important when an element is redefined in a derived type with a different type
         // (e.g., brid:boundedBy in AbstractBridgeType shadows gml:boundedBy in AbstractFeatureType)
@@ -275,7 +315,7 @@ impl OnePassSchemaValidator {
     /// Gets inline type definition for an element (either global or from parent's content model).
     ///
     /// This searches through inherited elements as well when the parent type uses ComplexExtension.
-    pub(crate) fn get_element_inline_type(&self, name: &str) -> Option<TypeDef> {
+    pub(crate) fn get_element_inline_type(&mut self, name: &str) -> Option<TypeDef> {
         // First try global element
         if let Some(elem) = self.schema.get_element(name) {
             if let Some(ref inline) = elem.inline_type {
@@ -289,14 +329,19 @@ impl OnePassSchemaValidator {
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
-        let parent_name = &self.state.element_stack.get(parent_idx)?.name;
+        let parent_name = self.state.element_stack.get(parent_idx)?.name.clone();
 
         let parent_elem = self.schema.get_element(parent_name.as_ref())?;
-        let type_def = if let Some(ref type_ref) = parent_elem.type_ref {
-            self.schema.get_type(type_ref)?
-        } else {
-            parent_elem.inline_type.as_ref()?
-        };
+        // Fast path: memoized inherited-element list by parent type name.
+        if let Some(type_ref) = parent_elem.type_ref.clone() {
+            let elements = self.collect_elements_cached(&type_ref)?;
+            return elements
+                .iter()
+                .rev()
+                .find(|e| e.name == name)
+                .and_then(|e| e.inline_type.clone());
+        }
+        let type_def = parent_elem.inline_type.as_ref()?;
 
         let TypeDef::Complex(complex) = type_def else {
             return None;

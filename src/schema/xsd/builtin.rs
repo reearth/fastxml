@@ -187,6 +187,19 @@ pub fn create_xsd_primitive_types() -> Vec<(String, TypeDef)> {
             xs::NOTATION.to_string(),
             TypeDef::Simple(SimpleType::new("NOTATION")),
         ),
+        // XSD 1.1 datatypes
+        (
+            "xs:dateTimeStamp".to_string(),
+            TypeDef::Simple(SimpleType::new("dateTimeStamp").with_base(xs::DATE_TIME)),
+        ),
+        (
+            "xs:dayTimeDuration".to_string(),
+            TypeDef::Simple(SimpleType::new("dayTimeDuration").with_base(xs::DURATION)),
+        ),
+        (
+            "xs:yearMonthDuration".to_string(),
+            TypeDef::Simple(SimpleType::new("yearMonthDuration").with_base(xs::DURATION)),
+        ),
         // Built-in list types
         (
             xs::NMTOKENS.to_string(),

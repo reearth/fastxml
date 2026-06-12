@@ -1,5 +1,8 @@
 //! Node types and internal data structures.
 
+use std::num::NonZeroU32;
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use smallvec::SmallVec;
 
@@ -43,45 +46,95 @@ pub(crate) struct NodeData {
     pub id: NodeId,
     /// Node type
     pub node_type: NodeType,
-    /// Local name (for elements and attributes)
-    pub name: String,
+    /// Local name (for elements and attributes); interned so repeated
+    /// names share one allocation
+    pub name: Arc<str>,
     /// Namespace prefix (if any)
-    pub prefix: Option<String>,
+    pub prefix: Option<Arc<str>>,
     /// Namespace URI (if any)
-    pub namespace_uri: Option<String>,
+    pub namespace_uri: Option<Arc<str>>,
     /// Text content (for text, CDATA, and comment nodes)
     pub content: Option<String>,
-    /// Attributes (for element nodes)
-    /// Uses IndexMap to preserve insertion order (XML source order)
-    pub attributes: IndexMap<String, String>,
-    /// Namespace info for attributes: local_name → (prefix, namespace_uri)
-    /// Only populated for element nodes with namespaced attributes.
-    pub attribute_ns_info: IndexMap<String, (String, String)>,
-    /// Namespace declarations on this element
-    pub namespace_decls: Vec<Namespace>,
+    /// Attribute and namespace data, boxed because most nodes (all text
+    /// nodes, attribute-less elements) carry none — this keeps the inline
+    /// size of `NodeData` small, which dominates DOM memory.
+    pub extra: Option<Box<NodeExtra>>,
     /// Parent node ID
     pub parent: Option<NodeId>,
     /// Child node IDs
     pub children: SmallVec<[NodeId; 4]>,
     /// Line number in source (if available)
-    pub line: Option<usize>,
+    pub line: Option<NonZeroU32>,
     /// Column number in source (if available)
-    pub column: Option<usize>,
+    pub column: Option<NonZeroU32>,
+}
+
+/// Per-node data that only some nodes carry (attributes, namespace
+/// declarations); boxed out of [`NodeData`] to keep the node array compact.
+#[derive(Debug, Default)]
+pub(crate) struct NodeExtra {
+    /// Attributes (for element nodes); IndexMap preserves source order
+    pub attributes: IndexMap<String, String>,
+    /// Namespace info for attributes: local_name → (prefix, namespace_uri)
+    pub attribute_ns_info: IndexMap<String, (String, String)>,
+    /// Namespace declarations on this element
+    pub namespace_decls: Vec<Namespace>,
 }
 
 impl NodeData {
+    /// The node's attributes, or a shared empty map when it has none.
+    pub fn attrs(&self) -> &IndexMap<String, String> {
+        static EMPTY: std::sync::OnceLock<IndexMap<String, String>> = std::sync::OnceLock::new();
+        match &self.extra {
+            Some(extra) => &extra.attributes,
+            None => EMPTY.get_or_init(IndexMap::new),
+        }
+    }
+
+    /// Mutable access to the attributes, allocating the extra block on
+    /// first use.
+    pub fn attrs_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.extra.get_or_insert_default().attributes
+    }
+
+    /// Attribute namespace info, or a shared empty map.
+    pub fn attr_ns_info(&self) -> &IndexMap<String, (String, String)> {
+        static EMPTY: std::sync::OnceLock<IndexMap<String, (String, String)>> =
+            std::sync::OnceLock::new();
+        match &self.extra {
+            Some(extra) => &extra.attribute_ns_info,
+            None => EMPTY.get_or_init(IndexMap::new),
+        }
+    }
+
+    /// Mutable attribute namespace info, allocating on first use.
+    pub fn attr_ns_info_mut(&mut self) -> &mut IndexMap<String, (String, String)> {
+        &mut self.extra.get_or_insert_default().attribute_ns_info
+    }
+
+    /// Namespace declarations on this node (empty slice when none).
+    pub fn ns_decls(&self) -> &[Namespace] {
+        self.extra
+            .as_deref()
+            .map(|e| e.namespace_decls.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Mutable namespace declarations, allocating on first use.
+    pub fn ns_decls_mut(&mut self) -> &mut Vec<Namespace> {
+        &mut self.extra.get_or_insert_default().namespace_decls
+    }
+
     /// Creates a new document node.
     pub fn document() -> Self {
         Self {
             id: 0,
             node_type: NodeType::Document,
-            name: String::new(),
+            name: Arc::from(""),
             prefix: None,
             namespace_uri: None,
             content: None,
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -92,9 +145,9 @@ impl NodeData {
     /// Creates a new element node.
     pub fn element(
         id: NodeId,
-        name: String,
-        prefix: Option<String>,
-        namespace_uri: Option<String>,
+        name: Arc<str>,
+        prefix: Option<Arc<str>>,
+        namespace_uri: Option<Arc<str>>,
     ) -> Self {
         Self {
             id,
@@ -103,9 +156,7 @@ impl NodeData {
             prefix,
             namespace_uri,
             content: None,
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -118,13 +169,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::Text,
-            name: String::new(),
+            name: Arc::from(""),
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -137,13 +186,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::CData,
-            name: String::new(),
+            name: Arc::from(""),
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -156,13 +203,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::Comment,
-            name: String::new(),
+            name: Arc::from(""),
             prefix: None,
             namespace_uri: None,
             content: Some(content),
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -175,13 +220,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::ProcessingInstruction,
-            name: target,
+            name: Arc::from(target.as_str()),
             prefix: None,
             namespace_uri: None,
             content,
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -200,13 +243,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::Attribute,
-            name,
-            prefix,
-            namespace_uri,
+            name: Arc::from(name.as_str()),
+            prefix: prefix.map(|p| Arc::from(p.as_str())),
+            namespace_uri: namespace_uri.map(|n| Arc::from(n.as_str())),
             content: Some(value),
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -223,13 +264,11 @@ impl NodeData {
         Self {
             id,
             node_type: NodeType::Namespace,
-            name: prefix,
+            name: Arc::from(prefix.as_str()),
             prefix: None,
             namespace_uri: None,
             content: Some(uri),
-            attributes: IndexMap::new(),
-            attribute_ns_info: IndexMap::new(),
-            namespace_decls: Vec::new(),
+            extra: None,
             parent: None,
             children: SmallVec::new(),
             line: None,
@@ -241,7 +280,20 @@ impl NodeData {
     pub fn qname(&self) -> String {
         match &self.prefix {
             Some(p) if !p.is_empty() => format!("{}:{}", p, self.name),
-            _ => self.name.clone(),
+            _ => self.name.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    /// DOM memory is dominated by the node array; keep `NodeData` compact.
+    #[test]
+    fn node_data_stays_compact() {
+        assert!(
+            std::mem::size_of::<super::NodeData>() <= 176,
+            "NodeData grew to {} bytes; keep rarely-used fields in NodeExtra",
+            std::mem::size_of::<super::NodeData>()
+        );
     }
 }

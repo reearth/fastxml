@@ -2,8 +2,8 @@
 
 use crate::error::Result;
 use crate::schema::types::{
-    AttributeDef, BlockSet, ComplexType, ContentModel, DerivationMethod, ProcessContents,
-    SimpleType, TypeDef, WhiteSpace, WildcardConstraint, WildcardNamespace,
+    AttributeDef, BlockSet, ComplexType, ContentModel, DerivationMethod, ExplicitTimezone,
+    ProcessContents, SimpleType, TypeDef, WhiteSpace, WildcardConstraint, WildcardNamespace,
 };
 
 use super::super::types::*;
@@ -232,6 +232,13 @@ impl XsdCompiler {
                                 WhiteSpaceValue::Preserve => WhiteSpace::Preserve,
                                 WhiteSpaceValue::Replace => WhiteSpace::Replace,
                                 WhiteSpaceValue::Collapse => WhiteSpace::Collapse,
+                            });
+                        }
+                        XsdFacet::ExplicitTimezone(v) => {
+                            compiled.explicit_timezone = Some(match v {
+                                ExplicitTimezoneValue::Required => ExplicitTimezone::Required,
+                                ExplicitTimezoneValue::Prohibited => ExplicitTimezone::Prohibited,
+                                ExplicitTimezoneValue::Optional => ExplicitTimezone::Optional,
                             });
                         }
                     }
