@@ -30,6 +30,12 @@ indexmap = "2"
 # Stack-based small vectors
 smallvec = "1"
 
+# Fast byte scanning (newline counting in position tracking)
+memchr = "2"
+
+# Fast non-cryptographic hasher for internal hot-path maps
+rustc-hash = "2"
+
 # Inline small strings (avoids heap allocation for short strings)
 compact_str = "0.8"
 

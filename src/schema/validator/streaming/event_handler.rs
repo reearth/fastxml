@@ -7,6 +7,17 @@ use crate::event::{XmlEvent, XmlEventHandler};
 
 use super::OnePassSchemaValidator;
 
+/// Returns the pooled copy of `s`, inserting it on first sight.
+fn intern_str(pool: &mut rustc_hash::FxHashSet<Arc<str>>, s: &str) -> Arc<str> {
+    if let Some(existing) = pool.get(s) {
+        Arc::clone(existing)
+    } else {
+        let arc: Arc<str> = Arc::from(s);
+        pool.insert(Arc::clone(&arc));
+        arc
+    }
+}
+
 impl XmlEventHandler for OnePassSchemaValidator {
     fn handle(&mut self, event: &XmlEvent) -> Result<()> {
         match event {
@@ -25,14 +36,20 @@ impl XmlEventHandler for OnePassSchemaValidator {
                 // Use prefixed name to distinguish elements with same local name but different namespaces
                 // e.g., gml:boundedBy vs brid:boundedBy
                 let qualified_name = match prefix {
-                    Some(p) if !p.is_empty() => Arc::from(format!("{}:{}", p, name)),
+                    Some(p) if !p.is_empty() => {
+                        self.qname_buf.clear();
+                        self.qname_buf.push_str(p);
+                        self.qname_buf.push(':');
+                        self.qname_buf.push_str(name);
+                        intern_str(&mut self.name_pool, &self.qname_buf)
+                    }
                     _ => Arc::clone(name),
                 };
-                self.state.push_element(
-                    qualified_name,
-                    namespace.as_ref().map(|s| Arc::from(s.as_str())),
-                );
-                let attrs: Vec<(&str, &str)> = attributes
+                let ns = namespace
+                    .as_ref()
+                    .map(|s| intern_str(&mut self.name_pool, s));
+                self.state.push_element(qualified_name, ns);
+                let attrs: smallvec::SmallVec<[(&str, &str); 8]> = attributes
                     .iter()
                     .map(|(k, v)| (k.as_str(), v.as_str()))
                     .collect();

@@ -177,7 +177,6 @@ impl XmlDocument {
         let mut nodes = self.nodes.write();
         let id = nodes.len();
         nodes.push(NodeData::attribute(
-            id,
             name.to_string(),
             value.to_string(),
             prefix.map(|s| s.to_string()),
@@ -197,7 +196,6 @@ impl XmlDocument {
         let mut nodes = self.nodes.write();
         let id = nodes.len();
         nodes.push(NodeData::namespace_node(
-            id,
             prefix.to_string(),
             uri.to_string(),
         ));
@@ -242,7 +240,7 @@ pub struct DocumentBuilder {
     next_id: NodeId,
     /// Interned strings for names / prefixes / namespace URIs, so the 2M
     /// nodes of a large document share a few hundred allocations
-    strings: std::collections::HashSet<std::sync::Arc<str>>,
+    strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
 }
 
 /// Converts a usize source position to the compact node representation.
@@ -271,7 +269,7 @@ impl DocumentBuilder {
             root_element_id: None,
             node_stack: vec![0], // Start with document node
             next_id: 1,
-            strings: std::collections::HashSet::new(),
+            strings: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -294,17 +292,16 @@ impl DocumentBuilder {
         let interned_name = self.intern(name);
         let interned_prefix = prefix.map(|s| self.intern(s));
         let interned_ns = namespace_uri.map(|s| self.intern(s));
-        let mut node = NodeData::element(id, interned_name, interned_prefix, interned_ns);
+        let mut node = NodeData::element(interned_name, interned_prefix, interned_ns);
 
         for (key, value) in attributes {
-            node.attrs_mut().insert(key.to_string(), value.to_string());
-        }
-
-        for (local_name, attr_prefix, attr_ns_uri) in attribute_ns_info {
-            node.attr_ns_info_mut().insert(
-                local_name.to_string(),
-                (attr_prefix.to_string(), attr_ns_uri.to_string()),
-            );
+            let ns = attribute_ns_info.iter().find(|(local, _, _)| *local == key);
+            node.set_attr(crate::node::types::Attr {
+                name: self.intern(key),
+                value: Box::from(value),
+                prefix: ns.map(|(_, p, _)| self.intern(p)),
+                ns_uri: ns.map(|(_, _, u)| self.intern(u)),
+            });
         }
 
         if !namespace_decls.is_empty() {
@@ -314,11 +311,11 @@ impl DocumentBuilder {
         node.column = to_position(column);
 
         let parent_id = *self.node_stack.last().unwrap_or(&0);
-        node.parent = Some(parent_id);
+        node.set_parent(Some(parent_id));
 
         // Add as child of parent (direct access, no lock needed)
         if let Some(parent) = self.nodes.get_mut(parent_id) {
-            parent.children.push(id);
+            parent.push_child(id);
         }
 
         self.nodes.push(node);
@@ -346,13 +343,13 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::text(id, content.to_string());
+        let mut node = NodeData::text(content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
-        node.parent = Some(parent_id);
+        node.set_parent(Some(parent_id));
 
         // Add as child of parent (direct access, no lock needed)
         if let Some(parent) = self.nodes.get_mut(parent_id) {
-            parent.children.push(id);
+            parent.push_child(id);
         }
 
         self.nodes.push(node);
@@ -364,13 +361,13 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::cdata(id, content.to_string());
+        let mut node = NodeData::cdata(content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
-        node.parent = Some(parent_id);
+        node.set_parent(Some(parent_id));
 
         // Add as child of parent (direct access, no lock needed)
         if let Some(parent) = self.nodes.get_mut(parent_id) {
-            parent.children.push(id);
+            parent.push_child(id);
         }
 
         self.nodes.push(node);
@@ -382,13 +379,13 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::comment(id, content.to_string());
+        let mut node = NodeData::comment(content.to_string());
         let parent_id = *self.node_stack.last().unwrap_or(&0);
-        node.parent = Some(parent_id);
+        node.set_parent(Some(parent_id));
 
         // Add as child of parent (direct access, no lock needed)
         if let Some(parent) = self.nodes.get_mut(parent_id) {
-            parent.children.push(id);
+            parent.push_child(id);
         }
 
         self.nodes.push(node);
@@ -400,17 +397,14 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::processing_instruction(
-            id,
-            target.to_string(),
-            content.map(|s| s.to_string()),
-        );
+        let mut node =
+            NodeData::processing_instruction(target.to_string(), content.map(|s| s.to_string()));
         let parent_id = *self.node_stack.last().unwrap_or(&0);
-        node.parent = Some(parent_id);
+        node.set_parent(Some(parent_id));
 
         // Add as child of parent (direct access, no lock needed)
         if let Some(parent) = self.nodes.get_mut(parent_id) {
-            parent.children.push(id);
+            parent.push_child(id);
         }
 
         self.nodes.push(node);

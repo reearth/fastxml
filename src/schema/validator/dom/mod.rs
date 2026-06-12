@@ -126,7 +126,7 @@ pub struct DomSchemaValidator {
     /// Memoized facet constraints per named simple type
     pub(crate) facet_cache: std::cell::RefCell<crate::schema::xsd::facets::FacetCache>,
     /// Interned error strings (messages repeat heavily on invalid files)
-    pub(crate) error_strings: std::cell::RefCell<std::collections::HashSet<std::sync::Arc<str>>>,
+    pub(crate) error_strings: std::cell::RefCell<rustc_hash::FxHashSet<std::sync::Arc<str>>>,
 }
 
 impl DomSchemaValidator {

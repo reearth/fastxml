@@ -4,7 +4,6 @@
 //! that enables single-pass parsing with optional validation.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::Arc;
 
@@ -22,13 +21,13 @@ use crate::position::PositionTrackingReader;
 /// repeated allocations for the same string values.
 #[derive(Debug, Default)]
 struct StringInterner {
-    cache: HashMap<Box<str>, Arc<str>>,
+    cache: rustc_hash::FxHashMap<Box<str>, Arc<str>>,
 }
 
 impl StringInterner {
     fn new() -> Self {
         Self {
-            cache: HashMap::new(),
+            cache: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -218,8 +217,8 @@ impl<R: BufRead> StreamingParser<R> {
                     }
                 }
                 Ok(Event::End(ref e)) => {
-                    let name_bytes = e.name().as_ref().to_vec();
-                    let full_name = std::str::from_utf8(&name_bytes)?;
+                    let qname = e.name();
+                    let full_name = std::str::from_utf8(qname.as_ref())?;
                     let (prefix, name) = crate::namespace::split_qname(full_name);
                     let event = XmlEvent::EndElement {
                         name: self.interner.intern(name),
@@ -353,8 +352,8 @@ fn convert_start_event(
     interner: &mut StringInterner,
     entities: &std::collections::HashMap<String, String>,
 ) -> Result<XmlEvent> {
-    let name_bytes = e.name().as_ref().to_vec();
-    let full_name = std::str::from_utf8(&name_bytes)?;
+    let qname = e.name();
+    let full_name = std::str::from_utf8(qname.as_ref())?;
     let (prefix, name) = crate::namespace::split_qname(full_name);
 
     let mut namespace_decls = Vec::new();

@@ -32,9 +32,6 @@ pub struct PositionTrackingReader<R> {
     line: usize,
     column: usize,
     byte_offset: usize,
-    /// Buffer for incomplete UTF-8 sequences
-    utf8_buf: [u8; 4],
-    utf8_len: usize,
 }
 
 impl<R> PositionTrackingReader<R> {
@@ -45,8 +42,6 @@ impl<R> PositionTrackingReader<R> {
             line: 1,
             column: 1,
             byte_offset: 0,
-            utf8_buf: [0; 4],
-            utf8_len: 0,
         }
     }
 
@@ -82,49 +77,30 @@ impl<R> PositionTrackingReader<R> {
 
     /// Updates position tracking for consumed bytes.
     fn track_bytes(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.byte_offset += 1;
+        track(
+            bytes,
+            &mut self.line,
+            &mut self.column,
+            &mut self.byte_offset,
+        );
+    }
+}
 
-            // Handle UTF-8 multi-byte sequences
-            if self.utf8_len > 0 {
-                // We're in the middle of a multi-byte sequence
-                self.utf8_buf[self.utf8_len] = byte;
-                self.utf8_len += 1;
-
-                // Check if we have a complete character
-                if let Ok(s) = std::str::from_utf8(&self.utf8_buf[..self.utf8_len]) {
-                    if !s.is_empty() {
-                        let ch = s.chars().next().unwrap();
-                        if ch == '\n' {
-                            self.line += 1;
-                            self.column = 1;
-                        } else {
-                            self.column += 1;
-                        }
-                        self.utf8_len = 0;
-                    }
-                } else if self.utf8_len >= 4 {
-                    // Invalid UTF-8, reset and count as one character
-                    self.column += 1;
-                    self.utf8_len = 0;
-                }
-            } else if byte & 0x80 == 0 {
-                // ASCII byte
-                if byte == b'\n' {
-                    self.line += 1;
-                    self.column = 1;
-                } else {
-                    self.column += 1;
-                }
-            } else if byte & 0xC0 == 0xC0 {
-                // Start of multi-byte sequence
-                self.utf8_buf[0] = byte;
-                self.utf8_len = 1;
-            } else {
-                // Continuation byte without start - count as character
-                self.column += 1;
-            }
+/// Bulk position update for a consumed chunk.
+///
+/// Lines are counted by scanning for `\n` with memchr; columns count UTF-8
+/// characters as "bytes that are not continuation bytes", which is correct
+/// for valid UTF-8 and works across chunk boundaries without buffering
+/// partial sequences.
+fn track(bytes: &[u8], line: &mut usize, column: &mut usize, byte_offset: &mut usize) {
+    *byte_offset += bytes.len();
+    let count_chars = |b: &[u8]| b.iter().filter(|&&x| x & 0xC0 != 0x80).count();
+    match memchr::memrchr(b'\n', bytes) {
+        Some(last_nl) => {
+            *line += memchr::memchr_iter(b'\n', bytes).count();
+            *column = 1 + count_chars(&bytes[last_nl + 1..]);
         }
+        None => *column += count_chars(bytes),
     }
 }
 
@@ -142,15 +118,18 @@ impl<R: BufRead> BufRead for PositionTrackingReader<R> {
     }
 
     fn consume(&mut self, amt: usize) {
-        // Get the bytes before consuming - need to copy to avoid borrow issues
-        let bytes_to_track: Vec<u8> = if let Ok(buf) = self.inner.fill_buf() {
-            let track_amt = amt.min(buf.len());
-            buf[..track_amt].to_vec()
-        } else {
-            Vec::new()
-        };
-        self.track_bytes(&bytes_to_track);
-        self.inner.consume(amt);
+        // Borrow the buffered bytes and the position fields disjointly so the
+        // consumed chunk can be scanned without copying it out.
+        let Self {
+            inner,
+            line,
+            column,
+            byte_offset,
+        } = self;
+        if let Ok(buf) = inner.fill_buf() {
+            track(&buf[..amt.min(buf.len())], line, column, byte_offset);
+        }
+        inner.consume(amt);
     }
 }
 

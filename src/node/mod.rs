@@ -3,7 +3,7 @@
 pub mod error;
 mod mutable;
 mod readonly;
-mod types;
+pub(crate) mod types;
 
 #[cfg(test)]
 mod tests;

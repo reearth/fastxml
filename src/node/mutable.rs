@@ -91,7 +91,7 @@ impl XmlNode {
             NodeType::Element => {
                 // Collect text content from all descendant text nodes
                 let mut content = String::new();
-                self.collect_text_content_recursive(node.id, &nodes, &mut content);
+                self.collect_text_content_recursive(self.id, &nodes, &mut content);
                 if content.is_empty() {
                     None
                 } else {
@@ -116,7 +116,7 @@ impl XmlNode {
                     }
                 }
                 NodeType::Element => {
-                    for &child_id in &node.children {
+                    for child_id in node.child_ids() {
                         self.collect_text_content_recursive(child_id, nodes, content);
                     }
                 }
@@ -130,7 +130,7 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .and_then(|n| n.attrs().get(name).cloned())
+            .and_then(|n| n.attr(name).map(str::to_string))
     }
 
     /// Returns an attribute value by name and namespace.
@@ -141,21 +141,15 @@ impl XmlNode {
         let node = nodes.get(self.id)?;
 
         // Try exact match first
-        if let Some(value) = node.attrs().get(name) {
-            return Some(value.clone());
+        if let Some(value) = node.attr(name) {
+            return Some(value.to_string());
         }
 
-        // Try with namespace prefix lookup
-        for ns in node.ns_decls() {
-            if ns.uri() == ns_uri {
-                let prefixed_name = format!("{}:{}", ns.prefix(), name);
-                if let Some(value) = node.attrs().get(&prefixed_name) {
-                    return Some(value.clone());
-                }
-            }
-        }
-
-        None
+        // Match by stored attribute namespace
+        node.attrs()
+            .iter()
+            .find(|a| a.name.as_ref() == name && a.ns_uri.as_deref() == Some(ns_uri))
+            .map(|a| a.value.to_string())
     }
 
     /// Returns all attributes as a map.
@@ -163,7 +157,12 @@ impl XmlNode {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
-            .map(|n| n.attrs().clone())
+            .map(|n| {
+                n.attrs()
+                    .iter()
+                    .map(|a| (a.name.to_string(), a.value.to_string()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -171,9 +170,10 @@ impl XmlNode {
     /// Returns (prefix, namespace_uri) if the attribute is namespaced.
     pub fn get_attribute_ns_info(&self, local_name: &str) -> Option<(String, String)> {
         let nodes = self.nodes.read();
-        nodes
-            .get(self.id)
-            .and_then(|n| n.attr_ns_info().get(local_name).cloned())
+        nodes.get(self.id).and_then(|n| {
+            n.attr_ns_info(local_name)
+                .map(|(p, u)| (p.to_string(), u.to_string()))
+        })
     }
 
     /// Returns namespace declarations on this element.
@@ -188,7 +188,7 @@ impl XmlNode {
     /// Returns the parent node (if any).
     pub fn get_parent(&self) -> Option<XmlNode> {
         let nodes = self.nodes.read();
-        let parent_id = nodes.get(self.id)?.parent?;
+        let parent_id = nodes.get(self.id)?.parent()?;
         Some(XmlNode {
             id: parent_id,
             nodes: Arc::clone(&self.nodes),
@@ -201,9 +201,8 @@ impl XmlNode {
         nodes
             .get(self.id)
             .map(|n| {
-                n.children
-                    .iter()
-                    .map(|&id| XmlNode {
+                n.child_ids()
+                    .map(|id| XmlNode {
                         id,
                         nodes: Arc::clone(&self.nodes),
                     })
@@ -218,9 +217,8 @@ impl XmlNode {
         nodes
             .get(self.id)
             .map(|n| {
-                n.children
-                    .iter()
-                    .filter_map(|&id| {
+                n.child_ids()
+                    .filter_map(|id| {
                         nodes.get(id).and_then(|child| {
                             if child.node_type == NodeType::Element {
                                 Some(XmlNode {
@@ -241,7 +239,7 @@ impl XmlNode {
     pub fn first_child(&self) -> Option<XmlNode> {
         let nodes = self.nodes.read();
         let node = nodes.get(self.id)?;
-        node.children.first().map(|&id| XmlNode {
+        node.child_ids().next().map(|id| XmlNode {
             id,
             nodes: Arc::clone(&self.nodes),
         })
@@ -251,7 +249,7 @@ impl XmlNode {
     pub fn last_child(&self) -> Option<XmlNode> {
         let nodes = self.nodes.read();
         let node = nodes.get(self.id)?;
-        node.children.last().map(|&id| XmlNode {
+        node.child_ids().next_back().map(|id| XmlNode {
             id,
             nodes: Arc::clone(&self.nodes),
         })
@@ -277,7 +275,12 @@ impl XmlNode {
     pub fn set_attribute(&self, name: &str, value: &str) {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            node.attrs_mut().insert(name.to_string(), value.to_string());
+            node.set_attr(crate::node::types::Attr {
+                name: std::sync::Arc::from(name),
+                value: Box::from(value),
+                prefix: None,
+                ns_uri: None,
+            });
         }
     }
 
@@ -287,7 +290,7 @@ impl XmlNode {
     pub fn remove_attribute(&self, name: &str) -> Option<String> {
         let mut nodes = self.nodes.write();
         if let Some(node) = nodes.get_mut(self.id) {
-            return node.attrs_mut().shift_remove(name);
+            return node.remove_attr(name).map(String::from);
         }
         None
     }

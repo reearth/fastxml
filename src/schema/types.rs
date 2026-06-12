@@ -3,7 +3,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
+use indexmap::IndexMap as IndexMapBase;
+
+/// Insertion-ordered map with a fast non-cryptographic hasher; schema
+/// lookups happen per element/attribute during validation, so hashing speed
+/// matters more than HashDoS resistance here.
+pub type IndexMap<K, V> = IndexMapBase<K, V, rustc_hash::FxBuildHasher>;
 
 /// A namespace-qualified name for collision-free lookups.
 ///
@@ -143,9 +148,9 @@ impl CompiledSchema {
     pub fn new() -> Self {
         Self {
             target_namespace: None,
-            elements: IndexMap::new(),
-            types: IndexMap::new(),
-            attributes: IndexMap::new(),
+            elements: IndexMap::default(),
+            types: IndexMap::default(),
+            attributes: IndexMap::default(),
             imports: HashMap::new(),
             substitution_groups: HashMap::new(),
             // Namespace resolution
