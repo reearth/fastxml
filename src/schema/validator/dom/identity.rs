@@ -25,6 +25,10 @@ pub(crate) fn validate_identity_constraints(
     doc: &XmlDocument,
     tasks: &[ConstraintTask],
     node_kinds: &HashMap<crate::node::NodeId, crate::schema::xsd::primitive::PrimitiveKind>,
+    attr_kinds: &HashMap<
+        (crate::node::NodeId, String),
+        crate::schema::xsd::primitive::PrimitiveKind,
+    >,
 ) -> Vec<String> {
     let mut errors = Vec::new();
     // Key/unique tables by constraint local name, for keyref resolution.
@@ -42,7 +46,7 @@ pub(crate) fn validate_identity_constraints(
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| field_value(schema, doc, &selected, f, node_kinds))
+                .map(|f| field_value(schema, doc, &selected, f, node_kinds, attr_kinds))
                 .collect();
 
             if outcomes.iter().any(|v| matches!(v, FieldOutcome::Multiple)) {
@@ -108,7 +112,7 @@ pub(crate) fn validate_identity_constraints(
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| field_value(schema, doc, &selected, f, node_kinds))
+                .map(|f| field_value(schema, doc, &selected, f, node_kinds, attr_kinds))
                 .collect();
             if !outcomes.iter().all(|v| matches!(v, FieldOutcome::Value(_))) {
                 continue; // incomplete keyref tuples are not checked
@@ -173,6 +177,19 @@ enum FieldOutcome {
     Multiple,
 }
 
+/// If `xpath` selects an attribute directly on the context node (`@name` or
+/// `./@name`, optionally prefixed), returns that attribute's local name. More
+/// complex paths return `None` (the value is then compared lexically).
+fn direct_attr_local(xpath: &str) -> Option<&str> {
+    let x = xpath.trim();
+    let x = x.strip_prefix("./").unwrap_or(x);
+    let a = x.strip_prefix('@')?;
+    if a.contains('/') {
+        return None;
+    }
+    Some(a.rsplit(':').next().unwrap_or(a))
+}
+
 /// Evaluates a field XPath relative to a selected node. A field must select
 /// at most one node (cvc-identity-constraint).
 fn field_value(
@@ -181,6 +198,10 @@ fn field_value(
     context: &XmlNode,
     xpath: &str,
     node_kinds: &HashMap<crate::node::NodeId, crate::schema::xsd::primitive::PrimitiveKind>,
+    attr_kinds: &HashMap<
+        (crate::node::NodeId, String),
+        crate::schema::xsd::primitive::PrimitiveKind,
+    >,
 ) -> FieldOutcome {
     let Some(query) = compile_with_schema_ns(schema, xpath) else {
         return FieldOutcome::Absent;
@@ -190,8 +211,13 @@ fn field_value(
             [] => FieldOutcome::Absent,
             [node] => {
                 // Compare in the field's value space (e.g. +0 and -0 are
-                // the same xs:decimal key).
-                let kind = node_kinds.get(&node.id()).copied();
+                // the same xs:decimal key). Attribute pseudo-nodes carry no
+                // recorded kind, so a field selecting an attribute directly on
+                // the selected node resolves its kind via the owner element.
+                let kind = match direct_attr_local(xpath) {
+                    Some(local) => attr_kinds.get(&(context.id(), local.to_string())).copied(),
+                    None => node_kinds.get(&node.id()).copied(),
+                };
                 FieldOutcome::Value(crate::schema::xsd::value_compare::canonical_value(
                     kind,
                     string_value(node).trim(),

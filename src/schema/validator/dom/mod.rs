@@ -92,6 +92,14 @@ pub(crate) struct DocIdState {
         crate::node::NodeId,
         crate::schema::xsd::primitive::PrimitiveKind,
     >,
+    /// Primitive value-space kind of an attribute, keyed by (owner element
+    /// node, attribute local name). Recorded during attribute validation so
+    /// identity-constraint fields carried by attributes are compared in the
+    /// right value space.
+    pub(crate) attr_kinds: std::collections::HashMap<
+        (crate::node::NodeId, String),
+        crate::schema::xsd::primitive::PrimitiveKind,
+    >,
 }
 
 impl DocIdState {
@@ -210,6 +218,7 @@ impl DomSchemaValidator {
             doc,
             &ids.constraint_tasks,
             &ids.node_kinds,
+            &ids.attr_kinds,
         ) {
             let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
                 .with_level(ErrorLevel::Error);
@@ -569,6 +578,18 @@ impl DomSchemaValidator {
                 )
             })
             .collect();
+        // Record each attribute's value-space kind, keyed by (this element,
+        // local name), so identity-constraint fields carried by attributes
+        // (e.g. `@id`) can be canonicalized at constraint-evaluation time.
+        for (name, _, _) in &filtered {
+            let local = name.rsplit(':').next().unwrap_or(name);
+            if let Some(kind) =
+                super::attributes::attribute_primitive_kind(&self.schema, complex, local)
+            {
+                ids.attr_kinds.insert((node.id(), local.to_string()), kind);
+            }
+        }
+
         let result = super::attributes::validate_element_attributes(
             &self.schema,
             complex,
