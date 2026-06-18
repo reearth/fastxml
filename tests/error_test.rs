@@ -340,16 +340,20 @@ mod malformed_xml {
     fn test_null_byte_in_content() {
         let xml = "<root>hello\0world</root>";
         let result = Parser::from(xml).parse();
-        // quick-xml accepts null bytes in content
-        assert!(result.is_ok(), "quick-xml accepts null bytes");
+        // A literal NUL is not a legal XML character (Char production).
+        assert!(result.is_err(), "NUL in content is not well-formed");
     }
 
     #[test]
     fn test_control_characters() {
         let xml = "<root>\x01\x02\x03</root>";
         let result = Parser::from(xml).parse();
-        // quick-xml accepts control characters in content
-        assert!(result.is_ok(), "quick-xml accepts control characters");
+        // C0 control characters (other than tab/LF/CR) violate the Char
+        // production and must be rejected.
+        assert!(
+            result.is_err(),
+            "control characters in content are not well-formed"
+        );
     }
 
     #[test]

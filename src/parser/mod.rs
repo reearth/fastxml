@@ -7,6 +7,7 @@ pub use unified::Parser;
 
 pub(crate) mod encoding;
 pub(crate) mod entities;
+pub(crate) mod wellformed;
 
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -197,6 +198,11 @@ fn parse_from_reader<R: BufRead>(
                 builder.end_element();
             }
             Ok(Event::Text(ref e)) => {
+                // Check the raw (pre-unescape) text: literal characters must
+                // satisfy the Char production, but character references such
+                // as `&#1;` (legal in XML 1.1) survive as ordinary ASCII here
+                // and are not misjudged.
+                wellformed::check_chars(std::str::from_utf8(e.as_ref())?, "text content")?;
                 let text = e
                     .unescape_with(|name| {
                         entity_map
@@ -214,15 +220,18 @@ fn parse_from_reader<R: BufRead>(
             }
             Ok(Event::CData(ref e)) => {
                 let text = std::str::from_utf8(e.as_ref())?;
+                wellformed::check_chars(text, "CDATA section")?;
                 check_memory(options, &mut memory_used, text.len())?;
                 builder.cdata(text);
             }
             Ok(Event::Comment(ref e)) => {
                 let text = std::str::from_utf8(e.as_ref())?;
+                wellformed::check_chars(text, "comment")?;
                 builder.comment(text);
             }
             Ok(Event::PI(ref e)) => {
                 let content = std::str::from_utf8(e.as_ref())?;
+                wellformed::check_chars(content, "processing instruction")?;
                 // Parse PI: target followed by content
                 let parts: Vec<&str> = content.splitn(2, char::is_whitespace).collect();
                 let target = parts.first().unwrap_or(&"");
@@ -236,6 +245,7 @@ fn parse_from_reader<R: BufRead>(
                 // Collect internal-subset general entity declarations so
                 // entity references in content/attributes resolve.
                 if let Ok(text) = std::str::from_utf8(e.as_ref()) {
+                    wellformed::check_chars(text, "document type declaration")?;
                     entity_map = entities::parse_internal_entities(text);
                 }
             }
@@ -281,6 +291,7 @@ fn process_start_element<R: BufRead>(
 
     let qname_bytes = e.name().as_ref().to_vec();
     let (prefix, local_name) = extract_name_parts(&qname_bytes)?;
+    wellformed::check_chars(std::str::from_utf8(&qname_bytes)?, "element name")?;
 
     // First pass: collect namespace declarations and register them
     let mut namespace_decls = Vec::new();
@@ -289,6 +300,10 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
+        wellformed::check_chars(key, "attribute name")?;
+        // Raw value: literal characters must be legal, while `&#…;` references
+        // (legal in XML 1.1) pass through as plain ASCII.
+        wellformed::check_chars(std::str::from_utf8(attr.value.as_ref())?, "attribute value")?;
         let value = attr
             .unescape_value_with(|name| {
                 entity_map

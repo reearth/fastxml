@@ -691,8 +691,14 @@ Known issues and planned improvements, roughly in priority order:
 
 **XML parsing**
 
-- Stricter not-well-formed detection (the underlying parser accepts some
-  malformed input that the W3C suite expects to be rejected).
+- Stricter not-well-formed detection. The `Char` production is now enforced
+  (literal control characters and other illegal codepoints are rejected in
+  names, text, attribute values, and the DTD), which lifts the W3C not-wf
+  pass rate to ~26%. The remaining gap is two clusters: the XML 1.0 *name*
+  character classes (`BaseChar` / `CombiningChar` / `Digit` / `Extender`,
+  productions P85/P87/P88/P89 and P04/P05), and DTD / entity well-formedness
+  (the larger share — internal-subset declarations, parameter entities, and
+  character-reference legality are not yet checked).
 
 **Performance / memory**
 
