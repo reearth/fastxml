@@ -51,6 +51,10 @@ fn w3c_xsd_conformance_dom() {
     let mut report = SuiteReport::new();
     let mut schema_pass = 0;
     let mut schema_fail = 0;
+    let mut schema_valid_pass = 0;
+    let mut schema_valid_total = 0;
+    let mut schema_invalid_pass = 0;
+    let mut schema_invalid_total = 0;
     let mut instance_pass = 0;
     let mut instance_fail = 0;
 
@@ -67,10 +71,17 @@ fn w3c_xsd_conformance_dom() {
                 Err(_) => continue,
             };
 
+            match schema_doc.expected {
+                SchemaValidity::Valid => schema_valid_total += 1,
+                SchemaValidity::Invalid => schema_invalid_total += 1,
+                _ => {}
+            }
+
             match fastxml::schema::Schema::from_xsd(&content) {
                 Ok(schema) => {
                     if schema_doc.expected == SchemaValidity::Valid {
                         schema_pass += 1;
+                        schema_valid_pass += 1;
                         compiled_schema = Some(Arc::new(schema));
                     } else if schema_doc.expected == SchemaValidity::Invalid {
                         schema_fail += 1;
@@ -83,6 +94,7 @@ fn w3c_xsd_conformance_dom() {
                 Err(e) => {
                     if schema_doc.expected == SchemaValidity::Invalid {
                         schema_pass += 1;
+                        schema_invalid_pass += 1;
                     } else if schema_doc.expected == SchemaValidity::Valid {
                         schema_fail += 1;
                         eprintln!("FAIL [schema/dom] {}: {}", group.name, e);
@@ -168,6 +180,18 @@ fn w3c_xsd_conformance_dom() {
     eprintln!(
         "Schema compilation: {} passed, {} failed",
         schema_pass, schema_fail
+    );
+    eprintln!(
+        "  valid schemas accepted: {}/{} ({:.1}%)",
+        schema_valid_pass,
+        schema_valid_total,
+        100.0 * schema_valid_pass as f64 / schema_valid_total.max(1) as f64
+    );
+    eprintln!(
+        "  invalid schemas rejected: {}/{} ({:.1}%)",
+        schema_invalid_pass,
+        schema_invalid_total,
+        100.0 * schema_invalid_pass as f64 / schema_invalid_total.max(1) as f64
     );
     eprintln!(
         "Instance validation: {} passed, {} failed",

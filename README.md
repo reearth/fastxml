@@ -654,6 +654,7 @@ Conformance test results on current main (post-v0.9.0). See
 |------------|----------|-----------|
 | W3C XML | valid documents | 98.5% |
 | W3C XML | invalid documents | 97.4% |
+| W3C XML | not-well-formed | 26.4% |
 | W3C XSD | schema compilation | 89.0% |
 | W3C XSD | instance validation (DOM) | 98.0% |
 | W3C XSD | instance validation (streaming) | 97.5% |
@@ -662,6 +663,11 @@ Schema compilation breaks down asymmetrically: every valid schema in the
 suite compiles (100%, zero false rejections), while only 52.3% of invalid
 schemas are rejected — fastxml is permissive toward malformed schemas
 rather than strict.
+
+The not-well-formed pass rate is similarly limited by leniency: the `Char`
+production is enforced, but the XML 1.0 name character classes and DTD /
+entity well-formedness are not yet checked (see the roadmap). Valid
+documents are unaffected.
 
 XSD tests are evaluated against XSD 1.0 expectations; XSD 1.1-only test
 groups are excluded.
