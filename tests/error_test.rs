@@ -350,7 +350,10 @@ mod malformed_xml {
         let result = Parser::from(xml).parse();
         // C0 control characters (other than tab/LF/CR) violate the Char
         // production and must be rejected.
-        assert!(result.is_err(), "control characters in content are not well-formed");
+        assert!(
+            result.is_err(),
+            "control characters in content are not well-formed"
+        );
     }
 
     #[test]
