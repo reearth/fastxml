@@ -681,19 +681,6 @@ cargo test -p fastxml-conformance
 
 Known issues and planned improvements, roughly in priority order:
 
-**Validation correctness**
-
-- **DOM validator namespace handling**: child element declarations can be
-  resolved by local name across namespaces, producing false positives on
-  documents that reuse a local name in different namespaces (e.g. CityGML
-  `gen:value` vs. measure `value` — ~30k spurious errors on the benchmark
-  file where the streaming validator and libxml report none). The streaming
-  validator is unaffected. Namespace-aware element declarations (carrying
-  their target namespace through compilation) would fix this and several
-  conformance tails at once.
-- **Streaming identity constraints**: keyref tuples are compared lexically,
-  not in the value space (the DOM validator already compares typed values).
-
 **Schema (XSD) coverage**
 
 - Invalid-schema rejection (52.3%): deeper particle-restriction legality

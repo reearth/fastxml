@@ -92,6 +92,44 @@ fn attribute_simple_type<'a>(
     }
 }
 
+/// Resolves the [`PrimitiveKind`] governing the value space of the attribute
+/// named `attr_local` on `complex` (following the derivation chain), so
+/// identity-constraint field values carried by attributes can be canonicalized
+/// before comparison. Returns `None` for string-derived or undeclared
+/// attributes, in which case lexical comparison is used.
+pub(crate) fn attribute_primitive_kind(
+    schema: &CompiledSchema,
+    complex: &ComplexType,
+    attr_local: &str,
+) -> Option<PrimitiveKind> {
+    let def = collect_attributes(schema, complex)
+        .into_iter()
+        .find(|d| d.name == attr_local || d.name.rsplit(':').next() == Some(attr_local))?;
+    let def = resolve_ref(schema, def);
+    let simple = attribute_simple_type(schema, def)?;
+    PrimitiveKind::resolve(schema, simple)
+}
+
+/// Resolves the [`PrimitiveKind`] governing an element's text value: its
+/// simple type, or the base of a `simpleContent` complex type. Returns `None`
+/// when the element has no simple value space (element-only content).
+pub(crate) fn element_text_primitive_kind(
+    schema: &CompiledSchema,
+    type_def: &TypeDef,
+) -> Option<PrimitiveKind> {
+    match type_def {
+        TypeDef::Simple(simple) => PrimitiveKind::resolve(schema, simple),
+        TypeDef::Complex(complex) => {
+            if let ContentModel::SimpleContent { base_type } = &complex.content
+                && let Some(TypeDef::Simple(simple)) = schema.get_type(base_type)
+            {
+                return PrimitiveKind::resolve(schema, simple);
+            }
+            None
+        }
+    }
+}
+
 /// Validates one attribute value against its declaration.
 ///
 /// Returns an error message when the value is invalid, `None` when valid or

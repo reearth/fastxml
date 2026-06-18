@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ContentModel, SimpleType, TypeDef};
+use crate::schema::types::{ComplexType, ContentModel, SimpleType, TypeDef};
 use crate::schema::xsd::facets::FacetValidator;
 use crate::schema::xsd::primitive::PrimitiveKind;
 
@@ -240,12 +240,43 @@ impl OnePassSchemaValidator {
     }
 
     /// Handles identity-constraint bookkeeping at element start.
+    /// The complex type governing the current (most recently started)
+    /// element, when one is resolvable from its declared or inline type.
+    /// Used to resolve attribute value-space kinds for identity constraints.
+    fn current_element_complex_type(&self) -> Option<&ComplexType> {
+        let ctx = self.state.current_element()?;
+        let type_def = match ctx.type_ref.as_deref() {
+            Some(tr) => self.schema.get_type(tr),
+            None => ctx.inline_type.as_ref(),
+        };
+        match type_def {
+            Some(TypeDef::Complex(c)) => Some(c),
+            _ => None,
+        }
+    }
+
     fn identity_element_start(
         &mut self,
         elem_constraints: &[crate::schema::types::CompiledConstraint],
         attributes: &[(&str, &str)],
     ) {
         let depth = self.state.element_stack.len();
+
+        // Resolve the value-space kind of each present attribute once, so the
+        // identity-constraint field values captured below can be canonicalized
+        // (e.g. the xs:integer attributes "1" and "01" denote the same key).
+        let attr_kinds: Vec<Option<PrimitiveKind>> = {
+            let complex = self.current_element_complex_type();
+            attributes
+                .iter()
+                .map(|&(name, _)| {
+                    let local = name.rsplit(':').next().unwrap_or(name);
+                    complex.and_then(|c| {
+                        super::super::attributes::attribute_primitive_kind(&self.schema, c, local)
+                    })
+                })
+                .collect()
+        };
 
         // Path of local names for elements on the stack (depth 1..=depth).
         let local_names: Vec<&str> = self
@@ -266,11 +297,15 @@ impl OnePassSchemaValidator {
                         if field.steps.is_empty()
                             && let Some(ref attr) = field.attr
                         {
-                            let value = attributes.iter().find_map(|&(n, v)| {
-                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            let value = attributes.iter().enumerate().find_map(|(ai, &(n, v))| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
-                            if let Some(v) = value {
-                                fields[i] = super::identity::FieldState::Set(v.trim().to_string());
+                            if let Some((ai, v)) = value {
+                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                    attr_kinds[ai],
+                                    v,
+                                );
+                                fields[i] = super::identity::FieldState::Set(canon);
                             }
                         }
                     }
@@ -288,13 +323,17 @@ impl OnePassSchemaValidator {
                         if let Some(ref attr) = field.attr
                             && super::identity::field_steps_match(field, rel)
                         {
-                            let value = attributes.iter().find_map(|&(n, v)| {
-                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some(v)
+                            let value = attributes.iter().enumerate().find_map(|(ai, &(n, v))| {
+                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
-                            if let Some(v) = value {
+                            if let Some((ai, v)) = value {
+                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                    attr_kinds[ai],
+                                    v,
+                                );
                                 selected.fields[i] = match selected.fields[i] {
                                     super::identity::FieldState::Unset => {
-                                        super::identity::FieldState::Set(v.trim().to_string())
+                                        super::identity::FieldState::Set(canon)
                                     }
                                     _ => super::identity::FieldState::Multiple,
                                 };
@@ -319,7 +358,20 @@ impl OnePassSchemaValidator {
         use crate::schema::types::CompiledConstraintType;
         use crate::schema::xsd::constraints::{ConstraintType, IdentityConstraint, KeyValue};
 
-        let text = ctx.text_content.trim().to_string();
+        // Canonicalize the ending element's text in its value space so a `.`
+        // or descendant-text field key compares correctly (e.g. xs:integer
+        // "01" and "1" denote the same key).
+        let text_kind: Option<PrimitiveKind> = if let Some(tr) = ctx.type_ref.as_deref() {
+            self.schema.get_type(tr).and_then(|td| {
+                super::super::attributes::element_text_primitive_kind(&self.schema, td)
+            })
+        } else if let Some(ref it) = ctx.inline_type {
+            super::super::attributes::element_text_primitive_kind(&self.schema, it)
+        } else {
+            None
+        };
+        let text =
+            crate::schema::xsd::value_compare::canonical_value(text_kind, ctx.text_content.trim());
         let ended_local = ctx
             .name
             .rsplit(':')
