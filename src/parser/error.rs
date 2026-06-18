@@ -37,6 +37,11 @@ pub enum ParseError {
         /// Error message
         message: String,
     },
+    /// The input is not well-formed (e.g. an illegal XML character).
+    NotWellFormed {
+        /// Error message
+        message: String,
+    },
 }
 
 impl std::fmt::Display for ParseError {
@@ -59,6 +64,9 @@ impl std::fmt::Display for ParseError {
             }
             ParseError::Generic { message } => {
                 write!(f, "{}", message)
+            }
+            ParseError::NotWellFormed { message } => {
+                write!(f, "not well-formed: {}", message)
             }
         }
     }
