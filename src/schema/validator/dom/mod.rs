@@ -127,6 +127,9 @@ pub struct DomSchemaValidator {
     pub(crate) facet_cache: std::cell::RefCell<crate::schema::xsd::facets::FacetCache>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: std::cell::RefCell<rustc_hash::FxHashSet<std::sync::Arc<str>>>,
+    /// (message, node_name) -> index into the error vec, used when
+    /// `aggregate_errors` is on.
+    pub(crate) aggregate_index: std::cell::RefCell<crate::error::ErrorAggregateIndex>,
 }
 
 impl DomSchemaValidator {
@@ -139,6 +142,7 @@ impl DomSchemaValidator {
             max_errors: 0,
             facet_cache: Default::default(),
             error_strings: Default::default(),
+            aggregate_index: Default::default(),
         }
     }
 
@@ -149,6 +153,12 @@ impl DomSchemaValidator {
     }
 
     /// Sets the maximum number of errors to collect.
+    /// Collapses identical errors into one entry with a count (builder).
+    pub fn with_aggregate_errors(mut self) -> Self {
+        self.options.aggregate_errors = true;
+        self
+    }
+
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
@@ -157,6 +167,31 @@ impl DomSchemaValidator {
     /// Interns an error's strings through the validator-lifetime pool.
     fn intern_error(&self, error: StructuredError) -> StructuredError {
         error.interned(&mut self.error_strings.borrow_mut())
+    }
+
+    /// Appends an error, respecting `max_errors` and, when enabled,
+    /// collapsing identical errors into one entry with a count.
+    pub(crate) fn push_error(&self, errors: &mut Vec<StructuredError>, error: StructuredError) {
+        let error = self.intern_error(error);
+        if self.options.aggregate_errors {
+            let key = (
+                std::sync::Arc::clone(&error.message),
+                error.node_name.clone(),
+            );
+            let mut index = self.aggregate_index.borrow_mut();
+            if let Some(&idx) = index.get(&key) {
+                errors[idx].record_occurrence(error.location.line, error.location.column);
+                return;
+            }
+            if self.should_add_error(errors) {
+                index.insert(key, errors.len());
+                errors.push(error);
+            }
+            return;
+        }
+        if self.should_add_error(errors) {
+            errors.push(error);
+        }
     }
 
     /// Validates the document and returns any errors found.
@@ -178,9 +213,7 @@ impl DomSchemaValidator {
         ) {
             let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
                 .with_level(ErrorLevel::Error);
-            if self.should_add_error(&errors) {
-                errors.push(self.intern_error(error));
-            }
+            self.push_error(&mut errors, error);
         }
 
         // Resolve IDREF references against the IDs seen in the document
@@ -197,9 +230,7 @@ impl DomSchemaValidator {
                 if let Some(column) = column {
                     error = error.with_column(column);
                 }
-                if self.should_add_error(&errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(&mut errors, error);
             }
         }
 
@@ -322,9 +353,7 @@ impl DomSchemaValidator {
                             )
                             .with_node_name(&name)
                             .with_level(ErrorLevel::Error);
-                        if self.should_add_error(errors) {
-                            errors.push(self.intern_error(error));
-                        }
+                        self.push_error(errors, error);
                     }
                 }
             }
@@ -339,9 +368,7 @@ impl DomSchemaValidator {
                     )
                     .with_node_name(&name)
                     .with_level(ErrorLevel::Error);
-                if self.should_add_error(errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(errors, error);
             }
 
             // xsi:nil handling: only nillable declarations may carry it, and
@@ -360,9 +387,7 @@ impl DomSchemaValidator {
                         )
                         .with_node_name(&name)
                         .with_level(ErrorLevel::Error);
-                    if self.should_add_error(errors) {
-                        errors.push(self.intern_error(error));
-                    }
+                    self.push_error(errors, error);
                 } else if !node.get_child_elements().is_empty()
                     || !self.collect_text_content(node).trim().is_empty()
                 {
@@ -374,9 +399,7 @@ impl DomSchemaValidator {
                         )
                         .with_node_name(&name)
                         .with_level(ErrorLevel::Error);
-                    if self.should_add_error(errors) {
-                        errors.push(self.intern_error(error));
-                    }
+                    self.push_error(errors, error);
                 }
             }
 
@@ -435,9 +458,7 @@ impl DomSchemaValidator {
                             )
                             .with_node_name(&name)
                             .with_level(ErrorLevel::Error);
-                        if self.should_add_error(errors) {
-                            errors.push(self.intern_error(error));
-                        }
+                        self.push_error(errors, error);
                     }
                     if let Some(max) = w.max_occurs {
                         if matched > max {
@@ -452,9 +473,7 @@ impl DomSchemaValidator {
                                 )
                                 .with_node_name(&name)
                                 .with_level(ErrorLevel::Error);
-                            if self.should_add_error(errors) {
-                                errors.push(self.intern_error(error));
-                            }
+                            self.push_error(errors, error);
                         }
                     }
                 }
@@ -505,9 +524,7 @@ impl DomSchemaValidator {
                 .with_node_name(&qname)
                 .with_level(ErrorLevel::Error);
 
-            if self.should_add_error(errors) {
-                errors.push(self.intern_error(error));
-            }
+            self.push_error(errors, error);
             ParentContext::default()
         } else {
             ParentContext::default()
@@ -570,9 +587,7 @@ impl DomSchemaValidator {
                 )
                 .with_node_name(&name)
                 .with_level(ErrorLevel::Error);
-            if self.should_add_error(errors) {
-                errors.push(self.intern_error(error));
-            }
+            self.push_error(errors, error);
         }
     }
 

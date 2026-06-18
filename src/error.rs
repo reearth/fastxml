@@ -296,6 +296,16 @@ pub struct StructuredError {
     pub expected: Option<std::sync::Arc<str>>,
     /// Actual value found (for type mismatch errors)
     pub found: Option<std::sync::Arc<str>>,
+    /// How many identical occurrences this entry represents. Always 1
+    /// unless error aggregation is enabled on the validator, where
+    /// repeated identical errors collapse into one entry with a count.
+    pub count: u32,
+    /// Positions of the 2nd..nth occurrences as (line, column) pairs
+    /// (0 = unknown), populated when error aggregation is enabled. The
+    /// first occurrence's position lives in `location`. At 8 bytes per
+    /// occurrence this stays small even for hundreds of thousands of
+    /// occurrences.
+    pub more_positions: Option<Box<Vec<(u32, u32)>>>,
 }
 
 impl Default for StructuredError {
@@ -308,9 +318,43 @@ impl Default for StructuredError {
             node_name: None,
             expected: None,
             found: None,
+            count: 1,
+            more_positions: None,
         }
     }
 }
+
+impl StructuredError {
+    /// Records another occurrence of this (aggregated) error at the given
+    /// position.
+    pub(crate) fn record_occurrence(&mut self, line: Option<usize>, column: Option<usize>) {
+        self.count += 1;
+        self.more_positions
+            .get_or_insert_default()
+            .push((line.unwrap_or(0) as u32, column.unwrap_or(0) as u32));
+    }
+
+    /// The range of source lines covered by all recorded occurrences,
+    /// when at least one position is known.
+    pub fn line_range(&self) -> Option<(usize, usize)> {
+        let mut min: Option<usize> = self.location.line;
+        let mut max: Option<usize> = self.location.line;
+        for &(line, _) in self.more_positions.as_deref().into_iter().flatten() {
+            if line == 0 {
+                continue;
+            }
+            let line = line as usize;
+            min = Some(min.map_or(line, |m| m.min(line)));
+            max = Some(max.map_or(line, |m| m.max(line)));
+        }
+        Some((min?, max?))
+    }
+}
+
+/// Index from (message, node name) to position in an error vec, used by
+/// validators when error aggregation is enabled.
+pub(crate) type ErrorAggregateIndex =
+    rustc_hash::FxHashMap<(std::sync::Arc<str>, Option<std::sync::Arc<str>>), usize>;
 
 /// Returns the pooled copy of `s`, inserting it on first sight.
 pub(crate) fn intern_arc(
@@ -499,6 +543,15 @@ impl std::fmt::Display for StructuredError {
 
         if let (Some(expected), Some(found)) = (&self.expected, &self.found) {
             write!(f, " (expected: {}, found: {})", expected, found)?;
+        }
+
+        if self.count > 1 {
+            match self.line_range() {
+                Some((first, last)) if last > first => {
+                    write!(f, " (\u{00d7}{}, lines {}-{})", self.count, first, last)?;
+                }
+                _ => write!(f, " (\u{00d7}{})", self.count)?,
+            }
         }
 
         Ok(())

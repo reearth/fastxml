@@ -61,6 +61,7 @@ pub struct Validator<'a> {
     schema: Option<Arc<CompiledSchema>>,
     mode: ValidationMode,
     max_errors: Option<usize>,
+    aggregate_errors: bool,
 }
 
 impl<'a> From<&'a XmlDocument> for Validator<'a> {
@@ -88,6 +89,7 @@ impl<'a> Validator<'a> {
             schema: None,
             mode: ValidationMode::default(),
             max_errors: None,
+            aggregate_errors: false,
         }
     }
 
@@ -120,6 +122,17 @@ impl<'a> Validator<'a> {
         self
     }
 
+    /// Collapses identical errors into one entry whose
+    /// [`count`](crate::error::StructuredError::count) records the number of
+    /// occurrences. Keeps memory bounded on error-dense documents (a
+    /// million identical violations become one entry), at the cost of
+    /// per-occurrence locations: each entry keeps its first occurrence's
+    /// position.
+    pub fn aggregate_errors(mut self) -> Self {
+        self.aggregate_errors = true;
+        self
+    }
+
     /// Runs validation and returns a [`Report`].
     ///
     /// With an explicit [`schema`](Self::schema), this never touches the
@@ -132,9 +145,12 @@ impl<'a> Validator<'a> {
             schema,
             mode,
             max_errors,
+            aggregate_errors,
         } = self;
         let entries = match schema {
-            Some(schema) => validate_with_schema(source, schema, mode, max_errors)?,
+            Some(schema) => {
+                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
+            }
             None => run_location_default(source)?,
         };
         Ok(Report::new(entries))
@@ -149,9 +165,12 @@ impl<'a> Validator<'a> {
             schema,
             mode,
             max_errors,
+            aggregate_errors,
         } = self;
         let entries = match schema {
-            Some(schema) => validate_with_schema(source, schema, mode, max_errors)?,
+            Some(schema) => {
+                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
+            }
             None => match source {
                 Source::Dom(doc) => {
                     super::api::validate_with_schema_location_and_fetcher(doc, &fetcher)?
@@ -185,9 +204,12 @@ impl<'a> Validator<'a> {
             schema,
             mode,
             max_errors,
+            aggregate_errors,
         } = self;
         let entries = match schema {
-            Some(schema) => validate_with_schema(source, schema, mode, max_errors)?,
+            Some(schema) => {
+                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
+            }
             None => match source {
                 Source::Dom(doc) => {
                     super::api::validate_with_schema_location_with_async_fetcher(doc, fetcher)
@@ -218,6 +240,7 @@ fn validate_with_schema(
     schema: Arc<CompiledSchema>,
     mode: ValidationMode,
     max_errors: Option<usize>,
+    aggregate_errors: bool,
 ) -> Result<Vec<StructuredError>> {
     match source {
         Source::Dom(doc) => {
@@ -225,10 +248,17 @@ fn validate_with_schema(
             if let Some(max) = max_errors {
                 validator = validator.with_max_errors(max);
             }
+            if aggregate_errors {
+                validator = validator.with_aggregate_errors();
+            }
             validator.validate(doc)
         }
-        Source::Bytes(bytes) => run_streaming_with_schema(bytes, schema, mode, max_errors),
-        Source::Reader(reader) => run_streaming_with_schema(reader, schema, mode, max_errors),
+        Source::Bytes(bytes) => {
+            run_streaming_with_schema(bytes, schema, mode, max_errors, aggregate_errors)
+        }
+        Source::Reader(reader) => {
+            run_streaming_with_schema(reader, schema, mode, max_errors, aggregate_errors)
+        }
     }
 }
 
@@ -237,10 +267,14 @@ fn run_streaming_with_schema<R: BufRead>(
     schema: Arc<CompiledSchema>,
     mode: ValidationMode,
     max_errors: Option<usize>,
+    aggregate_errors: bool,
 ) -> Result<Vec<StructuredError>> {
     let mut validator = OnePassSchemaValidator::new(schema).set_mode(mode);
     if let Some(max) = max_errors {
         validator = validator.with_max_errors(max);
+    }
+    if aggregate_errors {
+        validator = validator.with_aggregate_errors();
     }
     validator.validate(reader)
 }

@@ -67,6 +67,11 @@ impl XsdParser {
                 StackFrame::Element(elem) => {
                     elem.inline_type = Some(Box::new(type_def));
                 }
+                StackFrame::Redefine(redefine) => {
+                    if let XsdTypeDef::Complex(ct) = type_def {
+                        redefine.complex_types.push(ct);
+                    }
+                }
                 _ => {}
             }
         } else {
@@ -82,6 +87,9 @@ impl XsdParser {
             match parent {
                 StackFrame::Schema => {
                     self.schema.types.push(type_def);
+                }
+                StackFrame::Redefine(redefine) => {
+                    redefine.simple_types.push(st.clone());
                 }
                 StackFrame::Element(elem) => {
                     elem.inline_type = Some(Box::new(type_def));
@@ -268,8 +276,10 @@ impl XsdParser {
         } else {
             // It's a definition
             if let Some(parent) = self.stack.last_mut() {
-                if matches!(parent, StackFrame::Schema) {
-                    self.schema.attribute_groups.push(ag);
+                match parent {
+                    StackFrame::Schema => self.schema.attribute_groups.push(ag),
+                    StackFrame::Redefine(redefine) => redefine.attribute_groups.push(ag),
+                    _ => {}
                 }
             } else {
                 self.schema.attribute_groups.push(ag);
@@ -314,8 +324,10 @@ impl XsdParser {
         } else {
             // It's a definition
             if let Some(parent) = self.stack.last_mut() {
-                if matches!(parent, StackFrame::Schema) {
-                    self.schema.groups.push(grp);
+                match parent {
+                    StackFrame::Schema => self.schema.groups.push(grp),
+                    StackFrame::Redefine(redefine) => redefine.groups.push(grp),
+                    _ => {}
                 }
             } else {
                 self.schema.groups.push(grp);

@@ -71,9 +71,7 @@ impl DomSchemaValidator {
                     )
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
-                if self.should_add_error(errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(errors, error);
             }
         }
 
@@ -128,9 +126,7 @@ impl DomSchemaValidator {
                                 .with_node_name(&node_name)
                                 .with_level(ErrorLevel::Error);
 
-                            if self.should_add_error(errors) {
-                                errors.push(self.intern_error(error));
-                            }
+                            self.push_error(errors, error);
                         }
                     }
                 }
@@ -173,9 +169,7 @@ impl DomSchemaValidator {
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
 
-                if self.should_add_error(errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(errors, error);
             }
 
             // Record the node's value-space kind for identity constraints
@@ -196,9 +190,7 @@ impl DomSchemaValidator {
                     .make_error(ValidationErrorType::IdentityConstraint, message, node)
                     .with_node_name(&node_name)
                     .with_level(ErrorLevel::Error);
-                if self.should_add_error(errors) {
-                    errors.push(self.intern_error(error));
-                }
+                self.push_error(errors, error);
             }
         }
 
@@ -217,9 +209,7 @@ impl DomSchemaValidator {
                 .with_node_name(&node_name)
                 .with_level(ErrorLevel::Error);
 
-            if self.should_add_error(errors) {
-                errors.push(self.intern_error(error));
-            }
+            self.push_error(errors, error);
         }
     }
 
