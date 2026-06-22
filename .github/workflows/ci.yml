@@ -71,3 +71,25 @@ jobs:
         run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -Dwarnings
+
+  # Single aggregating gate: this is the only status check that needs to be
+  # marked "required" in the branch-protection rule. It turns green only after
+  # every CI job above has finished successfully, and red if any of them fails
+  # or is cancelled. `if: always()` ensures it always reports a definitive
+  # pass/fail (never "skipped"), so it never leaves the merge in a pending
+  # state when an upstream job fails.
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [fmt, clippy, test, test-libxml, doc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all CI jobs succeeded
+        run: |
+          results="${{ join(needs.*.result, ',') }}"
+          echo "Upstream job results: ${results}"
+          if [[ "${results}" == *failure* || "${results}" == *cancelled* ]]; then
+            echo "::error::One or more CI jobs did not succeed."
+            exit 1
+          fi
+          echo "All CI jobs succeeded."
