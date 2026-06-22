@@ -291,7 +291,7 @@ fn process_start_element<R: BufRead>(
 
     let qname_bytes = e.name().as_ref().to_vec();
     let (prefix, local_name) = extract_name_parts(&qname_bytes)?;
-    wellformed::check_chars(std::str::from_utf8(&qname_bytes)?, "element name")?;
+    wellformed::check_name(std::str::from_utf8(&qname_bytes)?, "element name")?;
 
     // First pass: collect namespace declarations and register them
     let mut namespace_decls = Vec::new();
@@ -300,7 +300,7 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        wellformed::check_chars(key, "attribute name")?;
+        wellformed::check_name(key, "attribute name")?;
         // Raw value: literal characters must be legal, while `&#…;` references
         // (legal in XML 1.1) pass through as plain ASCII.
         wellformed::check_chars(std::str::from_utf8(attr.value.as_ref())?, "attribute value")?;

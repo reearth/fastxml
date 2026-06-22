@@ -327,7 +327,7 @@ impl<R: BufRead> StreamingParser<R> {
                 Ok(Event::End(ref e)) => {
                     let qname = e.name();
                     let full_name = std::str::from_utf8(qname.as_ref())?;
-                    crate::parser::wellformed::check_chars(full_name, "element name")?;
+                    crate::parser::wellformed::check_name(full_name, "element name")?;
                     let (prefix, name) = crate::namespace::split_qname(full_name);
                     on_event(&RawEvent::EndElement { name, prefix })?;
                 }
@@ -469,7 +469,7 @@ fn split_start_event<'a>(
     smallvec::SmallVec<[Namespace; 2]>,
 )> {
     let full_name = std::str::from_utf8(e.name().into_inner())?;
-    crate::parser::wellformed::check_chars(full_name, "element name")?;
+    crate::parser::wellformed::check_name(full_name, "element name")?;
     let (prefix, name) = crate::namespace::split_qname(full_name);
 
     let mut namespace_decls: smallvec::SmallVec<[Namespace; 2]> = smallvec::SmallVec::new();
@@ -479,7 +479,7 @@ fn split_start_event<'a>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.into_inner())?;
-        crate::parser::wellformed::check_chars(key, "attribute name")?;
+        crate::parser::wellformed::check_name(key, "attribute name")?;
         // Raw value: literal characters must be legal, while `&#…;` references
         // (legal in XML 1.1) pass through as plain ASCII.
         crate::parser::wellformed::check_chars(
