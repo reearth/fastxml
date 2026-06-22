@@ -63,11 +63,52 @@ mod malformed_xml {
     fn test_invalid_tag_name_starting_with_number() {
         let xml = "<1root/>";
         let result = Parser::from(xml).parse();
-        // quick-xml is lenient and accepts tags starting with numbers
+        // A digit is a NameChar but not a NameStartChar (XML 1.0 P5), so a name
+        // beginning with one is not well-formed.
         assert!(
-            result.is_ok(),
-            "quick-xml accepts tags starting with numbers"
+            matches!(result, Err(Error::Parse(_))),
+            "Expected Parse error for tag name starting with a digit, got: {:?}",
+            result
         );
+    }
+
+    #[test]
+    fn test_invalid_tag_name_illegal_char() {
+        // U+00D7 (MULTIPLICATION SIGN) is a legal XML character but falls in a
+        // gap of the BaseChar production, so it is not a NameChar.
+        let xml = "<a\u{00D7}b/>";
+        let result = Parser::from(xml).parse();
+        assert!(
+            matches!(result, Err(Error::Parse(_))),
+            "Expected Parse error for illegal character in name, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_invalid_attribute_name_starting_with_number() {
+        let xml = r#"<root 1attr="x"/>"#;
+        let result = Parser::from(xml).parse();
+        assert!(
+            matches!(result, Err(Error::Parse(_))),
+            "Expected Parse error for attribute name starting with a digit, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_valid_unicode_tag_name() {
+        // Names built from Letters/Ideographics outside ASCII must be accepted
+        // (regression guard against an overly strict NameChar table).
+        for xml in ["<日本語/>", "<Élément/>", "<café/>", "<_x.y-z0/>"] {
+            let result = Parser::from(xml).parse();
+            assert!(
+                result.is_ok(),
+                "Expected valid Unicode name to parse, xml={:?}, got: {:?}",
+                xml,
+                result
+            );
+        }
     }
 
     #[test]

@@ -652,9 +652,9 @@ Conformance test results on current main (post-v0.9.0). See
 
 | Test Suite | Category | Pass Rate |
 |------------|----------|-----------|
-| W3C XML | valid documents | 98.5% |
-| W3C XML | invalid documents | 97.4% |
-| W3C XML | not-well-formed | 26.4% |
+| W3C XML | valid documents | 96.9% |
+| W3C XML | invalid documents | 91.6% |
+| W3C XML | not-well-formed | 36.5% |
 | W3C XSD | schema compilation | 89.0% |
 | W3C XSD | instance validation (DOM) | 98.0% |
 | W3C XSD | instance validation (streaming) | 97.5% |
@@ -664,10 +664,20 @@ suite compiles (100%, zero false rejections), while only 52.3% of invalid
 schemas are rejected — fastxml is permissive toward malformed schemas
 rather than strict.
 
-The not-well-formed pass rate is similarly limited by leniency: the `Char`
-production is enforced, but the XML 1.0 name character classes and DTD /
-entity well-formedness are not yet checked (see the roadmap). Valid
-documents are unaffected.
+The not-well-formed gain comes from enforcing the XML 1.0 `Name` production
+for element and attribute names (the `Char` production was already enforced).
+The remaining gap is names that appear only inside the DTD internal subset —
+PI targets and `<!ELEMENT>` / `<!ATTLIST>` / `<!ENTITY>` declaration names —
+together with DTD / entity well-formedness, which are not yet checked (see
+the roadmap).
+
+Names are validated against the XML 1.0 *4th edition* productions
+(`BaseChar` / `CombiningChar` / `Digit` / `Extender`, P85–P89). This is why
+the `valid` and `invalid` rates dipped slightly: a handful of W3C tests
+assert XML 1.1 or XML 1.0 *5th edition* name rules, under which characters
+such as U+017F (ſ) or U+0EC7 are legal in names. fastxml rejects those per
+4th edition, so the cross-edition tests now register as failures — no
+XML 1.0 4th edition conforming document is affected.
 
 XSD tests are evaluated against XSD 1.0 expectations; XSD 1.1-only test
 groups are excluded.
@@ -697,14 +707,14 @@ Known issues and planned improvements, roughly in priority order:
 
 **XML parsing**
 
-- Stricter not-well-formed detection. The `Char` production is now enforced
-  (literal control characters and other illegal codepoints are rejected in
-  names, text, attribute values, and the DTD), which lifts the W3C not-wf
-  pass rate to ~26%. The remaining gap is two clusters: the XML 1.0 *name*
-  character classes (`BaseChar` / `CombiningChar` / `Digit` / `Extender`,
-  productions P85/P87/P88/P89 and P04/P05), and DTD / entity well-formedness
-  (the larger share — internal-subset declarations, parameter entities, and
-  character-reference legality are not yet checked).
+- Stricter not-well-formed detection. The `Char` production is enforced, and
+  the XML 1.0 *name* character classes (`BaseChar` / `CombiningChar` / `Digit`
+  / `Extender`, productions P85/P87/P88/P89, 4th edition) are now enforced for
+  element and attribute names, lifting the W3C not-wf pass rate to ~36%. The
+  remaining gap is DTD / entity well-formedness (the larger share —
+  internal-subset declarations including PI targets and `<!ELEMENT>` /
+  `<!ATTLIST>` / `<!ENTITY>` names, parameter entities, and character-reference
+  legality are not yet checked).
 
 **Performance / memory**
 
