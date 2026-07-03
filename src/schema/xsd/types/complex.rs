@@ -183,4 +183,8 @@ pub enum DerivationType {
     Restriction,
     /// Substitution
     Substitution,
+    /// Derivation by list (simple types)
+    List,
+    /// Derivation by union (simple types)
+    Union,
 }

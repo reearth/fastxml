@@ -20,6 +20,8 @@ fn parse_derivation_control(value: &str) -> DerivationControl {
             "extension" => Some(DerivationType::Extension),
             "restriction" => Some(DerivationType::Restriction),
             "substitution" => Some(DerivationType::Substitution),
+            "list" => Some(DerivationType::List),
+            "union" => Some(DerivationType::Union),
             _ => None,
         })
         .collect();
@@ -227,6 +229,9 @@ impl XsdParser {
         if let Some(bd) = attrs.get("blockDefault") {
             self.schema.block_default = Some(parse_derivation_control(bd));
         }
+        if let Some(fd) = attrs.get("finalDefault") {
+            self.schema.final_default = Some(parse_derivation_control(fd));
+        }
         if let Some(v) = attrs.get("version") {
             self.schema.version = Some(v.clone());
         }
@@ -300,11 +305,14 @@ impl XsdParser {
     }
 
     pub(super) fn handle_simple_type(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
-        let st = if let Some(name) = attrs.get("name") {
+        let mut st = if let Some(name) = attrs.get("name") {
             XsdSimpleType::new(name)
         } else {
             XsdSimpleType::anonymous()
         };
+        if let Some(final_) = attrs.get("final") {
+            st.final_ = Some(parse_derivation_control(final_));
+        }
 
         self.stack.push(StackFrame::SimpleType(st));
         Ok(())

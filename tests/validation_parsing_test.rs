@@ -96,12 +96,9 @@ fn test_xsd_circular_type_reference() {
         </xs:schema>"#;
 
     let result = Schema::from_xsd(xsd.as_bytes());
-    // XSD parser accepts circular type references during parsing
-    // Type resolution happens lazily during validation
-    assert!(
-        result.is_ok(),
-        "Parser accepts circular type references during parsing"
-    );
+    // Circular type derivation violates ct-props-correct; the compiler
+    // rejects the schema.
+    assert!(result.is_err(), "circular type derivation must be rejected");
 }
 
 #[test]
