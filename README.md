@@ -40,6 +40,24 @@ Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
 | fastxml DOM + validate | 1.7s | 36 MB/s | 370 MB |
 | fastxml Streaming + validate | 1.4s | 44 MB/s | **~60 MB** |
 
+The libxml figures and the building-file numbers above are from that earlier
+run and are kept unchanged. Streaming-validation throughput has since been
+improved ~1.75x; the following is a same-machine before/after on a
+schema-rich CityGML DEM tile (PLATEAU, 53 XSD schemas / 2,635 types
+resolved), measured with `examples/bench.rs`:
+
+| Streaming + validate (DEM) | Before | After | Parse-only |
+|----------------------------|-------:|------:|-----------:|
+| 15 MB tile  | 43.2 MB/s | **75.6 MB/s** | 182 MB/s (unchanged) |
+| 220 MB tile | 43.5 MB/s | **75.7 MB/s** | 183 MB/s (unchanged) |
+
+Memory is unchanged by these optimizations (18.0 MB delta on the 220 MB
+tile, before and after) — the added caches are bounded by schema size, not
+document size. The parse path is untouched (parse-only throughput is flat),
+and the W3C XML/XSD conformance outcomes are identical before and after. The
+building file is less text-heavy than the DEM, so its gain is smaller than
+the DEM's whitespace-dominated 1.75x.
+
 - **fastxml DOM uses less memory than libxml** on this file (367 vs
   405 MB): nodes are 128 bytes plus a compact interned attribute list. On
   text-heavy files the gap is much larger (907 MB PLATEAU DEM, measured at
@@ -764,10 +782,17 @@ Known issues and planned improvements, roughly in priority order:
 
 **Performance / memory**
 
-- Validation throughput: streaming validation runs at ~44 MB/s vs libxml's
-  ~270 MB/s on schema-rich CityGML (the event pipeline is already
-  zero-copy; remaining cost is per-element schema lookups and per-value
-  facet checks).
+- Validation throughput: streaming validation runs at ~76 MB/s (up from
+  ~44 MB/s) vs libxml's ~270 MB/s on schema-rich CityGML. The recent ~1.75x
+  gain came from removing per-element/per-value allocations (borrowing
+  compiled types via the schema `Arc` instead of cloning them, `Cow`
+  whitespace normalization that borrows already-collapsed values, memoized
+  attribute collection, and skipping identity bookkeeping when nothing is
+  tracked). Closing the remaining gap to libxml is architectural — a
+  symbol-ID pipeline: intern names once at the tokenizer, then use
+  ID-indexed element lookup and automaton transitions and precompiled
+  per-type validation ops instead of string-keyed hash lookups and per-value
+  facet interpretation. That redesign is the stated next step.
 
 
 ## Development
