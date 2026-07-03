@@ -708,12 +708,15 @@ impl OnePassSchemaValidator {
         // Anti-regression guardrail: count every text-content check
         // unconditionally, before any type resolution or early return.
         self.counters.text_nodes_checked += 1;
+        // C2: clone the schema *Arc* (a cheap refcount bump), not the whole
+        // TypeDef. The borrowed &TypeDef then lives independently of self, so
+        // validate_text_against_type_def (which takes &mut self) can be called
+        // without cloning the type on every text node.
+        let schema = Arc::clone(&self.schema);
         // Try to get type definition from type_ref first
         if let Some(ref type_ref) = ctx.type_ref {
-            // Note: .cloned() is required to break the borrow from self.schema
-            // before calling validate_text_against_type_def which takes &mut self
-            if let Some(type_def) = self.schema.get_type(type_ref).cloned() {
-                self.validate_text_against_type_def(ctx, &type_def);
+            if let Some(type_def) = schema.get_type(type_ref) {
+                self.validate_text_against_type_def(ctx, type_def);
                 return;
             }
         }
@@ -724,8 +727,8 @@ impl OnePassSchemaValidator {
         }
 
         // Inline (anonymous) type captured at element start
-        if let Some(inline_type) = ctx.inline_type.clone() {
-            self.validate_text_against_type_def(ctx, &inline_type);
+        if let Some(inline_type) = ctx.inline_type.as_ref() {
+            self.validate_text_against_type_def(ctx, inline_type);
             return;
         }
 
@@ -748,9 +751,10 @@ impl OnePassSchemaValidator {
             TypeDef::Complex(complex) => {
                 // For complex types with simple content, validate the base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    if let Some(TypeDef::Simple(simple)) =
-                        self.schema.get_type(base_type).cloned().as_ref()
-                    {
+                    // C2: borrow the base simple type via a cheap schema-Arc
+                    // clone instead of cloning the TypeDef.
+                    let schema = Arc::clone(&self.schema);
+                    if let Some(TypeDef::Simple(simple)) = schema.get_type(base_type) {
                         self.validate_text_against_simple_type(ctx, simple);
                     }
                 } else if !complex.mixed {
