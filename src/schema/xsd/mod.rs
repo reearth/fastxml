@@ -48,6 +48,7 @@ pub mod content_automaton;
 pub mod content_model;
 pub mod error;
 pub mod facets;
+pub(crate) mod identity_xpath;
 pub mod parser;
 pub mod primitive;
 pub(crate) mod regex_check;

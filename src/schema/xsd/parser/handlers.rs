@@ -994,8 +994,30 @@ impl XsdParser {
         Ok(())
     }
 
+    /// Validates a selector/field xpath against the restricted grammar of
+    /// XSD 1.0 §3.11.6, using the namespace bindings in scope.
+    fn check_identity_xpath(
+        &self,
+        xpath: &str,
+        kind: crate::schema::xsd::identity_xpath::IdentityXPathKind,
+    ) -> Result<()> {
+        crate::schema::xsd::identity_xpath::validate_identity_xpath(xpath, kind, |prefix| {
+            self.schema.namespace_bindings.contains_key(prefix)
+        })
+        .map_err(|message| {
+            crate::schema::error::SchemaError::InvalidSchema {
+                message: format!("invalid identity-constraint xpath '{xpath}': {message}"),
+            }
+            .into()
+        })
+    }
+
     pub(super) fn handle_selector(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+        self.check_identity_xpath(
+            &xpath,
+            crate::schema::xsd::identity_xpath::IdentityXPathKind::Selector,
+        )?;
 
         // Set the selector on the parent constraint
         for frame in self.stack.iter_mut().rev() {
@@ -1012,6 +1034,10 @@ impl XsdParser {
 
     pub(super) fn handle_field(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+        self.check_identity_xpath(
+            &xpath,
+            crate::schema::xsd::identity_xpath::IdentityXPathKind::Field,
+        )?;
 
         // Add the field to the parent constraint
         for frame in self.stack.iter_mut().rev() {

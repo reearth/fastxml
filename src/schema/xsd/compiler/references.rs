@@ -103,6 +103,15 @@ fn tns_key(schema: &XsdSchema) -> String {
     schema.target_namespace.clone().unwrap_or_default()
 }
 
+/// What a keyref `refer=` may point at.
+#[derive(Debug, Clone, Copy)]
+struct KeyInfo {
+    /// Whether the constraint is a key/unique (a legal refer target).
+    is_key_or_unique: bool,
+    /// Number of field expressions.
+    field_count: usize,
+}
+
 /// Symbol tables of top-level component names, keyed by namespace.
 #[derive(Debug, Default)]
 struct SymbolTables {
@@ -111,8 +120,8 @@ struct SymbolTables {
     attributes: HashMap<String, HashSet<String>>,
     groups: HashMap<String, HashSet<String>>,
     attribute_groups: HashMap<String, HashSet<String>>,
-    /// key/unique identity-constraint names (for keyref refer=).
-    keys: HashMap<String, HashSet<String>>,
+    /// Identity-constraint names (for keyref refer=) with their metadata.
+    keys: HashMap<String, HashMap<String, KeyInfo>>,
 }
 
 impl SymbolTables {
@@ -172,14 +181,29 @@ impl SymbolTables {
         tables
     }
 
+    /// Looks up keyref-refer metadata, with the same chameleon no-namespace
+    /// fallback as [`Self::contains`].
+    fn lookup_key(&self, ns: &str, local: &str) -> Option<KeyInfo> {
+        if let Some(info) = self.keys.get(ns).and_then(|m| m.get(local)) {
+            return Some(*info);
+        }
+        if !ns.is_empty() {
+            return self.keys.get("").and_then(|m| m.get(local)).copied();
+        }
+        None
+    }
+
     fn contains(&self, kind: RefKind, ns: &str, local: &str) -> bool {
+        if kind == RefKind::Key {
+            return self.lookup_key(ns, local).is_some();
+        }
         let table = match kind {
             RefKind::Type => &self.types,
             RefKind::Element => &self.elements,
             RefKind::Attribute => &self.attributes,
             RefKind::Group => &self.groups,
             RefKind::AttributeGroup => &self.attribute_groups,
-            RefKind::Key => &self.keys,
+            RefKind::Key => unreachable!("handled above"),
         };
         if table.get(ns).is_some_and(|set| set.contains(local)) {
             return true;
@@ -202,15 +226,18 @@ impl SymbolTables {
 fn collect_constraint_names(
     element: &XsdElement,
     ns: &str,
-    keys: &mut HashMap<String, HashSet<String>>,
+    keys: &mut HashMap<String, HashMap<String, KeyInfo>>,
 ) {
     for ic in &element.identity_constraints {
-        // keyref names share the symbol space but cannot be refer targets;
-        // record them anyway to stay lenient about refer-to-keyref (checked
-        // separately if ever needed).
-        keys.entry(ns.to_string())
-            .or_default()
-            .insert(ic.name.clone());
+        // keyref names share the symbol space; record them too so refer
+        // resolution can distinguish "missing" from "wrong kind".
+        keys.entry(ns.to_string()).or_default().insert(
+            ic.name.clone(),
+            KeyInfo {
+                is_key_or_unique: ic.constraint_type != XsdConstraintType::KeyRef,
+                field_count: ic.fields.len(),
+            },
+        );
     }
     if let Some(inline) = &element.inline_type {
         collect_constraints_in_type(inline, ns, keys);
@@ -220,7 +247,7 @@ fn collect_constraint_names(
 fn collect_constraints_in_type(
     type_def: &XsdTypeDef,
     ns: &str,
-    keys: &mut HashMap<String, HashSet<String>>,
+    keys: &mut HashMap<String, HashMap<String, KeyInfo>>,
 ) {
     let XsdTypeDef::Complex(ct) = type_def else {
         return;
@@ -249,7 +276,7 @@ fn collect_constraints_in_type(
 fn collect_constraints_in_particle(
     particle: &XsdParticle,
     ns: &str,
-    keys: &mut HashMap<String, HashSet<String>>,
+    keys: &mut HashMap<String, HashMap<String, KeyInfo>>,
 ) {
     match particle {
         XsdParticle::Sequence(seq) => {
@@ -274,7 +301,7 @@ fn collect_constraints_in_particle(
 fn collect_constraints_in_item(
     item: &XsdParticleItem,
     ns: &str,
-    keys: &mut HashMap<String, HashSet<String>>,
+    keys: &mut HashMap<String, HashMap<String, KeyInfo>>,
 ) {
     match item {
         XsdParticleItem::Element(element) => collect_constraint_names(element, ns, keys),
@@ -472,7 +499,43 @@ impl Checker<'_> {
             if let Some(refer) = &ic.refer {
                 let from = format!("keyref '{}'", ic.name);
                 self.check_ref(RefKind::Key, refer, &from)?;
+                self.check_keyref_target(ic, refer)?;
             }
+        }
+        Ok(())
+    }
+
+    /// When a keyref's refer target resolves, it must be a key/unique (not
+    /// another keyref) and its field count must match the keyref's.
+    fn check_keyref_target(&self, ic: &XsdIdentityConstraint, refer: &QName) -> Result<()> {
+        let prefix = refer.prefix.as_deref().map(str::trim);
+        let local = refer.local.trim();
+        let Some(ns) = self.resolve_ns(prefix) else {
+            return Ok(()); // already reported by check_ref
+        };
+        let Some(info) = self.tables.lookup_key(&ns, local) else {
+            return Ok(()); // missing target is handled by check_ref
+        };
+        if !info.is_key_or_unique {
+            return Err(SchemaError::InvalidSchema {
+                message: format!(
+                    "keyref '{}' must refer to a key or unique constraint, but '{}' is a keyref",
+                    ic.name, refer
+                ),
+            }
+            .into());
+        }
+        if info.field_count != ic.fields.len() {
+            return Err(SchemaError::InvalidSchema {
+                message: format!(
+                    "keyref '{}' has {} field(s) but referred constraint '{}' has {}",
+                    ic.name,
+                    ic.fields.len(),
+                    refer,
+                    info.field_count
+                ),
+            }
+            .into());
         }
         Ok(())
     }
@@ -821,6 +884,79 @@ mod tests {
             </xs:element>
         </xs:schema>"#;
         assert_dangling(xsd, "noSuchKey");
+    }
+
+    #[test]
+    fn keyref_field_count_mismatch_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="a" type="xs:string" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                </xs:complexType>
+                <xs:key name="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                    <xs:field xpath="@y"/>
+                </xs:key>
+                <xs:keyref name="kr" refer="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:keyref>
+            </xs:element>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("field counts must match");
+        assert!(err.to_string().contains("field"), "got: {err}");
+    }
+
+    #[test]
+    fn keyref_referring_to_keyref_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="a" type="xs:string" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                </xs:complexType>
+                <xs:key name="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:key>
+                <xs:keyref name="kr1" refer="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:keyref>
+                <xs:keyref name="kr2" refer="kr1">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:keyref>
+            </xs:element>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("refer to keyref is invalid");
+        assert!(err.to_string().contains("keyref"), "got: {err}");
+    }
+
+    #[test]
+    fn matching_keyref_accepted() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="a" type="xs:string" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                </xs:complexType>
+                <xs:key name="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:key>
+                <xs:keyref name="kr" refer="k">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@x"/>
+                </xs:keyref>
+            </xs:element>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("valid keyref must compile");
     }
 
     #[test]

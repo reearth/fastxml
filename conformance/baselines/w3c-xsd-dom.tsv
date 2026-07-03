@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37265	fail=1901	unsupported=28	blocked=419	panic=0
+#counts	total=39613	pass=37321	fail=1845	unsupported=28	blocked=419	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -1473,67 +1473,11 @@ schema-invalid	idB005::msMeta/../msData/identityConstraint/idB005.xsd	fail	compi
 schema-invalid	idC019::msMeta/../msData/identityConstraint/idC019.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idD006::msMeta/../msData/identityConstraint/idD006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idD011::msMeta/../msData/identityConstraint/idD011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idD012::msMeta/../msData/identityConstraint/idD012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idD014::msMeta/../msData/identityConstraint/idD014.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idE006::msMeta/../msData/identityConstraint/idE006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idE007::msMeta/../msData/identityConstraint/idE007.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idE011::msMeta/../msData/identityConstraint/idE011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idE012::msMeta/../msData/identityConstraint/idE012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idE014::msMeta/../msData/identityConstraint/idE014.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idH013::msMeta/../msData/identityConstraint/idH013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idH014::msMeta/../msData/identityConstraint/idH014.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idH035::msMeta/../msData/identityConstraint/idH035.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI001::msMeta/../msData/identityConstraint/idI001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI003::msMeta/../msData/identityConstraint/idI003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI004::msMeta/../msData/identityConstraint/idI004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI005::msMeta/../msData/identityConstraint/idI005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI006::msMeta/../msData/identityConstraint/idI006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI007::msMeta/../msData/identityConstraint/idI007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI010::msMeta/../msData/identityConstraint/idI010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI014::msMeta/../msData/identityConstraint/idI014.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI015::msMeta/../msData/identityConstraint/idI015.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI016::msMeta/../msData/identityConstraint/idI016.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI018::msMeta/../msData/identityConstraint/idI018.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI022::msMeta/../msData/identityConstraint/idI022.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI023::msMeta/../msData/identityConstraint/idI023.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI028::msMeta/../msData/identityConstraint/idI028.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI038::msMeta/../msData/identityConstraint/idI038.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI145::msMeta/../msData/identityConstraint/idI145.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI146::msMeta/../msData/identityConstraint/idI146.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI147::msMeta/../msData/identityConstraint/idI147.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI148::msMeta/../msData/identityConstraint/idI148.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI149::msMeta/../msData/identityConstraint/idI149.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI150::msMeta/../msData/identityConstraint/idI150.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI151::msMeta/../msData/identityConstraint/idI151.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idI152::msMeta/../msData/identityConstraint/idI152.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ001::msMeta/../msData/identityConstraint/idJ001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ002::msMeta/../msData/identityConstraint/idJ002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ003::msMeta/../msData/identityConstraint/idJ003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ005::msMeta/../msData/identityConstraint/idJ005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ006::msMeta/../msData/identityConstraint/idJ006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ007::msMeta/../msData/identityConstraint/idJ007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ008::msMeta/../msData/identityConstraint/idJ008.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ011::msMeta/../msData/identityConstraint/idJ011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ015::msMeta/../msData/identityConstraint/idJ015.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ016::msMeta/../msData/identityConstraint/idJ016.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ017::msMeta/../msData/identityConstraint/idJ017.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ025::msMeta/../msData/identityConstraint/idJ025.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ026::msMeta/../msData/identityConstraint/idJ026.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ030::msMeta/../msData/identityConstraint/idJ030.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ032::msMeta/../msData/identityConstraint/idJ032.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ036::msMeta/../msData/identityConstraint/idJ036.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ052::msMeta/../msData/identityConstraint/idJ052.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ056::msMeta/../msData/identityConstraint/idJ056.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ205::msMeta/../msData/identityConstraint/idJ205.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ206::msMeta/../msData/identityConstraint/idJ206.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ207::msMeta/../msData/identityConstraint/idJ207.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ208::msMeta/../msData/identityConstraint/idJ208.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ209::msMeta/../msData/identityConstraint/idJ209.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idJ210::msMeta/../msData/identityConstraint/idJ210.xsd	fail	compiled a schema that should be invalid
 schema-invalid	idZ003::msMeta/../msData/identityConstraint/idZ003.xml	fail	compiled a schema that should be invalid
 schema-invalid	idZ011::msMeta/../msData/identityConstraint/idZ011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idc003.e::sunMeta/../sunData/combined/identity/idc003/idc003.e.xsd	fail	compiled a schema that should be invalid
-schema-invalid	idc004a.e::sunMeta/../sunData/combined/identity/idc004a/idc004a.e.xsd	fail	compiled a schema that should be invalid
 schema-invalid	int_enumeration001_673::msMeta/../msData/datatypes/Facets/Schemas/int_enumeration001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	int_fractionDigits004_734::msMeta/../msData/datatypes/Facets/Schemas/int_fractionDigits004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	int_fractionDigits007_737::msMeta/../msData/datatypes/Facets/Schemas/int_fractionDigits007.xsd	fail	compiled a schema that should be invalid
