@@ -647,50 +647,64 @@ demonstrations of both the modern and compatibility APIs.
 
 ## Conformance
 
-Conformance test results on current main (post-v0.9.0). See
+Conformance results on current `main`, measured by a harness that records one
+honest outcome per test: `pass`, `fail`, `unsupported` (a feature fastxml
+deliberately does not implement — XML 1.1, XML 1.0 5th-edition-only rules,
+non-UTF-8 encodings), `blocked` (the harness could not decide, e.g. an
+unresolvable schema import), or `panic`. The **pass rate is
+`pass / (pass + fail + panic)`** — decided tests only — and **coverage** is the
+share of all tests that were decided. Both engines (DOM and streaming) are run;
+results are diffed against committed [baselines](conformance/baselines/) so any
+change in library behaviour must land with an updated baseline. See
 [conformance/](conformance/) for details.
 
-| Test Suite | Category | Pass Rate |
-|------------|----------|-----------|
-| W3C XML | valid documents | 96.9% |
-| W3C XML | invalid documents | 91.6% |
-| W3C XML | not-well-formed | 36.5% |
-| W3C XSD | schema compilation | 89.0% |
-| W3C XSD | instance validation (DOM) | 98.0% |
-| W3C XSD | instance validation (streaming) | 97.5% |
+### W3C XML — 2,585 tests, DOM engine
 
-Schema compilation breaks down asymmetrically: every valid schema in the
-suite compiles (100%, zero false rejections), while only 52.3% of invalid
-schemas are rejected — fastxml is permissive toward malformed schemas
-rather than strict.
+| Category | Pass rate | pass | fail | unsupported |
+|----------|-----------|------|------|-------------|
+| valid documents          | 93.2% | 383 | 28  | 401 |
+| invalid documents (DTD)  | 96.7% | 208 | 7   | 27  |
+| not-well-formed          | 26.2% | 319 | 897 | 282 |
+| error (optional)         | —     | 0   | 0   | 33  |
+| **overall**              | **49.4%** | **910** | **932** | **743** |
 
-The not-well-formed gain comes from enforcing the XML 1.0 `Name` production
-for element and attribute names (the `Char` production was already enforced).
-The remaining gap is names that appear only inside the DTD internal subset —
-PI targets and `<!ELEMENT>` / `<!ATTLIST>` / `<!ENTITY>` declaration names —
-together with DTD / entity well-formedness, which are not yet checked (see
-the roadmap).
+The streaming engine is within a few tests of DOM (overall 49.0%).
+`unsupported` is dominated by XML 1.1 / 5th-edition-only tests and non-UTF-8
+encodings, which fastxml does not target (it targets XML 1.0 4th edition, UTF-8).
+The low not-well-formed rate is the honest headline: fastxml is a lenient,
+non-validating parser and accepts many malformed documents — DTD-internal-subset
+well-formedness and entity constraints are not checked (see the roadmap).
 
-Names are validated against the XML 1.0 *4th edition* productions
-(`BaseChar` / `CombiningChar` / `Digit` / `Extender`, P85–P89). This is why
-the `valid` and `invalid` rates dipped slightly: a handful of W3C tests
-assert XML 1.1 or XML 1.0 *5th edition* name rules, under which characters
-such as U+017F (ſ) or U+0EC7 are legal in names. fastxml rejects those per
-4th edition, so the cross-edition tests now register as failures — no
-XML 1.0 4th edition conforming document is affected.
+### W3C XSD — 39,613 tests, DOM engine
 
-XSD tests are evaluated against XSD 1.0 expectations; XSD 1.1-only test
-groups are excluded.
+| Category | Pass rate | pass | fail | blocked |
+|----------|-----------|------|------|---------|
+| valid schemas accepted      | 100.0% | 11,139 | 0     | 0   |
+| invalid schemas rejected    | 52.3%  | 1,753  | 1,599 | 0   |
+| valid instances             | 99.4%  | 13,673 | 86    | 304 |
+| invalid instances rejected  | 96.9%  | 10,581 | 339   | 111 |
+| **overall**                 | **94.8%** | **37,146** | **2,024** | **415** |
 
-Note: numbers from v0.8.2 and earlier are not comparable — the test
-catalog parser used to misread the expected outcome of each test
-(`<expected validity="...">` was ignored), so both pass rates and
-failure counts were measured against the wrong expectations.
+Schema compilation is asymmetric: every valid schema compiles (zero false
+rejections), but only 52.3% of invalid schemas are rejected — fastxml is
+permissive toward malformed schemas rather than strict. `blocked` instances are
+those whose schema could not be resolved/compiled, plus one wildcard instance
+whose validity is nondeterministic in fastxml. The streaming engine scores 94.6%
+overall. XSD 1.1-only test groups are excluded (XSD 1.0 target); the 28
+indeterminate schema/instance tests are reported as `unsupported`.
+
+> **Numbers from v0.9.x and earlier are not directly comparable** — the harness
+> previously counted *any* error as a pass for negative tests and dropped
+> blocked instances from the denominators, so both pass rates and totals were
+> measured against the wrong basis.
 
 ```bash
 # Run conformance tests (requires test data download)
 cargo run -p fastxml-conformance --bin download
 cargo test -p fastxml-conformance
+
+# Regenerate the committed baselines after an intentional behaviour change
+FASTXML_UPDATE_BASELINE=1 cargo test -p fastxml-conformance
 ```
 
 ## Roadmap
@@ -707,14 +721,19 @@ Known issues and planned improvements, roughly in priority order:
 
 **XML parsing**
 
-- Stricter not-well-formed detection. The `Char` production is enforced, and
-  the XML 1.0 *name* character classes (`BaseChar` / `CombiningChar` / `Digit`
-  / `Extender`, productions P85/P87/P88/P89, 4th edition) are now enforced for
-  element and attribute names, lifting the W3C not-wf pass rate to ~36%. The
-  remaining gap is DTD / entity well-formedness (the larger share —
-  internal-subset declarations including PI targets and `<!ELEMENT>` /
+- Stricter not-well-formed detection (26% of W3C not-wf tests pass under the
+  honest denominator). The `Char` production is enforced, and the XML 1.0 *name*
+  character classes (`BaseChar` / `CombiningChar` / `Digit` / `Extender`,
+  productions P85/P87/P88/P89, 4th edition) are enforced for element and
+  attribute names. The remaining gap is DTD / entity well-formedness (the larger
+  share — internal-subset declarations including PI targets and `<!ELEMENT>` /
   `<!ATTLIST>` / `<!ENTITY>` names, parameter entities, and character-reference
   legality are not yet checked).
+
+**XPath**
+
+- XPath conformance is currently covered by unit tests only; no standard
+  external suite (e.g. OASIS XPath 1.0) is run.
 
 **Performance / memory**
 
