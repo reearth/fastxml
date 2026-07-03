@@ -493,6 +493,12 @@ impl WellformedChecker {
     pub(crate) fn comment(&mut self, raw: &str) -> Result<()> {
         self.document_started = true;
         check_chars(raw, "comment")?;
+        // `--` must not appear inside a comment (XML 1.0 P15). The DOM engine's
+        // tokenizer already rejects this; enforcing it here keeps the streaming
+        // engine in lockstep.
+        if raw.contains("--") {
+            return Err(not_wf("'--' is not allowed inside a comment").into());
+        }
         Ok(())
     }
 

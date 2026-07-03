@@ -668,8 +668,8 @@ change in library behaviour must land with an updated baseline. See
 | error (optional)         | —     | 0    | 0   | 33  |
 | **overall**              | **91.3%** | **1682** | **160** | **743** |
 
-The streaming engine is within a few tests of DOM (overall 90.9%; not-well-formed
-1084 pass / 132 fail). `unsupported` is dominated by XML 1.1 / 5th-edition-only
+The streaming engine is within a few tests of DOM (overall 91.2%; not-well-formed
+1089 pass / 127 fail). `unsupported` is dominated by XML 1.1 / 5th-edition-only
 tests and non-UTF-8 encodings, which fastxml does not target (it targets XML 1.0
 4th edition, UTF-8). Well-formedness enforcement covers the `Char` and `Name`
 productions, document structure (single root, prolog/epilog content, `]]>` in
