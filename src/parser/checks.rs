@@ -269,9 +269,13 @@ impl WellformedChecker {
         self.doctype_seen = true;
         // If an internal subset opens (`[`) but its closing `]` is absent, the
         // tokenizer truncated the declaration at a `>` inside a quoted literal;
-        // the remainder follows as text events (handled in `text`).
-        if let Some(after_bracket) = raw.split_once('[').map(|(_, rest)| rest) {
-            self.dtd_open = internal_subset_end(after_bracket).is_none();
+        // the remainder follows as text events (handled in `text`). When it is
+        // complete, validate the whole declaration's grammar.
+        match raw.split_once('[').map(|(_, rest)| rest) {
+            Some(after_bracket) if internal_subset_end(after_bracket).is_none() => {
+                self.dtd_open = true;
+            }
+            _ => super::dtd::check_doctype(raw)?,
         }
         Ok(())
     }

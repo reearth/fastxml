@@ -6,6 +6,7 @@ mod unified;
 pub use unified::Parser;
 
 pub(crate) mod checks;
+pub(crate) mod dtd;
 pub(crate) mod encoding;
 pub(crate) mod entities;
 pub(crate) mod wellformed;
