@@ -29,17 +29,22 @@ impl OnePassSchemaValidator {
         // it. `qualified_name` equals `name` when there is no prefix.
         let qname: &str = qualified_name.as_ref();
 
+        // C3: hold a local clone of the schema Arc so the looked-up ElementDef
+        // is decoupled from `self` and stays borrowable across the &mut self
+        // calls below. This lets identity constraints be passed as a slice
+        // instead of cloning the constraint Vec on every element.
+        let schema = Arc::clone(&self.schema);
         // Optimization: Try local name lookup first (most common case)
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
-        let elem_def = self.lookup_element_optimized(name, prefix, qname, namespace);
+        let elem_def = self.lookup_element_optimized(&schema, name, prefix, qname, namespace);
         let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
         let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
         let elem_default = elem_def.and_then(|e| e.default.clone());
         let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
         let elem_known = elem_def.is_some();
-        let elem_constraints: Vec<crate::schema::types::CompiledConstraint> =
-            elem_def.map(|e| e.constraints.clone()).unwrap_or_default();
+        let elem_constraints: &[crate::schema::types::CompiledConstraint] =
+            elem_def.map(|e| e.constraints.as_slice()).unwrap_or(&[]);
         let nilled = attributes
             .iter()
             .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
@@ -234,7 +239,7 @@ impl OnePassSchemaValidator {
 
         // Identity constraints: open scopes declared on this element, and
         // match this element against the selectors of enclosing scopes.
-        self.identity_element_start(&elem_constraints, attributes);
+        self.identity_element_start(elem_constraints, attributes);
 
         // Validate attributes
         self.validate_attributes(name, attributes);

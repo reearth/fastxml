@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use crate::schema::types::{
-    ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren, SimpleType, TypeDef,
+    CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
+    SimpleType, TypeDef,
 };
 use crate::schema::xsd::facets::FacetConstraints;
 
@@ -12,13 +13,19 @@ use super::OnePassSchemaValidator;
 impl OnePassSchemaValidator {
     /// Optimized element lookup: tries qname first (when prefix present), then local name,
     /// then namespace URI.
-    pub(crate) fn lookup_element_optimized(
+    pub(crate) fn lookup_element_optimized<'s>(
         &self,
+        schema: &'s CompiledSchema,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
         qname: &str,
         namespace_uri: Option<&str>,
-    ) -> Option<&ElementDef> {
+    ) -> Option<&'s ElementDef> {
+        // C3: `schema` is a locally-held clone of `self.schema`'s Arc, so the
+        // returned &ElementDef is decoupled from `self` and can be held across
+        // &mut self calls — letting the caller pass element constraints as a
+        // slice instead of cloning them per element.
+        //
         // If prefix exists, try qname FIRST to ensure correct namespace resolution.
         // This is critical when multiple namespaces define elements with the same local name
         // (e.g., bldg:WallSurface vs tun:WallSurface vs brid:WallSurface).
@@ -26,14 +33,14 @@ impl OnePassSchemaValidator {
         // boundary, so no `format!` is needed here.
         if let Some(p) = prefix {
             if !p.is_empty() {
-                if let Some(elem) = self.schema.get_element(qname) {
+                if let Some(elem) = schema.get_element(qname) {
                     return Some(elem);
                 }
             }
         }
 
         // Try local name (for elements without prefix or as fallback)
-        if let Some(elem) = self.schema.get_element(name.as_ref()) {
+        if let Some(elem) = schema.get_element(name.as_ref()) {
             return Some(elem);
         }
 
@@ -41,7 +48,7 @@ impl OnePassSchemaValidator {
         // This handles the case where XML uses different prefix than schema
         // (e.g., XML uses tr:Road but schema has tran:Road)
         if let Some(ns) = namespace_uri {
-            if let Some(elem) = self.schema.get_element_by_ns(ns, name.as_ref()) {
+            if let Some(elem) = schema.get_element_by_ns(ns, name.as_ref()) {
                 return Some(elem);
             }
         }
