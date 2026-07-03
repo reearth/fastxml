@@ -16,15 +16,17 @@ impl OnePassSchemaValidator {
         &self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
+        qname: &str,
         namespace_uri: Option<&str>,
     ) -> Option<&ElementDef> {
         // If prefix exists, try qname FIRST to ensure correct namespace resolution.
         // This is critical when multiple namespaces define elements with the same local name
         // (e.g., bldg:WallSurface vs tun:WallSurface vs brid:WallSurface).
+        // C1: `qname` is the interned qualified name threaded from the tag
+        // boundary, so no `format!` is needed here.
         if let Some(p) = prefix {
             if !p.is_empty() {
-                let qname = format!("{}:{}", p.as_ref(), name.as_ref());
-                if let Some(elem) = self.schema.get_element(&qname) {
+                if let Some(elem) = self.schema.get_element(qname) {
                     return Some(elem);
                 }
             }

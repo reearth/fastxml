@@ -47,10 +47,16 @@ impl XmlEventHandler for OnePassSchemaValidator {
                     _ => Arc::clone(&interned_name),
                 };
                 // Streaming events carry no resolved namespace URI.
-                self.state.push_element(qualified_name, None);
+                self.state.push_element(Arc::clone(&qualified_name), None);
                 let attrs: smallvec::SmallVec<[(&str, &str); 8]> =
                     attributes.iter().map(|(k, v)| (*k, v.as_ref())).collect();
-                self.validate_element(&interned_name, interned_prefix.as_ref(), None, &attrs);
+                self.validate_element(
+                    &interned_name,
+                    interned_prefix.as_ref(),
+                    &qualified_name,
+                    None,
+                    &attrs,
+                );
             }
             RawEvent::EndElement { name, .. } => {
                 let interned_name = intern_str(&mut self.name_pool, name);

@@ -17,27 +17,25 @@ impl OnePassSchemaValidator {
         &mut self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
+        qualified_name: &Arc<str>,
         namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
         // Anti-regression guardrail: count every element unconditionally,
         // before any lookup or early return.
         self.counters.elements_validated += 1;
+        // C1: the interned qualified name is built once at the tag boundary and
+        // threaded here, so neither the lookup nor the error paths re-`format!`
+        // it. `qualified_name` equals `name` when there is no prefix.
+        let qname: &str = qualified_name.as_ref();
+
         // Optimization: Try local name lookup first (most common case)
-        // Only construct qname if local lookup fails AND prefix exists
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
-        let elem_def = self.lookup_element_optimized(name, prefix, namespace);
+        let elem_def = self.lookup_element_optimized(name, prefix, qname, namespace);
         let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
         let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
         let elem_default = elem_def.and_then(|e| e.default.clone());
         let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
-
-        // Construct qname only when needed for error messages or when prefix exists
-        let qname_owned: Option<String> = match prefix {
-            Some(p) if !p.is_empty() => Some(format!("{}:{}", p.as_ref(), name.as_ref())),
-            _ => None,
-        };
-        let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
 
         let elem_known = elem_def.is_some();
         let elem_constraints: Vec<crate::schema::types::CompiledConstraint> =
