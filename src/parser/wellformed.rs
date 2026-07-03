@@ -41,6 +41,47 @@ pub(crate) fn check_chars(s: &str, context: &str) -> Result<(), ParseError> {
     Ok(())
 }
 
+/// Validates character data in a single pass: every character satisfies the
+/// `Char` production, the sequence `]]>` does not appear literally, and every
+/// `&#…` is a well-formed character reference to a legal character.
+///
+/// This fuses [`check_chars`], the `]]>` check, and [`check_char_refs`] into one
+/// traversal, which matters on the hot path where large text nodes and many
+/// small whitespace nodes would otherwise be scanned several times.
+pub(crate) fn check_text(s: &str, context: &str) -> Result<(), ParseError> {
+    // Number of consecutive `]` immediately preceding the current position.
+    let mut brackets: usize = 0;
+    for (i, c) in s.char_indices() {
+        if !is_xml_char(c) {
+            return Err(ParseError::NotWellFormed {
+                message: format!("illegal XML character U+{:04X} in {context}", c as u32),
+            });
+        }
+        match c {
+            ']' => brackets += 1,
+            '>' => {
+                if brackets >= 2 {
+                    return Err(ParseError::NotWellFormed {
+                        message: format!("the sequence ']]>' is not allowed in {context}"),
+                    });
+                }
+                brackets = 0;
+            }
+            '&' => {
+                brackets = 0;
+                // Only character references (`&#…`) are validated here; a bare
+                // general-entity reference is resolved (and its existence
+                // checked) elsewhere.
+                if s[i + 1..].starts_with('#') {
+                    check_char_refs(&s[i..], context)?;
+                }
+            }
+            _ => brackets = 0,
+        }
+    }
+    Ok(())
+}
+
 /// Rejects malformed or illegal character references (`CharRef`, XML 1.0 P66)
 /// appearing in `s`.
 ///
@@ -372,6 +413,22 @@ mod tests {
         assert!(check_name("_x.y-z0", "element name").is_ok());
         assert!(check_name("日本語", "element name").is_ok());
         assert!(check_name("café", "element name").is_ok());
+    }
+
+    #[test]
+    fn check_text_fuses_all_rules() {
+        assert!(check_text("plain text 123", "text").is_ok());
+        assert!(check_text("a]]b] ]] c", "text").is_ok()); // brackets without '>'
+        assert!(check_text("x &#60; y &#x41;", "text").is_ok());
+        assert!(check_text("&amp; &foo;", "text").is_ok()); // entity refs untouched
+        // ']]>' is forbidden.
+        assert!(check_text("a]]>b", "text").is_err());
+        assert!(check_text("]]]>", "text").is_err());
+        // Illegal character.
+        assert!(check_text("a\u{0}b", "text").is_err());
+        // Malformed / illegal character reference.
+        assert!(check_text("&#xB;", "text").is_err());
+        assert!(check_text("&#56.0;", "text").is_err());
     }
 
     #[test]

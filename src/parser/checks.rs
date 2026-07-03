@@ -15,9 +15,10 @@
 //! Reference legality is handled separately.
 
 use quick_xml::events::BytesStart;
+use smallvec::SmallVec;
 
 use super::error::ParseError;
-use super::wellformed::{check_char_refs, check_chars, check_name};
+use super::wellformed::{check_char_refs, check_chars, check_name, check_text};
 use crate::error::Result;
 
 /// Where in the document the parser currently is, per the top-level grammar
@@ -312,9 +313,14 @@ impl WellformedChecker {
         let qname = std::str::from_utf8(e.name().into_inner())?;
         check_name(qname, "element name")?;
 
-        // First pass: character/reference checks and namespace declarations.
+        // Single pass over the attributes: character/reference checks, collect
+        // namespace declarations into a new scope, and remember prefixed
+        // attribute names (borrowed) for the expanded-name uniqueness check.
+        // `scope` only allocates when this element declares a namespace, and
+        // the prefixed-name list stays on the stack for the common few-attribute
+        // case, so the checks add no per-element heap traffic in typical input.
         let mut scope: Vec<(String, String)> = Vec::new();
-        let mut plain_attrs: Vec<(String, String)> = Vec::new();
+        let mut prefixed: SmallVec<[&str; 8]> = SmallVec::new();
         for attr_result in e.attributes() {
             let attr = attr_result.map_err(|e| ParseError::AttributeError {
                 message: e.to_string(),
@@ -339,8 +345,8 @@ impl WellformedChecker {
             } else if let Some(prefix) = key.strip_prefix("xmlns:") {
                 check_ns_declaration(prefix, value)?;
                 scope.push((prefix.to_string(), value.to_string()));
-            } else {
-                plain_attrs.push((key.to_string(), value.to_string()));
+            } else if key.contains(':') {
+                prefixed.push(key);
             }
         }
         self.ns_stack.push(scope);
@@ -351,7 +357,7 @@ impl WellformedChecker {
         // are intentionally not enforced here: the W3C XML 1.0 conformance
         // suite treats colons as ordinary name characters, so a namespace-aware
         // QName check would reject documents that are well-formed XML 1.0.
-        self.check_duplicate_expanded_attrs(&plain_attrs)?;
+        self.check_duplicate_expanded_attrs(&prefixed)?;
 
         self.open_element()?;
         Ok(())
@@ -361,23 +367,25 @@ impl WellformedChecker {
     /// attributes whose prefix is actually bound participate; attributes with
     /// an unbound prefix keep their literal name, and quick-xml already rejects
     /// literal duplicates.
-    fn check_duplicate_expanded_attrs(&self, attrs: &[(String, String)]) -> Result<()> {
-        let mut expanded: Vec<(String, String)> = Vec::new();
-        for (key, _) in attrs {
+    fn check_duplicate_expanded_attrs(&self, prefixed: &[&str]) -> Result<()> {
+        if prefixed.len() < 2 {
+            return Ok(());
+        }
+        let mut expanded: SmallVec<[(&str, &str); 8]> = SmallVec::new();
+        for key in prefixed {
             let Some((prefix, local)) = key.split_once(':') else {
                 continue;
             };
             let Some(uri) = self.resolve(prefix) else {
                 continue;
             };
-            let name = (uri.to_string(), local.to_string());
-            if expanded.contains(&name) {
+            if expanded.contains(&(uri, local)) {
                 return Err(not_wf(format!(
                     "duplicate attribute '{key}' after namespace resolution"
                 ))
                 .into());
             }
-            expanded.push(name);
+            expanded.push((uri, local));
         }
         Ok(())
     }
@@ -441,11 +449,11 @@ impl WellformedChecker {
         // text preceding a declaration still means the declaration is not first;
         // marking it here keeps the declaration-position check correct.
         self.document_started = true;
-        check_chars(raw, "text content")?;
         // When quick-xml truncated the DOCTYPE at a `>` inside a quoted literal,
         // the remaining internal subset (up to its closing `]`) arrives as text.
         // Consume it as DTD rather than judging it as prolog character data.
         if self.dtd_open {
+            check_chars(raw, "text content")?;
             if let Some(end) = internal_subset_end(raw) {
                 self.dtd_open = false;
                 // Anything after the `]` and the DOCTYPE's `>` is prolog text.
@@ -455,12 +463,9 @@ impl WellformedChecker {
             }
             return Ok(());
         }
-        // `]]>` may not appear literally in character data (CDATA-section-close
-        // delimiter); it must be written `]]&gt;`.
-        if raw.contains("]]>") {
-            return Err(not_wf("the sequence ']]>' is not allowed in character data").into());
-        }
-        check_char_refs(raw, "text content")?;
+        // Single pass: Char production, no literal `]]>`, and well-formed
+        // character references.
+        check_text(raw, "text content")?;
         // Outside the root element only white space is permitted as text.
         if matches!(self.state, DocState::Prolog | DocState::Epilog)
             && !raw.chars().all(is_xml_space)
