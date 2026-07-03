@@ -326,8 +326,11 @@ mod malformed_xml {
     fn test_xml_reserved_prefix() {
         let xml = r#"<xml:element xmlns:xml="http://wrong.url"/>"#;
         let result = Parser::from(xml).parse();
-        // quick-xml doesn't validate xml prefix namespace
-        assert!(result.is_ok(), "quick-xml doesn't validate xml prefix");
+        // The 'xml' prefix may only be bound to the XML namespace.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for a misbound 'xml' prefix, got: {result:?}"
+        );
     }
 
     #[test]

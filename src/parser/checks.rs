@@ -55,6 +55,10 @@ pub(crate) struct WellformedChecker {
     /// seen. The XML declaration is only well-formed as the very first thing in
     /// the document.
     document_started: bool,
+    /// Namespace declarations in scope, one entry per open element (innermost
+    /// last). Each entry maps a prefix (`""` for the default namespace) to its
+    /// URI. Used to enforce namespace well-formedness.
+    ns_stack: Vec<Vec<(String, String)>>,
 }
 
 impl Default for WellformedChecker {
@@ -65,9 +69,13 @@ impl Default for WellformedChecker {
             doctype_seen: false,
             dtd_open: false,
             document_started: false,
+            ns_stack: Vec::new(),
         }
     }
 }
+
+/// The namespace name bound to the reserved `xml` prefix.
+const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Scans an internal-subset fragment (the text *after* the opening `[`) for the
 /// `]` that closes the subset at top level, honoring quoted literals and
@@ -247,6 +255,40 @@ fn is_version_num(v: &str) -> bool {
     }
 }
 
+/// Validates an `xmlns:prefix="uri"` declaration.
+fn check_ns_declaration(prefix: &str, uri: &str) -> std::result::Result<(), ParseError> {
+    if prefix.is_empty() {
+        return Err(not_wf(
+            "a namespace prefix declared with 'xmlns:' must not be empty",
+        ));
+    }
+    if !is_ncname(prefix) {
+        return Err(not_wf(format!("illegal namespace prefix '{prefix}'")));
+    }
+    match prefix {
+        "xmlns" => Err(not_wf("the prefix 'xmlns' must not be declared")),
+        "xml" if uri != XML_NAMESPACE => Err(not_wf(
+            "the prefix 'xml' may only be bound to the XML namespace",
+        )),
+        // Unbinding a prefix (empty URI) is an XML Namespaces 1.1 feature and is
+        // not well-formed in a 1.0 document.
+        _ if uri.is_empty() => Err(not_wf(format!(
+            "a namespace prefix must not be unbound (xmlns:{prefix}=\"\")"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// True when `s` is a non-empty `NCName` (a `Name` with no colon).
+fn is_ncname(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c != ':' && super::wellformed::is_name_start_char(c) => {}
+        _ => return false,
+    }
+    chars.all(|c| c != ':' && super::wellformed::is_name_char(c))
+}
+
 /// `EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*`.
 fn is_enc_name(e: &str) -> bool {
     let mut chars = e.chars();
@@ -269,6 +311,10 @@ impl WellformedChecker {
         self.document_started = true;
         let qname = std::str::from_utf8(e.name().into_inner())?;
         check_name(qname, "element name")?;
+
+        // First pass: character/reference checks and namespace declarations.
+        let mut scope: Vec<(String, String)> = Vec::new();
+        let mut plain_attrs: Vec<(String, String)> = Vec::new();
         for attr_result in e.attributes() {
             let attr = attr_result.map_err(|e| ParseError::AttributeError {
                 message: e.to_string(),
@@ -288,9 +334,67 @@ impl WellformedChecker {
                 ))
                 .into());
             }
+            if key == "xmlns" {
+                scope.push((String::new(), value.to_string()));
+            } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                check_ns_declaration(prefix, value)?;
+                scope.push((prefix.to_string(), value.to_string()));
+            } else {
+                plain_attrs.push((key.to_string(), value.to_string()));
+            }
         }
+        self.ns_stack.push(scope);
+
+        // Reject two attributes that resolve to the same expanded name (same
+        // namespace URI and local name) even when written with different
+        // prefixes. Other namespace constraints (QName syntax, prefix binding)
+        // are intentionally not enforced here: the W3C XML 1.0 conformance
+        // suite treats colons as ordinary name characters, so a namespace-aware
+        // QName check would reject documents that are well-formed XML 1.0.
+        self.check_duplicate_expanded_attrs(&plain_attrs)?;
+
         self.open_element()?;
         Ok(())
+    }
+
+    /// Rejects two attributes sharing a namespace URI and local name. Only
+    /// attributes whose prefix is actually bound participate; attributes with
+    /// an unbound prefix keep their literal name, and quick-xml already rejects
+    /// literal duplicates.
+    fn check_duplicate_expanded_attrs(&self, attrs: &[(String, String)]) -> Result<()> {
+        let mut expanded: Vec<(String, String)> = Vec::new();
+        for (key, _) in attrs {
+            let Some((prefix, local)) = key.split_once(':') else {
+                continue;
+            };
+            let Some(uri) = self.resolve(prefix) else {
+                continue;
+            };
+            let name = (uri.to_string(), local.to_string());
+            if expanded.contains(&name) {
+                return Err(not_wf(format!(
+                    "duplicate attribute '{key}' after namespace resolution"
+                ))
+                .into());
+            }
+            expanded.push(name);
+        }
+        Ok(())
+    }
+
+    /// Resolves a prefix to its namespace URI in the current scope, or `None`
+    /// when it is unbound. `xml` is always bound; a prefix bound to the empty
+    /// string is treated as unbound.
+    fn resolve(&self, prefix: &str) -> Option<&str> {
+        if prefix == "xml" {
+            return Some(XML_NAMESPACE);
+        }
+        for scope in self.ns_stack.iter().rev() {
+            if let Some((_, uri)) = scope.iter().find(|(p, _)| p == prefix) {
+                return if uri.is_empty() { None } else { Some(uri) };
+            }
+        }
+        None
     }
 
     /// Structural transition when an element opens.
@@ -319,6 +423,8 @@ impl WellformedChecker {
     /// effectively a no-op that keeps the two loops symmetric.
     pub(crate) fn end(&mut self, qname: &str) -> Result<()> {
         check_name(qname, "element name")?;
+        // Leave this element's namespace scope.
+        self.ns_stack.pop();
         if let DocState::InRoot(depth) = self.state {
             self.state = if depth <= 1 {
                 DocState::Epilog
@@ -515,6 +621,25 @@ mod tests {
         ] {
             assert!(check_declaration(raw).is_err(), "expected reject: {raw:?}");
         }
+    }
+
+    #[test]
+    fn ns_declaration_rules() {
+        assert!(check_ns_declaration("a", "http://example.org/a").is_ok());
+        assert!(check_ns_declaration("xml", XML_NAMESPACE).is_ok());
+        // 'xml' bound to the wrong URI.
+        assert!(check_ns_declaration("xml", "http://wrong").is_err());
+        // 'xmlns' must not be declared.
+        assert!(check_ns_declaration("xmlns", "http://example.org").is_err());
+        // Empty prefix (`xmlns:`) and prefix unbinding are illegal in 1.0.
+        assert!(check_ns_declaration("", "http://example.org").is_err());
+        assert!(check_ns_declaration("a", "").is_err());
+    }
+
+    #[test]
+    fn ncname_recognition() {
+        assert!(is_ncname("a") && is_ncname("_x.y-z0"));
+        assert!(!is_ncname("") && !is_ncname("a:b") && !is_ncname("0a"));
     }
 
     #[test]

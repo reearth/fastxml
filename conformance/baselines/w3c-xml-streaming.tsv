@@ -1,4 +1,4 @@
-#counts	total=2585	pass=1668	fail=174	unsupported=743	blocked=0	panic=0
+#counts	total=2585	pass=1675	fail=167	unsupported=743	blocked=0	panic=0
 error	ibm-invalid-P68-ibm68i01.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i02.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i03.xml	unsupported	optional-error-test
@@ -404,23 +404,16 @@ not-wf	rmt-e3e-12	fail	parser accepted not-well-formed input
 not-wf	rmt-ns-e1.0-13a	fail	parser accepted not-well-formed input
 not-wf	rmt-ns-e1.0-13b	fail	parser accepted not-well-formed input
 not-wf	rmt-ns-e1.0-13c	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-009	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-010	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-011	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-012	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-013	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-014	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-015	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-016	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-023	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-025	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-026	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-029	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-030	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-031	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-032	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-033	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-036	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-042	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-043	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-044	fail	parser accepted not-well-formed input
