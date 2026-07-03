@@ -23,6 +23,9 @@ pub struct XmlConfTest {
     pub description: Option<String>,
     /// Test section(s) covered.
     pub sections: Option<String>,
+    /// XML version(s) this test applies to (e.g. "1.0", "1.1"). A
+    /// whitespace-separated list; absent means unspecified (treated as 1.0).
+    pub version: Option<String>,
     /// Edition of XML spec this test applies to.
     pub edition: Option<String>,
     /// Namespace support required: "yes", "no", or "both".
@@ -233,14 +236,6 @@ fn parse_catalog_content(
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let local_name_bytes = e.local_name();
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
-                let is_empty = matches!(reader.read_event(), Ok(Event::End(_)) | Err(_));
-
-                // Re-read for empty check doesn't work well, let's handle based on event type
-                let was_empty = matches!(
-                    content
-                        .get(reader.buffer_position() as usize - 3..reader.buffer_position() as usize),
-                    Some(s) if s.contains("/>")
-                );
 
                 match local_name {
                     "TESTSUITE" => {
@@ -292,8 +287,6 @@ fn parse_catalog_content(
                     }
                     _ => {}
                 }
-
-                let _ = (is_empty, was_empty); // suppress warnings
             }
             Ok(Event::End(e)) => {
                 let local_name_bytes = e.local_name();
@@ -384,6 +377,7 @@ fn parse_test(e: &BytesStart, base_path: &Path) -> Result<Option<XmlConfTest>, X
         output,
         description: None,
         sections: attrs.get("SECTIONS").cloned(),
+        version: attrs.get("VERSION").cloned(),
         edition: attrs.get("EDITION").cloned(),
         namespace: attrs.get("NAMESPACE").cloned(),
         entities: attrs.get("ENTITIES").cloned(),
