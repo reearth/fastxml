@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use crate::error::Result;
+use crate::schema::xsd::types::XsdFacet;
 
 use super::helpers::XSD_NAMESPACE;
 use super::stack_frame::StackFrame;
@@ -837,6 +838,75 @@ impl XsdParser {
             _ => {}
         }
 
+        Ok(())
+    }
+
+    /// Validates that existing facets in a restriction are consistent with a new facet.
+    pub(super) fn validate_facet_consistency(
+        facets: &[XsdFacet],
+        new_facet: &XsdFacet,
+    ) -> Result<()> {
+        use crate::schema::error::SchemaError;
+
+        match new_facet {
+            XsdFacet::MinLength(min_len) => {
+                // Check if maxLength exists and is less than minLength
+                for f in facets {
+                    if let XsdFacet::MaxLength(max_len) = f {
+                        if min_len > max_len {
+                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
+                                min_length: *min_len as u64,
+                                max_length: *max_len as u64,
+                            }
+                            .into());
+                        }
+                    }
+                }
+            }
+            XsdFacet::MaxLength(max_len) => {
+                // Check if minLength exists and is greater than maxLength
+                for f in facets {
+                    if let XsdFacet::MinLength(min_len) = f {
+                        if min_len > max_len {
+                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
+                                min_length: *min_len as u64,
+                                max_length: *max_len as u64,
+                            }
+                            .into());
+                        }
+                    }
+                }
+            }
+            XsdFacet::FractionDigits(frac) => {
+                // fractionDigits must be <= totalDigits
+                for f in facets {
+                    if let XsdFacet::TotalDigits(total) = f {
+                        if frac > total {
+                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
+                                fraction_digits: *frac as u64,
+                                total_digits: *total as u64,
+                            }
+                            .into());
+                        }
+                    }
+                }
+            }
+            XsdFacet::TotalDigits(total) => {
+                // totalDigits must be >= fractionDigits
+                for f in facets {
+                    if let XsdFacet::FractionDigits(frac) = f {
+                        if frac > total {
+                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
+                                fraction_digits: *frac as u64,
+                                total_digits: *total as u64,
+                            }
+                            .into());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
         Ok(())
     }
 }

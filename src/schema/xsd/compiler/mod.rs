@@ -4,12 +4,15 @@
 //! representation (CompiledSchema).
 
 mod cache;
+mod cycles;
 mod facet_checks;
 mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod redefine;
 mod references;
+#[cfg(test)]
+mod references_tests;
 mod restriction;
 mod substitution;
 mod types;
