@@ -174,7 +174,7 @@ impl PrimitiveKind {
     /// catch user-declared facets on those types.
     pub fn validate(&self, raw: &str) -> Result<(), PrimitiveError> {
         let normalized = collapse(raw);
-        let v = normalized.as_str();
+        let v: &str = &normalized;
         match self {
             Self::Boolean => validate_with_regex(v, boolean_regex(), "boolean"),
             Self::Decimal => validate_with_regex(v, decimal_regex(), "decimal"),
@@ -1026,7 +1026,26 @@ fn validate_yearmonthduration(v: &str) -> Result<(), PrimitiveError> {
 /// every run of whitespace becomes a single space, and leading/trailing
 /// whitespace is stripped. Returns an owned `String` so callers can use it
 /// without worrying about the borrow lifetime of the input.
-fn collapse(input: &str) -> String {
+fn collapse(input: &str) -> std::borrow::Cow<'_, str> {
+    // C5: borrow when the value is already collapsed (the common case for
+    // typed scalar content), otherwise build in a single pass.
+    let mut prev_was_space = true; // start true so leading whitespace is caught
+    let mut needs_build = false;
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            if ch != ' ' || prev_was_space {
+                needs_build = true;
+                break;
+            }
+            prev_was_space = true;
+        } else {
+            prev_was_space = false;
+        }
+    }
+    if !needs_build && !input.ends_with(' ') {
+        return std::borrow::Cow::Borrowed(input);
+    }
+
     let mut out = String::with_capacity(input.len());
     let mut prev_was_space = true; // start true to trim leading whitespace
     for ch in input.chars() {
@@ -1043,7 +1062,7 @@ fn collapse(input: &str) -> String {
     if out.ends_with(' ') {
         out.pop();
     }
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 #[cfg(test)]
