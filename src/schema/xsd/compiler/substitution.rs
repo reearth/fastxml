@@ -20,8 +20,12 @@ impl XsdCompiler {
             }
         }
 
-        // Store in schema for validation use
-        schema.substitution_groups = self.substitution_groups.clone();
+        // Store in schema for validation use (schema map is FxHashMap; C6).
+        schema.substitution_groups = self
+            .substitution_groups
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
     }
 
     /// Builds the transitive substitution groups cache.
@@ -80,7 +84,7 @@ impl XsdCompiler {
     fn collect_transitive_substitution_members(
         &self,
         head_name: &str,
-        groups: &std::collections::HashMap<String, Vec<String>>,
+        groups: &rustc_hash::FxHashMap<String, Vec<String>>,
         members: &mut Vec<String>,
         visited: &mut HashSet<String>,
     ) {
