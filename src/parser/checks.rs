@@ -17,7 +17,7 @@
 use quick_xml::events::BytesStart;
 
 use super::error::ParseError;
-use super::wellformed::{check_chars, check_name};
+use super::wellformed::{check_char_refs, check_chars, check_name};
 use crate::error::Result;
 
 /// Where in the document the parser currently is, per the top-level grammar
@@ -99,6 +99,25 @@ fn internal_subset_end(fragment: &str) -> Option<usize> {
     None
 }
 
+/// Finds the byte offset of the `[` that opens the internal subset, scanning
+/// outside quoted literals so a `[` inside a public/system identifier is not
+/// mistaken for it. Returns `None` when there is no internal subset.
+fn subset_open(raw: &str) -> Option<usize> {
+    let mut quote: Option<u8> = None;
+    for (i, b) in raw.bytes().enumerate() {
+        match quote {
+            Some(q) if b == q => quote = None,
+            Some(_) => {}
+            None => match b {
+                b'"' | b'\'' => quote = Some(b),
+                b'[' => return Some(i),
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
 /// True for the four characters of the XML `S` (white space) production.
 #[inline]
 fn is_xml_space(c: char) -> bool {
@@ -132,6 +151,7 @@ impl WellformedChecker {
             // `&#…;` references survive as plain ASCII and are judged elsewhere.
             let value = std::str::from_utf8(attr.value.as_ref())?;
             check_chars(value, "attribute value")?;
+            check_char_refs(value, "attribute value")?;
             // `<` is forbidden in an attribute value (the AttValue production
             // excludes it); a literal here can never be a character reference.
             if value.contains('<') {
@@ -202,6 +222,7 @@ impl WellformedChecker {
         if raw.contains("]]>") {
             return Err(not_wf("the sequence ']]>' is not allowed in character data").into());
         }
+        check_char_refs(raw, "text content")?;
         // Outside the root element only white space is permitted as text.
         if matches!(self.state, DocState::Prolog | DocState::Epilog)
             && !raw.chars().all(is_xml_space)
@@ -270,9 +291,11 @@ impl WellformedChecker {
         // If an internal subset opens (`[`) but its closing `]` is absent, the
         // tokenizer truncated the declaration at a `>` inside a quoted literal;
         // the remainder follows as text events (handled in `text`). When it is
-        // complete, validate the whole declaration's grammar.
-        match raw.split_once('[').map(|(_, rest)| rest) {
-            Some(after_bracket) if internal_subset_end(after_bracket).is_none() => {
+        // complete, validate the whole declaration's grammar. The subset opener
+        // must be located outside quoted literals so a `[` inside a public or
+        // system identifier is not mistaken for it.
+        match subset_open(raw) {
+            Some(open) if internal_subset_end(&raw[open + 1..]).is_none() => {
                 self.dtd_open = true;
             }
             _ => super::dtd::check_doctype(raw)?,

@@ -41,6 +41,61 @@ pub(crate) fn check_chars(s: &str, context: &str) -> Result<(), ParseError> {
     Ok(())
 }
 
+/// Rejects malformed or illegal character references (`CharRef`, XML 1.0 P66)
+/// appearing in `s`.
+///
+/// ```text
+/// CharRef ::= '&#' [0-9]+ ';' | '&#x' [0-9a-fA-F]+ ';'
+/// ```
+///
+/// Every `&#…` must be a syntactically complete decimal or hexadecimal
+/// reference terminated by `;`, and the referenced code point must satisfy the
+/// [`Char`](is_xml_char) production. General entity references (`&name;`) are
+/// left untouched — only `&#` sequences are inspected — so this may be run on
+/// raw, pre-unescape text without misjudging entity references. `context` names
+/// where the text came from, for the error message.
+pub(crate) fn check_char_refs(s: &str, context: &str) -> Result<(), ParseError> {
+    let mut rest = s;
+    while let Some(pos) = rest.find("&#") {
+        let after = &rest[pos + 2..];
+        let (hex, digits_and_rest) = match after.strip_prefix(['x', 'X']) {
+            Some(d) => (true, d),
+            None => (false, after),
+        };
+        let n: usize = digits_and_rest
+            .chars()
+            .take_while(|c| {
+                if hex {
+                    c.is_ascii_hexdigit()
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+            .map(char::len_utf8)
+            .sum();
+        let (digits, tail) = digits_and_rest.split_at(n);
+        if digits.is_empty() || !tail.starts_with(';') {
+            return Err(ParseError::NotWellFormed {
+                message: format!("malformed character reference in {context}"),
+            });
+        }
+        let legal = u32::from_str_radix(digits, if hex { 16 } else { 10 })
+            .ok()
+            .and_then(char::from_u32)
+            .is_some_and(is_xml_char);
+        if !legal {
+            return Err(ParseError::NotWellFormed {
+                message: format!(
+                    "character reference '&#{}{digits};' denotes an illegal character in {context}",
+                    if hex { "x" } else { "" }
+                ),
+            });
+        }
+        rest = &tail[1..];
+    }
+    Ok(())
+}
+
 /// Rejects any `name` that violates the XML 1.0 `Name` production (P5):
 ///
 /// ```text
@@ -317,6 +372,31 @@ mod tests {
         assert!(check_name("_x.y-z0", "element name").is_ok());
         assert!(check_name("日本語", "element name").is_ok());
         assert!(check_name("café", "element name").is_ok());
+    }
+
+    #[test]
+    fn char_refs_accept_well_formed() {
+        assert!(check_char_refs("a &#60; b &#x41; c", "text").is_ok());
+        assert!(check_char_refs("no refs here", "text").is_ok());
+        // A bare general-entity reference is not a character reference.
+        assert!(check_char_refs("&amp; &foo;", "text").is_ok());
+        assert!(check_char_refs("&#x10FFFF;", "text").is_ok());
+    }
+
+    #[test]
+    fn char_refs_reject_malformed_or_illegal() {
+        // Missing terminator.
+        assert!(check_char_refs("x &#x003a", "text").is_err());
+        // Non-digit in the reference.
+        assert!(check_char_refs("&#56.0;", "text").is_err());
+        assert!(check_char_refs("&#x00/2f;", "text").is_err());
+        // Empty reference.
+        assert!(check_char_refs("&#;", "text").is_err());
+        // Illegal character value (NUL, C0 control, surrogate, out of range).
+        assert!(check_char_refs("&#0;", "text").is_err());
+        assert!(check_char_refs("&#xB;", "text").is_err());
+        assert!(check_char_refs("&#xD800;", "text").is_err());
+        assert!(check_char_refs("&#x110000;", "text").is_err());
     }
 
     #[test]

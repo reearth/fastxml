@@ -26,7 +26,7 @@
 //! subset that quick-xml truncated at a `>` inside a quoted literal is skipped.
 
 use super::error::ParseError;
-use super::wellformed::{check_name, is_name_char, is_name_start_char};
+use super::wellformed::{check_char_refs, check_name, is_name_char, is_name_start_char};
 
 type R = Result<(), ParseError>;
 
@@ -626,6 +626,7 @@ fn parse_att_value(c: &mut Cursor<'_>) -> R {
     if value.contains('<') {
         return Err(err("'<' is not allowed in an attribute default value"));
     }
+    check_char_refs(value, "attribute default value")?;
     Ok(())
 }
 
@@ -644,7 +645,8 @@ fn parse_entity_decl(body: &str) -> R {
     c.require_s("before the entity definition")?;
     // EntityValue | ExternalID [NDataDecl]
     if matches!(c.peek(), Some('"' | '\'')) {
-        c.parse_quoted("entity value")?;
+        let value = c.parse_quoted("entity value")?;
+        check_char_refs(value, "entity value")?;
     } else {
         parse_external_id(&mut c)?;
         if !is_pe {
