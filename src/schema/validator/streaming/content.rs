@@ -797,7 +797,10 @@ impl OnePassSchemaValidator {
 
         // User-declared facets. Empty content is still checked — a pattern
         // or enumeration facet can legitimately reject the empty string.
-        {
+        // C4: the (memoized) FacetConstraints already resolve the primitive
+        // value kind, so capture it here and reuse it for the built-in check
+        // below instead of re-running PrimitiveKind::resolve per text node.
+        let value_kind = {
             let constraints = self.create_facet_constraints(simple);
 
             // Fixed value constraint: non-empty content must match.
@@ -847,10 +850,12 @@ impl OnePassSchemaValidator {
                 &mut id_values,
             );
             self.record_ids(id_values.ids, id_values.idrefs);
-        }
+            constraints.value_kind
+        };
 
-        // Built-in primitive lexical/value-space check.
-        if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
+        // Built-in primitive lexical/value-space check (C4: reuse the cached
+        // value_kind rather than re-resolving the primitive chain).
+        if let Some(kind) = value_kind
             && let Err(prim_error) = kind.validate(&ctx.text_content)
         {
             let error = self

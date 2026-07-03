@@ -144,22 +144,23 @@ impl PrimitiveKind {
             return Some(kind);
         }
 
-        let mut current = simple.base_type.clone()?;
+        // C4: walk the base-type chain by reference, no per-level String clone.
+        let mut current: &str = simple.base_type.as_deref()?;
         // Defensive bound on chain length to avoid pathological cycles or
         // very deep accidental recursion. XSD's built-in tree is shallow (at
         // most ~6 levels), so 16 is more than enough.
         for _ in 0..16 {
-            if let Some(kind) = Self::from_type_name(&current) {
+            if let Some(kind) = Self::from_type_name(current) {
                 return Some(kind);
             }
-            let next = match schema.get_type(&current)? {
+            let next = match schema.get_type(current)? {
                 TypeDef::Simple(s) => s,
                 TypeDef::Complex(_) => return None,
             };
             if let Some(kind) = Self::from_type_name(&next.name) {
                 return Some(kind);
             }
-            current = next.base_type.clone()?;
+            current = next.base_type.as_deref()?;
         }
         None
     }
