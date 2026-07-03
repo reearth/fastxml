@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37900	fail=1266	unsupported=28	blocked=419	panic=0
+#counts	total=39613	pass=37977	fail=1189	unsupported=28	blocked=419	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -994,7 +994,6 @@ schema-invalid	addB108::msMeta/../msData/additional/addB108.xsd	fail	compiled a 
 schema-invalid	addB110::msMeta/../msData/additional/test65911_1.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB111::msMeta/../msData/additional/test65911_2.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB112::msMeta/../msData/additional/test65911_3.xsd	fail	compiled a schema that should be invalid
-schema-invalid	addB118::msMeta/../msData/additional/test74966.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB121::msMeta/../msData/additional/addB121.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB141::msMeta/../msData/additional/test82919.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB153::msMeta/../msData/additional/test86490_a.xsd	fail	compiled a schema that should be invalid
@@ -1070,7 +1069,6 @@ schema-invalid	au_attrdecl00101m1_n::sunMeta/../sunData/AttrUse/AU_attrDecl/AU_a
 schema-invalid	byte_fractionDigits004_806::msMeta/../msData/datatypes/Facets/Schemas/byte_fractionDigits004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	byte_fractionDigits007_809::msMeta/../msData/datatypes/Facets/Schemas/byte_fractionDigits007.xsd	fail	compiled a schema that should be invalid
 schema-invalid	complex017::saxonMeta/../saxonData/Complex/complex017.bad.xsd	fail	compiled a schema that should be invalid
-schema-invalid	complex018::saxonMeta/../saxonData/Complex/complex018.bad.xsd	fail	compiled a schema that should be invalid
 schema-invalid	complex019::saxonMeta/../saxonData/Complex/complex019.bad.xsd	fail	compiled a schema that should be invalid
 schema-invalid	complex020::saxonMeta/../saxonData/Complex/complex020.bad.xsd	fail	compiled a schema that should be invalid
 schema-invalid	complex025::saxonMeta/../saxonData/Complex/complex025.bad.xsd	fail	compiled a schema that should be invalid
@@ -1296,18 +1294,12 @@ schema-invalid	particlesHa081::msMeta/../msData/particles/particlesHa081.xsd	fai
 schema-invalid	particlesHa083::msMeta/../msData/particles/particlesHa083.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa101::msMeta/../msData/particles/particlesHa101.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa102::msMeta/../msData/particles/particlesHa102.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa121::msMeta/../msData/particles/particlesHa121.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa123::msMeta/../msData/particles/particlesHa123.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa140::msMeta/../msData/particles/particlesHa140.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa144::msMeta/../msData/particles/particlesHa144.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa145::msMeta/../msData/particles/particlesHa145.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa147::msMeta/../msData/particles/particlesHa147.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa161::msMeta/../msData/particles/particlesHa161.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa166::msMeta/../msData/particles/particlesHa166.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa169::msMeta/../msData/particles/particlesHa169.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa181::msMeta/../msData/particles/particlesHa181.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa182::msMeta/../msData/particles/particlesHa182.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesHa187::msMeta/../msData/particles/particlesHa187.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHa189::msMeta/../msData/particles/particlesHa189.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHb001::msMeta/../msData/particles/particlesHb001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesHb002::msMeta/../msData/particles/particlesHb002.xsd	fail	compiled a schema that should be invalid
@@ -1325,9 +1317,6 @@ schema-invalid	particlesIb006::msMeta/../msData/particles/particlesIb006.xsd	fai
 schema-invalid	particlesIb007::msMeta/../msData/particles/particlesIb007.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIc002::msMeta/../msData/particles/particlesIc002.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIc004::msMeta/../msData/particles/particlesIc004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesId003::msMeta/../msData/particles/particlesId003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesId006::msMeta/../msData/particles/particlesId006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesId012::msMeta/../msData/particles/particlesId012.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIf007::msMeta/../msData/particles/particlesIf007.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIf008::msMeta/../msData/particles/particlesIf008.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIf009::msMeta/../msData/particles/particlesIf009.xsd	fail	compiled a schema that should be invalid
@@ -1346,12 +1335,7 @@ schema-invalid	particlesIj008::msMeta/../msData/particles/particlesIj008.xsd	fai
 schema-invalid	particlesIj009::msMeta/../msData/particles/particlesIj009.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIj010::msMeta/../msData/particles/particlesIj010.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIj011::msMeta/../msData/particles/particlesIj011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIj012::msMeta/../msData/particles/particlesIj012.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIj013::msMeta/../msData/particles/particlesIj013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIj015::msMeta/../msData/particles/particlesIj015.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIj016::msMeta/../msData/particles/particlesIj016.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk002::msMeta/../msData/particles/particlesIk002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk003::msMeta/../msData/particles/particlesIk003.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk005::msMeta/../msData/particles/particlesIk005.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk006::msMeta/../msData/particles/particlesIk006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk007::msMeta/../msData/particles/particlesIk007.xsd	fail	compiled a schema that should be invalid
@@ -1360,51 +1344,13 @@ schema-invalid	particlesIk009::msMeta/../msData/particles/particlesIk009.xsd	fai
 schema-invalid	particlesIk010::msMeta/../msData/particles/particlesIk010.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk011::msMeta/../msData/particles/particlesIk011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk013::msMeta/../msData/particles/particlesIk013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk015::msMeta/../msData/particles/particlesIk015.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk016::msMeta/../msData/particles/particlesIk016.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk019::msMeta/../msData/particles/particlesIk019.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk020::msMeta/../msData/particles/particlesIk020.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk021::msMeta/../msData/particles/particlesIk021.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk022::msMeta/../msData/particles/particlesIk022.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesIk024::msMeta/../msData/particles/particlesIk024.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk025::msMeta/../msData/particles/particlesIk025.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesIk027::msMeta/../msData/particles/particlesIk027.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJa003::msMeta/../msData/particles/particlesJa003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJa006::msMeta/../msData/particles/particlesJa006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJa012::msMeta/../msData/particles/particlesJa012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJb006::msMeta/../msData/particles/particlesJb006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJb009::msMeta/../msData/particles/particlesJb009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJb012::msMeta/../msData/particles/particlesJb012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJb014::msMeta/../msData/particles/particlesJb014.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJc003::msMeta/../msData/particles/particlesJc003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJc006::msMeta/../msData/particles/particlesJc006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJc012::msMeta/../msData/particles/particlesJc012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJd006::msMeta/../msData/particles/particlesJd006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJd009::msMeta/../msData/particles/particlesJd009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJd012::msMeta/../msData/particles/particlesJd012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJd014::msMeta/../msData/particles/particlesJd014.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJe003::msMeta/../msData/particles/particlesJe003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJe006::msMeta/../msData/particles/particlesJe006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJe012::msMeta/../msData/particles/particlesJe012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJf006::msMeta/../msData/particles/particlesJf006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJf009::msMeta/../msData/particles/particlesJf009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJf012::msMeta/../msData/particles/particlesJf012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJf014::msMeta/../msData/particles/particlesJf014.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJg001::msMeta/../msData/particles/particlesJg001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJh001::msMeta/../msData/particles/particlesJh001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJj003::msMeta/../msData/particles/particlesJj003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJj006::msMeta/../msData/particles/particlesJj006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJj012::msMeta/../msData/particles/particlesJj012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJk006::msMeta/../msData/particles/particlesJk006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJk009::msMeta/../msData/particles/particlesJk009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJk012::msMeta/../msData/particles/particlesJk012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJk014::msMeta/../msData/particles/particlesJk014.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJl002::msMeta/../msData/particles/particlesJl002.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJl003::msMeta/../msData/particles/particlesJl003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJm003::msMeta/../msData/particles/particlesJm003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJn009::msMeta/../msData/particles/particlesJn009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJp003::msMeta/../msData/particles/particlesJp003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesJq009::msMeta/../msData/particles/particlesJq009.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJr001::msMeta/../msData/particles/particlesJr001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJs002::msMeta/../msData/particles/particlesJs002.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesJs003::msMeta/../msData/particles/particlesJs003.xsd	fail	compiled a schema that should be invalid
@@ -1412,8 +1358,6 @@ schema-invalid	particlesJs004::msMeta/../msData/particles/particlesJs004.xsd	fai
 schema-invalid	particlesK006::msMeta/../msData/particles/particlesK006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL001::msMeta/../msData/particles/particlesL001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL002::msMeta/../msData/particles/particlesL002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesL005::msMeta/../msData/particles/particlesL005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesL009::msMeta/../msData/particles/particlesL009.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL010::msMeta/../msData/particles/particlesL010.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL011::msMeta/../msData/particles/particlesL011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL014::msMeta/../msData/particles/particlesL014.xsd	fail	compiled a schema that should be invalid
@@ -1426,16 +1370,7 @@ schema-invalid	particlesL024::msMeta/../msData/particles/particlesL024.xsd	fail	
 schema-invalid	particlesL026::msMeta/../msData/particles/particlesL026.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL027::msMeta/../msData/particles/particlesL027.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL030::msMeta/../msData/particles/particlesL030.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesL031::msMeta/../msData/particles/particlesL031.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesL032::msMeta/../msData/particles/particlesL032.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesM001::msMeta/../msData/particles/particlesM001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesM033::msMeta/../msData/particles/particlesM033.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesM034::msMeta/../msData/particles/particlesM034.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesOa002::msMeta/../msData/particles/particlesOa002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesOa007::msMeta/../msData/particles/particlesOa007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesOa009::msMeta/../msData/particles/particlesOa009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesOa010::msMeta/../msData/particles/particlesOa010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesOa015::msMeta/../msData/particles/particlesOa015.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesQ006::msMeta/../msData/particles/particlesQ006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesQ012::msMeta/../msData/particles/particlesQ012.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesQ018::msMeta/../msData/particles/particlesQ018.xsd	fail	compiled a schema that should be invalid
@@ -1447,7 +1382,6 @@ schema-invalid	particlesQ026::msMeta/../msData/particles/particlesQ026.xsd	fail	
 schema-invalid	particlesQ027::msMeta/../msData/particles/particlesQ027.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesQ028::msMeta/../msData/particles/particlesQ028.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesQ031::msMeta/../msData/particles/particlesQ031.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesR006::msMeta/../msData/particles/particlesR006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesR010::msMeta/../msData/particles/particlesR010.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesR014::msMeta/../msData/particles/particlesR014.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesR018::msMeta/../msData/particles/particlesR018.xsd	fail	compiled a schema that should be invalid
@@ -1460,14 +1394,8 @@ schema-invalid	particlesR027::msMeta/../msData/particles/particlesR027.xsd	fail	
 schema-invalid	particlesR028::msMeta/../msData/particles/particlesR028.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesR031::msMeta/../msData/particles/particlesR031.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesS002::msMeta/../msData/particles/particlesS002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesS005::msMeta/../msData/particles/particlesS005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesS006::msMeta/../msData/particles/particlesS006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesS008::msMeta/../msData/particles/particlesS008.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesS009::msMeta/../msData/particles/particlesS009.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesS010::msMeta/../msData/particles/particlesS010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesT002::msMeta/../msData/particles/particlesT002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesT008::msMeta/../msData/particles/particlesT008.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesT009::msMeta/../msData/particles/particlesT009.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesT010::msMeta/../msData/particles/particlesT010.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesT011::msMeta/../msData/particles/particlesT011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesU006::msMeta/../msData/particles/particlesU006.xsd	fail	compiled a schema that should be invalid
@@ -1479,10 +1407,6 @@ schema-invalid	particlesV016::msMeta/../msData/particles/particlesV016.xsd	fail	
 schema-invalid	particlesV017::msMeta/../msData/particles/particlesV017.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesV018::msMeta/../msData/particles/particlesV018.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesV020::msMeta/../msData/particles/particlesV020.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesW007::msMeta/../msData/particles/particlesW007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesW010::msMeta/../msData/particles/particlesW010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesW012::msMeta/../msData/particles/particlesW012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesW013::msMeta/../msData/particles/particlesW013.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesW014::msMeta/../msData/particles/particlesW014.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesW015::msMeta/../msData/particles/particlesW015.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ009::msMeta/../msData/particles/particlesZ009.xsd	fail	compiled a schema that should be invalid
@@ -1493,7 +1417,6 @@ schema-invalid	particlesZ017::msMeta/../msData/particles/particlesZ017.xsd	fail	
 schema-invalid	particlesZ018::msMeta/../msData/particles/particlesZ018.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ021::msMeta/../msData/particles/particlesZ021.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ022::msMeta/../msData/particles/particlesZ022.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particlesZ023::msMeta/../msData/particles/particlesZ023.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ024::msMeta/../msData/particles/particlesZ024.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ026a::msMeta/../msData/particles/particlesZ026a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesZ026a::msMeta/../msData/particles/particlesZ026b.xsd	fail	compiled a schema that should be invalid
