@@ -5,6 +5,7 @@ mod unified;
 
 pub use unified::Parser;
 
+pub(crate) mod checks;
 pub(crate) mod encoding;
 pub(crate) mod entities;
 pub(crate) mod wellformed;
@@ -160,11 +161,13 @@ fn parse_from_reader<R: BufRead>(
     let mut memory_used = 0usize;
     let mut ns_stack = NamespaceStack::new();
     let mut entity_map: HashMap<String, String> = HashMap::new();
+    let mut checker = checks::WellformedChecker::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
+                checker.start(e)?;
                 let line = reader.get_ref().line();
                 let column = reader.get_ref().column();
                 process_start_element(
@@ -179,6 +182,7 @@ fn parse_from_reader<R: BufRead>(
             }
             Ok(Event::Empty(ref e)) => {
                 check_memory(options, &mut memory_used, e.len())?;
+                checker.start(e)?;
                 let line = reader.get_ref().line();
                 let column = reader.get_ref().column();
                 process_start_element(
@@ -193,7 +197,8 @@ fn parse_from_reader<R: BufRead>(
                 ns_stack.pop_scope();
                 builder.end_element();
             }
-            Ok(Event::End(_)) => {
+            Ok(Event::End(ref e)) => {
+                checker.end(std::str::from_utf8(e.name().into_inner())?)?;
                 ns_stack.pop_scope();
                 builder.end_element();
             }
@@ -202,7 +207,7 @@ fn parse_from_reader<R: BufRead>(
                 // satisfy the Char production, but character references such
                 // as `&#1;` (legal in XML 1.1) survive as ordinary ASCII here
                 // and are not misjudged.
-                wellformed::check_chars(std::str::from_utf8(e.as_ref())?, "text content")?;
+                checker.text(std::str::from_utf8(e.as_ref())?)?;
                 let text = e
                     .unescape_with(|name| {
                         entity_map
@@ -220,36 +225,39 @@ fn parse_from_reader<R: BufRead>(
             }
             Ok(Event::CData(ref e)) => {
                 let text = std::str::from_utf8(e.as_ref())?;
-                wellformed::check_chars(text, "CDATA section")?;
+                checker.cdata(text)?;
                 check_memory(options, &mut memory_used, text.len())?;
                 builder.cdata(text);
             }
             Ok(Event::Comment(ref e)) => {
                 let text = std::str::from_utf8(e.as_ref())?;
-                wellformed::check_chars(text, "comment")?;
+                checker.comment(text)?;
                 builder.comment(text);
             }
             Ok(Event::PI(ref e)) => {
                 let content = std::str::from_utf8(e.as_ref())?;
-                wellformed::check_chars(content, "processing instruction")?;
+                checker.pi(content)?;
                 // Parse PI: target followed by content
                 let parts: Vec<&str> = content.splitn(2, char::is_whitespace).collect();
                 let target = parts.first().unwrap_or(&"");
                 let pi_content = parts.get(1).map(|s| s.trim());
                 builder.processing_instruction(target, pi_content);
             }
-            Ok(Event::Decl(ref _e)) => {
-                // XML declaration - we could extract version/encoding if needed
+            Ok(Event::Decl(ref e)) => {
+                checker.decl(std::str::from_utf8(e.as_ref())?)?;
             }
             Ok(Event::DocType(ref e)) => {
                 // Collect internal-subset general entity declarations so
                 // entity references in content/attributes resolve.
                 if let Ok(text) = std::str::from_utf8(e.as_ref()) {
-                    wellformed::check_chars(text, "document type declaration")?;
+                    checker.doctype(text)?;
                     entity_map = entities::parse_internal_entities(text);
                 }
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) => {
+                checker.eof()?;
+                break;
+            }
             Err(e) => {
                 return Err(crate::parser::error::ParseError::AtPosition {
                     position: reader.buffer_position(),
@@ -291,7 +299,8 @@ fn process_start_element<R: BufRead>(
 
     let qname_bytes = e.name().as_ref().to_vec();
     let (prefix, local_name) = extract_name_parts(&qname_bytes)?;
-    wellformed::check_name(std::str::from_utf8(&qname_bytes)?, "element name")?;
+    // Name and character well-formedness were validated by
+    // `WellformedChecker::start` before this function ran.
 
     // First pass: collect namespace declarations and register them
     let mut namespace_decls = Vec::new();
@@ -300,10 +309,6 @@ fn process_start_element<R: BufRead>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.as_ref())?;
-        wellformed::check_name(key, "attribute name")?;
-        // Raw value: literal characters must be legal, while `&#…;` references
-        // (legal in XML 1.1) pass through as plain ASCII.
-        wellformed::check_chars(std::str::from_utf8(attr.value.as_ref())?, "attribute value")?;
         let value = attr
             .unescape_value_with(|name| {
                 entity_map
