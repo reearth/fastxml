@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37127	fail=2039	unsupported=28	blocked=419	panic=0
+#counts	total=39613	pass=37180	fail=1986	unsupported=28	blocked=419	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -985,7 +985,6 @@ schema-invalid	RegexTest_1236::msMeta/../msData/regex/RegexTest_1236.xsd	fail	co
 schema-invalid	RegexTest_583::msMeta/../msData/regex/RegexTest_583.xsd	fail	compiled a schema that should be invalid
 schema-invalid	RegexTest_752::msMeta/../msData/regex/RegexTest_752.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addA003::msMeta/../msData/additional/adhocAddA003e.xsd	fail	compiled a schema that should be invalid
-schema-invalid	addB005::msMeta/../msData/additional/test60998.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB008::msMeta/../msData/additional/test65472.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB009::msMeta/../msData/additional/test66059.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB014::msMeta/../msData/additional/test65699.xsd	fail	compiled a schema that should be invalid
@@ -1007,7 +1006,6 @@ schema-invalid	addB081::msMeta/../msData/additional/addB081.xsd	fail	compiled a 
 schema-invalid	addB082::msMeta/../msData/additional/addB082.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB083::msMeta/../msData/additional/addB083.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB089::msMeta/../msData/additional/addB089.xsd	fail	compiled a schema that should be invalid
-schema-invalid	addB095::msMeta/../msData/additional/addB095.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB101::msMeta/../msData/additional/addB101.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB108::msMeta/../msData/additional/addB108.xsd	fail	compiled a schema that should be invalid
 schema-invalid	addB110::msMeta/../msData/additional/test65911_1.xsd	fail	compiled a schema that should be invalid
@@ -1694,66 +1692,20 @@ schema-invalid	long_minInclusive004_651::msMeta/../msData/datatypes/Facets/Schem
 schema-invalid	long_minInclusive005_652::msMeta/../msData/datatypes/Facets/Schemas/long_minInclusive005.xsd	fail	compiled a schema that should be invalid
 schema-invalid	long_totalDigits003_660::msMeta/../msData/datatypes/Facets/Schemas/long_totalDigits003.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgA013::msMeta/../msData/modelGroups/mgA013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgA018::msMeta/../msData/modelGroups/mgA018.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgA019::msMeta/../msData/modelGroups/mgA019.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgA020::msMeta/../msData/modelGroups/mgA020.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAa004::msMeta/../msData/modelGroups/mgAa004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAa006::msMeta/../msData/modelGroups/mgAa006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAa007::msMeta/../msData/modelGroups/mgAa007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb001::msMeta/../msData/modelGroups/mgAb001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb002::msMeta/../msData/modelGroups/mgAb002.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb003::msMeta/../msData/modelGroups/mgAb003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb004::msMeta/../msData/modelGroups/mgAb004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb005::msMeta/../msData/modelGroups/mgAb005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb006::msMeta/../msData/modelGroups/mgAb006.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb007::msMeta/../msData/modelGroups/mgAb007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb008::msMeta/../msData/modelGroups/mgAb008.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgAb009::msMeta/../msData/modelGroups/mgAb009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgB008::msMeta/../msData/modelGroups/mgB008.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgB009::msMeta/../msData/modelGroups/mgB009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgB010::msMeta/../msData/modelGroups/mgB010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgC008::msMeta/../msData/modelGroups/mgC008.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgC009::msMeta/../msData/modelGroups/mgC009.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgC013::msMeta/../msData/modelGroups/mgC013.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgEa004::msMeta/../msData/modelGroups/mgEa004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgG025::msMeta/../msData/modelGroups/mgG025.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgHa004::msMeta/../msData/modelGroups/mgHa004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgJ025::msMeta/../msData/modelGroups/mgJ025.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO001::msMeta/../msData/modelGroups/mgO001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO003::msMeta/../msData/modelGroups/mgO003.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgO012::msMeta/../msData/modelGroups/mgO012.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgO013::msMeta/../msData/modelGroups/mgO013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO018::msMeta/../msData/modelGroups/mgO018.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO019::msMeta/../msData/modelGroups/mgO019.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO020::msMeta/../msData/modelGroups/mgO020.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO026::msMeta/../msData/modelGroups/mgO026.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgO027::msMeta/../msData/modelGroups/mgO027.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgO033::msMeta/../msData/modelGroups/mgO033.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP039::msMeta/../msData/modelGroups/mgP039.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP040::msMeta/../msData/modelGroups/mgP040.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP041::msMeta/../msData/modelGroups/mgP041.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP042::msMeta/../msData/modelGroups/mgP042.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP043::msMeta/../msData/modelGroups/mgP043.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP049::msMeta/../msData/modelGroups/mgP049.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgP050::msMeta/../msData/modelGroups/mgP050.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgP057::msMeta/../msData/modelGroups/mgP057.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgP058::msMeta/../msData/modelGroups/mgP058.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgP059::msMeta/../msData/modelGroups/mgP059.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgP061::msMeta/../msData/modelGroups/mgP061.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgP062::msMeta/../msData/modelGroups/mgP062.xsd	fail	compiled a schema that should be invalid
 schema-invalid	mgQ001::msMeta/../msData/modelGroups/mgQ001.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ004::msMeta/../msData/modelGroups/mgQ004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ005::msMeta/../msData/modelGroups/mgQ005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ010::msMeta/../msData/modelGroups/mgQ010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ011::msMeta/../msData/modelGroups/mgQ011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ012::msMeta/../msData/modelGroups/mgQ012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgQ013::msMeta/../msData/modelGroups/mgQ013.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR004::msMeta/../msData/modelGroups/mgR004.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR005::msMeta/../msData/modelGroups/mgR005.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR010::msMeta/../msData/modelGroups/mgR010.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR011::msMeta/../msData/modelGroups/mgR011.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR012::msMeta/../msData/modelGroups/mgR012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	mgR013::msMeta/../msData/modelGroups/mgR013.xsd	fail	compiled a schema that should be invalid
 schema-invalid	modelgroup00102m1::sunMeta/../sunData/MGroupDef/modelGroup/modelGroup00102m/modelGroup00102m1.xsd	fail	compiled a schema that should be invalid
 schema-invalid	modelgroup00102m2::sunMeta/../sunData/MGroupDef/modelGroup/modelGroup00102m/modelGroup00102m2.xsd	fail	compiled a schema that should be invalid
 schema-invalid	modelgroup00102m3::sunMeta/../sunData/MGroupDef/modelGroup/modelGroup00102m/modelGroup00102m3.xsd	fail	compiled a schema that should be invalid
@@ -1838,10 +1790,6 @@ schema-invalid	notatF055::msMeta/../msData/notations/notatF055.xsd	fail	compiled
 schema-invalid	notatG001::msMeta/../msData/notations/notatG001.xsd	fail	compiled a schema that should be invalid
 schema-invalid	notatG002::msMeta/../msData/notations/notatG002.xsd	fail	compiled a schema that should be invalid
 schema-invalid	notatG003::msMeta/../msData/notations/notatG003.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particles00102m1::sunMeta/../sunData/MGroup/particles/particles00102m/particles00102m1.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particles00103m1::sunMeta/../sunData/MGroup/particles/particles00103m/particles00103m1.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particles00104m1::sunMeta/../sunData/MGroup/particles/particles00104m/particles00104m1.xsd	fail	compiled a schema that should be invalid
-schema-invalid	particles00105m1::sunMeta/../sunData/MGroup/particles/particles00105m/particles00105m1.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesDa006::msMeta/../msData/particles/particlesDa006.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesDa011::msMeta/../msData/particles/particlesDa011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	particlesEa025::msMeta/../msData/particles/particlesEa025.xsd	fail	compiled a schema that should be invalid
@@ -2138,7 +2086,6 @@ schema-invalid	schK2::msMeta/../msData/schema/schK2_a.xsd	fail	compiled a schema
 schema-invalid	schK3::msMeta/../msData/schema/schK3_a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	schL10::msMeta/../msData/schema/schL10_a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	schL1::msMeta/../msData/schema/schL1_a.xsd	fail	compiled a schema that should be invalid
-schema-invalid	schL3::msMeta/../msData/schema/schL3_a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	schL5::msMeta/../msData/schema/schL5_a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	schL6::msMeta/../msData/schema/schL6_a.xsd	fail	compiled a schema that should be invalid
 schema-invalid	schL8::msMeta/../msData/schema/schL8_a.xsd	fail	compiled a schema that should be invalid

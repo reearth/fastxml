@@ -997,4 +997,103 @@ mod tests {
         assert_eq!(parsed.get("name"), Some(&"test".to_string()));
         assert_eq!(parsed.get("type"), Some(&"xs:string".to_string()));
     }
+
+    // cos-all-limited: xs:all placement and occurrence constraints.
+
+    #[test]
+    fn all_with_max_occurs_other_than_one_rejected() {
+        for max in ["0", "2", "unbounded"] {
+            let xsd = format!(
+                r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                    <xs:complexType name="t">
+                        <xs:all minOccurs="0" maxOccurs="{max}">
+                            <xs:element name="e" type="xs:string"/>
+                        </xs:all>
+                    </xs:complexType>
+                </xs:schema>"#
+            );
+            assert!(
+                parse_xsd_ast(xsd.as_bytes()).is_err(),
+                "all with maxOccurs={max} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn all_with_min_occurs_two_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:all minOccurs="2">
+                    <xs:element name="e" type="xs:string"/>
+                </xs:all>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn all_with_valid_occurs_accepted() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:all minOccurs="0" maxOccurs="1">
+                    <xs:element name="e" type="xs:string" minOccurs="0" maxOccurs="1"/>
+                </xs:all>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn all_member_with_max_occurs_two_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:all>
+                    <xs:element name="e" type="xs:string" maxOccurs="2"/>
+                </xs:all>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn all_nested_in_sequence_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:sequence>
+                    <xs:all>
+                        <xs:element name="e" type="xs:string"/>
+                    </xs:all>
+                </xs:sequence>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn sequence_nested_in_all_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:all>
+                    <xs:sequence>
+                        <xs:element name="e" type="xs:string"/>
+                    </xs:sequence>
+                </xs:all>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn nested_schema_element_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:group name="g">
+                <xs:schema>
+                    <xs:all>
+                        <xs:element name="e" type="xs:string"/>
+                    </xs:all>
+                </xs:schema>
+            </xs:group>
+        </xs:schema>"#;
+        assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+    }
 }

@@ -490,6 +490,11 @@ impl XsdParser {
 
         let is_particle = matches!(local, "group" | "all" | "choice" | "sequence");
 
+        // xs:schema is only allowed as the document root.
+        if local == "schema" && !self.child_state_stack.is_empty() {
+            return err("'schema' is only allowed as the document root".to_string());
+        }
+
         let Some(parent) = self.child_state_stack.last_mut() else {
             return Ok(());
         };
@@ -593,6 +598,36 @@ impl XsdParser {
                     ));
                 }
             }
+            // cos-all-limited: xs:all must be the whole content model, so it
+            // cannot be nested inside a sequence or choice.
+            "sequence" | "choice" => {
+                if local == "all" {
+                    return err(format!("'all' cannot be nested inside {}", parent.name));
+                }
+            }
+            // xs:all admits only element declarations (and annotation), and
+            // its member elements must have minOccurs/maxOccurs of 0 or 1.
+            "all" => match local {
+                "annotation" => {}
+                "element" => {
+                    for occurs_attr in ["minOccurs", "maxOccurs"] {
+                        if let Some(v) = attrs.get(occurs_attr) {
+                            let v = v.trim();
+                            // Numerically 0 or 1 ("unbounded" and >1 are out);
+                            // unparseable values are rejected by parse_occurs.
+                            if v.parse::<u64>().map(|n| n > 1).unwrap_or(v == "unbounded") {
+                                return err(format!(
+                                    "element inside 'all' must have {} of 0 or 1, found '{}'",
+                                    occurs_attr, v
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    return err(format!("element '{}' is not allowed inside 'all'", local));
+                }
+            },
             _ => {}
         }
 
@@ -723,10 +758,28 @@ impl XsdParser {
         use crate::schema::error::SchemaError;
 
         let mut all = XsdAll::default();
-        // Parse minOccurs (maxOccurs for all is always 1 per XSD spec)
+        // cos-all-limited: an xs:all group must have minOccurs of 0 or 1 and
+        // maxOccurs of exactly 1.
         if let Some(min_str) = attrs.get("minOccurs") {
-            all.min_occurs =
+            let min =
                 Occurs::parse(min_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?;
+            if !matches!(min, Occurs::Count(0) | Occurs::Count(1)) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'all' must have minOccurs of 0 or 1, found '{}'", min_str),
+                }
+                .into());
+            }
+            all.min_occurs = min;
+        }
+        if let Some(max_str) = attrs.get("maxOccurs") {
+            let max =
+                Occurs::parse(max_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?;
+            if !matches!(max, Occurs::Count(1)) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'all' must have maxOccurs of 1, found '{}'", max_str),
+                }
+                .into());
+            }
         }
         all.max_occurs = Occurs::Count(1);
         self.stack.push(StackFrame::All(all));
