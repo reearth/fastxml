@@ -266,6 +266,13 @@ impl OnePassSchemaValidator {
         elem_constraints: &[crate::schema::types::CompiledConstraint],
         attributes: &[(&str, &str)],
     ) {
+        // C8 (lazy): with no identity scopes open and no constraints declared
+        // on this element, there is nothing to match and nothing to open —
+        // skip building the per-element attr_kinds / local_names vectors.
+        if self.identity_scopes.is_empty() && elem_constraints.is_empty() {
+            return;
+        }
+
         let depth = self.state.element_stack.len();
 
         // Resolve the value-space kind of each present attribute once, so the
