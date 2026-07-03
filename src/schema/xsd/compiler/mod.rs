@@ -4,6 +4,7 @@
 //! representation (CompiledSchema).
 
 mod cache;
+mod facet_checks;
 mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;

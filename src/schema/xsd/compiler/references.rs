@@ -24,6 +24,8 @@ const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
 
 use crate::schema::xsd::builtin::is_builtin_xsd_type_local;
 
+use super::facet_checks::{FacetBase, check_facets, classify_builtin_base};
+
 /// Namespaces that are always lenient because fastxml provides (partial)
 /// built-in definitions for them rather than compiled schema documents.
 fn is_always_lenient(ns: &str) -> bool {
@@ -793,6 +795,34 @@ impl Checker<'_> {
         Ok(())
     }
 
+    /// Classifies a restriction base for facet checking: a built-in XSD
+    /// datatype yields its primitive class; user-defined or unresolved bases
+    /// are `Unknown` (only base-independent facet checks run).
+    fn facet_base(&self, base: Option<&QName>) -> FacetBase {
+        let Some(qname) = base else {
+            return FacetBase::Unknown;
+        };
+        let prefix = qname.prefix.as_deref().map(str::trim);
+        let local = qname.local.trim();
+        let Some(ns) = self.resolve_ns(prefix) else {
+            return FacetBase::Unknown;
+        };
+        // A user-defined type shadowing a built-in name stays Unknown.
+        if self
+            .tables
+            .types
+            .get(&ns)
+            .is_some_and(|m| m.contains_key(local))
+        {
+            return FacetBase::Unknown;
+        }
+        if ns == XSD_NS || (ns.is_empty() && is_builtin_xsd_type_local(local)) {
+            classify_builtin_base(local)
+        } else {
+            FacetBase::Unknown
+        }
+    }
+
     /// Resolves what is known about a type reference target with the same
     /// resolution order as [`Self::check_ref`].
     fn resolve_type_info(&self, qname: &QName) -> Option<TypeInfo> {
@@ -944,6 +974,7 @@ impl Checker<'_> {
                 if let Some(inline) = &r.inline_base {
                     self.check_simple_type(inline)?;
                 }
+                check_facets(&r.facets, self.facet_base(r.base.as_ref()))?;
             }
             XsdSimpleTypeContent::List(list) => {
                 if let Some(item) = &list.item_type {
@@ -991,6 +1022,7 @@ impl Checker<'_> {
                 XsdSimpleContentDerivation::Restriction(r) => {
                     self.check_ref(RefKind::Type, &r.base, &from)?;
                     self.check_final(&r.base, DerivationType::Restriction, &from)?;
+                    check_facets(&r.facets, self.facet_base(Some(&r.base)))?;
                     for attr in &r.attributes {
                         self.check_attribute(attr, &from)?;
                     }
