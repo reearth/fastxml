@@ -750,6 +750,18 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
                 elements_validated = counters.elements_validated;
                 text_nodes_checked = counters.text_nodes_checked;
             }
+            // Guardrail helper: dump the distinct error messages when asked,
+            // so the anti-regression reference matches this exact code path.
+            if std::env::var_os("FASTXML_BENCH_DUMP_ERRORS").is_some() {
+                for e in report.errors() {
+                    eprintln!(
+                        "ERR {}:{} {}",
+                        e.location.line.unwrap_or(0),
+                        e.location.column.unwrap_or(0),
+                        e.message
+                    );
+                }
+            }
         }
     }
 
