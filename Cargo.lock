@@ -459,7 +459,6 @@ version = "0.1.0"
 dependencies = [
  "fastxml",
  "flate2",
- "lazy_static",
  "quick-xml",
  "serde",
  "serde_json",
