@@ -8,6 +8,7 @@ mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod redefine;
+mod references;
 mod substitution;
 mod types;
 
@@ -68,9 +69,16 @@ impl XsdCompiler {
     /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
         let mut schemas = schemas;
+        // Namespace strictness must be computed while import/include/redefine
+        // declarations are still present in the AST.
+        let strictness = references::Strictness::compute(&schemas);
         // Apply xs:redefine before anything is registered: originals are
         // renamed and redefinitions take their place.
         redefine::apply_redefines(&mut schemas);
+
+        // Every QName reference into a fully-present (strict) namespace must
+        // resolve to a declared component.
+        references::check_references(&schemas, &strictness)?;
 
         let mut result = CompiledSchema::new();
 

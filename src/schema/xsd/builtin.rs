@@ -19,6 +19,67 @@ pub const GML_NAMESPACE: &str = "http://www.opengis.net/gml/3.2";
 /// GML namespace URI (GML 3.1).
 pub const GML31_NAMESPACE: &str = "http://www.opengis.net/gml";
 
+/// Local names of the built-in XSD datatypes fastxml recognizes (XSD 1.0
+/// plus the XSD 1.1 datatypes fastxml supports).
+pub(crate) const XSD_BUILTIN_TYPE_LOCALS: &[&str] = &[
+    "anyType",
+    "anySimpleType",
+    "string",
+    "boolean",
+    "decimal",
+    "float",
+    "double",
+    "duration",
+    "dateTime",
+    "time",
+    "date",
+    "gYearMonth",
+    "gYear",
+    "gMonthDay",
+    "gDay",
+    "gMonth",
+    "hexBinary",
+    "base64Binary",
+    "anyURI",
+    "QName",
+    "NOTATION",
+    "normalizedString",
+    "token",
+    "language",
+    "NMTOKEN",
+    "NMTOKENS",
+    "Name",
+    "NCName",
+    "ID",
+    "IDREF",
+    "IDREFS",
+    "ENTITY",
+    "ENTITIES",
+    "integer",
+    "nonPositiveInteger",
+    "negativeInteger",
+    "long",
+    "int",
+    "short",
+    "byte",
+    "nonNegativeInteger",
+    "unsignedLong",
+    "unsignedInt",
+    "unsignedShort",
+    "unsignedByte",
+    "positiveInteger",
+    // XSD 1.1 datatypes fastxml supports.
+    "anyAtomicType",
+    "dateTimeStamp",
+    "dayTimeDuration",
+    "yearMonthDuration",
+];
+
+/// Whether `local` is the local name of a built-in XSD datatype.
+pub(crate) fn is_builtin_xsd_type_local(local: &str) -> bool {
+    XSD_BUILTIN_TYPE_LOCALS.contains(&local)
+}
+
 /// XSD primitive type names.
 #[allow(missing_docs)]
 pub mod xs {

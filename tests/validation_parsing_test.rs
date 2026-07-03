@@ -12,9 +12,13 @@ fn test_invalid_xsd_syntax() {
             <xs:element name="test" type="xs:nonexistent"/>
         </xs:schema>"#;
 
-    // Schema parsing should succeed, type resolution happens later
+    // xs:nonexistent is not a built-in XSD type; the reference-integrity
+    // pass rejects the schema at compile time.
     let result = Schema::from_xsd(xsd.as_bytes());
-    assert!(result.is_ok());
+    assert!(
+        result.is_err(),
+        "reference to xs:nonexistent must be rejected"
+    );
 }
 
 #[test]

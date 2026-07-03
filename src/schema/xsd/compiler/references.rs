@@ -1,0 +1,905 @@
+//! Reference-integrity checking over the XSD AST.
+//!
+//! After all schema documents of a set are known, every QName reference
+//! (`type=`, `base=`, `ref=`, `itemType=`, `memberTypes=`, `substitutionGroup=`,
+//! keyref `refer=`) must resolve to a declared component — but only when the
+//! referenced namespace is *strict*: fully present in the compiled set. A
+//! namespace whose imports/includes could not be resolved (or were never
+//! fetched, as in single-document compilation) is *poisoned* and stays lenient,
+//! so real-world schema sets with partial dependencies keep compiling.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::error::Result;
+use crate::schema::error::SchemaError;
+
+use super::super::types::*;
+
+/// The XSD schema namespace.
+const XSD_NS: &str = "http://www.w3.org/2001/XMLSchema";
+/// The XML namespace (implicitly bound to the `xml` prefix).
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+/// The XML Schema instance namespace.
+const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
+
+use crate::schema::xsd::builtin::is_builtin_xsd_type_local;
+
+/// Namespaces that are always lenient because fastxml provides (partial)
+/// built-in definitions for them rather than compiled schema documents.
+fn is_always_lenient(ns: &str) -> bool {
+    ns == XML_NS
+        || ns == XSI_NS
+        || ns == crate::schema::xsd::builtin::GML_NAMESPACE
+        || ns == crate::schema::xsd::builtin::GML31_NAMESPACE
+}
+
+/// Which namespaces of a schema set are strict (fully present) vs poisoned.
+///
+/// Must be computed *before* `xs:redefine` application drains the redefine
+/// declarations from the AST.
+#[derive(Debug, Default)]
+pub(crate) struct Strictness {
+    /// Target namespaces defined by schemas in the set ("" = no namespace).
+    defined: HashSet<String>,
+    /// Namespaces with unresolved imports/includes targeting them.
+    poisoned: HashSet<String>,
+}
+
+impl Strictness {
+    /// Computes strictness from the full AST set.
+    ///
+    /// A namespace is poisoned when:
+    /// - an `xs:import` for it has no resolved document in the set, or
+    /// - a schema of that namespace has `xs:include`/`xs:redefine` but no other
+    ///   document of the same namespace is present (the include was never
+    ///   fetched), or
+    /// - a schema of that namespace includes documents while a chameleon
+    ///   (no-targetNamespace) document is in the set (its components are not
+    ///   re-homed into the includer's namespace).
+    pub(crate) fn compute(schemas: &[XsdSchema]) -> Self {
+        let mut defined: HashSet<String> = HashSet::new();
+        for schema in schemas {
+            defined.insert(tns_key(schema));
+        }
+
+        let has_chameleon_doc = schemas
+            .iter()
+            .any(|s| s.target_namespace.is_none() && schemas.len() > 1);
+
+        let mut poisoned: HashSet<String> = HashSet::new();
+        for schema in schemas {
+            for import in &schema.imports {
+                let ns = import.namespace.clone().unwrap_or_default();
+                if !defined.contains(&ns) {
+                    poisoned.insert(ns);
+                }
+            }
+            if !schema.includes.is_empty() || !schema.redefines.is_empty() {
+                let own = tns_key(schema);
+                let satisfied = schemas
+                    .iter()
+                    .any(|other| !std::ptr::eq(other, schema) && tns_key(other) == own);
+                if !satisfied || (has_chameleon_doc && schema.target_namespace.is_some()) {
+                    poisoned.insert(own);
+                }
+            }
+        }
+
+        Self { defined, poisoned }
+    }
+
+    /// Whether references into `ns` must resolve.
+    fn is_strict(&self, ns: &str) -> bool {
+        if self.poisoned.contains(ns) || is_always_lenient(ns) {
+            return false;
+        }
+        // The XSD namespace resolves against built-ins even when no schema
+        // document for it is present.
+        ns == XSD_NS || self.defined.contains(ns)
+    }
+}
+
+fn tns_key(schema: &XsdSchema) -> String {
+    schema.target_namespace.clone().unwrap_or_default()
+}
+
+/// Symbol tables of top-level component names, keyed by namespace.
+#[derive(Debug, Default)]
+struct SymbolTables {
+    types: HashMap<String, HashSet<String>>,
+    elements: HashMap<String, HashSet<String>>,
+    attributes: HashMap<String, HashSet<String>>,
+    groups: HashMap<String, HashSet<String>>,
+    attribute_groups: HashMap<String, HashSet<String>>,
+    /// key/unique identity-constraint names (for keyref refer=).
+    keys: HashMap<String, HashSet<String>>,
+}
+
+impl SymbolTables {
+    fn build(schemas: &[XsdSchema]) -> Self {
+        let mut tables = Self::default();
+        for schema in schemas {
+            let ns = tns_key(schema);
+            for type_def in &schema.types {
+                if let Some(name) = type_def.name() {
+                    tables
+                        .types
+                        .entry(ns.clone())
+                        .or_default()
+                        .insert(name.to_string());
+                }
+            }
+            for element in &schema.elements {
+                tables
+                    .elements
+                    .entry(ns.clone())
+                    .or_default()
+                    .insert(element.name.clone());
+                collect_constraint_names(element, &ns, &mut tables.keys);
+            }
+            for attr in &schema.attributes {
+                if let Some(name) = &attr.name {
+                    tables
+                        .attributes
+                        .entry(ns.clone())
+                        .or_default()
+                        .insert(name.clone());
+                }
+            }
+            for group in &schema.groups {
+                if let Some(name) = &group.name {
+                    tables
+                        .groups
+                        .entry(ns.clone())
+                        .or_default()
+                        .insert(name.clone());
+                }
+            }
+            for ag in &schema.attribute_groups {
+                if let Some(name) = &ag.name {
+                    tables
+                        .attribute_groups
+                        .entry(ns.clone())
+                        .or_default()
+                        .insert(name.clone());
+                }
+            }
+            // Identity constraints can sit on elements nested inside types.
+            for type_def in &schema.types {
+                collect_constraints_in_type(type_def, &ns, &mut tables.keys);
+            }
+        }
+        tables
+    }
+
+    fn contains(&self, kind: RefKind, ns: &str, local: &str) -> bool {
+        let table = match kind {
+            RefKind::Type => &self.types,
+            RefKind::Element => &self.elements,
+            RefKind::Attribute => &self.attributes,
+            RefKind::Group => &self.groups,
+            RefKind::AttributeGroup => &self.attribute_groups,
+            RefKind::Key => &self.keys,
+        };
+        if table.get(ns).is_some_and(|set| set.contains(local)) {
+            return true;
+        }
+        // Components from chameleon (no-targetNamespace) documents are merged
+        // by the compiler under their local names; let them satisfy references
+        // into any namespace so we never reject what the compiler resolves.
+        if !ns.is_empty() && table.get("").is_some_and(|set| set.contains(local)) {
+            return true;
+        }
+        // Built-in XSD types. The compiler also registers built-ins under
+        // their bare local names, so no-namespace references to them resolve;
+        // stay consistent with that legacy leniency.
+        kind == RefKind::Type && (ns == XSD_NS || ns.is_empty()) && is_builtin_xsd_type_local(local)
+    }
+}
+
+/// Collects key/unique constraint names declared on an element (and its
+/// nested content) into the per-namespace key table.
+fn collect_constraint_names(
+    element: &XsdElement,
+    ns: &str,
+    keys: &mut HashMap<String, HashSet<String>>,
+) {
+    for ic in &element.identity_constraints {
+        // keyref names share the symbol space but cannot be refer targets;
+        // record them anyway to stay lenient about refer-to-keyref (checked
+        // separately if ever needed).
+        keys.entry(ns.to_string())
+            .or_default()
+            .insert(ic.name.clone());
+    }
+    if let Some(inline) = &element.inline_type {
+        collect_constraints_in_type(inline, ns, keys);
+    }
+}
+
+fn collect_constraints_in_type(
+    type_def: &XsdTypeDef,
+    ns: &str,
+    keys: &mut HashMap<String, HashSet<String>>,
+) {
+    let XsdTypeDef::Complex(ct) = type_def else {
+        return;
+    };
+    let mut walk_particle = |particle: &XsdParticle| {
+        collect_constraints_in_particle(particle, ns, keys);
+    };
+    match &ct.content {
+        XsdComplexContent::Particle(p) => walk_particle(p),
+        XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+            XsdComplexContentDerivation::Extension(ext) => {
+                if let Some(p) = &ext.particle {
+                    walk_particle(p);
+                }
+            }
+            XsdComplexContentDerivation::Restriction(r) => {
+                if let Some(p) = &r.particle {
+                    walk_particle(p);
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
+fn collect_constraints_in_particle(
+    particle: &XsdParticle,
+    ns: &str,
+    keys: &mut HashMap<String, HashSet<String>>,
+) {
+    match particle {
+        XsdParticle::Sequence(seq) => {
+            for item in &seq.particles {
+                collect_constraints_in_item(item, ns, keys);
+            }
+        }
+        XsdParticle::Choice(choice) => {
+            for item in &choice.particles {
+                collect_constraints_in_item(item, ns, keys);
+            }
+        }
+        XsdParticle::All(all) => {
+            for element in &all.elements {
+                collect_constraint_names(element, ns, keys);
+            }
+        }
+        XsdParticle::GroupRef(_) | XsdParticle::Any(_) => {}
+    }
+}
+
+fn collect_constraints_in_item(
+    item: &XsdParticleItem,
+    ns: &str,
+    keys: &mut HashMap<String, HashSet<String>>,
+) {
+    match item {
+        XsdParticleItem::Element(element) => collect_constraint_names(element, ns, keys),
+        XsdParticleItem::Sequence(seq) => {
+            for nested in &seq.particles {
+                collect_constraints_in_item(nested, ns, keys);
+            }
+        }
+        XsdParticleItem::Choice(choice) => {
+            for nested in &choice.particles {
+                collect_constraints_in_item(nested, ns, keys);
+            }
+        }
+        XsdParticleItem::GroupRef(_) | XsdParticleItem::Any(_) => {}
+    }
+}
+
+/// The kind of component a reference points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefKind {
+    Type,
+    Element,
+    Attribute,
+    Group,
+    AttributeGroup,
+    Key,
+}
+
+impl RefKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            RefKind::Type => "type",
+            RefKind::Element => "element",
+            RefKind::Attribute => "attribute",
+            RefKind::Group => "group",
+            RefKind::AttributeGroup => "attribute group",
+            RefKind::Key => "identity constraint",
+        }
+    }
+}
+
+/// Checks every QName reference in the schema set. Call after
+/// `apply_redefines` (so redefined self-references point at the surviving
+/// synthetic names) with a [`Strictness`] computed before it.
+pub(crate) fn check_references(schemas: &[XsdSchema], strictness: &Strictness) -> Result<()> {
+    let tables = SymbolTables::build(schemas);
+    for schema in schemas {
+        let checker = Checker {
+            schema,
+            strictness,
+            tables: &tables,
+        };
+        checker.check_schema()?;
+    }
+    Ok(())
+}
+
+/// Per-schema reference checker (QName prefixes resolve against the owning
+/// document's namespace bindings).
+struct Checker<'a> {
+    schema: &'a XsdSchema,
+    strictness: &'a Strictness,
+    tables: &'a SymbolTables,
+}
+
+impl Checker<'_> {
+    /// Resolves a QName's namespace using this schema's bindings.
+    /// Returns `None` when the prefix is undeclared. QName attribute values
+    /// are whitespace-collapsed, so stray whitespace is trimmed first.
+    fn resolve_ns(&self, prefix: Option<&str>) -> Option<String> {
+        match prefix {
+            Some("xml") => Some(XML_NS.to_string()),
+            Some(p) => self.schema.namespace_bindings.get(p).cloned(),
+            None => Some(
+                self.schema
+                    .namespace_bindings
+                    .get("")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// Checks one reference; errors when it points into a strict namespace
+    /// but no matching declaration exists.
+    fn check_ref(&self, kind: RefKind, qname: &QName, from: &str) -> Result<()> {
+        self.check_ref_inner(kind, qname, from, true)
+    }
+
+    /// Lazily checks a reference: per the resolution rules the W3C test suite
+    /// expects (saxonData/Missing), a dangling `type=` on an unused top-level
+    /// element, `substitutionGroup=`, `itemType=` or `memberTypes=` is only an
+    /// error when the component is needed for validation — except when the
+    /// QName can *never* resolve (undeclared prefix, or a miss in the closed
+    /// built-in XSD namespace).
+    fn check_ref_lazy(&self, kind: RefKind, qname: &QName, from: &str) -> Result<()> {
+        self.check_ref_inner(kind, qname, from, false)
+    }
+
+    fn check_ref_inner(
+        &self,
+        kind: RefKind,
+        qname: &QName,
+        from: &str,
+        require_existence: bool,
+    ) -> Result<()> {
+        // QName values are whitespace-collapsed before resolution.
+        let prefix = qname.prefix.as_deref().map(str::trim);
+        let local = qname.local.trim();
+        let Some(ns) = self.resolve_ns(prefix) else {
+            // Undeclared prefix: the QName cannot denote any component.
+            return Err(SchemaError::DanglingReference {
+                kind: kind.as_str(),
+                name: qname.to_string_full(),
+                referenced_from: format!("{} (undeclared namespace prefix)", from),
+            }
+            .into());
+        };
+        if self.tables.contains(kind, &ns, local) {
+            return Ok(());
+        }
+        // Mirror the compiler's leniency: an unprefixed reference falls back
+        // to the schema's own target namespace.
+        if prefix.is_none()
+            && let Some(own) = &self.schema.target_namespace
+            && *own != ns
+            && self.tables.contains(kind, own, local)
+        {
+            return Ok(());
+        }
+        // The XSD namespace is closed: a miss there can never be satisfied
+        // later, even under lazy resolution.
+        let must_resolve = self.strictness.is_strict(&ns) && (require_existence || ns == XSD_NS);
+        if !must_resolve {
+            return Ok(());
+        }
+        Err(SchemaError::DanglingReference {
+            kind: kind.as_str(),
+            name: qname.to_string_full(),
+            referenced_from: from.to_string(),
+        }
+        .into())
+    }
+
+    fn check_schema(&self) -> Result<()> {
+        for element in &self.schema.elements {
+            self.check_element_at(element, "top-level element", true)?;
+        }
+        for type_def in &self.schema.types {
+            self.check_type_def(type_def)?;
+        }
+        for attr in &self.schema.attributes {
+            self.check_attribute(attr, "top-level attribute")?;
+        }
+        for group in &self.schema.groups {
+            if let Some(particle) = &group.particle {
+                let from = format!("group '{}'", group.name.as_deref().unwrap_or("(anonymous)"));
+                self.check_particle(particle, &from)?;
+            }
+        }
+        for ag in &self.schema.attribute_groups {
+            let from = format!(
+                "attribute group '{}'",
+                ag.name.as_deref().unwrap_or("(anonymous)")
+            );
+            self.check_attribute_group_body(ag, &from)?;
+        }
+        Ok(())
+    }
+
+    fn check_element(&self, element: &XsdElement, from: &str) -> Result<()> {
+        self.check_element_at(element, from, false)
+    }
+
+    fn check_element_at(&self, element: &XsdElement, from: &str, top_level: bool) -> Result<()> {
+        if let Some(r) = &element.ref_ {
+            self.check_ref(RefKind::Element, r, from)?;
+        }
+        if let Some(t) = &element.type_ref {
+            // A dangling type on an unused top-level element declaration is
+            // tolerated under lazy component resolution (saxonData/Missing).
+            if top_level {
+                self.check_ref_lazy(RefKind::Type, t, from)?;
+            } else {
+                self.check_ref(RefKind::Type, t, from)?;
+            }
+        }
+        if let Some(sg) = &element.substitution_group {
+            self.check_ref_lazy(RefKind::Element, sg, from)?;
+        }
+        if let Some(inline) = &element.inline_type {
+            self.check_type_def(inline)?;
+        }
+        for ic in &element.identity_constraints {
+            if let Some(refer) = &ic.refer {
+                let from = format!("keyref '{}'", ic.name);
+                self.check_ref(RefKind::Key, refer, &from)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_attribute(&self, attr: &XsdAttribute, from: &str) -> Result<()> {
+        if let Some(r) = &attr.ref_ {
+            self.check_ref(RefKind::Attribute, r, from)?;
+        }
+        if let Some(t) = &attr.type_ref {
+            self.check_ref(RefKind::Type, t, from)?;
+        }
+        if let Some(inline) = &attr.inline_type {
+            self.check_simple_type(inline)?;
+        }
+        Ok(())
+    }
+
+    fn check_type_def(&self, type_def: &XsdTypeDef) -> Result<()> {
+        match type_def {
+            XsdTypeDef::Simple(st) => self.check_simple_type(st),
+            XsdTypeDef::Complex(ct) => self.check_complex_type(ct),
+        }
+    }
+
+    fn check_simple_type(&self, st: &XsdSimpleType) -> Result<()> {
+        let from = format!(
+            "simple type '{}'",
+            st.name.as_deref().unwrap_or("(anonymous)")
+        );
+        match &st.content {
+            XsdSimpleTypeContent::Restriction(r) => {
+                if let Some(base) = &r.base {
+                    self.check_ref(RefKind::Type, base, &from)?;
+                }
+                if let Some(inline) = &r.inline_base {
+                    self.check_simple_type(inline)?;
+                }
+            }
+            XsdSimpleTypeContent::List(list) => {
+                if let Some(item) = &list.item_type {
+                    self.check_ref_lazy(RefKind::Type, item, &from)?;
+                }
+                if let Some(inline) = &list.inline_type {
+                    self.check_simple_type(inline)?;
+                }
+            }
+            XsdSimpleTypeContent::Union(union) => {
+                for member in &union.member_types {
+                    self.check_ref_lazy(RefKind::Type, member, &from)?;
+                }
+                for inline in &union.inline_types {
+                    self.check_simple_type(inline)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_complex_type(&self, ct: &XsdComplexType) -> Result<()> {
+        let from = format!(
+            "complex type '{}'",
+            ct.name.as_deref().unwrap_or("(anonymous)")
+        );
+        match &ct.content {
+            XsdComplexContent::Empty => {}
+            XsdComplexContent::Particle(p) => self.check_particle(p, &from)?,
+            XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
+                XsdSimpleContentDerivation::Extension(ext) => {
+                    self.check_ref(RefKind::Type, &ext.base, &from)?;
+                    for attr in &ext.attributes {
+                        self.check_attribute(attr, &from)?;
+                    }
+                    for ag in &ext.attribute_groups {
+                        self.check_ref(RefKind::AttributeGroup, ag, &from)?;
+                    }
+                }
+                XsdSimpleContentDerivation::Restriction(r) => {
+                    self.check_ref(RefKind::Type, &r.base, &from)?;
+                    for attr in &r.attributes {
+                        self.check_attribute(attr, &from)?;
+                    }
+                    for ag in &r.attribute_groups {
+                        self.check_ref(RefKind::AttributeGroup, ag, &from)?;
+                    }
+                }
+            },
+            XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
+                XsdComplexContentDerivation::Extension(ext) => {
+                    self.check_ref(RefKind::Type, &ext.base, &from)?;
+                    if let Some(p) = &ext.particle {
+                        self.check_particle(p, &from)?;
+                    }
+                    for attr in &ext.attributes {
+                        self.check_attribute(attr, &from)?;
+                    }
+                    for ag in &ext.attribute_groups {
+                        self.check_ref(RefKind::AttributeGroup, ag, &from)?;
+                    }
+                }
+                XsdComplexContentDerivation::Restriction(r) => {
+                    self.check_ref(RefKind::Type, &r.base, &from)?;
+                    if let Some(p) = &r.particle {
+                        self.check_particle(p, &from)?;
+                    }
+                    for attr in &r.attributes {
+                        self.check_attribute(attr, &from)?;
+                    }
+                    for ag in &r.attribute_groups {
+                        self.check_ref(RefKind::AttributeGroup, ag, &from)?;
+                    }
+                }
+            },
+        }
+        for attr in &ct.attributes {
+            self.check_attribute(attr, &from)?;
+        }
+        for ag in &ct.attribute_groups {
+            self.check_ref(RefKind::AttributeGroup, ag, &from)?;
+        }
+        Ok(())
+    }
+
+    fn check_attribute_group_body(&self, ag: &XsdAttributeGroup, from: &str) -> Result<()> {
+        if let Some(r) = &ag.ref_ {
+            self.check_ref(RefKind::AttributeGroup, r, from)?;
+        }
+        for attr in &ag.attributes {
+            self.check_attribute(attr, from)?;
+        }
+        for nested in &ag.attribute_groups {
+            self.check_ref(RefKind::AttributeGroup, nested, from)?;
+        }
+        Ok(())
+    }
+
+    fn check_particle(&self, particle: &XsdParticle, from: &str) -> Result<()> {
+        match particle {
+            XsdParticle::Sequence(seq) => {
+                for item in &seq.particles {
+                    self.check_item(item, from)?;
+                }
+            }
+            XsdParticle::Choice(choice) => {
+                for item in &choice.particles {
+                    self.check_item(item, from)?;
+                }
+            }
+            XsdParticle::All(all) => {
+                for element in &all.elements {
+                    self.check_element(element, from)?;
+                }
+            }
+            XsdParticle::GroupRef(group_ref) => {
+                self.check_ref(RefKind::Group, &group_ref.name, from)?;
+            }
+            XsdParticle::Any(_) => {}
+        }
+        Ok(())
+    }
+
+    fn check_item(&self, item: &XsdParticleItem, from: &str) -> Result<()> {
+        match item {
+            XsdParticleItem::Element(element) => self.check_element(element, from),
+            XsdParticleItem::Sequence(seq) => {
+                for nested in &seq.particles {
+                    self.check_item(nested, from)?;
+                }
+                Ok(())
+            }
+            XsdParticleItem::Choice(choice) => {
+                for nested in &choice.particles {
+                    self.check_item(nested, from)?;
+                }
+                Ok(())
+            }
+            XsdParticleItem::GroupRef(group_ref) => {
+                self.check_ref(RefKind::Group, &group_ref.name, from)
+            }
+            XsdParticleItem::Any(_) => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::schema::Schema;
+
+    fn assert_dangling(xsd: &str, needle: &str) {
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("schema should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("undeclared") || msg.contains("reference"),
+            "expected dangling-reference error, got: {msg}"
+        );
+        assert!(
+            msg.contains(needle),
+            "error should mention '{needle}': {msg}"
+        );
+    }
+
+    #[test]
+    fn dangling_group_ref_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:group ref="noSuchGroup"/>
+                </xs:complexType>
+            </xs:element>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchGroup");
+    }
+
+    #[test]
+    fn dangling_element_ref_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element ref="noSuchElement"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchElement");
+    }
+
+    #[test]
+    fn dangling_local_type_ref_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root">
+                <xs:complexType>
+                    <xs:sequence>
+                        <xs:element name="child" type="NoSuchType"/>
+                    </xs:sequence>
+                </xs:complexType>
+            </xs:element>
+        </xs:schema>"#;
+        assert_dangling(xsd, "NoSuchType");
+    }
+
+    #[test]
+    fn top_level_dangling_type_tolerated() {
+        // Lazy component resolution: a dangling type on a top-level element
+        // is only an error when the element is used (saxonData/Missing).
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="unused" type="NoSuchType"/>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("lazy resolution tolerates unused dangling type");
+    }
+
+    #[test]
+    fn dangling_xsd_builtin_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root" type="xs:noSuchBuiltin"/>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchBuiltin");
+    }
+
+    #[test]
+    fn dangling_base_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:simpleType name="t">
+                <xs:restriction base="NoSuchBase"/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        assert_dangling(xsd, "NoSuchBase");
+    }
+
+    #[test]
+    fn dangling_item_type_tolerated_but_xsd_ns_rejected() {
+        // Lazy: a dangling itemType is tolerated (saxonData/Missing/missing006)…
+        let lazy = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:simpleType name="t">
+                <xs:list itemType="NoSuchItem"/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        Schema::from_xsd(lazy.as_bytes()).expect("lazy resolution tolerates dangling itemType");
+        // …but a miss in the closed XSD namespace can never resolve.
+        let impossible = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:simpleType name="t">
+                <xs:list itemType="xs:noSuchItem"/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        assert_dangling(impossible, "noSuchItem");
+    }
+
+    #[test]
+    fn dangling_member_types_in_xsd_ns_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:simpleType name="t">
+                <xs:union memberTypes="xs:string xs:timeDuration"/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        assert_dangling(xsd, "timeDuration");
+    }
+
+    #[test]
+    fn dangling_attribute_group_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:attributeGroup ref="noSuchAttrGroup"/>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchAttrGroup");
+    }
+
+    #[test]
+    fn dangling_attribute_ref_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:attribute ref="noSuchAttr"/>
+            </xs:complexType>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchAttr");
+    }
+
+    #[test]
+    fn dangling_substitution_group_tolerated() {
+        // Lazy resolution (saxonData/Missing/missing002): only an error when
+        // the head is needed for validation.
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="e" substitutionGroup="noSuchHead" type="xs:string"/>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("lazy resolution tolerates dangling head");
+    }
+
+    #[test]
+    fn whitespace_in_qname_is_collapsed() {
+        // QName attribute values are whitespace-collapsed (msData addB106).
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:simpleType name="t">
+                <xs:restriction base="   xs:string "/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("whitespace around QNames is not significant");
+    }
+
+    #[test]
+    fn dangling_keyref_refer_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root" type="xs:string">
+                <xs:keyref name="kr" refer="noSuchKey">
+                    <xs:selector xpath="a"/>
+                    <xs:field xpath="@b"/>
+                </xs:keyref>
+            </xs:element>
+        </xs:schema>"#;
+        assert_dangling(xsd, "noSuchKey");
+    }
+
+    #[test]
+    fn undeclared_prefix_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:element name="root" type="undeclared:Type"/>
+        </xs:schema>"#;
+        assert_dangling(xsd, "undeclared:Type");
+    }
+
+    #[test]
+    fn ref_into_unloaded_import_accepted() {
+        // The import has no schemaLocation, so its namespace is poisoned and
+        // references into it stay lenient (real-world partial schema sets).
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                xmlns:other="http://example.com/other">
+            <xs:import namespace="http://example.com/other"/>
+            <xs:element name="root" type="other:SomeType"/>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("lenient toward unresolved imports");
+    }
+
+    #[test]
+    fn ref_into_own_ns_with_include_accepted() {
+        // xs:include is present but its document was never fetched (single-doc
+        // compilation): the schema's own namespace is poisoned.
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:include schemaLocation="other.xsd"/>
+            <xs:element name="root" type="TypeFromInclude"/>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("lenient when includes are unresolved");
+    }
+
+    #[test]
+    fn valid_same_ns_refs_accepted() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                xmlns:tns="http://example.com/t" targetNamespace="http://example.com/t">
+            <xs:element name="root" type="tns:RootType"/>
+            <xs:complexType name="RootType">
+                <xs:sequence>
+                    <xs:element ref="tns:child"/>
+                    <xs:group ref="tns:g"/>
+                </xs:sequence>
+                <xs:attributeGroup ref="tns:ag"/>
+            </xs:complexType>
+            <xs:element name="child" type="xs:string"/>
+            <xs:group name="g">
+                <xs:sequence>
+                    <xs:element name="x" type="xs:string"/>
+                </xs:sequence>
+            </xs:group>
+            <xs:attributeGroup name="ag">
+                <xs:attribute name="a" type="xs:string"/>
+            </xs:attributeGroup>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("valid schema must compile");
+    }
+
+    #[test]
+    fn unprefixed_ref_falls_back_to_target_namespace() {
+        // Mirrors the compiler's leniency: unprefixed references resolve
+        // against the target namespace even without a default xmlns.
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                targetNamespace="http://example.com/t">
+            <xs:element name="root" type="RootType"/>
+            <xs:complexType name="RootType">
+                <xs:sequence/>
+            </xs:complexType>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("unprefixed same-ns ref must compile");
+    }
+
+    #[test]
+    fn xml_namespace_refs_accepted() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="t">
+                <xs:attribute ref="xml:lang"/>
+            </xs:complexType>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("xml namespace is always lenient");
+    }
+}

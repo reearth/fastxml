@@ -69,6 +69,15 @@ pub enum SchemaError {
         /// What is wrong
         message: String,
     },
+    /// A QName reference does not resolve to any declared component
+    DanglingReference {
+        /// The kind of component referenced (e.g., "type", "element", "group")
+        kind: &'static str,
+        /// The unresolved QName
+        name: String,
+        /// Where the reference appears
+        referenced_from: String,
+    },
 }
 
 impl std::fmt::Display for SchemaError {
@@ -133,6 +142,17 @@ impl std::fmt::Display for SchemaError {
             }
             SchemaError::CircularDependency { uri } => {
                 write!(f, "circular dependency in schema imports: {}", uri)
+            }
+            SchemaError::DanglingReference {
+                kind,
+                name,
+                referenced_from,
+            } => {
+                write!(
+                    f,
+                    "reference to undeclared {} '{}' (referenced from {})",
+                    kind, name, referenced_from
+                )
             }
         }
     }

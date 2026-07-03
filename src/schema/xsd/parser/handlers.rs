@@ -91,6 +91,15 @@ impl XsdParser {
 
         self.check_structural_rules(local, &attr_map)?;
 
+        // XML Schema versioning (the `vc:` namespace): prune declarations
+        // whose version-control conditions exclude this processor, exactly
+        // like annotation content is skipped.
+        if local != "schema" && self.pruned_by_versioning(attrs) {
+            self.stack.push(StackFrame::Annotation);
+            self.skip_depth = 1;
+            return Ok(());
+        }
+
         match local {
             "schema" => {
                 self.handle_schema(&attr_map)?;
@@ -193,6 +202,84 @@ impl XsdParser {
         }
 
         Ok(())
+    }
+
+    /// Whether XML Schema versioning (`vc:`) attributes on this element
+    /// exclude it for this processor (XSD 1.0 semantics with fastxml's
+    /// built-in datatype set). Excluded elements are pruned like annotation
+    /// content, per the W3C XML Schema versioning recommendation.
+    fn pruned_by_versioning(&self, attrs: &[(&str, &str)]) -> bool {
+        const VC_NS: &str = "http://www.w3.org/2007/XMLSchema-versioning";
+        /// Facets fastxml implements.
+        const AVAILABLE_FACETS: &[&str] = &[
+            "length",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "enumeration",
+            "whiteSpace",
+            "maxInclusive",
+            "maxExclusive",
+            "minInclusive",
+            "minExclusive",
+            "totalDigits",
+            "fractionDigits",
+            "explicitTimezone",
+        ];
+        /// The XSD version this processor implements.
+        const OUR_VERSION: f64 = 1.0;
+
+        let type_available = |qname: &str| -> bool {
+            let (prefix, local) = match qname.split_once(':') {
+                Some((p, l)) => (Some(p), l),
+                None => (None, qname),
+            };
+            let ns = match prefix {
+                Some(p) => self.schema.namespace_bindings.get(p).cloned(),
+                None => self.schema.namespace_bindings.get("").cloned(),
+            };
+            ns.as_deref() == Some(XSD_NAMESPACE)
+                && crate::schema::xsd::builtin::is_builtin_xsd_type_local(local)
+        };
+
+        for (raw_name, value) in attrs {
+            let Some((prefix, local)) = raw_name.split_once(':') else {
+                continue;
+            };
+            if self
+                .schema
+                .namespace_bindings
+                .get(prefix)
+                .map(String::as_str)
+                != Some(VC_NS)
+            {
+                continue;
+            }
+            let prune = match local {
+                // Retained iff minVersion <= V < maxVersion.
+                "minVersion" => value.trim().parse::<f64>().is_ok_and(|v| v > OUR_VERSION),
+                "maxVersion" => value.trim().parse::<f64>().is_ok_and(|v| v <= OUR_VERSION),
+                // Retained iff every listed type is available.
+                "typeAvailable" => !value.split_whitespace().all(type_available),
+                // Retained iff every listed type is unavailable.
+                "typeUnavailable" => value.split_whitespace().any(type_available),
+                // Retained iff every listed facet is available.
+                "facetAvailable" => !value.split_whitespace().all(|f| {
+                    let local = f.split_once(':').map_or(f, |(_, l)| l);
+                    AVAILABLE_FACETS.contains(&local)
+                }),
+                // Retained iff every listed facet is unavailable.
+                "facetUnavailable" => value.split_whitespace().any(|f| {
+                    let local = f.split_once(':').map_or(f, |(_, l)| l);
+                    AVAILABLE_FACETS.contains(&local)
+                }),
+                _ => false,
+            };
+            if prune {
+                return true;
+            }
+        }
+        false
     }
 
     /// Enforces schema-for-schemas structural rules at element start:

@@ -213,6 +213,7 @@ pub fn schema_error_kind(err: &Error) -> SchemaErrorKind {
     match err {
         Error::Schema(se) => match se {
             SchemaError::InvalidSchema { .. }
+            | SchemaError::DanglingReference { .. }
             | SchemaError::InvalidOccurs { .. }
             | SchemaError::MinOccursGreaterThanMaxOccurs { .. }
             | SchemaError::InvalidFacetValue { .. }
@@ -291,6 +292,7 @@ pub fn error_variant_name(err: &Error) -> &'static str {
             SchemaError::UrlResolutionFailed { .. } => "Schema::UrlResolutionFailed",
             SchemaError::CircularDependency { .. } => "Schema::CircularDependency",
             SchemaError::InvalidSchema { .. } => "Schema::InvalidSchema",
+            SchemaError::DanglingReference { .. } => "Schema::DanglingReference",
         },
         Error::Validation { .. } => "Validation",
         Error::Namespace(_) => "Namespace",
