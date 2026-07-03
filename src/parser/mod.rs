@@ -194,6 +194,8 @@ fn parse_from_reader<R: BufRead>(
                     column,
                     &entity_map,
                 )?;
+                // An empty-element tag opens and immediately closes.
+                checker.end(std::str::from_utf8(e.name().into_inner())?)?;
                 ns_stack.pop_scope();
                 builder.end_element();
             }

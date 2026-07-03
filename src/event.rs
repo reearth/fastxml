@@ -325,6 +325,8 @@ impl<R: BufRead> StreamingParser<R> {
                         line: Some(line),
                         column: Some(column),
                     })?;
+                    // An empty-element tag opens and immediately closes.
+                    checker.end(name)?;
                     on_event(&RawEvent::EndElement { name, prefix })?;
                 }
                 Ok(Event::End(ref e)) => {
