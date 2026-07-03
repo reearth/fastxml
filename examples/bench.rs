@@ -722,6 +722,8 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
     let mut total_parse_time = Duration::ZERO;
     let mut total_validate_time = Duration::ZERO;
     let mut validation_errors = 0usize;
+    let mut elements_validated = 0u64;
+    let mut text_nodes_checked = 0u64;
 
     // Parse only
     for _ in 0..iterations {
@@ -744,6 +746,10 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
             && let Ok(report) = report
         {
             validation_errors = report.error_count();
+            if let Some(counters) = report.counters() {
+                elements_validated = counters.elements_validated;
+                text_nodes_checked = counters.text_nodes_checked;
+            }
         }
     }
 
@@ -766,6 +772,8 @@ fn run_streaming_validate_subprocess(content: &[u8], iterations: usize, file_pat
         "validate_throughput_mb_s": validate_throughput,
         "memory_delta_bytes": memory_delta,
         "validation_errors": validation_errors,
+        "elements_validated": elements_validated,
+        "text_nodes_checked": text_nodes_checked,
     }));
 }
 

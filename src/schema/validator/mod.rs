@@ -33,6 +33,21 @@ mod xsi_type;
 pub use self::mode::ValidationMode;
 pub use facade::{Report, Validator};
 
+/// Work counters incremented unconditionally by the streaming validator.
+///
+/// These exist as an anti-regression guardrail: an "optimization" that
+/// silently skips work would change these counts. Every performance
+/// comparison must show identical counter values before and after.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ValidationCounters {
+    /// Elements passed to `validate_element` (incremented unconditionally at
+    /// the top, before any lookup or early return).
+    pub elements_validated: u64,
+    /// Text nodes passed to `validate_text_content_against_type`.
+    pub text_nodes_checked: u64,
+}
+
 /// Validation mode module.
 mod mode {
     /// Validation mode controlling strictness.

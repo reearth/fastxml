@@ -20,6 +20,9 @@ impl OnePassSchemaValidator {
         namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
+        // Anti-regression guardrail: count every element unconditionally,
+        // before any lookup or early return.
+        self.counters.elements_validated += 1;
         // Optimization: Try local name lookup first (most common case)
         // Only construct qname if local lookup fails AND prefix exists
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
@@ -704,6 +707,9 @@ impl OnePassSchemaValidator {
 
     /// Validates text content against the element's type definition.
     pub(crate) fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
+        // Anti-regression guardrail: count every text-content check
+        // unconditionally, before any type resolution or early return.
+        self.counters.text_nodes_checked += 1;
         // Try to get type definition from type_ref first
         if let Some(ref type_ref) = ctx.type_ref {
             // Note: .cloned() is required to break the borrow from self.schema
