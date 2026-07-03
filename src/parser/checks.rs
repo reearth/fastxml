@@ -51,6 +51,10 @@ pub(crate) struct WellformedChecker {
     /// following text events carry the rest of the subset until its closing
     /// `]`; they must not be judged as prolog character data.
     dtd_open: bool,
+    /// Whether any content (text, comment, PI, DOCTYPE, or element) has been
+    /// seen. The XML declaration is only well-formed as the very first thing in
+    /// the document.
+    document_started: bool,
 }
 
 impl Default for WellformedChecker {
@@ -60,6 +64,7 @@ impl Default for WellformedChecker {
             root_seen: false,
             doctype_seen: false,
             dtd_open: false,
+            document_started: false,
         }
     }
 }
@@ -130,6 +135,128 @@ fn not_wf(message: impl Into<String>) -> ParseError {
     }
 }
 
+/// Validates the raw body of an XML declaration, i.e. quick-xml's `Decl` event
+/// text `xml VersionInfo EncodingDecl? SDDecl? S?` (the surrounding `<?`/`?>`
+/// are already stripped).
+///
+/// ```text
+/// VersionInfo  ::= S 'version' Eq ("'" VersionNum "'" | '"' VersionNum '"')
+/// VersionNum   ::= '1.' [0-9]+
+/// EncodingDecl ::= S 'encoding' Eq ('"' EncName '"' | "'" EncName "'")
+/// EncName      ::= [A-Za-z] ([A-Za-z0-9._] | '-')*
+/// SDDecl       ::= S 'standalone' Eq (('"' ('yes' | 'no') '"') | ("'" ('yes' | 'no') "'"))
+/// ```
+fn check_declaration(raw: &str) -> std::result::Result<(), ParseError> {
+    let rest = raw
+        .strip_prefix("xml")
+        .ok_or_else(|| not_wf("malformed XML declaration"))?;
+
+    // VersionInfo (required).
+    let rest = require_leading_s(rest, "before 'version' in the XML declaration")?;
+    let rest = rest
+        .strip_prefix("version")
+        .ok_or_else(|| not_wf("the XML declaration must begin with 'version'"))?;
+    let (rest, version) = parse_eq_quoted(rest, "version")?;
+    if !is_version_num(version) {
+        return Err(not_wf(format!("unsupported XML version '{version}'")));
+    }
+
+    // EncodingDecl (optional).
+    let rest = match pseudo_attr(rest, "encoding")? {
+        Some((after, enc)) => {
+            if !is_enc_name(enc) {
+                return Err(not_wf(format!("illegal encoding name '{enc}'")));
+            }
+            after
+        }
+        None => rest,
+    };
+
+    // SDDecl (optional).
+    let rest = match pseudo_attr(rest, "standalone")? {
+        Some((after, sd)) => {
+            if sd != "yes" && sd != "no" {
+                return Err(not_wf(format!(
+                    "the standalone declaration must be 'yes' or 'no', not '{sd}'"
+                )));
+            }
+            after
+        }
+        None => rest,
+    };
+
+    if !rest.trim_start_matches(is_xml_space).is_empty() {
+        return Err(not_wf("unexpected content in the XML declaration"));
+    }
+    Ok(())
+}
+
+/// Requires at least one `S` at the start of `s`, returning the remainder.
+fn require_leading_s<'a>(s: &'a str, ctx: &str) -> std::result::Result<&'a str, ParseError> {
+    let trimmed = s.trim_start_matches(is_xml_space);
+    if trimmed.len() == s.len() {
+        return Err(not_wf(format!("white space is required {ctx}")));
+    }
+    Ok(trimmed)
+}
+
+/// Parses `Eq ('"' value '"' | "'" value "'")`, returning `(rest, value)`.
+fn parse_eq_quoted<'a>(
+    s: &'a str,
+    name: &str,
+) -> std::result::Result<(&'a str, &'a str), ParseError> {
+    let s = s.trim_start_matches(is_xml_space);
+    let s = s
+        .strip_prefix('=')
+        .ok_or_else(|| not_wf(format!("expected '=' after '{name}'")))?;
+    let s = s.trim_start_matches(is_xml_space);
+    let quote = match s.chars().next() {
+        Some(q @ ('"' | '\'')) => q,
+        _ => return Err(not_wf(format!("the value of '{name}' must be quoted"))),
+    };
+    let after = &s[quote.len_utf8()..];
+    match after.find(quote) {
+        Some(end) => Ok((&after[end + quote.len_utf8()..], &after[..end])),
+        None => Err(not_wf(format!("unterminated value for '{name}'"))),
+    }
+}
+
+/// Recognizes an optional pseudo-attribute `S 'name' Eq quoted`, requiring the
+/// leading `S`. Returns `(rest, value)` when present, or `None` when the next
+/// token is not `name`.
+fn pseudo_attr<'a>(
+    s: &'a str,
+    name: &str,
+) -> std::result::Result<Option<(&'a str, &'a str)>, ParseError> {
+    let trimmed = s.trim_start_matches(is_xml_space);
+    if !trimmed.starts_with(name) {
+        return Ok(None);
+    }
+    if trimmed.len() == s.len() {
+        return Err(not_wf(format!("white space is required before '{name}'")));
+    }
+    let (rest, value) = parse_eq_quoted(&trimmed[name.len()..], name)?;
+    Ok(Some((rest, value)))
+}
+
+/// `VersionNum ::= '1.' [0-9]+`.
+fn is_version_num(v: &str) -> bool {
+    match v.strip_prefix("1.") {
+        Some(digits) => !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// `EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*`.
+fn is_enc_name(e: &str) -> bool {
+    let mut chars = e.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 impl WellformedChecker {
     /// Creates a checker for a fresh document.
     pub(crate) fn new() -> Self {
@@ -139,6 +266,7 @@ impl WellformedChecker {
     /// Checks a start (or empty-element) tag: the element `Name`, every
     /// attribute's `Name` and raw value, and the document-structure position.
     pub(crate) fn start(&mut self, e: &BytesStart<'_>) -> Result<()> {
+        self.document_started = true;
         let qname = std::str::from_utf8(e.name().into_inner())?;
         check_name(qname, "element name")?;
         for attr_result in e.attributes() {
@@ -203,6 +331,10 @@ impl WellformedChecker {
 
     /// Checks raw text (character data).
     pub(crate) fn text(&mut self, raw: &str) -> Result<()> {
+        // White space in the prolog does not itself begin the document, but any
+        // text preceding a declaration still means the declaration is not first;
+        // marking it here keeps the declaration-position check correct.
+        self.document_started = true;
         check_chars(raw, "text content")?;
         // When quick-xml truncated the DOCTYPE at a `>` inside a quoted literal,
         // the remaining internal subset (up to its closing `]`) arrives as text.
@@ -236,6 +368,7 @@ impl WellformedChecker {
 
     /// Checks a CDATA section body.
     pub(crate) fn cdata(&mut self, raw: &str) -> Result<()> {
+        self.document_started = true;
         check_chars(raw, "CDATA section")?;
         if !matches!(self.state, DocState::InRoot(_)) {
             return Err(
@@ -247,12 +380,14 @@ impl WellformedChecker {
 
     /// Checks a comment body.
     pub(crate) fn comment(&mut self, raw: &str) -> Result<()> {
+        self.document_started = true;
         check_chars(raw, "comment")?;
         Ok(())
     }
 
     /// Checks a processing instruction's raw body (target plus data).
     pub(crate) fn pi(&mut self, raw: &str) -> Result<()> {
+        self.document_started = true;
         check_chars(raw, "processing instruction")?;
         // The target is the leading Name; data (if any) follows white space.
         let target = raw.split(is_xml_space).next().unwrap_or("");
@@ -270,14 +405,24 @@ impl WellformedChecker {
         Ok(())
     }
 
-    /// Checks an XML declaration's raw body.
-    pub(crate) fn decl(&mut self, _raw: &str) -> Result<()> {
+    /// Checks an XML declaration's raw body (`xml` followed by the version,
+    /// optional encoding, and optional standalone pseudo-attributes).
+    pub(crate) fn decl(&mut self, raw: &str) -> Result<()> {
+        if self.document_started {
+            return Err(not_wf(
+                "the XML declaration must be at the very beginning of the document",
+            )
+            .into());
+        }
+        self.document_started = true;
+        check_declaration(raw)?;
         Ok(())
     }
 
     /// Checks a `DOCTYPE` declaration's raw body (name, external id, and
     /// internal subset, exactly as the tokenizer delivered it).
     pub(crate) fn doctype(&mut self, raw: &str) -> Result<()> {
+        self.document_started = true;
         check_chars(raw, "document type declaration")?;
         if self.doctype_seen {
             return Err(not_wf("only one DOCTYPE declaration is allowed").into());
@@ -339,5 +484,44 @@ mod tests {
         for c in ['\u{0B}', '\u{0C}', 'a', '\u{A0}'] {
             assert!(!is_xml_space(c));
         }
+    }
+
+    #[test]
+    fn declaration_accepts_well_formed() {
+        for raw in [
+            "xml version=\"1.0\"",
+            "xml version='1.0'",
+            "xml version=\"1.1\"",
+            "xml version=\"1.0\" encoding=\"UTF-8\"",
+            "xml version=\"1.0\" standalone=\"yes\"",
+            "xml version=\"1.0\" encoding=\"ISO-8859-1\" standalone='no' ",
+        ] {
+            assert!(check_declaration(raw).is_ok(), "expected accept: {raw:?}");
+        }
+    }
+
+    #[test]
+    fn declaration_rejects_malformed() {
+        for raw in [
+            "xml",                                                       // no version
+            "xml encoding=\"UTF-8\"",                                    // version missing
+            "xml version=\"2.0\"",                                       // bad VersionNum
+            "xml version=\"1.0\"standalone=\"yes\"",                     // no S before standalone
+            "xml version=\"1.0\" standalone=\"maybe\"",                  // bad standalone value
+            "xml version=\"1.0\" standalone=\"yes\" encoding=\"UTF-8\"", // wrong order
+            "xml version=\"1.0\" encoding=\"UTF 8\"",                    // bad EncName
+            "xml version = 1.0",                                         // unquoted value
+            "xml version=\"1.0\" foo=\"bar\"",                           // stray pseudo-attr
+        ] {
+            assert!(check_declaration(raw).is_err(), "expected reject: {raw:?}");
+        }
+    }
+
+    #[test]
+    fn version_num_and_enc_name() {
+        assert!(is_version_num("1.0") && is_version_num("1.10"));
+        assert!(!is_version_num("2.0") && !is_version_num("1.") && !is_version_num("1"));
+        assert!(is_enc_name("UTF-8") && is_enc_name("a"));
+        assert!(!is_enc_name("8bit") && !is_enc_name("") && !is_enc_name("x y"));
     }
 }

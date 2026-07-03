@@ -208,18 +208,22 @@ mod malformed_xml {
     fn test_invalid_xml_declaration() {
         let xml = r#"<?xml version="2.0"?><root/>"#;
         let result = Parser::from(xml).parse();
-        // quick-xml doesn't validate XML version
-        assert!(result.is_ok(), "quick-xml accepts version 2.0");
+        // VersionNum is '1.' [0-9]+ (XML 1.0 P26); "2.0" is not well-formed.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for version 2.0, got: {result:?}"
+        );
     }
 
     #[test]
     fn test_xml_declaration_not_at_start() {
         let xml = " <?xml version=\"1.0\"?><root/>";
         let result = Parser::from(xml).parse();
-        // quick-xml is lenient about whitespace before declaration
+        // The XML declaration must be the very first thing in the document; even
+        // leading white space makes it not well-formed.
         assert!(
-            result.is_ok(),
-            "quick-xml accepts whitespace before declaration"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for a declaration not at the start, got: {result:?}"
         );
     }
 

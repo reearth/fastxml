@@ -1,4 +1,4 @@
-#counts	total=2585	pass=1611	fail=231	unsupported=743	blocked=0	panic=0
+#counts	total=2585	pass=1675	fail=167	unsupported=743	blocked=0	panic=0
 error	ibm-invalid-P68-ibm68i01.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i02.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i03.xml	unsupported	optional-error-test
@@ -241,24 +241,6 @@ not-wf	ibm-not-wf-P02-ibm02n31.xml	fail	utf8 error: invalid utf-8 sequence of 1 
 not-wf	ibm-not-wf-P09-ibm09n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P09-ibm09n02.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P09-ibm09n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P17-ibm17n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P22-ibm22n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P22-ibm22n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P22-ibm22n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P23-ibm23n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P23-ibm23n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P23-ibm23n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n04.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n05.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n06.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n07.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n08.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P24-ibm24n09.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P25-ibm25n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P25-ibm25n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P26-ibm26n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P28-ibm28n05.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P28-ibm28n06.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P29-ibm29n03.xml	fail	parser accepted not-well-formed input
@@ -266,14 +248,6 @@ not-wf	ibm-not-wf-P29-ibm29n04.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P29-ibm29n07.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P30-ibm30n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P31-ibm31n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n04.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n05.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n06.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n07.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P32-ibm32n08.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P41-ibm41n11.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P41-ibm41n13.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P41-ibm41n14.xml	fail	parser accepted not-well-formed input
@@ -306,12 +280,6 @@ not-wf	ibm-not-wf-P77-ibm77n03.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P77-ibm77n04.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P79-ibm79n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P79-ibm79n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n03.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n04.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n05.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P80-ibm80n06.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P81-ibm81n01.xml	unsupported	encoding: _UTF-8
 not-wf	ibm-not-wf-P81-ibm81n02.xml	unsupported	encoding: -UTF-8
 not-wf	ibm-not-wf-P81-ibm81n03.xml	unsupported	encoding: .UTF-8
@@ -338,15 +306,7 @@ not-wf	not-wf-sa-082	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-084	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-090	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-092	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-094	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-095	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-096	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-097	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-098	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-099	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-100	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-101	unsupported	encoding:  UTF-8
-not-wf	not-wf-sa-102	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-113	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-114	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-115	fail	parser accepted not-well-formed input
@@ -356,11 +316,6 @@ not-wf	not-wf-sa-119	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-120	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-140	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-141	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-147	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-148	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-150	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-151	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-152	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-153	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-159	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-160	fail	parser accepted not-well-formed input
@@ -373,8 +328,6 @@ not-wf	not-wf-sa-179	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-180	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-182	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-186	fail	parser accepted not-well-formed input
-not-wf	o-p01fail1	fail	parser accepted not-well-formed input
-not-wf	o-p01fail2	fail	parser accepted not-well-formed input
 not-wf	o-p02fail1	unsupported	utf-16 BOM
 not-wf	o-p02fail10	unsupported	utf-16 BOM
 not-wf	o-p02fail11	unsupported	utf-16 BOM
@@ -413,24 +366,8 @@ not-wf	o-p09fail5	fail	parser accepted not-well-formed input
 not-wf	o-p11fail1	fail	parser accepted not-well-formed input
 not-wf	o-p11fail2	fail	parser accepted not-well-formed input
 not-wf	o-p12fail4	fail	parser accepted not-well-formed input
-not-wf	o-p16fail1	fail	parser accepted not-well-formed input
-not-wf	o-p22fail1	fail	parser accepted not-well-formed input
-not-wf	o-p22fail2	fail	parser accepted not-well-formed input
-not-wf	o-p23fail2	fail	parser accepted not-well-formed input
-not-wf	o-p23fail3	fail	parser accepted not-well-formed input
-not-wf	o-p23fail4	fail	parser accepted not-well-formed input
-not-wf	o-p24fail1	fail	parser accepted not-well-formed input
-not-wf	o-p24fail2	fail	parser accepted not-well-formed input
-not-wf	o-p25fail1	fail	parser accepted not-well-formed input
-not-wf	o-p26fail1	fail	parser accepted not-well-formed input
-not-wf	o-p26fail2	fail	parser accepted not-well-formed input
 not-wf	o-p30fail1	fail	parser accepted not-well-formed input
 not-wf	o-p31fail1	fail	parser accepted not-well-formed input
-not-wf	o-p32fail1	fail	parser accepted not-well-formed input
-not-wf	o-p32fail2	fail	parser accepted not-well-formed input
-not-wf	o-p32fail3	fail	parser accepted not-well-formed input
-not-wf	o-p32fail4	fail	parser accepted not-well-formed input
-not-wf	o-p32fail5	fail	parser accepted not-well-formed input
 not-wf	o-p40fail1	fail	parser accepted not-well-formed input
 not-wf	o-p44fail4	fail	parser accepted not-well-formed input
 not-wf	o-p61fail1	fail	parser accepted not-well-formed input
@@ -482,7 +419,6 @@ not-wf	rmt-ns10-042	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-043	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-044	fail	parser accepted not-well-formed input
 not-wf	rmt-ns11-005	unsupported	xml-1.1
-not-wf	sgml02	fail	parser accepted not-well-formed input
 not-wf	x-ibm-1-0.5-not-wf-P04-ibm04n02.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P04-ibm04n03.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P04-ibm04n04.xml	unsupported	5th-edition
