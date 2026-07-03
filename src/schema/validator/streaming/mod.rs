@@ -73,6 +73,9 @@ pub struct OnePassSchemaValidator {
     /// Memoized inherited-element lists per complex type name
     pub(crate) elements_cache:
         rustc_hash::FxHashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
+    /// Memoized collected attribute declarations per named complex type (C7).
+    pub(crate) attr_cache:
+        rustc_hash::FxHashMap<String, std::sync::Arc<super::attributes::CollectedAttrs>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -105,6 +108,7 @@ impl OnePassSchemaValidator {
             identity_scopes: Vec::new(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
+            attr_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             name_pool: Default::default(),

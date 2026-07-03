@@ -498,6 +498,52 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Returns the (memoized when named) collected attribute picture of the
+    /// current element's complex type, or `None` when it has no complex type.
+    ///
+    /// Resolution mirrors the previous inline logic: explicit `type_ref`
+    /// first, then an inline (anonymous) type on the context, then the
+    /// element's inline type from the parent content model. Named types are
+    /// cached by type name (C7); anonymous types build fresh.
+    fn collected_element_attrs(
+        &mut self,
+        element_name: &Arc<str>,
+    ) -> Option<Arc<super::super::attributes::CollectedAttrs>> {
+        use super::super::attributes::CollectedAttrs;
+
+        // Named type via the context's resolved type_ref.
+        if let Some(type_ref) = self
+            .state
+            .current_element()
+            .and_then(|ctx| ctx.type_ref.clone())
+        {
+            if let Some(cached) = self.attr_cache.get(&type_ref) {
+                return Some(Arc::clone(cached));
+            }
+            let schema = Arc::clone(&self.schema);
+            let TypeDef::Complex(complex) = schema.get_type(&type_ref)? else {
+                return None;
+            };
+            let built = Arc::new(CollectedAttrs::collect(&schema, complex));
+            self.attr_cache.insert(type_ref, Arc::clone(&built));
+            return Some(built);
+        }
+
+        // Inline (anonymous) type captured on the context at element start.
+        if let Some(ctx) = self.state.current_element()
+            && let Some(TypeDef::Complex(complex)) = ctx.inline_type.as_ref()
+        {
+            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
+        }
+
+        // Fallback: the element's inline type from the parent content model.
+        let inline_owned = self.get_element_inline_type(element_name);
+        if let Some(TypeDef::Complex(complex)) = inline_owned.as_ref() {
+            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
+        }
+        None
+    }
+
     /// Validates attributes on an element against the attribute
     /// declarations of its complex type.
     pub(crate) fn validate_attributes(
@@ -505,32 +551,14 @@ impl OnePassSchemaValidator {
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
+        // C7: resolve the (memoized) collected attribute picture of the
+        // element's complex type. Returns None when the element has no complex
+        // type, i.e. no attributes to validate.
+        let Some(collected) = self.collected_element_attrs(element_name) else {
+            return;
+        };
+
         let result = {
-            // Resolve the element's complex type: explicit type_ref first,
-            // then an inline (anonymous) type from the parent's content model.
-            let inline_owned;
-            let type_def: Option<&TypeDef> = match self
-                .state
-                .current_element()
-                .and_then(|ctx| ctx.type_ref.as_deref())
-            {
-                Some(tr) => self.schema.get_type(tr),
-                None => {
-                    if let Some(ctx) = self.state.current_element()
-                        && ctx.inline_type.is_some()
-                    {
-                        ctx.inline_type.as_ref()
-                    } else {
-                        inline_owned = self.get_element_inline_type(element_name);
-                        inline_owned.as_ref()
-                    }
-                }
-            };
-
-            let Some(TypeDef::Complex(complex)) = type_def else {
-                return;
-            };
-
             // Resolve each attribute's namespace from its prefix using the
             // in-scope namespace declarations (unprefixed attributes are in
             // no namespace).
@@ -545,7 +573,7 @@ impl OnePassSchemaValidator {
                 .collect();
             super::super::attributes::validate_element_attributes(
                 &self.schema,
-                complex,
+                &collected,
                 with_ns.iter().copied(),
                 &mut self.facet_cache,
             )
