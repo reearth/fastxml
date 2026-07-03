@@ -5,6 +5,7 @@
 mod finishers;
 mod handlers;
 mod helpers;
+mod rules;
 mod stack_frame;
 
 use std::collections::HashMap;
@@ -46,6 +47,9 @@ pub struct XsdParser {
     /// Identity constraint names seen (unique/key/keyref share one symbol
     /// space and must be unique schema-wide).
     seen_constraint_names: std::collections::HashSet<String>,
+    /// Top-level component names seen (`"space:name"` keys), for duplicate
+    /// detection within one document.
+    seen_top_level: std::collections::HashSet<String>,
 }
 
 /// Child bookkeeping for one open XSD element.
@@ -68,6 +72,15 @@ pub(super) struct ChildState {
     pub(super) selectors: u32,
     /// Number of field children (identity constraints)
     pub(super) fields: u32,
+    /// Whether the element carries a `ref` attribute (references admit no
+    /// non-annotation children).
+    pub(super) is_ref: bool,
+    /// Whether the element carries a `type` attribute (excludes an inline
+    /// simpleType/complexType child).
+    pub(super) has_type: bool,
+    /// Keys of attribute uses / attributeGroup refs seen in this scope, for
+    /// duplicate detection.
+    pub(super) attr_keys: std::collections::HashSet<String>,
 }
 
 impl XsdParser {
@@ -83,6 +96,7 @@ impl XsdParser {
             child_state_stack: Vec::new(),
             seen_ids: std::collections::HashSet::new(),
             seen_constraint_names: std::collections::HashSet::new(),
+            seen_top_level: std::collections::HashSet::new(),
         }
     }
 

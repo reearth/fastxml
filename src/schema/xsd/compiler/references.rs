@@ -115,7 +115,8 @@ struct KeyInfo {
 /// Symbol tables of top-level component names, keyed by namespace.
 #[derive(Debug, Default)]
 struct SymbolTables {
-    types: HashMap<String, HashSet<String>>,
+    /// Type names with their kind (`true` = complex type).
+    types: HashMap<String, HashMap<String, bool>>,
     elements: HashMap<String, HashSet<String>>,
     attributes: HashMap<String, HashSet<String>>,
     groups: HashMap<String, HashSet<String>>,
@@ -135,7 +136,7 @@ impl SymbolTables {
                         .types
                         .entry(ns.clone())
                         .or_default()
-                        .insert(name.to_string());
+                        .insert(name.to_string(), type_def.is_complex());
                 }
             }
             for element in &schema.elements {
@@ -193,17 +194,38 @@ impl SymbolTables {
         None
     }
 
+    /// Looks up whether a type reference resolves to a complex type
+    /// (`Some(true)`), a simple type (`Some(false)`), or nothing (`None`),
+    /// with the same fallbacks as [`Self::contains`].
+    fn lookup_type_kind(&self, ns: &str, local: &str) -> Option<bool> {
+        if let Some(is_complex) = self.types.get(ns).and_then(|m| m.get(local)) {
+            return Some(*is_complex);
+        }
+        if !ns.is_empty()
+            && let Some(is_complex) = self.types.get("").and_then(|m| m.get(local))
+        {
+            return Some(*is_complex);
+        }
+        if (ns == XSD_NS || ns.is_empty()) && is_builtin_xsd_type_local(local) {
+            // Every built-in datatype is simple except the ur-type.
+            return Some(local == "anyType");
+        }
+        None
+    }
+
     fn contains(&self, kind: RefKind, ns: &str, local: &str) -> bool {
         if kind == RefKind::Key {
             return self.lookup_key(ns, local).is_some();
         }
+        if kind == RefKind::Type {
+            return self.lookup_type_kind(ns, local).is_some();
+        }
         let table = match kind {
-            RefKind::Type => &self.types,
             RefKind::Element => &self.elements,
             RefKind::Attribute => &self.attributes,
             RefKind::Group => &self.groups,
             RefKind::AttributeGroup => &self.attribute_groups,
-            RefKind::Key => unreachable!("handled above"),
+            RefKind::Type | RefKind::Key => unreachable!("handled above"),
         };
         if table.get(ns).is_some_and(|set| set.contains(local)) {
             return true;
@@ -211,13 +233,7 @@ impl SymbolTables {
         // Components from chameleon (no-targetNamespace) documents are merged
         // by the compiler under their local names; let them satisfy references
         // into any namespace so we never reject what the compiler resolves.
-        if !ns.is_empty() && table.get("").is_some_and(|set| set.contains(local)) {
-            return true;
-        }
-        // Built-in XSD types. The compiler also registers built-ins under
-        // their bare local names, so no-namespace references to them resolve;
-        // stay consistent with that legacy leniency.
-        kind == RefKind::Type && (ns == XSD_NS || ns.is_empty()) && is_builtin_xsd_type_local(local)
+        !ns.is_empty() && table.get("").is_some_and(|set| set.contains(local))
     }
 }
 
@@ -348,6 +364,7 @@ impl RefKind {
 /// synthetic names) with a [`Strictness`] computed before it.
 pub(crate) fn check_references(schemas: &[XsdSchema], strictness: &Strictness) -> Result<()> {
     let tables = SymbolTables::build(schemas);
+    check_definition_cycles(schemas)?;
     for schema in schemas {
         let checker = Checker {
             schema,
@@ -355,6 +372,159 @@ pub(crate) fn check_references(schemas: &[XsdSchema], strictness: &Strictness) -
             tables: &tables,
         };
         checker.check_schema()?;
+    }
+    Ok(())
+}
+
+/// Resolves a reference QName to a `(namespace, local)` key using the owning
+/// schema's bindings, mirroring [`Checker::check_ref`]'s fallbacks. Only
+/// returns keys present in `known`.
+fn resolve_def_key(
+    schema: &XsdSchema,
+    qname: &QName,
+    known: &HashSet<(String, String)>,
+) -> Option<(String, String)> {
+    let local = qname.local.trim().to_string();
+    let ns = match qname.prefix.as_deref().map(str::trim) {
+        Some("xml") => return None,
+        Some(p) => schema.namespace_bindings.get(p)?.clone(),
+        None => schema
+            .namespace_bindings
+            .get("")
+            .cloned()
+            .unwrap_or_default(),
+    };
+    let key = (ns, local.clone());
+    if known.contains(&key) {
+        return Some(key);
+    }
+    if !key.0.is_empty() {
+        let chameleon = (String::new(), local.clone());
+        if known.contains(&chameleon) {
+            return Some(chameleon);
+        }
+    }
+    if qname.prefix.is_none()
+        && let Some(own) = &schema.target_namespace
+    {
+        let own_key = (own.clone(), local);
+        if known.contains(&own_key) {
+            return Some(own_key);
+        }
+    }
+    None
+}
+
+/// Collects the group references appearing in a particle tree.
+fn group_refs_in_particle<'a>(particle: &'a XsdParticle, out: &mut Vec<&'a QName>) {
+    match particle {
+        XsdParticle::Sequence(seq) => {
+            for item in &seq.particles {
+                group_refs_in_item(item, out);
+            }
+        }
+        XsdParticle::Choice(choice) => {
+            for item in &choice.particles {
+                group_refs_in_item(item, out);
+            }
+        }
+        XsdParticle::GroupRef(group_ref) => out.push(&group_ref.name),
+        XsdParticle::All(_) | XsdParticle::Any(_) => {}
+    }
+}
+
+fn group_refs_in_item<'a>(item: &'a XsdParticleItem, out: &mut Vec<&'a QName>) {
+    match item {
+        XsdParticleItem::Sequence(seq) => {
+            for nested in &seq.particles {
+                group_refs_in_item(nested, out);
+            }
+        }
+        XsdParticleItem::Choice(choice) => {
+            for nested in &choice.particles {
+                group_refs_in_item(nested, out);
+            }
+        }
+        XsdParticleItem::GroupRef(group_ref) => out.push(&group_ref.name),
+        XsdParticleItem::Element(_) | XsdParticleItem::Any(_) => {}
+    }
+}
+
+/// Detects circular `xs:group` and `xs:attributeGroup` references
+/// (src-model_group / src-attribute_group circularity rules).
+fn check_definition_cycles(schemas: &[XsdSchema]) -> Result<()> {
+    // (namespace, name) -> (owning schema index, outgoing references)
+    let mut groups: HashMap<(String, String), (usize, Vec<&QName>)> = HashMap::new();
+    let mut attr_groups: HashMap<(String, String), (usize, Vec<&QName>)> = HashMap::new();
+    for (si, schema) in schemas.iter().enumerate() {
+        let ns = tns_key(schema);
+        for group in &schema.groups {
+            if let Some(name) = &group.name {
+                let mut refs = Vec::new();
+                if let Some(particle) = &group.particle {
+                    group_refs_in_particle(particle, &mut refs);
+                }
+                groups.insert((ns.clone(), name.clone()), (si, refs));
+            }
+        }
+        for ag in &schema.attribute_groups {
+            if let Some(name) = &ag.name {
+                let mut refs: Vec<&QName> = ag.attribute_groups.iter().collect();
+                if let Some(r) = &ag.ref_ {
+                    refs.push(r);
+                }
+                attr_groups.insert((ns.clone(), name.clone()), (si, refs));
+            }
+        }
+    }
+    detect_cycles("group", schemas, &groups)?;
+    detect_cycles("attributeGroup", schemas, &attr_groups)?;
+    Ok(())
+}
+
+/// DFS cycle detection over a definition graph.
+fn detect_cycles(
+    kind: &str,
+    schemas: &[XsdSchema],
+    graph: &HashMap<(String, String), (usize, Vec<&QName>)>,
+) -> Result<()> {
+    let known: HashSet<(String, String)> = graph.keys().cloned().collect();
+    // 1 = visiting, 2 = done
+    let mut state: HashMap<&(String, String), u8> = HashMap::new();
+
+    fn visit<'a>(
+        kind: &str,
+        key: &'a (String, String),
+        schemas: &[XsdSchema],
+        graph: &'a HashMap<(String, String), (usize, Vec<&QName>)>,
+        known: &HashSet<(String, String)>,
+        state: &mut HashMap<&'a (String, String), u8>,
+    ) -> Result<()> {
+        match state.get(key) {
+            Some(1) => {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("circular {} reference involving '{}'", kind, key.1),
+                }
+                .into());
+            }
+            Some(_) => return Ok(()),
+            None => {}
+        }
+        state.insert(key, 1);
+        let (si, refs) = &graph[key];
+        for qname in refs {
+            if let Some(target) = resolve_def_key(&schemas[*si], qname, known)
+                && let Some((target_key, _)) = graph.get_key_value(&target)
+            {
+                visit(kind, target_key, schemas, graph, known, state)?;
+            }
+        }
+        state.insert(key, 2);
+        Ok(())
+    }
+
+    for key in graph.keys() {
+        visit(kind, key, schemas, graph, &known, &mut state)?;
     }
     Ok(())
 }
@@ -505,6 +675,53 @@ impl Checker<'_> {
         Ok(())
     }
 
+    /// Resolves the kind of a type reference (`Some(true)` = complex type)
+    /// with the same resolution order as [`Self::check_ref`].
+    fn resolve_type_kind(&self, qname: &QName) -> Option<bool> {
+        let prefix = qname.prefix.as_deref().map(str::trim);
+        let local = qname.local.trim();
+        let ns = self.resolve_ns(prefix)?;
+        if let Some(kind) = self.tables.lookup_type_kind(&ns, local) {
+            return Some(kind);
+        }
+        if prefix.is_none()
+            && let Some(own) = &self.schema.target_namespace
+            && *own != ns
+        {
+            return self.tables.lookup_type_kind(own, local);
+        }
+        None
+    }
+
+    /// Errors when a type reference resolves to a complex type in a context
+    /// that requires a simple type.
+    fn require_simple_type(&self, qname: &QName, from: &str) -> Result<()> {
+        if self.resolve_type_kind(qname) == Some(true) {
+            return Err(SchemaError::InvalidSchema {
+                message: format!(
+                    "{} requires a simple type, but '{}' is complex",
+                    from, qname
+                ),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Errors when a complexContent base resolves to a simple type.
+    fn require_complex_type(&self, qname: &QName, from: &str) -> Result<()> {
+        if self.resolve_type_kind(qname) == Some(false) {
+            return Err(SchemaError::InvalidSchema {
+                message: format!(
+                    "{} requires a complex type, but '{}' is simple",
+                    from, qname
+                ),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     /// When a keyref's refer target resolves, it must be a key/unique (not
     /// another keyref) and its field count must match the keyref's.
     fn check_keyref_target(&self, ic: &XsdIdentityConstraint, refer: &QName) -> Result<()> {
@@ -546,6 +763,7 @@ impl Checker<'_> {
         }
         if let Some(t) = &attr.type_ref {
             self.check_ref(RefKind::Type, t, from)?;
+            self.require_simple_type(t, "attribute type")?;
         }
         if let Some(inline) = &attr.inline_type {
             self.check_simple_type(inline)?;
@@ -569,6 +787,7 @@ impl Checker<'_> {
             XsdSimpleTypeContent::Restriction(r) => {
                 if let Some(base) = &r.base {
                     self.check_ref(RefKind::Type, base, &from)?;
+                    self.require_simple_type(base, "simple type restriction base")?;
                 }
                 if let Some(inline) = &r.inline_base {
                     self.check_simple_type(inline)?;
@@ -577,6 +796,7 @@ impl Checker<'_> {
             XsdSimpleTypeContent::List(list) => {
                 if let Some(item) = &list.item_type {
                     self.check_ref_lazy(RefKind::Type, item, &from)?;
+                    self.require_simple_type(item, "list item type")?;
                 }
                 if let Some(inline) = &list.inline_type {
                     self.check_simple_type(inline)?;
@@ -585,6 +805,7 @@ impl Checker<'_> {
             XsdSimpleTypeContent::Union(union) => {
                 for member in &union.member_types {
                     self.check_ref_lazy(RefKind::Type, member, &from)?;
+                    self.require_simple_type(member, "union member type")?;
                 }
                 for inline in &union.inline_types {
                     self.check_simple_type(inline)?;
@@ -625,6 +846,7 @@ impl Checker<'_> {
             XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
                 XsdComplexContentDerivation::Extension(ext) => {
                     self.check_ref(RefKind::Type, &ext.base, &from)?;
+                    self.require_complex_type(&ext.base, "complexContent extension base")?;
                     if let Some(p) = &ext.particle {
                         self.check_particle(p, &from)?;
                     }
@@ -637,6 +859,7 @@ impl Checker<'_> {
                 }
                 XsdComplexContentDerivation::Restriction(r) => {
                     self.check_ref(RefKind::Type, &r.base, &from)?;
+                    self.require_complex_type(&r.base, "complexContent restriction base")?;
                     if let Some(p) = &r.particle {
                         self.check_particle(p, &from)?;
                     }
@@ -957,6 +1180,102 @@ mod tests {
             </xs:element>
         </xs:schema>"#;
         Schema::from_xsd(xsd.as_bytes()).expect("valid keyref must compile");
+    }
+
+    #[test]
+    fn circular_attribute_group_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:attributeGroup name="a">
+                <xs:attributeGroup ref="b"/>
+            </xs:attributeGroup>
+            <xs:attributeGroup name="b">
+                <xs:attributeGroup ref="a"/>
+            </xs:attributeGroup>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("circular attributeGroup");
+        assert!(err.to_string().contains("circular"), "got: {err}");
+    }
+
+    #[test]
+    fn circular_group_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:group name="g1">
+                <xs:sequence>
+                    <xs:group ref="g2"/>
+                </xs:sequence>
+            </xs:group>
+            <xs:group name="g2">
+                <xs:sequence>
+                    <xs:group ref="g1"/>
+                </xs:sequence>
+            </xs:group>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("circular group");
+        assert!(err.to_string().contains("circular"), "got: {err}");
+    }
+
+    #[test]
+    fn acyclic_groups_accepted() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:group name="g1">
+                <xs:sequence>
+                    <xs:group ref="g2"/>
+                </xs:sequence>
+            </xs:group>
+            <xs:group name="g2">
+                <xs:sequence>
+                    <xs:element name="e" type="xs:string"/>
+                </xs:sequence>
+            </xs:group>
+            <xs:attributeGroup name="a">
+                <xs:attributeGroup ref="b"/>
+            </xs:attributeGroup>
+            <xs:attributeGroup name="b">
+                <xs:attribute name="x" type="xs:string"/>
+            </xs:attributeGroup>
+        </xs:schema>"#;
+        Schema::from_xsd(xsd.as_bytes()).expect("acyclic groups must compile");
+    }
+
+    #[test]
+    fn attribute_with_complex_type_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="CT">
+                <xs:sequence/>
+            </xs:complexType>
+            <xs:attribute name="a" type="CT"/>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("attribute type must be simple");
+        assert!(err.to_string().contains("simple"), "got: {err}");
+    }
+
+    #[test]
+    fn simple_restriction_of_complex_type_rejected() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="CT">
+                <xs:sequence/>
+            </xs:complexType>
+            <xs:simpleType name="st">
+                <xs:restriction base="CT"/>
+            </xs:simpleType>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("simple restriction of complex");
+        assert!(err.to_string().contains("simple"), "got: {err}");
+    }
+
+    #[test]
+    fn complex_content_base_must_be_complex() {
+        let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:complexType name="CT">
+                <xs:complexContent>
+                    <xs:extension base="xs:string">
+                        <xs:sequence/>
+                    </xs:extension>
+                </xs:complexContent>
+            </xs:complexType>
+        </xs:schema>"#;
+        let err = Schema::from_xsd(xsd.as_bytes()).expect_err("complexContent base simple");
+        assert!(err.to_string().contains("complex"), "got: {err}");
     }
 
     #[test]
