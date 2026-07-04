@@ -79,8 +79,9 @@ impl OnePassSchemaValidator {
             // pays for a redundant per-element type resolution. `elem_def`
             // borrows the locally-cloned schema Arc, so it stays valid across
             // the &mut self inline lookup.
+            let child_local_sym = self.current_local_sym();
             let (inline_type_ref, inline_flattened, inline_anon_type) =
-                self.get_inline_element_info(name);
+                self.get_inline_element_info(child_local_sym, name);
 
             // Use inline type if available, otherwise fall back to global element
             let (type_ref, flattened_children, anon_type) = if inline_type_ref.is_some()
@@ -90,7 +91,7 @@ impl OnePassSchemaValidator {
                 (inline_type_ref, inline_flattened, inline_anon_type)
             } else if let Some(elem) = elem_def {
                 (
-                    elem.type_ref.clone(),
+                    elem.type_ref.as_deref().map(Arc::from),
                     self.get_flattened_children_for_element(elem),
                     elem.inline_type.clone(),
                 )
@@ -109,16 +110,18 @@ impl OnePassSchemaValidator {
             }
 
             // Update current element context with type info
+            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
+                ctx.type_sym = type_sym;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
-            let type_ref = elem.type_ref.clone();
+            let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
             let flattened_children = self.get_flattened_children_for_element(elem);
             let anon_type = elem.inline_type.clone();
 
@@ -131,9 +134,11 @@ impl OnePassSchemaValidator {
             }
 
             // Update current element context with type info
+            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
+                ctx.type_sym = type_sym;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
@@ -183,8 +188,11 @@ impl OnePassSchemaValidator {
                         }
                         _ => None,
                     };
+                    let substituted_sym = self.symbols.intern(&substituted).0;
+                    let substituted: Arc<str> = Arc::from(substituted);
                     if let Some(ctx) = self.state.current_element_mut() {
                         ctx.type_ref = Some(substituted);
+                        ctx.type_sym = Some(substituted_sym);
                         if flattened.is_some() {
                             ctx.flattened_children = flattened;
                         }
@@ -244,6 +252,15 @@ impl OnePassSchemaValidator {
 
         // Validate attributes
         self.validate_attributes(name, attributes);
+    }
+
+    /// The local-name symbol of the current (most recently started) element,
+    /// used to key per-parent-type child resolution memoization.
+    fn current_local_sym(&self) -> u32 {
+        self.state
+            .current_element()
+            .map(|c| self.symbols.local(super::symbols::SymbolId(c.name_sym)).0)
+            .unwrap_or(0)
     }
 
     /// Handles identity-constraint bookkeeping at element start.
@@ -525,7 +542,7 @@ impl OnePassSchemaValidator {
             .current_element()
             .and_then(|ctx| ctx.type_ref.clone())
         {
-            if let Some(cached) = self.attr_cache.get(&type_ref) {
+            if let Some(cached) = self.attr_cache.get(type_ref.as_ref()) {
                 return Some(Arc::clone(cached));
             }
             let schema = Arc::clone(&self.schema);
@@ -533,7 +550,8 @@ impl OnePassSchemaValidator {
                 return None;
             };
             let built = Arc::new(CollectedAttrs::collect(&schema, complex));
-            self.attr_cache.insert(type_ref, Arc::clone(&built));
+            self.attr_cache
+                .insert(type_ref.to_string(), Arc::clone(&built));
             return Some(built);
         }
 

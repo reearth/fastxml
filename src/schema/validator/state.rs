@@ -37,8 +37,14 @@ pub(crate) struct ElementContext {
     pub text_content: String,
     /// Whether this element has been validated against schema
     pub schema_validated: bool,
-    /// Type reference for this element (if known from schema)
-    pub type_ref: Option<String>,
+    /// Type reference for this element (if known from schema). Shared as an
+    /// `Arc<str>` so per-element assignment is a refcount bump, not a `String`
+    /// allocation.
+    pub type_ref: Option<Arc<str>>,
+    /// Interned symbol of `type_ref` (streaming validator only). Used as the
+    /// cache key for resolving this element's children when it is a parent,
+    /// so the lookup keys on an integer rather than re-hashing the type name.
+    pub type_sym: Option<u32>,
     /// Pre-computed flattened children constraints from schema cache.
     /// Using Arc to avoid cloning for every element - this is a reference to
     /// the pre-computed cache in CompiledSchema.
@@ -76,6 +82,7 @@ impl ElementContext {
             text_content: String::new(),
             schema_validated: false,
             type_ref: None,
+            type_sym: None,
             flattened_children: None,
             sequence_index: 0,
             automaton_state: Default::default(),

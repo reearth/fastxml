@@ -85,6 +85,14 @@ pub struct OnePassSchemaValidator {
         String,
         Option<std::sync::Arc<crate::schema::types::FlattenedChildren>>,
     >,
+    /// Memoized inline (parent-content-model) element resolution keyed by
+    /// `(parent type symbol, child local symbol)` (S3). Resolving a child's
+    /// declared type from its parent's content model otherwise walks and
+    /// linearly scans the parent's flattened element list and clones its
+    /// `type_ref` on every element; this caches the resolved picture so it is
+    /// computed once per distinct (parent-type, child) pair.
+    pub(crate) inline_cache:
+        rustc_hash::FxHashMap<(u32, u32), std::sync::Arc<lookup::InlineResolved>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -120,6 +128,7 @@ impl OnePassSchemaValidator {
             elements_cache: Default::default(),
             attr_cache: Default::default(),
             type_ref_children: Default::default(),
+            inline_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             symbols: Default::default(),
