@@ -52,16 +52,27 @@ resolved), measured with `examples/bench.rs`:
 | 220 MB tile | 43.5 MB/s | **85.4 MB/s** | 184 MB/s (unchanged) |
 
 The most recent step replaced per-element string hashing/allocation with
-interned integer symbols and memoized the per-element type resolution
-(element lookup, flattened children, and text-validation plan cached by
-symbol), lifting the DEM tile from ~75.7 to ~85.4 MB/s. Memory is unchanged
-(≈17–18 MB delta on the 220 MB tile, before and after) — the caches and the
-symbol table are bounded by schema size, not document size. The parse path
-is untouched (parse-only throughput is flat), and the W3C XML/XSD conformance
-outcomes are byte-for-byte identical before and after. Parse-only throughput
-(~183 MB/s) is a hard ceiling on validate throughput; closing the remaining
-gap to libxml (~270 MB/s) is now a parser-side problem (tokenizer / event
-layer), not a validator-side one.
+interned integer symbols: names are interned once into `SymbolId`s,
+per-element type resolution (element lookup, flattened children, inline
+child types, text-validation plan) is memoized by symbol, and the
+content-model automaton matches children by symbol binary search instead of
+string-set probes. This lifted the DEM tile from ~75.7 to ~85.4 MB/s.
+Memory is unchanged (≈17 MB delta on the 220 MB tile, before and after) —
+the caches and the symbol table are bounded by schema size, not document
+size. The parse path is untouched (parse-only throughput is flat), and the
+W3C XML/XSD conformance outcomes are byte-for-byte identical before and
+after.
+
+Where the remaining time goes (measured by selectively disabling validator
+stages on the 15 MB DEM tile): of the 11.7 ms/MB total, parsing is
+5.5 ms/MB (a hard floor) and validation overhead is 6.2 ms/MB. That
+overhead is now dominated by *value* validation — ~55% is facet/primitive
+checking of text content (the DEM is mostly huge `gml:posList` number
+lists), with automaton stepping ~11%, attribute validation ~7%, text
+buffering ~8%, and residual per-element resolution/bookkeeping ~19%.
+Name-handling (hashing/allocation) no longer registers. So the next
+validator-side win is cheaper text value checking; the parser (~183 MB/s)
+is the eventual ceiling on the way to libxml's ~270 MB/s.
 
 - **fastxml DOM uses less memory than libxml** on this file (367 vs
   405 MB): nodes are 128 bytes plus a compact interned attribute list. On
@@ -794,15 +805,22 @@ Known issues and planned improvements, roughly in priority order:
   borrows already-collapsed values, memoized attribute collection, and
   skipping identity bookkeeping when nothing is tracked). The **symbol-ID
   validator layer is now done**: names are interned once into integer
-  `SymbolId`s, and per-element resolution (global element lookup, flattened
+  `SymbolId`s, per-element resolution (global element lookup, flattened
   children, inline child-type resolution, and the text-validation plan) is
   memoized by symbol instead of re-hashing/re-allocating strings on every
-  start tag. The remaining gap to libxml is **parser-side, not
-  validator-side**: parse-only throughput (~183 MB/s) is a hard ceiling on
-  validate throughput, so closing it means faster tokenization and an
-  interned event layer (interning names once at the tokenizer so the parser
-  hands symbols to the validator, plus symbol-indexed automaton transitions).
-  That parser work is the stated next step.
+  start tag, and the content-model automaton matches by symbol binary
+  search. What remains of the gap is, in order (measured by selectively
+  disabling stages): **facet/primitive validation of text values** (~55% of
+  the 6.2 ms/MB validation overhead on text-heavy CityGML — the actual
+  checking of `posList`-style number lists, a per-value cost the symbol
+  work cannot remove; needs a faster value-checking path, e.g. skipping
+  facet machinery for unconstrained list types and a leaner numeric
+  scanner), residual per-element resolution/bookkeeping (~19%), automaton
+  stepping (~11%), text buffering (~8%), and attribute validation (~7%).
+  The parser (~183 MB/s parse-only) is the eventual hard ceiling: reaching
+  libxml parity ultimately also needs faster tokenization and an interned
+  event layer (the parser handing symbols to the validator), but the
+  current gap is still mostly validator-side value checking.
 
 
 ## Development
