@@ -42,21 +42,26 @@ Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
 
 The libxml figures and the building-file numbers above are from that earlier
 run and are kept unchanged. Streaming-validation throughput has since been
-improved ~1.75x; the following is a same-machine before/after on a
+improved ~2x; the following is a same-machine before/after on a
 schema-rich CityGML DEM tile (PLATEAU, 53 XSD schemas / 2,635 types
 resolved), measured with `examples/bench.rs`:
 
 | Streaming + validate (DEM) | Before | After | Parse-only |
 |----------------------------|-------:|------:|-----------:|
-| 15 MB tile  | 43.2 MB/s | **75.6 MB/s** | 182 MB/s (unchanged) |
-| 220 MB tile | 43.5 MB/s | **75.7 MB/s** | 183 MB/s (unchanged) |
+| 15 MB tile  | 43.2 MB/s | **85.4 MB/s** | 183 MB/s (unchanged) |
+| 220 MB tile | 43.5 MB/s | **85.4 MB/s** | 184 MB/s (unchanged) |
 
-Memory is unchanged by these optimizations (18.0 MB delta on the 220 MB
-tile, before and after) — the added caches are bounded by schema size, not
-document size. The parse path is untouched (parse-only throughput is flat),
-and the W3C XML/XSD conformance outcomes are identical before and after. The
-building file is less text-heavy than the DEM, so its gain is smaller than
-the DEM's whitespace-dominated 1.75x.
+The most recent step replaced per-element string hashing/allocation with
+interned integer symbols and memoized the per-element type resolution
+(element lookup, flattened children, and text-validation plan cached by
+symbol), lifting the DEM tile from ~75.7 to ~85.4 MB/s. Memory is unchanged
+(≈17–18 MB delta on the 220 MB tile, before and after) — the caches and the
+symbol table are bounded by schema size, not document size. The parse path
+is untouched (parse-only throughput is flat), and the W3C XML/XSD conformance
+outcomes are byte-for-byte identical before and after. Parse-only throughput
+(~183 MB/s) is a hard ceiling on validate throughput; closing the remaining
+gap to libxml (~270 MB/s) is now a parser-side problem (tokenizer / event
+layer), not a validator-side one.
 
 - **fastxml DOM uses less memory than libxml** on this file (367 vs
   405 MB): nodes are 128 bytes plus a compact interned attribute list. On
@@ -782,17 +787,22 @@ Known issues and planned improvements, roughly in priority order:
 
 **Performance / memory**
 
-- Validation throughput: streaming validation runs at ~76 MB/s (up from
-  ~44 MB/s) vs libxml's ~270 MB/s on schema-rich CityGML. The recent ~1.75x
-  gain came from removing per-element/per-value allocations (borrowing
-  compiled types via the schema `Arc` instead of cloning them, `Cow`
-  whitespace normalization that borrows already-collapsed values, memoized
-  attribute collection, and skipping identity bookkeeping when nothing is
-  tracked). Closing the remaining gap to libxml is architectural — a
-  symbol-ID pipeline: intern names once at the tokenizer, then use
-  ID-indexed element lookup and automaton transitions and precompiled
-  per-type validation ops instead of string-keyed hash lookups and per-value
-  facet interpretation. That redesign is the stated next step.
+- Validation throughput: streaming validation runs at ~85 MB/s (up from
+  ~44 MB/s) vs libxml's ~270 MB/s on schema-rich CityGML. Earlier gains
+  removed per-element/per-value allocations (borrowing compiled types via the
+  schema `Arc` instead of cloning them, `Cow` whitespace normalization that
+  borrows already-collapsed values, memoized attribute collection, and
+  skipping identity bookkeeping when nothing is tracked). The **symbol-ID
+  validator layer is now done**: names are interned once into integer
+  `SymbolId`s, and per-element resolution (global element lookup, flattened
+  children, inline child-type resolution, and the text-validation plan) is
+  memoized by symbol instead of re-hashing/re-allocating strings on every
+  start tag. The remaining gap to libxml is **parser-side, not
+  validator-side**: parse-only throughput (~183 MB/s) is a hard ceiling on
+  validate throughput, so closing it means faster tokenization and an
+  interned event layer (interning names once at the tokenizer so the parser
+  hands symbols to the validator, plus symbol-indexed automaton transitions).
+  That parser work is the stated next step.
 
 
 ## Development
