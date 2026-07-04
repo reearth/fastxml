@@ -51,6 +51,31 @@ impl OnePassSchemaValidator {
         // Check if this element is expected by the parent (inline element definition)
         let is_expected_by_parent = self.is_element_expected_by_parent(name);
 
+        // Count this child toward the parent's wildcard occurrence bound when
+        // its namespace matches the wildcard's namespace set. The bound check
+        // at element end (only decidable when the wildcard is the sole
+        // particle) must not count non-matching children (DOM parity).
+        {
+            let len = self.state.element_stack.len();
+            if len >= 2 {
+                let matches = self
+                    .state
+                    .element_stack
+                    .get(len - 2)
+                    .and_then(|parent| parent.flattened_children.as_ref())
+                    .and_then(|fc| {
+                        fc.wildcard
+                            .as_ref()
+                            .filter(|_| fc.constraints.is_empty())
+                            .map(|w| w.matches(namespace))
+                    })
+                    .unwrap_or(false);
+                if matches && let Some(parent) = self.state.element_stack.get_mut(len - 2) {
+                    parent.wildcard_matched += 1;
+                }
+            }
+        }
+
         // Wildcard handling: a skip wildcard admits this whole subtree
         // without validation; a lax wildcard admits undeclared elements.
         let wildcard_mode = self.parent_wildcard_mode(name, namespace, is_expected_by_parent);
@@ -723,7 +748,11 @@ impl OnePassSchemaValidator {
                 && let Some(w) = &fc.wildcard
                 && fc.constraints.is_empty()
             {
-                let matched: u32 = ctx.child_counts.iter().map(|(_, c)| *c).sum();
+                // Only children whose namespace matched the wildcard's
+                // namespace set participate in the occurrence bound; the
+                // count is maintained at element start (DOM parity —
+                // non-matching children previously slipped through).
+                let matched: u32 = ctx.wildcard_matched;
                 if matched < w.min_occurs {
                     let error = self
                         .make_error(

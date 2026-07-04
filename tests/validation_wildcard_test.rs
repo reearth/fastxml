@@ -173,3 +173,137 @@ fn wildcard_same_local_name_cross_namespace_is_deterministically_valid() {
         );
     }
 }
+
+/// The streaming engine must resolve each element's namespace URI from the
+/// in-scope declarations when matching wildcard namespace sets. It previously
+/// passed `None`, so a `##local` wildcard admitted any prefixed element and
+/// namespace-constrained wildcards were not enforced at all (the DOM engine
+/// was already correct). Mirrors W3C particlesC024.
+#[test]
+fn streaming_wildcard_namespace_set_enforced() {
+    const SCHEMA: &[u8] = br###"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:x="http://example.com/t" targetNamespace="http://example.com/t"
+           elementFormDefault="qualified">
+  <xs:element name="doc">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="elem" type="x:anyLocal" minOccurs="0" maxOccurs="100"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:complexType name="anyLocal">
+    <xs:choice>
+      <xs:any processContents="lax" namespace="##local"/>
+    </xs:choice>
+  </xs:complexType>
+</xs:schema>"###;
+
+    let schema = std::sync::Arc::new(Schema::from_xsd(SCHEMA).expect("schema"));
+    let run = |xml: &str| {
+        let doc = fastxml::Parser::from(xml).parse().expect("parse");
+        let dom = Validator::from(&doc)
+            .schema(std::sync::Arc::clone(&schema))
+            .run()
+            .expect("dom")
+            .into_entries()
+            .is_empty();
+        let stream = Validator::from(xml.as_bytes())
+            .schema(std::sync::Arc::clone(&schema))
+            .run()
+            .expect("stream")
+            .into_entries()
+            .is_empty();
+        (dom, stream)
+    };
+
+    // A no-namespace child matches ##local: valid.
+    let (dom, stream) =
+        run(r#"<x:doc xmlns:x="http://example.com/t"><x:elem><anything/></x:elem></x:doc>"#);
+    assert!(dom, "DOM should accept a no-namespace child under ##local");
+    assert!(
+        stream,
+        "streaming should accept a no-namespace child under ##local"
+    );
+
+    // A namespaced child does not match ##local: invalid in BOTH engines.
+    let (dom, stream) = run(
+        r#"<x:doc xmlns:x="http://example.com/t"><x:elem><f:foo xmlns:f="urn:other"/></x:elem></x:doc>"#,
+    );
+    assert!(!dom, "DOM should reject a namespaced child under ##local");
+    assert!(
+        !stream,
+        "streaming should reject a namespaced child under ##local"
+    );
+
+    // Default-namespace children are namespaced too (xmlns=...): invalid.
+    let (dom, stream) = run(
+        r#"<x:doc xmlns:x="http://example.com/t"><x:elem><foo xmlns="urn:other"/></x:elem></x:doc>"#,
+    );
+    assert!(
+        !dom,
+        "DOM should reject a default-namespaced child under ##local"
+    );
+    assert!(
+        !stream,
+        "streaming should reject a default-namespaced child under ##local"
+    );
+}
+
+/// A wildcard's minOccurs/maxOccurs bound counts only children whose
+/// namespace matches the wildcard's namespace set. The streaming engine
+/// previously counted ALL children toward the bound, so a document whose
+/// only child does NOT match (here: a target-namespace child under an
+/// `##other` wildcard) satisfied minOccurs=1 and was wrongly accepted
+/// (DOM was already correct). Mirrors W3C wildG003.
+#[test]
+fn streaming_wildcard_occurrence_counts_only_matching_children() {
+    const SCHEMA: &[u8] = br###"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://example.com/w" xmlns="http://example.com/w">
+  <xs:element name="foo">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:any namespace="##other" processContents="lax"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="b" type="xs:string"/>
+</xs:schema>"###;
+
+    let schema = std::sync::Arc::new(Schema::from_xsd(SCHEMA).expect("schema"));
+    let run = |xml: &str| {
+        let doc = fastxml::Parser::from(xml).parse().expect("parse");
+        let dom = Validator::from(&doc)
+            .schema(std::sync::Arc::clone(&schema))
+            .run()
+            .expect("dom")
+            .into_entries()
+            .is_empty();
+        let stream = Validator::from(xml.as_bytes())
+            .schema(std::sync::Arc::clone(&schema))
+            .run()
+            .expect("stream")
+            .into_entries()
+            .is_empty();
+        (dom, stream)
+    };
+
+    // The only child is in the target namespace: it does not match ##other,
+    // so the required wildcard particle is unsatisfied -> invalid.
+    let (dom, stream) = run(r#"<foo xmlns="http://example.com/w"><b>text</b></foo>"#);
+    assert!(
+        !dom,
+        "DOM must reject: no child matches the ##other wildcard"
+    );
+    assert!(
+        !stream,
+        "streaming must reject: no child matches the ##other wildcard"
+    );
+
+    // A child from another namespace matches ##other -> valid.
+    let (dom, stream) =
+        run(r#"<foo xmlns="http://example.com/w"><o:x xmlns:o="urn:other"/></foo>"#);
+    assert!(dom, "DOM should accept an ##other-matching child");
+    assert!(stream, "streaming should accept an ##other-matching child");
+}

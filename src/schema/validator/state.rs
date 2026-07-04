@@ -7,6 +7,10 @@ use smallvec::SmallVec;
 use crate::namespace::Namespace;
 use crate::schema::types::{ContentModelType, FlattenedChildren};
 
+/// One lexical scope of namespace declarations: `(prefix, uri)` pairs, the
+/// prefix `""` denoting the default namespace.
+type NsScope = SmallVec<[(String, Arc<str>); 4]>;
+
 /// Validation state during streaming.
 #[derive(Debug, Default)]
 pub(crate) struct ValidationState {
@@ -16,7 +20,13 @@ pub(crate) struct ValidationState {
     pub depth: usize,
     /// Namespace bindings at each depth - stores only the diff for each scope
     /// This avoids cloning the entire HashMap on each push
-    pub namespace_stack: Vec<SmallVec<[(String, String); 4]>>,
+    pub namespace_stack: Vec<NsScope>,
+    /// Memoized prefix -> namespace-URI resolutions for the *current* scope
+    /// chain. Namespace declarations are rare (typically only on the root),
+    /// so this avoids walking `namespace_stack` on every element start; it
+    /// is cleared whenever a scope that actually declares bindings is pushed
+    /// or popped. `None` caches a negative result (unbound / xmlns="").
+    ns_resolution_cache: SmallVec<[(String, Option<Arc<str>>); 8]>,
 }
 
 /// Context for an element being validated.
@@ -69,6 +79,12 @@ pub(crate) struct ElementContext {
     /// Set when this element was admitted by a lax/skip wildcard; its
     /// subtree inherits that processing mode.
     pub wildcard_mode: Option<crate::schema::types::ProcessContents>,
+    /// Number of child elements whose namespace matched this element's
+    /// content-model wildcard (counted only when the wildcard is the sole
+    /// particle, where the occurrence bound is decidable without an
+    /// automaton). Children that do NOT match the wildcard's namespace set
+    /// must not count toward its minOccurs/maxOccurs (DOM parity).
+    pub wildcard_matched: u32,
 }
 
 impl ElementContext {
@@ -92,6 +108,7 @@ impl ElementContext {
             fixed_value: None,
             inline_type: None,
             wildcard_mode: None,
+            wildcard_matched: 0,
         }
     }
 
@@ -192,6 +209,7 @@ impl ValidationState {
             element_stack: Vec::with_capacity(64),
             depth: 0,
             namespace_stack: vec![SmallVec::new()],
+            ns_resolution_cache: SmallVec::new(),
         }
     }
 
@@ -242,31 +260,67 @@ impl ValidationState {
     /// Pushes namespace declarations for the current scope.
     /// Only stores the diff (new bindings) instead of cloning the entire map.
     pub fn push_namespaces(&mut self, decls: &[Namespace]) {
-        let bindings: SmallVec<[(String, String); 4]> = decls
+        let bindings: NsScope = decls
             .iter()
-            .map(|ns| (ns.prefix().to_string(), ns.uri().to_string()))
+            .map(|ns| (ns.prefix().to_string(), Arc::from(ns.uri())))
             .collect();
+        if !bindings.is_empty() {
+            self.ns_resolution_cache.clear();
+        }
         self.namespace_stack.push(bindings);
     }
 
     pub fn pop_namespaces(&mut self) {
-        if self.namespace_stack.len() > 1 {
-            self.namespace_stack.pop();
+        if self.namespace_stack.len() > 1
+            && let Some(popped) = self.namespace_stack.pop()
+            && !popped.is_empty()
+        {
+            self.ns_resolution_cache.clear();
         }
     }
 
     /// Resolves a namespace prefix by searching from innermost to outermost scope.
-    #[allow(dead_code)]
     pub fn resolve_prefix(&self, prefix: &str) -> Option<&str> {
         // Search from innermost to outermost scope
         for scope in self.namespace_stack.iter().rev() {
             for (p, uri) in scope {
                 if p == prefix {
-                    return Some(uri.as_str());
+                    return Some(uri.as_ref());
                 }
             }
         }
         None
+    }
+
+    /// Resolves the namespace URI of an element from its prefix (or the
+    /// in-scope default namespace when it has none). Returns `None` for
+    /// no-namespace elements: an unbound prefix, no default declaration, or
+    /// an empty-URI binding (`xmlns=""` un-declares the default namespace).
+    ///
+    /// Resolutions are memoized until the scope chain changes, so the hot
+    /// path costs one scan of a handful of cached prefixes.
+    pub fn resolve_element_namespace(&mut self, prefix: Option<&str>) -> Option<Arc<str>> {
+        let key = match prefix {
+            Some(p) if !p.is_empty() => p,
+            _ => "",
+        };
+        if let Some((_, cached)) = self.ns_resolution_cache.iter().find(|(p, _)| p == key) {
+            return cached.clone();
+        }
+        let mut resolved: Option<Arc<str>> = None;
+        'outer: for scope in self.namespace_stack.iter().rev() {
+            for (p, uri) in scope {
+                if p == key {
+                    if !uri.is_empty() {
+                        resolved = Some(Arc::clone(uri));
+                    }
+                    break 'outer;
+                }
+            }
+        }
+        self.ns_resolution_cache
+            .push((key.to_string(), resolved.clone()));
+        resolved
     }
 
     /// Returns XPath-like path to current element.
