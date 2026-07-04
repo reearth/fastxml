@@ -3,10 +3,15 @@ name: Conformance Tests
 on:
   # Allow manual trigger
   workflow_dispatch:
-  # Run on PRs that touch conformance tests
+  # Run on PRs that touch the library or the conformance harness. Because the
+  # conformance suite now gates on committed baselines, a change in library
+  # behaviour must update the baselines in the same PR.
   pull_request:
     paths:
+      - 'src/**'
       - 'conformance/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/conformance.yml'
 
 env:
@@ -55,37 +60,23 @@ jobs:
             git clone --depth 1 https://github.com/w3c/xsdtests.git conformance/data/w3c-xsd/xsdtests
           fi
 
+      # --release: the XSD suite validates tens of thousands of instances; a
+      # debug build is impractically slow. Failures now gate the merge (no
+      # continue-on-error): a regression or an un-updated baseline fails the job.
       - name: Build conformance tests
-        run: cargo build -p fastxml-conformance --tests
+        run: cargo build --release -p fastxml-conformance --tests
 
-      - name: Run W3C XML conformance tests (DOM)
-        run: cargo test -p fastxml-conformance w3c_xml_conformance_dom -- --nocapture
-        continue-on-error: true
+      - name: Run W3C XML conformance tests (DOM + Streaming)
+        run: cargo test --release -p fastxml-conformance --test w3c_xml -- --nocapture
 
-      - name: Run W3C XML conformance tests (Streaming)
-        run: cargo test -p fastxml-conformance w3c_xml_conformance_streaming -- --nocapture
-        continue-on-error: true
+      - name: Run W3C XSD conformance tests (DOM + Streaming)
+        run: cargo test --release -p fastxml-conformance --test w3c_xsd -- --nocapture
 
-      - name: Run W3C XSD conformance tests (DOM)
-        run: cargo test -p fastxml-conformance w3c_xsd_conformance_dom -- --nocapture
-        continue-on-error: true
-
-      - name: Run W3C XSD conformance tests (Streaming)
-        run: cargo test -p fastxml-conformance w3c_xsd_conformance_streaming -- --nocapture
-        continue-on-error: true
-
-      - name: Run basic validation tests
-        run: |
-          cargo test -p fastxml-conformance basic_xsd_validation -- --nocapture
-          cargo test -p fastxml-conformance dom_streaming_consistency -- --nocapture
-          cargo test -p fastxml-conformance basic_xpath -- --nocapture
-          cargo test -p fastxml-conformance xpath_axes -- --nocapture
-          cargo test -p fastxml-conformance xpath_string_functions -- --nocapture
-          cargo test -p fastxml-conformance xpath_number_functions -- --nocapture
+      - name: Run basic XPath unit tests
+        run: cargo test --release -p fastxml-conformance --test xpath_basic -- --nocapture
 
       - name: Generate report
-        run: cargo run -p fastxml-conformance --bin report -- --json > conformance-report.json
-        continue-on-error: true
+        run: cargo run --release -p fastxml-conformance --bin report -- --json > conformance-report.json
 
       - name: Upload report artifact
         uses: actions/upload-artifact@v4

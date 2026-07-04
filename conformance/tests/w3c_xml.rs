@@ -1,388 +1,68 @@
 //! W3C XML Conformance Test Suite tests.
 //!
-//! These tests run the W3C XML Conformance Test Suite against fastxml's parser.
-//! Both DOM parsing and streaming parsing are tested.
-//!
-//! Note: fastxml has the following known limitations:
-//! - Only UTF-8 encoding is supported (UTF-16, ISO-8859-1, etc. tests are skipped)
-//! - DTD/external entity expansion is not supported
-//! - Some edge cases in malformed XML detection may differ from strict compliance
+//! Thin wrapper: load the catalog, run the suite via the runner library, then
+//! diff against a committed baseline. All the logic lives in
+//! `fastxml_conformance::runner::xml` and `::baseline`.
 
-use fastxml_conformance::catalog::xmlconf::{TestType, XmlConfCatalog, XmlConfTest};
-use fastxml_conformance::reporter::SuiteReport;
-use fastxml_conformance::{is_known_failure, require_test_data};
-use std::fs;
-use std::io::BufReader;
+use fastxml_conformance::baseline::Baseline;
+use fastxml_conformance::reporter::print_suite_run;
+use fastxml_conformance::runner::Engine;
+use fastxml_conformance::runner::xml::{load_catalog, run_xml_suite};
+use fastxml_conformance::{baselines_dir, require_test_data, should_update_baseline};
 
-/// Check if a test requires non-UTF-8 encoding (which fastxml doesn't support).
-fn requires_non_utf8(test: &XmlConfTest) -> bool {
-    let path_str = test.uri.to_string_lossy().to_lowercase();
-    // Skip UTF-16 and other encoding tests
-    path_str.contains("utf16")
-        || path_str.contains("utf-16")
-        || path_str.contains("little")
-        || path_str.contains("weekly-")
-        || path_str.contains("pr-xml-")
-}
+/// Pinned number of real `<TEST>` elements reachable from `xmlconf.xml`.
+///
+/// The referenced sub-catalogs (james-clark, sun, ibm, oasis, eduni, japanese,
+/// ...) contain 2586 `<TEST` occurrences, but one of them lives inside an XML
+/// comment in `ibm/xml-1.1/ibm_not-wf.xml`, so 2585 real test elements are
+/// parsed. If the test data changes and this assertion fires, update this
+/// constant DELIBERATELY and regenerate the baselines with
+/// `FASTXML_UPDATE_BASELINE=1`.
+const XML_TOTAL: usize = 2585;
 
-/// Run all W3C XML conformance tests with DOM parser.
-#[test]
-fn w3c_xml_conformance_dom() {
+fn run_and_check(engine: Engine, baseline_name: &str) {
     let data_path = require_test_data!("w3c-xml");
-
-    // The W3C test suite extracts to xmlconf/ directory
-    let xmlconf_path = data_path.join("xmlconf");
-    let catalog_path = if xmlconf_path.exists() {
-        xmlconf_path.join("xmlconf.xml")
-    } else {
-        data_path.join("xmlconf.xml")
-    };
-
-    if !catalog_path.exists() {
-        eprintln!(
-            "Catalog not found at {}. Skipping tests.",
-            catalog_path.display()
-        );
+    let Some(catalog) = load_catalog(&data_path) else {
+        eprintln!("Catalog unavailable; skipping {baseline_name}");
         return;
-    }
-
-    eprintln!("Loading catalog from: {}", catalog_path.display());
-
-    let catalog = match XmlConfCatalog::parse(&catalog_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to parse catalog: {}", e);
-            return;
-        }
     };
 
-    let stats = catalog.stats();
-    eprintln!(
-        "Found {} tests: {} valid, {} invalid, {} not-wf, {} error",
-        stats.total, stats.valid, stats.invalid, stats.not_wf, stats.error
+    let total = catalog.all_tests().count();
+    assert_eq!(
+        total, XML_TOTAL,
+        "catalog test count changed ({total} != {XML_TOTAL}); update XML_TOTAL and \
+         regenerate baselines deliberately"
     );
 
-    let mut report = SuiteReport::new();
+    let run = run_xml_suite(engine, &catalog);
+    print_suite_run(&format!("W3C XML Conformance ({})", engine.as_str()), &run);
 
-    // Run valid tests
-    for test in catalog.tests_by_type(TestType::Valid) {
-        let test_path = catalog.get_test_path(test);
-        let category = Some("valid");
-
-        if is_known_failure(&test.id) {
-            report.record_expected_fail(category);
-            continue;
-        }
-
-        // Skip tests requiring external entities
-        if test.entities.as_deref() == Some("both") || test.entities.as_deref() == Some("general") {
-            report.record_skip();
-            continue;
-        }
-
-        // Skip non-UTF-8 encoding tests
-        if requires_non_utf8(test) {
-            report.record_skip();
-            continue;
-        }
-
-        let content = match fs::read(&test_path) {
-            Ok(c) => c,
-            Err(_) => {
-                report.record_skip();
-                continue;
-            }
-        };
-
-        match fastxml::Parser::from(content.as_slice()).parse() {
-            Ok(_) => report.record_pass(category),
-            Err(e) => {
-                eprintln!("FAIL [valid/dom] {}: {}", test.id, e);
-                report.record_fail(&test.id, category);
-            }
-        }
-    }
-
-    // Run not-well-formed tests
-    for test in catalog.tests_by_type(TestType::NotWellFormed) {
-        let test_path = catalog.get_test_path(test);
-        let category = Some("not-wf");
-
-        if is_known_failure(&test.id) {
-            report.record_expected_fail(category);
-            continue;
-        }
-
-        // Skip non-UTF-8 encoding tests
-        if requires_non_utf8(test) {
-            report.record_skip();
-            continue;
-        }
-
-        let content = match fs::read(&test_path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                report.record_skip();
-                continue;
-            }
-        };
-
-        match fastxml::Parser::from(content.as_slice()).parse() {
-            Ok(_) => {
-                eprintln!("FAIL [not-wf/dom] {}: parser accepted invalid XML", test.id);
-                report.record_fail(&test.id, category);
-            }
-            Err(_) => {
-                report.record_pass(category);
-            }
-        }
-    }
-
-    // Run invalid tests (valid XML but invalid per DTD)
-    for test in catalog.tests_by_type(TestType::Invalid) {
-        let test_path = catalog.get_test_path(test);
-        let category = Some("invalid");
-
-        if is_known_failure(&test.id) {
-            report.record_expected_fail(category);
-            continue;
-        }
-
-        // Skip non-UTF-8 encoding tests
-        if requires_non_utf8(test) {
-            report.record_skip();
-            continue;
-        }
-
-        let content = match fs::read(&test_path) {
-            Ok(c) => c,
-            Err(_) => {
-                report.record_skip();
-                continue;
-            }
-        };
-
-        match fastxml::Parser::from(content.as_slice()).parse() {
-            Ok(_) => report.record_pass(category),
-            Err(e) => {
-                eprintln!("FAIL [invalid/dom] {}: {}", test.id, e);
-                report.record_fail(&test.id, category);
-            }
-        }
-    }
-
-    // Print summary
-    print_report("W3C XML Conformance (DOM)", &report);
-
-    // Note: Many failures are expected due to fastxml's limitations:
-    // - No DTD entity expansion
-    // - Lenient parsing of some malformed XML edge cases
-    // The goal is to track progress, not enforce strict compliance.
-}
-
-/// Run all W3C XML conformance tests with Streaming parser.
-#[test]
-fn w3c_xml_conformance_streaming() {
-    let data_path = require_test_data!("w3c-xml");
-
-    let xmlconf_path = data_path.join("xmlconf");
-    let catalog_path = if xmlconf_path.exists() {
-        xmlconf_path.join("xmlconf.xml")
-    } else {
-        data_path.join("xmlconf.xml")
-    };
-
-    if !catalog_path.exists() {
-        eprintln!("Catalog not found. Skipping streaming tests.");
+    let path = baselines_dir().join(format!("{baseline_name}.tsv"));
+    if should_update_baseline() {
+        Baseline::from_records(&run.records)
+            .write(&path)
+            .expect("write baseline");
+        eprintln!("Updated baseline: {}", path.display());
         return;
     }
 
-    let catalog = match XmlConfCatalog::parse(&catalog_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to parse catalog: {}", e);
-            return;
-        }
-    };
-
-    let mut report = SuiteReport::new();
-
-    // Run valid tests with streaming parser
-    for test in catalog.tests_by_type(TestType::Valid) {
-        let test_path = catalog.get_test_path(test);
-        let category = Some("valid");
-
-        if is_known_failure(&test.id) {
-            report.record_expected_fail(category);
-            continue;
-        }
-
-        if test.entities.as_deref() == Some("both") || test.entities.as_deref() == Some("general") {
-            report.record_skip();
-            continue;
-        }
-
-        // Skip non-UTF-8 encoding tests
-        if requires_non_utf8(test) {
-            report.record_skip();
-            continue;
-        }
-
-        let file = match fs::File::open(&test_path) {
-            Ok(f) => f,
-            Err(_) => {
-                report.record_skip();
-                continue;
-            }
-        };
-
-        let reader = BufReader::new(file);
-        match fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(())) {
-            Ok(_) => report.record_pass(category),
-            Err(e) => {
-                eprintln!("FAIL [valid/streaming] {}: {}", test.id, e);
-                report.record_fail(&test.id, category);
-            }
-        }
-    }
-
-    // Run not-well-formed tests with streaming parser
-    for test in catalog.tests_by_type(TestType::NotWellFormed) {
-        let test_path = catalog.get_test_path(test);
-        let category = Some("not-wf");
-
-        if is_known_failure(&test.id) {
-            report.record_expected_fail(category);
-            continue;
-        }
-
-        // Skip non-UTF-8 encoding tests
-        if requires_non_utf8(test) {
-            report.record_skip();
-            continue;
-        }
-
-        let file = match fs::File::open(&test_path) {
-            Ok(f) => f,
-            Err(_) => {
-                report.record_skip();
-                continue;
-            }
-        };
-
-        let reader = BufReader::new(file);
-        match fastxml::Parser::from_reader(reader).for_each_event(|_| Ok(())) {
-            Ok(_) => {
-                eprintln!(
-                    "FAIL [not-wf/streaming] {}: parser accepted invalid XML",
-                    test.id
-                );
-                report.record_fail(&test.id, category);
-            }
-            Err(_) => {
-                report.record_pass(category);
-            }
-        }
-    }
-
-    // Print summary
-    print_report("W3C XML Conformance (Streaming)", &report);
-
-    // Note: Many failures are expected due to fastxml's limitations.
-    // The goal is to track progress, not enforce strict compliance.
+    let baseline = Baseline::load(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot load baseline {}: {e}\nRun `FASTXML_UPDATE_BASELINE=1 cargo test \
+             -p fastxml-conformance` to create it.",
+            path.display()
+        )
+    });
+    let diff = baseline.diff(&run.records);
+    assert!(diff.is_clean(), "{}", diff.message(baseline_name));
 }
 
-/// Test a few specific well-known XML test cases.
 #[test]
-fn w3c_xml_specific_cases() {
-    let data_path = require_test_data!("w3c-xml");
-
-    let xmlconf_path = data_path.join("xmlconf");
-    let base_path = if xmlconf_path.exists() {
-        xmlconf_path
-    } else {
-        data_path.clone()
-    };
-
-    // Test 1: Basic valid XML (james clark test) - DOM
-    let valid_file = base_path
-        .join("james clark")
-        .join("valid")
-        .join("sa")
-        .join("001.xml");
-    if valid_file.exists() {
-        let content = fs::read(&valid_file).expect("read valid file");
-        assert!(
-            fastxml::Parser::from(content.as_slice()).parse().is_ok(),
-            "Should parse valid XML (DOM)"
-        );
-
-        // Also test streaming
-        let file = fs::File::open(&valid_file).expect("open valid file");
-        let reader = BufReader::new(file);
-        assert!(
-            fastxml::Parser::from_reader(reader)
-                .for_each_event(|_| Ok(()))
-                .is_ok(),
-            "Should parse valid XML (Streaming)"
-        );
-    }
-
-    // Test 2: Not well-formed XML - DOM
-    let not_wf_file = base_path
-        .join("james clark")
-        .join("not-wf")
-        .join("sa")
-        .join("001.xml");
-    if not_wf_file.exists() {
-        let content = fs::read(&not_wf_file).expect("read not-wf file");
-        assert!(
-            fastxml::Parser::from(content.as_slice()).parse().is_err(),
-            "Should reject not-well-formed XML (DOM)"
-        );
-
-        // Also test streaming
-        let file = fs::File::open(&not_wf_file).expect("open not-wf file");
-        let reader = BufReader::new(file);
-        assert!(
-            fastxml::Parser::from_reader(reader)
-                .for_each_event(|_| Ok(()))
-                .is_err(),
-            "Should reject not-well-formed XML (Streaming)"
-        );
-    }
+fn w3c_xml_conformance_dom() {
+    run_and_check(Engine::Dom, "w3c-xml-dom");
 }
 
-fn print_report(title: &str, report: &SuiteReport) {
-    eprintln!();
-    eprintln!("=== {} Results ===", title);
-    eprintln!("Total: {}", report.total);
-    eprintln!("Passed: {}", report.passed);
-    eprintln!("Failed: {}", report.failed);
-    eprintln!("Skipped: {}", report.skipped);
-    eprintln!("Expected failures: {}", report.expected_failures);
-
-    let pass_rate = if report.total > 0 {
-        let effective_total = report.total - report.skipped - report.expected_failures;
-        if effective_total > 0 {
-            (report.passed as f64 / effective_total as f64) * 100.0
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
-    eprintln!("Pass rate: {:.1}%", pass_rate);
-
-    for (cat, cat_report) in &report.categories {
-        let cat_rate = if cat_report.total > 0 {
-            (cat_report.passed as f64 / cat_report.total as f64) * 100.0
-        } else {
-            0.0
-        };
-        eprintln!(
-            "  {}: {}/{} ({:.1}%)",
-            cat, cat_report.passed, cat_report.total, cat_rate
-        );
-    }
+#[test]
+fn w3c_xml_conformance_streaming() {
+    run_and_check(Engine::Streaming, "w3c-xml-streaming");
 }
