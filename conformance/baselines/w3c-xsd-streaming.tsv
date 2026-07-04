@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37978	fail=1189	unsupported=28	blocked=418	panic=0
+#counts	total=39613	pass=37980	fail=1187	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -610,12 +610,10 @@ instance-valid	idL086::msMeta/../msData/identityConstraint/idL086.xml	fail	expec
 instance-valid	idL088::msMeta/../msData/identityConstraint/idL088.xml	fail	expected valid but validator reported errors
 instance-valid	idL090::msMeta/../msData/identityConstraint/idL090.xml	fail	expected valid but validator reported errors
 instance-valid	idL102::msMeta/../msData/identityConstraint/idL102.xml	fail	expected valid but validator reported errors
-instance-valid	idc004.nogen::sunMeta/../sunData/combined/identity/idc004/idc004.nogen.v00.xml	fail	expected valid but validator reported errors
 instance-valid	idconstrdefs00201m::sunMeta/../sunData/ElemDecl/identityConstraintDefs/idConstrDefs00201m/idConstrDefs00201m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest002::sunMeta/../sunData/combined/identity/IdentityTestSuite/002/test.2.v.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest003::sunMeta/../sunData/combined/identity/IdentityTestSuite/003/test.1.v.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest003::sunMeta/../sunData/combined/identity/IdentityTestSuite/003/test.2.v.xml	fail	expected valid but validator reported errors
-instance-valid	identitytestsuitetest004::sunMeta/../sunData/combined/identity/IdentityTestSuite/004/test.1.v.xml	fail	expected valid but validator reported errors
 instance-valid	introspection::common/../boeingMeta/BoeingXSDTestSet.testSet	blocked	schema failed to compile
 instance-valid	introspection::common/../common/introspection.testSet	blocked	schema failed to compile
 instance-valid	introspection::common/../ibmMeta/allGroup.testSet	blocked	schema failed to compile

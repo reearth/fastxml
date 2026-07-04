@@ -7,7 +7,10 @@
 //! [`ConstraintValidator`](crate::schema::xsd::constraints::ConstraintValidator),
 //! whose keyref resolution already runs at `finish()`.
 
+use std::collections::HashSet;
+
 use crate::schema::types::{CompiledConstraint, CompiledConstraintType};
+use crate::schema::xsd::constraints::KeyValue;
 
 /// One step-path alternative of a selector (`a/b`, `.//a`, `*`).
 #[derive(Debug, Clone)]
@@ -147,6 +150,12 @@ pub(crate) struct ScopeState {
     /// Element-stack depth of the scoping element.
     pub depth: usize,
     pub selected: Vec<SelectedState>,
+    /// Key tuples already seen within THIS scope instance. Uniqueness is
+    /// per scope (per XSD): the same value may legally repeat under sibling
+    /// scoping elements, so it must not be tracked in the shared,
+    /// name-keyed key table (which exists only for cross-scope keyref
+    /// resolution).
+    pub seen: HashSet<KeyValue>,
 }
 
 impl ScopeState {
@@ -166,6 +175,7 @@ impl ScopeState {
             fields,
             depth,
             selected: Vec::new(),
+            seen: HashSet::new(),
         })
     }
 

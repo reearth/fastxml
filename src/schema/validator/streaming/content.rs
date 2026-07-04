@@ -504,8 +504,30 @@ impl OnePassSchemaValidator {
                 };
                 if scope.is_keyref() {
                     self.constraint_validator.add_keyref_value(&ic, value);
-                } else if let Err(e) = self.constraint_validator.add_key_value(&ic, value) {
-                    errors.push(e.to_string());
+                } else if value.has_null() {
+                    // A key requires every field present; a unique tuple with a
+                    // null/absent field simply does not participate in the
+                    // uniqueness check (and is not recorded for keyrefs).
+                    if scope.constraint.constraint_type == CompiledConstraintType::Key {
+                        if let Some(idx) = value.values.iter().position(|v| v.is_empty()) {
+                            errors.push(format!(
+                                "null value in key field {} of constraint '{}'",
+                                idx, scope.constraint.name
+                            ));
+                        }
+                    }
+                } else {
+                    // Uniqueness is per scoping-element instance: check against
+                    // this scope's own `seen` set, not the shared name-keyed
+                    // table (that table exists only for cross-scope keyref
+                    // resolution, into which the value is unioned).
+                    if !scope.seen.insert(value.clone()) {
+                        errors.push(format!(
+                            "duplicate value {:?} in constraint '{}'",
+                            value.values, scope.constraint.name
+                        ));
+                    }
+                    self.constraint_validator.record_key_value(&ic, value);
                 }
             }
         }

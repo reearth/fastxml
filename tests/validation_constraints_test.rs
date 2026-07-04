@@ -195,3 +195,74 @@ fn test_missing_namespace_declaration() {
         "undeclared prefix in a type reference must be rejected"
     );
 }
+
+// =============================================================================
+// Per-scope uniqueness (streaming/DOM parity)
+// =============================================================================
+
+/// A `unique` (or `key`) constraint is scoped to the element instance that
+/// declares it. The same field value may legally repeat under *sibling*
+/// scoping elements. The streaming engine previously tracked uniqueness in a
+/// single table keyed by constraint name, so a value appearing once in each
+/// sibling scope was falsely reported as a duplicate (the DOM engine scoped
+/// correctly). Both engines must accept this document. Regression for the
+/// W3C `uniqueTestName` (introspection test-set) cluster.
+#[test]
+fn unique_is_scoped_per_declaring_element_instance() {
+    use std::sync::Arc;
+    const SCHEMA: &[u8] = br#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="group" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="group">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="item" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:attribute name="name" type="xs:string"/>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+    <xs:unique name="uniqueItemName">
+      <xs:selector xpath="item"/>
+      <xs:field xpath="@name"/>
+    </xs:unique>
+  </xs:element>
+</xs:schema>"#;
+    // "a" and "b" repeat across the two groups (legal), unique within each.
+    const VALID: &str = r#"<root>
+  <group><item name="a"/><item name="b"/></group>
+  <group><item name="a"/><item name="b"/></group>
+</root>"#;
+    // "a" repeats *within* the first group (illegal).
+    const INVALID: &str = r#"<root>
+  <group><item name="a"/><item name="a"/></group>
+  <group><item name="b"/></group>
+</root>"#;
+
+    let schema = Arc::new(Schema::from_xsd(SCHEMA).expect("schema"));
+
+    for (xml, want_valid) in [(VALID, true), (INVALID, false)] {
+        let doc = fastxml::Parser::from(xml).parse().expect("parse");
+        let dom = fastxml::schema::Validator::from(&doc)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("dom")
+            .into_entries()
+            .is_empty();
+        let stream = fastxml::schema::Validator::from(xml.as_bytes())
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("stream")
+            .into_entries()
+            .is_empty();
+        assert_eq!(dom, want_valid, "DOM verdict wrong for: {xml}");
+        assert_eq!(stream, want_valid, "streaming verdict wrong for: {xml}");
+    }
+}

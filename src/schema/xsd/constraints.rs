@@ -339,6 +339,24 @@ impl ConstraintValidator {
         set.add(value)
     }
 
+    /// Records a key/unique value into the shared, name-keyed table purely so
+    /// later keyrefs can resolve against it, without performing a uniqueness
+    /// check. Uniqueness is scope-local and must be enforced by the caller per
+    /// scoping-element instance; the shared table deliberately unions values
+    /// across all instances of a constraint (mirroring the DOM engine, which
+    /// checks `seen` per scope but merges into name-keyed tables for keyref).
+    pub fn record_key_value(&mut self, constraint: &IdentityConstraint, value: KeyValue) {
+        if constraint.constraint_type == ConstraintType::Unique && value.has_null() {
+            return;
+        }
+        let set = self
+            .key_values
+            .entry(constraint.name.clone())
+            .or_insert_with(|| KeyValueSet::new(&constraint.name, constraint.fields.len()));
+        // Ignore the duplicate result: the table is a union for keyref lookup.
+        let _ = set.add(value);
+    }
+
     /// Adds a keyref value to be validated at the end.
     pub fn add_keyref_value(&mut self, constraint: &IdentityConstraint, value: KeyValue) {
         if let Some(refer) = &constraint.refer {
