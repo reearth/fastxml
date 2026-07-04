@@ -292,6 +292,7 @@ impl<R: BufRead> StreamingParser<R> {
         F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
         let mut buffer = Vec::with_capacity(8 * 1024);
+        let mut checker = crate::parser::checks::WellformedChecker::new();
 
         loop {
             let event_result = self.reader.read_event_into(&mut buffer);
@@ -300,6 +301,7 @@ impl<R: BufRead> StreamingParser<R> {
 
             match event_result {
                 Ok(Event::Start(ref e)) => {
+                    checker.start(e)?;
                     let (name, prefix, attributes, namespace_decls) =
                         split_start_event(e, &self.entities)?;
                     on_event(&RawEvent::StartElement {
@@ -312,6 +314,7 @@ impl<R: BufRead> StreamingParser<R> {
                     })?;
                 }
                 Ok(Event::Empty(ref e)) => {
+                    checker.start(e)?;
                     let (name, prefix, attributes, namespace_decls) =
                         split_start_event(e, &self.entities)?;
                     on_event(&RawEvent::StartElement {
@@ -322,12 +325,14 @@ impl<R: BufRead> StreamingParser<R> {
                         line: Some(line),
                         column: Some(column),
                     })?;
+                    // An empty-element tag opens and immediately closes.
+                    checker.end(name)?;
                     on_event(&RawEvent::EndElement { name, prefix })?;
                 }
                 Ok(Event::End(ref e)) => {
                     let qname = e.name();
                     let full_name = std::str::from_utf8(qname.as_ref())?;
-                    crate::parser::wellformed::check_name(full_name, "element name")?;
+                    checker.end(full_name)?;
                     let (prefix, name) = crate::namespace::split_qname(full_name);
                     on_event(&RawEvent::EndElement { name, prefix })?;
                 }
@@ -335,10 +340,7 @@ impl<R: BufRead> StreamingParser<R> {
                     // Check the raw (pre-unescape) text so literal illegal
                     // characters are caught while `&#…;` references (legal in
                     // XML 1.1) pass through as plain ASCII.
-                    crate::parser::wellformed::check_chars(
-                        std::str::from_utf8(e.as_ref())?,
-                        "text content",
-                    )?;
+                    checker.text(std::str::from_utf8(e.as_ref())?)?;
                     let text = e
                         .unescape_with(|name| {
                             self.entities
@@ -355,17 +357,17 @@ impl<R: BufRead> StreamingParser<R> {
                 }
                 Ok(Event::CData(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
-                    crate::parser::wellformed::check_chars(text, "CDATA section")?;
+                    checker.cdata(text)?;
                     on_event(&RawEvent::CData(text))?;
                 }
                 Ok(Event::Comment(ref e)) => {
                     let text = std::str::from_utf8(e.as_ref())?;
-                    crate::parser::wellformed::check_chars(text, "comment")?;
+                    checker.comment(text)?;
                     on_event(&RawEvent::Comment(text))?;
                 }
                 Ok(Event::PI(ref e)) => {
                     let content = std::str::from_utf8(e.as_ref())?;
-                    crate::parser::wellformed::check_chars(content, "processing instruction")?;
+                    checker.pi(content)?;
                     let mut parts = content.splitn(2, char::is_whitespace);
                     let target = parts.next().unwrap_or("");
                     let pi_content = parts.next().map(str::trim);
@@ -375,6 +377,7 @@ impl<R: BufRead> StreamingParser<R> {
                     })?;
                 }
                 Ok(Event::Decl(ref e)) => {
+                    checker.decl(std::str::from_utf8(e.as_ref())?)?;
                     let version = e
                         .version()
                         .ok()
@@ -396,11 +399,12 @@ impl<R: BufRead> StreamingParser<R> {
                 Ok(Event::DocType(ref e)) => {
                     // Collect internal-subset general entity declarations
                     if let Ok(text) = std::str::from_utf8(e.as_ref()) {
-                        crate::parser::wellformed::check_chars(text, "document type declaration")?;
+                        checker.doctype(text)?;
                         self.entities = crate::parser::entities::parse_internal_entities(text);
                     }
                 }
                 Ok(Event::Eof) => {
+                    checker.eof()?;
                     on_event(&RawEvent::Eof)?;
                     break;
                 }
@@ -469,7 +473,8 @@ fn split_start_event<'a>(
     smallvec::SmallVec<[Namespace; 2]>,
 )> {
     let full_name = std::str::from_utf8(e.name().into_inner())?;
-    crate::parser::wellformed::check_name(full_name, "element name")?;
+    // Name and character well-formedness were validated by
+    // `WellformedChecker::start` before this function ran.
     let (prefix, name) = crate::namespace::split_qname(full_name);
 
     let mut namespace_decls: smallvec::SmallVec<[Namespace; 2]> = smallvec::SmallVec::new();
@@ -479,13 +484,6 @@ fn split_start_event<'a>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.into_inner())?;
-        crate::parser::wellformed::check_name(key, "attribute name")?;
-        // Raw value: literal characters must be legal, while `&#…;` references
-        // (legal in XML 1.1) pass through as plain ASCII.
-        crate::parser::wellformed::check_chars(
-            std::str::from_utf8(attr.value.as_ref())?,
-            "attribute value",
-        )?;
         let value = attr
             .unescape_value_with(|name| {
                 entities

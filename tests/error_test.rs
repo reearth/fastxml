@@ -1,7 +1,6 @@
 //! Tests for error handling with malformed XML and validation violations.
 
 use fastxml::error::Error;
-use fastxml::node::error::NodeError;
 use fastxml::parser::error::ParseError;
 use fastxml::xpath::error::{XPathEvalError, XPathSyntaxError};
 use fastxml::{Parser, ParserOptions};
@@ -17,9 +16,11 @@ mod malformed_xml {
     fn test_unclosed_tag() {
         let xml = "<root><child>";
         let result = Parser::from(xml).parse();
-        // quick-xml is lenient with unclosed tags at EOF
-        // Document parses but may have incomplete structure
-        assert!(result.is_ok());
+        // An element left unclosed at EOF is not well-formed.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for an unclosed element, got: {result:?}"
+        );
     }
 
     #[test]
@@ -207,18 +208,22 @@ mod malformed_xml {
     fn test_invalid_xml_declaration() {
         let xml = r#"<?xml version="2.0"?><root/>"#;
         let result = Parser::from(xml).parse();
-        // quick-xml doesn't validate XML version
-        assert!(result.is_ok(), "quick-xml accepts version 2.0");
+        // VersionNum is '1.' [0-9]+ (XML 1.0 P26); "2.0" is not well-formed.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for version 2.0, got: {result:?}"
+        );
     }
 
     #[test]
     fn test_xml_declaration_not_at_start() {
         let xml = " <?xml version=\"1.0\"?><root/>";
         let result = Parser::from(xml).parse();
-        // quick-xml is lenient about whitespace before declaration
+        // The XML declaration must be the very first thing in the document; even
+        // leading white space makes it not well-formed.
         assert!(
-            result.is_ok(),
-            "quick-xml accepts whitespace before declaration"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for a declaration not at the start, got: {result:?}"
         );
     }
 
@@ -226,26 +231,21 @@ mod malformed_xml {
     fn test_multiple_root_elements() {
         let xml = "<root1/><root2/>";
         let result = Parser::from(xml).parse();
-        // quick-xml only parses the first root
-        assert!(result.is_ok());
-        let doc = result.unwrap();
-        let root = doc.get_root_element().unwrap();
-        assert_eq!(root.get_name(), "root1");
+        // A document may contain only one root element.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for a second root element, got: {result:?}"
+        );
     }
 
     #[test]
     fn test_empty_input() {
         let xml = "";
         let result = Parser::from(xml).parse();
-        // Empty input is accepted but has no root
-        assert!(result.is_ok());
-        let doc = result.unwrap();
+        // A well-formed document must contain a root element.
         assert!(
-            matches!(
-                doc.get_root_element(),
-                Err(Error::Node(NodeError::NoRootElement))
-            ),
-            "Empty doc should have no root"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Empty input should be rejected (no document element), got: {result:?}"
         );
     }
 
@@ -253,14 +253,9 @@ mod malformed_xml {
     fn test_whitespace_only() {
         let xml = "   \n\t  ";
         let result = Parser::from(xml).parse();
-        assert!(result.is_ok());
-        let doc = result.unwrap();
         assert!(
-            matches!(
-                doc.get_root_element(),
-                Err(Error::Node(NodeError::NoRootElement))
-            ),
-            "Whitespace-only doc should have no root"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Whitespace-only input should be rejected (no document element), got: {result:?}"
         );
     }
 
@@ -268,14 +263,9 @@ mod malformed_xml {
     fn test_comment_only() {
         let xml = "<!-- just a comment -->";
         let result = Parser::from(xml).parse();
-        assert!(result.is_ok());
-        let doc = result.unwrap();
         assert!(
-            matches!(
-                doc.get_root_element(),
-                Err(Error::Node(NodeError::NoRootElement))
-            ),
-            "Comment-only doc should have no root"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Comment-only input should be rejected (no document element), got: {result:?}"
         );
     }
 
@@ -316,11 +306,11 @@ mod malformed_xml {
     fn test_cdata_end_in_cdata() {
         let xml = "<root><![CDATA[contains ]]> in middle]]></root>";
         let result = Parser::from(xml).parse();
-        // ]]> inside CDATA ends it early, but quick-xml handles this gracefully
-        // and parses the rest as text/another CDATA
+        // The CDATA ends at the first ']]>'; the following ' in middle]]>' is
+        // character data, and the literal ']]>' there is not well-formed.
         assert!(
-            result.is_ok(),
-            "CDATA with ]]> inside is handled gracefully"
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for ']]>' in character data, got: {result:?}"
         );
     }
 
@@ -336,8 +326,11 @@ mod malformed_xml {
     fn test_xml_reserved_prefix() {
         let xml = r#"<xml:element xmlns:xml="http://wrong.url"/>"#;
         let result = Parser::from(xml).parse();
-        // quick-xml doesn't validate xml prefix namespace
-        assert!(result.is_ok(), "quick-xml doesn't validate xml prefix");
+        // The 'xml' prefix may only be bound to the XML namespace.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for a misbound 'xml' prefix, got: {result:?}"
+        );
     }
 
     #[test]
@@ -570,13 +563,11 @@ mod xpath_errors {
 
     #[test]
     fn test_xpath_on_empty_document() {
-        let doc = Parser::from("").parse().unwrap();
-        let result = doc.query("/root");
-        // XPath on empty doc returns NodeNotFound error (no root element)
+        // An empty document is now rejected at parse time (no root element).
+        let result = Parser::from("").parse();
         assert!(
-            matches!(result, Err(Error::Node(NodeError::NoRootElement))),
-            "Expected Node error, got: {:?}",
-            result
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for an empty document, got: {result:?}"
         );
     }
 }
@@ -592,8 +583,11 @@ mod streaming_errors {
     fn test_streaming_malformed_xml() {
         let xml = "<root><unclosed>";
         let result = Parser::from(xml).for_each_event(|_event| Ok(()));
-        // Unclosed tags at EOF: quick-xml is lenient
-        assert!(result.is_ok(), "Streaming accepts unclosed tags at EOF");
+        // An element left unclosed at EOF is not well-formed.
+        assert!(
+            result.is_err(),
+            "Streaming should reject an unclosed element at EOF"
+        );
     }
 
     #[test]
@@ -607,7 +601,11 @@ mod streaming_errors {
     fn test_streaming_empty_input() {
         let xml = "";
         let result = Parser::from(xml).for_each_event(|_event| Ok(()));
-        assert!(result.is_ok(), "Empty input should be handled gracefully");
+        // A well-formed document must contain a root element.
+        assert!(
+            result.is_err(),
+            "Streaming should reject empty input (no document element)"
+        );
     }
 
     #[test]

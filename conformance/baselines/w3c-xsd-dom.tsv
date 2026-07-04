@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37146	fail=2024	unsupported=28	blocked=415	panic=0
+#counts	total=39613	pass=37144	fail=2022	unsupported=28	blocked=419	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -455,7 +455,7 @@ instance-invalid	xsd021::sunMeta/../sunData/combined/xsd021/xsd021.n09.xml	block
 instance-invalid	xsd021::sunMeta/../sunData/combined/xsd021/xsd021.n10.xml	blocked	schema failed to compile
 instance-invalid	xsd021::sunMeta/../sunData/combined/xsd021/xsd021.n11.xml	blocked	schema failed to compile
 instance-invalid	xsd022::sunMeta/../sunData/combined/xsd022/xsd022.n00.xml	fail	expected invalid but validator accepted it
-instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n01.xml	fail	expected invalid but validator accepted it
+instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n01.xml	blocked	parse error: not well-formed: character reference '&#xc;' denotes an illegal character in text content
 instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n02.xml	fail	expected invalid but validator accepted it
 instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n03.xml	fail	expected invalid but validator accepted it
 instance-invalid	xv100notc::saxonMeta/../saxonData/XmlVersions/xv100.c.xml	fail	expected invalid but validator accepted it
@@ -851,8 +851,10 @@ instance-valid	xsd012::sunMeta/../sunData/combined/xsd012/xsd012.v00.xml	fail	ex
 instance-valid	xsd021::sunMeta/../sunData/combined/xsd021/xsd021.v00.xml	blocked	schema failed to compile
 instance-valid	xsd024::sunMeta/../sunData/combined/xsd024/xsd024.xml	blocked	schema failed to compile
 instance-valid	xv001::saxonMeta/../saxonData/XmlVersions/xv001.v01.xml	blocked	parse error: not well-formed: illegal element name character U+0133 in name 'Dĳkstra'
-instance-valid	xv003::saxonMeta/../saxonData/XmlVersions/xv003.v01.xml	fail	expected valid but validator reported errors
+instance-valid	xv003::saxonMeta/../saxonData/XmlVersions/xv003.v01.xml	blocked	parse error: not well-formed: character reference '&#x0c;' denotes an illegal character in attribute value
 instance-valid	xv004::saxonMeta/../saxonData/XmlVersions/xv004.v01.xml	blocked	parse error: not well-formed: illegal element name character U+0133 in name 'Dĳkstra'
+instance-valid	xv006::saxonMeta/../saxonData/XmlVersions/xv006.v01.xml	blocked	parse error: not well-formed: character reference '&#x07;' denotes an illegal character in text content
+instance-valid	xv008::saxonMeta/../saxonData/XmlVersions/xv008.v01.xml	blocked	parse error: not well-formed: character reference '&#x07;' denotes an illegal character in text content
 schema-indeterminate	addB064::msMeta/../msData/additional/test73722.xsd	unsupported	indeterminate
 schema-indeterminate	addB071::msMeta/../msData/additional/test65026.xsd	unsupported	indeterminate
 schema-indeterminate	addC002::msMeta/../msData/additional/adhocAddC002.xsd	unsupported	indeterminate

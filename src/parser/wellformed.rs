@@ -41,6 +41,102 @@ pub(crate) fn check_chars(s: &str, context: &str) -> Result<(), ParseError> {
     Ok(())
 }
 
+/// Validates character data in a single pass: every character satisfies the
+/// `Char` production, the sequence `]]>` does not appear literally, and every
+/// `&#…` is a well-formed character reference to a legal character.
+///
+/// This fuses [`check_chars`], the `]]>` check, and [`check_char_refs`] into one
+/// traversal, which matters on the hot path where large text nodes and many
+/// small whitespace nodes would otherwise be scanned several times.
+pub(crate) fn check_text(s: &str, context: &str) -> Result<(), ParseError> {
+    // Number of consecutive `]` immediately preceding the current position.
+    let mut brackets: usize = 0;
+    for (i, c) in s.char_indices() {
+        if !is_xml_char(c) {
+            return Err(ParseError::NotWellFormed {
+                message: format!("illegal XML character U+{:04X} in {context}", c as u32),
+            });
+        }
+        match c {
+            ']' => brackets += 1,
+            '>' => {
+                if brackets >= 2 {
+                    return Err(ParseError::NotWellFormed {
+                        message: format!("the sequence ']]>' is not allowed in {context}"),
+                    });
+                }
+                brackets = 0;
+            }
+            '&' => {
+                brackets = 0;
+                // Only character references (`&#…`) are validated here; a bare
+                // general-entity reference is resolved (and its existence
+                // checked) elsewhere.
+                if s[i + 1..].starts_with('#') {
+                    check_char_refs(&s[i..], context)?;
+                }
+            }
+            _ => brackets = 0,
+        }
+    }
+    Ok(())
+}
+
+/// Rejects malformed or illegal character references (`CharRef`, XML 1.0 P66)
+/// appearing in `s`.
+///
+/// ```text
+/// CharRef ::= '&#' [0-9]+ ';' | '&#x' [0-9a-fA-F]+ ';'
+/// ```
+///
+/// Every `&#…` must be a syntactically complete decimal or hexadecimal
+/// reference terminated by `;`, and the referenced code point must satisfy the
+/// [`Char`](is_xml_char) production. General entity references (`&name;`) are
+/// left untouched — only `&#` sequences are inspected — so this may be run on
+/// raw, pre-unescape text without misjudging entity references. `context` names
+/// where the text came from, for the error message.
+pub(crate) fn check_char_refs(s: &str, context: &str) -> Result<(), ParseError> {
+    let mut rest = s;
+    while let Some(pos) = rest.find("&#") {
+        let after = &rest[pos + 2..];
+        let (hex, digits_and_rest) = match after.strip_prefix(['x', 'X']) {
+            Some(d) => (true, d),
+            None => (false, after),
+        };
+        let n: usize = digits_and_rest
+            .chars()
+            .take_while(|c| {
+                if hex {
+                    c.is_ascii_hexdigit()
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+            .map(char::len_utf8)
+            .sum();
+        let (digits, tail) = digits_and_rest.split_at(n);
+        if digits.is_empty() || !tail.starts_with(';') {
+            return Err(ParseError::NotWellFormed {
+                message: format!("malformed character reference in {context}"),
+            });
+        }
+        let legal = u32::from_str_radix(digits, if hex { 16 } else { 10 })
+            .ok()
+            .and_then(char::from_u32)
+            .is_some_and(is_xml_char);
+        if !legal {
+            return Err(ParseError::NotWellFormed {
+                message: format!(
+                    "character reference '&#{}{digits};' denotes an illegal character in {context}",
+                    if hex { "x" } else { "" }
+                ),
+            });
+        }
+        rest = &tail[1..];
+    }
+    Ok(())
+}
+
 /// Rejects any `name` that violates the XML 1.0 `Name` production (P5):
 ///
 /// ```text
@@ -317,6 +413,47 @@ mod tests {
         assert!(check_name("_x.y-z0", "element name").is_ok());
         assert!(check_name("日本語", "element name").is_ok());
         assert!(check_name("café", "element name").is_ok());
+    }
+
+    #[test]
+    fn check_text_fuses_all_rules() {
+        assert!(check_text("plain text 123", "text").is_ok());
+        assert!(check_text("a]]b] ]] c", "text").is_ok()); // brackets without '>'
+        assert!(check_text("x &#60; y &#x41;", "text").is_ok());
+        assert!(check_text("&amp; &foo;", "text").is_ok()); // entity refs untouched
+        // ']]>' is forbidden.
+        assert!(check_text("a]]>b", "text").is_err());
+        assert!(check_text("]]]>", "text").is_err());
+        // Illegal character.
+        assert!(check_text("a\u{0}b", "text").is_err());
+        // Malformed / illegal character reference.
+        assert!(check_text("&#xB;", "text").is_err());
+        assert!(check_text("&#56.0;", "text").is_err());
+    }
+
+    #[test]
+    fn char_refs_accept_well_formed() {
+        assert!(check_char_refs("a &#60; b &#x41; c", "text").is_ok());
+        assert!(check_char_refs("no refs here", "text").is_ok());
+        // A bare general-entity reference is not a character reference.
+        assert!(check_char_refs("&amp; &foo;", "text").is_ok());
+        assert!(check_char_refs("&#x10FFFF;", "text").is_ok());
+    }
+
+    #[test]
+    fn char_refs_reject_malformed_or_illegal() {
+        // Missing terminator.
+        assert!(check_char_refs("x &#x003a", "text").is_err());
+        // Non-digit in the reference.
+        assert!(check_char_refs("&#56.0;", "text").is_err());
+        assert!(check_char_refs("&#x00/2f;", "text").is_err());
+        // Empty reference.
+        assert!(check_char_refs("&#;", "text").is_err());
+        // Illegal character value (NUL, C0 control, surrogate, out of range).
+        assert!(check_char_refs("&#0;", "text").is_err());
+        assert!(check_char_refs("&#xB;", "text").is_err());
+        assert!(check_char_refs("&#xD800;", "text").is_err());
+        assert!(check_char_refs("&#x110000;", "text").is_err());
     }
 
     #[test]

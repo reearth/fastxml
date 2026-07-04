@@ -662,18 +662,25 @@ change in library behaviour must land with an updated baseline. See
 
 | Category | Pass rate | pass | fail | unsupported |
 |----------|-----------|------|------|-------------|
-| valid documents          | 93.2% | 383 | 28  | 401 |
-| invalid documents (DTD)  | 96.7% | 208 | 7   | 27  |
-| not-well-formed          | 26.2% | 319 | 897 | 282 |
-| error (optional)         | —     | 0   | 0   | 33  |
-| **overall**              | **49.4%** | **910** | **932** | **743** |
+| valid documents          | 93.2% | 383  | 28  | 401 |
+| invalid documents (DTD)  | 96.7% | 208  | 7   | 27  |
+| not-well-formed          | 89.7% | 1091 | 125 | 282 |
+| error (optional)         | —     | 0    | 0   | 33  |
+| **overall**              | **91.3%** | **1682** | **160** | **743** |
 
-The streaming engine is within a few tests of DOM (overall 49.0%).
-`unsupported` is dominated by XML 1.1 / 5th-edition-only tests and non-UTF-8
-encodings, which fastxml does not target (it targets XML 1.0 4th edition, UTF-8).
-The low not-well-formed rate is the honest headline: fastxml is a lenient,
-non-validating parser and accepts many malformed documents — DTD-internal-subset
-well-formedness and entity constraints are not checked (see the roadmap).
+The streaming engine is within a few tests of DOM (overall 91.2%; not-well-formed
+1089 pass / 127 fail). `unsupported` is dominated by XML 1.1 / 5th-edition-only
+tests and non-UTF-8 encodings, which fastxml does not target (it targets XML 1.0
+4th edition, UTF-8). Well-formedness enforcement covers the `Char` and `Name`
+productions, document structure (single root, prolog/epilog content, `]]>` in
+character data, unclosed elements), the full `DOCTYPE` internal subset
+(PI targets and `ELEMENT` / `ATTLIST` / `ENTITY` / `NOTATION` declaration
+grammar, conditional sections, `PubidLiteral` characters), character-reference
+and entity semantics (malformed/illegal references, reference cycles), the XML
+declaration, and a non-conflicting subset of the namespace constraints. The
+remaining not-well-formed failures are chiefly namespace QName / prefix-binding
+rules that would conflict with the plain XML 1.0 test suite, and constructs that
+require full entity expansion and re-parsing (see the roadmap).
 
 ### W3C XSD — 39,613 tests, DOM engine
 
@@ -721,14 +728,23 @@ Known issues and planned improvements, roughly in priority order:
 
 **XML parsing**
 
-- Stricter not-well-formed detection (26% of W3C not-wf tests pass under the
-  honest denominator). The `Char` production is enforced, and the XML 1.0 *name*
-  character classes (`BaseChar` / `CombiningChar` / `Digit` / `Extender`,
-  productions P85/P87/P88/P89, 4th edition) are enforced for element and
-  attribute names. The remaining gap is DTD / entity well-formedness (the larger
-  share — internal-subset declarations including PI targets and `<!ELEMENT>` /
-  `<!ATTLIST>` / `<!ENTITY>` names, parameter entities, and character-reference
-  legality are not yet checked).
+- Stricter not-well-formed detection (89.7% of W3C not-wf tests now pass under
+  the honest denominator, up from 26%). Enforced: the `Char` and `Name`
+  productions (XML 1.0 4th-edition character classes); document structure
+  (exactly one root, no character data or second root outside it, no literal
+  `]]>` in character data, no `<` in attribute values, no unclosed elements);
+  the `DOCTYPE` internal subset (PI targets, `<!ELEMENT>` / `<!ATTLIST>` /
+  `<!ENTITY>` / `<!NOTATION>` declaration grammar, rejection of conditional
+  sections, `PubidLiteral` character class), with conservative acceptance when a
+  parameter-entity reference could make declarations invisible; character
+  references (`&#…` syntax and legality) and internal general-entity semantics
+  (reference cycles, references to undeclared entities); the XML declaration
+  (version / encoding / standalone, ordering, position); and the namespace
+  constraints that do not clash with plain XML 1.0. Remaining gap: the namespace
+  QName / prefix-binding rules (which the OASIS XML 1.0 P04/P05 tests require to
+  be *accepted*, since `:` is an ordinary name character in XML 1.0), external
+  DTD subsets, and errors that surface only after full entity expansion and
+  re-parsing.
 
 **XPath**
 
