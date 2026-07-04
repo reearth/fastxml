@@ -5,6 +5,7 @@ mod event_handler;
 mod identity;
 mod lookup;
 mod occurrence;
+mod symbols;
 
 use std::io::BufRead;
 use std::sync::Arc;
@@ -81,9 +82,10 @@ pub struct OnePassSchemaValidator {
     /// (message, node_name) -> index into `errors`, used when
     /// `aggregate_errors` is on.
     pub(crate) aggregate_index: crate::error::ErrorAggregateIndex,
-    /// Interned element/namespace names, so per-element qualified names and
-    /// namespace URIs don't allocate on every start tag.
-    pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// Interned element/attribute names (`SymbolId`s), so per-element
+    /// qualified names don't hash/allocate on every start tag. Holds both
+    /// qualified and local names in one namespace; see [`symbols`].
+    pub(crate) symbols: symbols::SymbolTable,
     /// Reusable buffer for building qualified names.
     pub(crate) qname_buf: String,
     /// Anti-regression work counters (see [`ValidationCounters`]).
@@ -111,7 +113,7 @@ impl OnePassSchemaValidator {
             attr_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
-            name_pool: Default::default(),
+            symbols: Default::default(),
             qname_buf: String::new(),
             counters: super::ValidationCounters::default(),
         }

@@ -17,7 +17,7 @@ impl OnePassSchemaValidator {
         &self,
         schema: &'s CompiledSchema,
         name: &Arc<str>,
-        prefix: Option<&Arc<str>>,
+        prefix: Option<&str>,
         qname: &str,
         namespace_uri: Option<&str>,
     ) -> Option<&'s ElementDef> {

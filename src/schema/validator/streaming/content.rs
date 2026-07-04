@@ -16,7 +16,7 @@ impl OnePassSchemaValidator {
     pub(crate) fn validate_element(
         &mut self,
         name: &Arc<str>,
-        prefix: Option<&Arc<str>>,
+        prefix: Option<&str>,
         qualified_name: &Arc<str>,
         namespace: Option<&str>,
         attributes: &[(&str, &str)],
@@ -664,7 +664,7 @@ impl OnePassSchemaValidator {
     }
 
     /// Validates an element when it closes.
-    pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
+    pub(crate) fn validate_element_end(&mut self) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
             // Identity constraint bookkeeping (works on the popped depth)

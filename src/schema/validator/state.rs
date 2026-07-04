@@ -24,6 +24,10 @@ pub(crate) struct ValidationState {
 pub(crate) struct ElementContext {
     /// Element name (local name) - stored as Arc<str> to avoid allocation
     pub name: Arc<str>,
+    /// Interned symbol id of the element's qualified name (streaming
+    /// validator only; the DOM path leaves it at 0). Kept so per-element
+    /// resolution can be memoized by integer symbol rather than by string.
+    pub name_sym: u32,
     /// Element namespace URI (for future use)
     #[allow(dead_code)]
     pub namespace: Option<Arc<str>>,
@@ -66,6 +70,7 @@ impl ElementContext {
     pub fn new(name: Arc<str>, namespace: Option<Arc<str>>) -> Self {
         Self {
             name,
+            name_sym: 0,
             namespace,
             child_counts: SmallVec::new(),
             text_content: String::new(),
@@ -191,6 +196,18 @@ impl ValidationState {
         }
         self.element_stack
             .push(ElementContext::new(name, namespace));
+        self.depth += 1;
+    }
+
+    /// Pushes a new element, recording its interned name symbol (streaming
+    /// validator hot path).
+    pub fn push_element_sym(&mut self, name: Arc<str>, namespace: Option<Arc<str>>, name_sym: u32) {
+        if let Some(parent) = self.element_stack.last_mut() {
+            parent.increment_child_arc(&name);
+        }
+        let mut ctx = ElementContext::new(name, namespace);
+        ctx.name_sym = name_sym;
+        self.element_stack.push(ctx);
         self.depth += 1;
     }
 
