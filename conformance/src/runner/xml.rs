@@ -2,7 +2,7 @@
 
 use super::{
     AuditHistogram, EncodingVerdict, Engine, Eval, SuiteRun, panic_message, rel, sniff_encoding,
-    xml_edition_applies, xml_version_applies,
+    xml_edition_applies, xml_namespace_applies, xml_version_applies,
 };
 use crate::catalog::xmlconf::{TestType, XmlConfCatalog, XmlConfTest};
 use crate::outcome::{Outcome, TestRecord, classify_notwf_rejection, error_variant_name};
@@ -73,6 +73,15 @@ fn evaluate_xml_test(engine: Engine, test: &XmlConfTest, base: &Path) -> Eval {
     }
     if !xml_edition_applies(test.edition.as_deref()) {
         return Eval::new(Outcome::Unsupported, Some("5th-edition".into()));
+    }
+    if !xml_namespace_applies(test.namespace.as_deref()) {
+        // fastxml is always namespace-aware; a test that assumes namespace
+        // processing is off (e.g. a bare colon as an ordinary name character)
+        // cannot be run faithfully.
+        return Eval::new(
+            Outcome::Unsupported,
+            Some("namespace-processing-off not supported".into()),
+        );
     }
 
     let bytes = match std::fs::read(&test.uri) {
