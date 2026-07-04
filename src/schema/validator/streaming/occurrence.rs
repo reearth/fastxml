@@ -8,8 +8,30 @@ use crate::schema::xsd::content_automaton::StepResult;
 
 use super::super::state::ElementContext;
 use super::OnePassSchemaValidator;
+use super::bound_automaton::BoundAutomaton;
 
 impl OnePassSchemaValidator {
+    /// Returns the (memoized) symbol-bound view of `automaton`, binding its
+    /// position name sets into the validator's symbol table on first sight.
+    /// Keyed by the automaton's `Arc` pointer: automatons live for the
+    /// schema's lifetime inside `FlattenedChildren`, so the pointer is a
+    /// stable identity here.
+    fn bound_automaton_for(
+        &mut self,
+        automaton: &Arc<crate::schema::xsd::content_automaton::ContentAutomaton>,
+    ) -> Arc<BoundAutomaton> {
+        let key = Arc::as_ptr(automaton) as usize;
+        if let Some(bound) = self.bound_automatons.get(&key) {
+            return Arc::clone(bound);
+        }
+        let bound = Arc::new(BoundAutomaton::bind(
+            Arc::clone(automaton),
+            &mut self.symbols,
+        ));
+        self.bound_automatons.insert(key, Arc::clone(&bound));
+        bound
+    }
+
     /// Advances the parent's content-model automaton with this child.
     ///
     /// Returns `true` when the parent has an automaton (the legacy
@@ -17,6 +39,9 @@ impl OnePassSchemaValidator {
     /// `report` controls whether violations become errors — children
     /// admitted via wildcard modes step silently except for occurrence
     /// overflows.
+    // `local` is consumed only by the cfg(test) equivalence check against
+    // the string-based step; release builds match by symbols alone.
+    #[cfg_attr(not(test), allow(unused_variables))]
     pub(crate) fn step_parent_automaton(
         &mut self,
         qname: &str,
@@ -40,12 +65,43 @@ impl OnePassSchemaValidator {
         };
         let parent_name = parent.name.clone();
 
+        // The child was just pushed with its interned qname symbol; step the
+        // parent's automaton by symbols (integer binary searches per
+        // candidate position) instead of string-set hash probes.
+        let (qname_sym, local_sym) = {
+            let child = self
+                .state
+                .element_stack
+                .last()
+                .expect("child element was pushed before stepping");
+            let q = super::symbols::SymbolId(child.name_sym);
+            (q, self.symbols.local(q))
+        };
+        let bound = self.bound_automaton_for(&automaton);
+
         let result = {
             let parent = match self.state.element_stack.get_mut(parent_idx) {
                 Some(p) => p,
                 None => return true,
             };
-            automaton.step(&mut parent.automaton_state, qname, local, ns)
+            // Debug-only: the symbol-bound step must agree with the string
+            // step, both in result and in the resulting configuration set.
+            #[cfg(test)]
+            let mut st_check = parent.automaton_state.clone();
+            let result = bound.step_syms(&mut parent.automaton_state, qname_sym, local_sym, ns);
+            #[cfg(test)]
+            {
+                let check = automaton.step(&mut st_check, qname, local, ns);
+                debug_assert_eq!(
+                    check, result,
+                    "step_syms diverged from step for child '{qname}' in '{parent_name}'"
+                );
+                debug_assert_eq!(
+                    st_check, parent.automaton_state,
+                    "automaton configs diverged for child '{qname}' in '{parent_name}'"
+                );
+            }
+            result
         };
 
         match result {

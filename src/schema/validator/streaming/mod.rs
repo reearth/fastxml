@@ -1,5 +1,6 @@
 //! One-pass streaming schema validator implementation.
 
+mod bound_automaton;
 mod content;
 mod event_handler;
 mod identity;
@@ -99,6 +100,12 @@ pub struct OnePassSchemaValidator {
     /// `get_type` probe plus a facet-cache probe on every element close; this
     /// caches the resolved [`text::TextOp`] once per distinct type.
     pub(crate) text_op_cache: rustc_hash::FxHashMap<u32, text::TextOp>,
+    /// Symbol-bound content-model automatons keyed by the wrapped
+    /// automaton's `Arc` pointer (S6). Binding interns each position's name
+    /// set once, so per-child matching becomes `SymbolId` binary searches
+    /// instead of string-set hash probes.
+    pub(crate) bound_automatons:
+        rustc_hash::FxHashMap<usize, std::sync::Arc<bound_automaton::BoundAutomaton>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -136,6 +143,7 @@ impl OnePassSchemaValidator {
             type_ref_children: Default::default(),
             inline_cache: Default::default(),
             text_op_cache: Default::default(),
+            bound_automatons: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             symbols: Default::default(),

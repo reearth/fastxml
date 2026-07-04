@@ -115,7 +115,7 @@ pub struct ContentAutomaton {
 /// cursor tracks the *set* of feasible `(state, run)` configurations. Run
 /// counts are normalized, keeping the set tiny — for unambiguous models it
 /// stays at one entry.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomatonState {
     /// Feasible (state, consecutive-run) pairs; state 0 = start
     configs: smallvec::SmallVec<[(u32, u32); 2]>,
@@ -149,7 +149,7 @@ pub enum FinishError {
 }
 
 /// Outcome of feeding one child element to the automaton.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum StepResult {
     /// The child is admitted by the content model.
     Matched,
@@ -188,6 +188,24 @@ impl ContentAutomaton {
         local: &str,
         ns: Option<&str>,
     ) -> StepResult {
+        self.step_matched(st, |pos| self.matchers[pos].matches(name, local, ns))
+    }
+
+    /// Feeds one child element with a caller-supplied position matcher.
+    ///
+    /// This is the single implementation of the step control flow
+    /// (configuration set, run counters, `blocked_max`, run normalization);
+    /// [`Self::step`] instantiates it with the string matcher and the
+    /// streaming validator's symbol-bound automaton instantiates it with a
+    /// `SymbolId` binary-search matcher — guaranteeing identical semantics
+    /// by construction. `matches(pos)` must answer whether the child matches
+    /// position `pos`. The failure paths (expected-list construction) do not
+    /// consult the matcher, so error contents are matcher-independent.
+    pub(crate) fn step_matched(
+        &self,
+        st: &mut AutomatonState,
+        matches: impl Fn(usize) -> bool,
+    ) -> StepResult {
         let mut next: smallvec::SmallVec<[(u32, u32); 2]> = smallvec::SmallVec::new();
         let mut push = |state: u32, run: u32| {
             if !next.contains(&(state, run)) {
@@ -198,7 +216,7 @@ impl ContentAutomaton {
 
         for &(state, run) in &st.configs {
             for &target in &self.transitions[state as usize] {
-                if !self.matchers[target as usize].matches(name, local, ns) {
+                if !matches(target as usize) {
                     continue;
                 }
                 if target + 1 == state {
@@ -296,6 +314,12 @@ impl ContentAutomaton {
     /// Whether empty content is acceptable.
     pub fn accepts_empty(&self) -> bool {
         self.accepting[0]
+    }
+
+    /// The matcher per position (state = position + 1). Used by the
+    /// streaming validator to bind positions to interned symbol ids.
+    pub(crate) fn matchers(&self) -> &[PosMatcher] {
+        &self.matchers
     }
 }
 
