@@ -4,10 +4,16 @@
 //! representation (CompiledSchema).
 
 mod cache;
+mod cycles;
+mod facet_checks;
 mod validity;
 pub(crate) use cache::inherited_wildcard;
 mod particles;
 mod redefine;
+mod references;
+#[cfg(test)]
+mod references_tests;
+mod restriction;
 mod substitution;
 mod types;
 
@@ -68,9 +74,17 @@ impl XsdCompiler {
     /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
         let mut schemas = schemas;
+        let single_document = schemas.len() == 1;
+        // Namespace strictness must be computed while import/include/redefine
+        // declarations are still present in the AST.
+        let strictness = references::Strictness::compute(&schemas);
         // Apply xs:redefine before anything is registered: originals are
         // renamed and redefinitions take their place.
         redefine::apply_redefines(&mut schemas);
+
+        // Every QName reference into a fully-present (strict) namespace must
+        // resolve to a declared component.
+        references::check_references(&schemas, &strictness)?;
 
         let mut result = CompiledSchema::new();
 
@@ -128,6 +142,15 @@ impl XsdCompiler {
                 }
                 .into());
             }
+        }
+
+        // Particle-restriction legality (rcase-*) over the nested trees.
+        // Only for single-document compilation: the compiled type table keys
+        // types by prefix-qualified name, and multi-document sets can bind
+        // the same prefix to different namespaces, making base-type
+        // resolution ambiguous (and rejection unsafe).
+        if single_document {
+            restriction::check_particle_restrictions(&result)?;
         }
 
         validity::check_schema_validity(&result)?;

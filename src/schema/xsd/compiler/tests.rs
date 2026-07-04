@@ -81,6 +81,11 @@ fn test_compile_simple_type_enumeration() {
 fn test_compile_extension() {
     let xsd = r#"<?xml version="1.0"?>
     <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+        <xs:complexType name="BaseType">
+            <xs:sequence>
+                <xs:element name="core" type="xs:string"/>
+            </xs:sequence>
+        </xs:complexType>
         <xs:complexType name="ExtendedType">
             <xs:complexContent>
                 <xs:extension base="BaseType">

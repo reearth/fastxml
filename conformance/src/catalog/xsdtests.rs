@@ -233,6 +233,10 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
     let mut pending_name = String::new();
     // (version, validity) pairs from <expected> elements
     let mut pending_expected: Vec<(Option<String>, String)> = Vec::new();
+    // Depth inside a group-level <documentation> element (annotations that
+    // describe the whole testGroup, not a schemaTest/instanceTest).
+    let mut in_group_documentation = false;
+    let mut group_documentation = String::new();
 
     loop {
         let event = reader.read_event();
@@ -300,6 +304,20 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
                                 .push((attrs.get("version").cloned(), validity.clone()));
                         }
                     }
+                    "documentation" => {
+                        // Only capture the group-level annotation (not ones
+                        // nested inside schemaTest/instanceTest) and only the
+                        // first documentation element per group.
+                        if ctx == TestCtx::None
+                            && current_group
+                                .as_ref()
+                                .is_some_and(|g| g.description.is_none())
+                            && matches!(event, Ok(Event::Start(_)))
+                        {
+                            in_group_documentation = true;
+                            group_documentation.clear();
+                        }
+                    }
                     _ => {}
                 }
 
@@ -311,11 +329,30 @@ fn parse_test_set(path: &Path) -> Result<TestSet, XsdTestError> {
                     ctx = TestCtx::None;
                 }
             }
+            Ok(Event::Text(ref t)) => {
+                if in_group_documentation && let Ok(text) = t.unescape() {
+                    if !group_documentation.is_empty() {
+                        group_documentation.push(' ');
+                    }
+                    group_documentation.push_str(text.trim());
+                }
+            }
             Ok(Event::End(e)) => {
                 let local_name_bytes = e.local_name();
                 let local_name = std::str::from_utf8(local_name_bytes.as_ref()).unwrap_or("");
 
                 match local_name {
+                    "documentation" => {
+                        if in_group_documentation {
+                            in_group_documentation = false;
+                            if let Some(ref mut group) = current_group
+                                && group.description.is_none()
+                                && !group_documentation.is_empty()
+                            {
+                                group.description = Some(std::mem::take(&mut group_documentation));
+                            }
+                        }
+                    }
                     "schemaTest" => {
                         if ctx == TestCtx::Schema
                             && let Some(ref mut group) = current_group

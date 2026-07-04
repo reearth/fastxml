@@ -12,9 +12,13 @@ fn test_invalid_xsd_syntax() {
             <xs:element name="test" type="xs:nonexistent"/>
         </xs:schema>"#;
 
-    // Schema parsing should succeed, type resolution happens later
+    // xs:nonexistent is not a built-in XSD type; the reference-integrity
+    // pass rejects the schema at compile time.
     let result = Schema::from_xsd(xsd.as_bytes());
-    assert!(result.is_ok());
+    assert!(
+        result.is_err(),
+        "reference to xs:nonexistent must be rejected"
+    );
 }
 
 #[test]
@@ -92,12 +96,9 @@ fn test_xsd_circular_type_reference() {
         </xs:schema>"#;
 
     let result = Schema::from_xsd(xsd.as_bytes());
-    // XSD parser accepts circular type references during parsing
-    // Type resolution happens lazily during validation
-    assert!(
-        result.is_ok(),
-        "Parser accepts circular type references during parsing"
-    );
+    // Circular type derivation violates ct-props-correct; the compiler
+    // rejects the schema.
+    assert!(result.is_err(), "circular type derivation must be rejected");
 }
 
 #[test]

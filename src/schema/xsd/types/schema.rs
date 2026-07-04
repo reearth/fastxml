@@ -21,6 +21,8 @@ pub struct XsdSchema {
     pub version: Option<String>,
     /// Default block constraint for elements/types (blockDefault attribute)
     pub block_default: Option<super::complex::DerivationControl>,
+    /// Default final constraint for elements/types (finalDefault attribute)
+    pub final_default: Option<super::complex::DerivationControl>,
     /// Import declarations
     pub imports: Vec<XsdImport>,
     /// Include declarations

@@ -9,6 +9,8 @@ pub struct XsdSimpleType {
     pub name: Option<String>,
     /// Content definition
     pub content: XsdSimpleTypeContent,
+    /// Final constraint (blocks restriction/list/union derivation)
+    pub final_: Option<super::complex::DerivationControl>,
 }
 
 impl XsdSimpleType {
@@ -17,6 +19,7 @@ impl XsdSimpleType {
         Self {
             name: Some(name.into()),
             content: XsdSimpleTypeContent::Restriction(XsdSimpleRestriction::default()),
+            final_: None,
         }
     }
 
@@ -25,6 +28,7 @@ impl XsdSimpleType {
         Self {
             name: None,
             content: XsdSimpleTypeContent::Restriction(XsdSimpleRestriction::default()),
+            final_: None,
         }
     }
 }

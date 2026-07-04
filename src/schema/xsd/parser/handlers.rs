@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use crate::error::Result;
 use crate::schema::xsd::types::*;
 
+use super::XsdParser;
 use super::helpers::{XSD_NAMESPACE, parse_occurs};
 use super::stack_frame::StackFrame;
-use super::{ChildState, XsdParser};
 
 /// Parses a `block` / `final` attribute value into a [`DerivationControl`].
 fn parse_derivation_control(value: &str) -> DerivationControl {
@@ -20,6 +20,8 @@ fn parse_derivation_control(value: &str) -> DerivationControl {
             "extension" => Some(DerivationType::Extension),
             "restriction" => Some(DerivationType::Restriction),
             "substitution" => Some(DerivationType::Substitution),
+            "list" => Some(DerivationType::List),
+            "union" => Some(DerivationType::Union),
             _ => None,
         })
         .collect();
@@ -88,6 +90,19 @@ impl XsdParser {
 
         let local = self.xsd_local_name(name);
         let attr_map = super::helpers::parse_attributes(attrs);
+
+        // XML Schema versioning (the `vc:` namespace): prune declarations
+        // whose version-control conditions exclude this processor, exactly
+        // like annotation content is skipped. Pruning happens *before* the
+        // structural rules — a pruned declaration takes no part in duplicate
+        // or placement checks.
+        if local != "schema" && self.pruned_by_versioning(attrs) {
+            self.stack.push(StackFrame::Annotation);
+            // Balance the ChildState that the skip-unwind path pops.
+            self.push_child_state(local, &attr_map);
+            self.skip_depth = 1;
+            return Ok(());
+        }
 
         self.check_structural_rules(local, &attr_map)?;
 
@@ -195,323 +210,6 @@ impl XsdParser {
         Ok(())
     }
 
-    /// Enforces schema-for-schemas structural rules at element start:
-    /// `id` attribute validity and document-wide uniqueness, annotation
-    /// placement (at most one, first child, except under xs:schema /
-    /// xs:redefine), and xs:notation placement (top level only).
-    fn check_structural_rules(
-        &mut self,
-        local: &str,
-        attrs: &HashMap<String, String>,
-    ) -> Result<()> {
-        use crate::schema::error::SchemaError;
-        use crate::schema::xsd::primitive::PrimitiveKind;
-
-        // id attributes are xs:ID: valid NCName, unique per document.
-        if let Some(id) = attrs.get("id") {
-            if PrimitiveKind::Ncname.validate(id).is_err() {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("id attribute '{}' is not a valid NCName", id),
-                }
-                .into());
-            }
-            if !self.seen_ids.insert(id.clone()) {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("duplicate id attribute value '{}'", id),
-                }
-                .into());
-            }
-        }
-
-        // Inside a simple-type restriction, only facets / annotation /
-        // an inline simpleType are allowed as children.
-        if matches!(self.stack.last(), Some(StackFrame::SimpleRestriction(_)))
-            && !matches!(
-                local,
-                "annotation"
-                    | "simpleType"
-                    | "enumeration"
-                    | "pattern"
-                    | "length"
-                    | "minLength"
-                    | "maxLength"
-                    | "minInclusive"
-                    | "maxInclusive"
-                    | "minExclusive"
-                    | "maxExclusive"
-                    | "totalDigits"
-                    | "fractionDigits"
-                    | "whiteSpace"
-                    | "explicitTimezone"
-                    | "assertion" // XSD 1.1 facet; ignored but not rejected
-            )
-        {
-            return Err(SchemaError::InvalidSchema {
-                message: format!(
-                    "element '{}' is not allowed inside a simple type restriction",
-                    local
-                ),
-            }
-            .into());
-        }
-
-        // Identity constraints: only allowed inside xs:element, with
-        // schema-wide unique NCName names; refer is keyref-only (and
-        // required there).
-        if matches!(local, "unique" | "key" | "keyref") {
-            if !matches!(self.stack.last(), Some(StackFrame::Element(_))) {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("'{}' is only allowed inside an element declaration", local),
-                }
-                .into());
-            }
-            let Some(name) = attrs.get("name") else {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("'{}' requires a 'name' attribute", local),
-                }
-                .into());
-            };
-            if crate::schema::xsd::primitive::PrimitiveKind::Ncname
-                .validate(name)
-                .is_err()
-            {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("identity constraint name '{}' is not a valid NCName", name),
-                }
-                .into());
-            }
-            if !self.seen_constraint_names.insert(name.clone()) {
-                return Err(SchemaError::InvalidSchema {
-                    message: format!("duplicate identity constraint name '{}'", name),
-                }
-                .into());
-            }
-            match (local, attrs.contains_key("refer")) {
-                ("keyref", false) => {
-                    return Err(SchemaError::InvalidSchema {
-                        message: "keyref requires a 'refer' attribute".to_string(),
-                    }
-                    .into());
-                }
-                ("unique" | "key", true) => {
-                    return Err(SchemaError::InvalidSchema {
-                        message: format!("'{}' does not allow a 'refer' attribute", local),
-                    }
-                    .into());
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(parent) = self.child_state_stack.last_mut() {
-            let parent_allows_repeat = parent.name == "schema" || parent.name == "redefine";
-            if local == "annotation" {
-                if !parent_allows_repeat {
-                    if parent.annotations >= 1 {
-                        return Err(SchemaError::InvalidSchema {
-                            message: format!("multiple annotation elements in '{}'", parent.name),
-                        }
-                        .into());
-                    }
-                    if parent.children_seen > 0 {
-                        return Err(SchemaError::InvalidSchema {
-                            message: format!(
-                                "annotation must be the first child of '{}'",
-                                parent.name
-                            ),
-                        }
-                        .into());
-                    }
-                }
-                parent.annotations += 1;
-            } else {
-                if local == "notation" && !parent_allows_repeat {
-                    return Err(SchemaError::InvalidSchema {
-                        message: "notation is only allowed at the top level of a schema"
-                            .to_string(),
-                    }
-                    .into());
-                }
-                parent.children_seen += 1;
-            }
-        }
-
-        self.check_content_model_rules(local, attrs)?;
-
-        self.child_state_stack.push(ChildState {
-            name: local.to_string(),
-            children_seen: 0,
-            annotations: 0,
-            particles: 0,
-            derivations: 0,
-            any_attributes: 0,
-            selectors: 0,
-            fields: 0,
-        });
-        Ok(())
-    }
-
-    /// Enforces per-element content rules from the schema for schemas:
-    /// which children an XSD element admits, how many, and which attributes
-    /// are required.
-    fn check_content_model_rules(
-        &mut self,
-        local: &str,
-        attrs: &HashMap<String, String>,
-    ) -> Result<()> {
-        use crate::schema::error::SchemaError;
-
-        let err =
-            |message: String| -> Result<()> { Err(SchemaError::InvalidSchema { message }.into()) };
-
-        // Required attributes on the element itself.
-        match local {
-            "notation" => {
-                // Per the XSD 1.0 errata, at least one of public/system.
-                if !attrs.contains_key("name")
-                    || (!attrs.contains_key("public") && !attrs.contains_key("system"))
-                {
-                    return err(
-                        "notation requires 'name' and at least one of 'public'/'system'"
-                            .to_string(),
-                    );
-                }
-            }
-            "selector" | "field" => {
-                if !attrs.contains_key("xpath") {
-                    return err(format!("{} requires an 'xpath' attribute", local));
-                }
-            }
-            "element" | "attribute" => {
-                if !attrs.contains_key("name") && !attrs.contains_key("ref") {
-                    return err(format!("{} requires a 'name' or 'ref' attribute", local));
-                }
-                if attrs.contains_key("default") && attrs.contains_key("fixed") {
-                    return err(format!("{} cannot have both 'default' and 'fixed'", local));
-                }
-                if local == "attribute"
-                    && attrs.contains_key("default")
-                    && attrs.get("use").is_some_and(|u| u != "optional")
-                {
-                    return err(
-                        "attribute with a default value must have use='optional'".to_string()
-                    );
-                }
-            }
-            _ => {}
-        }
-
-        let is_particle = matches!(local, "group" | "all" | "choice" | "sequence");
-
-        let Some(parent) = self.child_state_stack.last_mut() else {
-            return Ok(());
-        };
-
-        if local == "anyAttribute" {
-            if parent.any_attributes > 0 {
-                return err(format!(
-                    "at most one anyAttribute is allowed in '{}'",
-                    parent.name
-                ));
-            }
-            parent.any_attributes += 1;
-        }
-
-        match parent.name.as_str() {
-            // complexType admits one of: simpleContent | complexContent |
-            // one particle (plus attributes etc.).
-            "complexType" => {
-                if matches!(local, "simpleContent" | "complexContent") {
-                    // children_seen already includes this child
-                    if parent.derivations > 0 || parent.particles > 0 || parent.children_seen > 1 {
-                        return err(format!(
-                            "complexType with {} content cannot have other children",
-                            local
-                        ));
-                    }
-                    parent.derivations += 1;
-                } else if is_particle {
-                    if parent.derivations > 0 || parent.particles > 0 {
-                        return err(format!(
-                            "complexType allows only one content child, found extra '{}'",
-                            local
-                        ));
-                    }
-                    parent.particles += 1;
-                } else if local != "annotation" && parent.derivations > 0 {
-                    // simpleContent/complexContent must be the only child;
-                    // attributes belong inside the derivation.
-                    return err(format!(
-                        "complexType with simpleContent/complexContent cannot also contain '{}'",
-                        local
-                    ));
-                }
-            }
-            // simpleContent / complexContent admit exactly one
-            // restriction/extension (plus annotation).
-            "simpleContent" | "complexContent" => {
-                if matches!(local, "restriction" | "extension") {
-                    if parent.derivations > 0 {
-                        return err(format!("{} allows only one derivation child", parent.name));
-                    }
-                    parent.derivations += 1;
-                } else if local != "annotation" {
-                    return err(format!(
-                        "element '{}' is not allowed inside {}",
-                        local, parent.name
-                    ));
-                }
-            }
-            // A complex-content extension/restriction admits at most one
-            // particle.
-            "extension" | "restriction" => {
-                if is_particle {
-                    if parent.particles > 0 {
-                        return err(format!(
-                            "{} allows only one particle child, found extra '{}'",
-                            parent.name, local
-                        ));
-                    }
-                    parent.particles += 1;
-                }
-            }
-            // Identity constraints admit annotation, one selector, fields.
-            "unique" | "key" | "keyref" => match local {
-                "selector" => {
-                    if parent.selectors > 0 {
-                        return err("only one selector is allowed".to_string());
-                    }
-                    parent.selectors += 1;
-                }
-                "field" => {
-                    if parent.selectors == 0 {
-                        return err("selector must precede field".to_string());
-                    }
-                    parent.fields += 1;
-                }
-                "annotation" => {}
-                _ => {
-                    return err(format!(
-                        "element '{}' is not allowed inside {}",
-                        local, parent.name
-                    ));
-                }
-            },
-            // Elements whose only legal child is annotation.
-            "notation" | "import" | "include" | "selector" | "field" | "any" | "anyAttribute" => {
-                if local != "annotation" {
-                    return err(format!(
-                        "element '{}' is not allowed inside {}",
-                        local, parent.name
-                    ));
-                }
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
     pub(super) fn handle_schema(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         if let Some(tns) = attrs.get("targetNamespace") {
             self.schema.target_namespace = Some(tns.clone());
@@ -530,6 +228,9 @@ impl XsdParser {
         }
         if let Some(bd) = attrs.get("blockDefault") {
             self.schema.block_default = Some(parse_derivation_control(bd));
+        }
+        if let Some(fd) = attrs.get("finalDefault") {
+            self.schema.final_default = Some(parse_derivation_control(fd));
         }
         if let Some(v) = attrs.get("version") {
             self.schema.version = Some(v.clone());
@@ -604,11 +305,14 @@ impl XsdParser {
     }
 
     pub(super) fn handle_simple_type(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
-        let st = if let Some(name) = attrs.get("name") {
+        let mut st = if let Some(name) = attrs.get("name") {
             XsdSimpleType::new(name)
         } else {
             XsdSimpleType::anonymous()
         };
+        if let Some(final_) = attrs.get("final") {
+            st.final_ = Some(parse_derivation_control(final_));
+        }
 
         self.stack.push(StackFrame::SimpleType(st));
         Ok(())
@@ -636,10 +340,28 @@ impl XsdParser {
         use crate::schema::error::SchemaError;
 
         let mut all = XsdAll::default();
-        // Parse minOccurs (maxOccurs for all is always 1 per XSD spec)
+        // cos-all-limited: an xs:all group must have minOccurs of 0 or 1 and
+        // maxOccurs of exactly 1.
         if let Some(min_str) = attrs.get("minOccurs") {
-            all.min_occurs =
+            let min =
                 Occurs::parse(min_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?;
+            if !matches!(min, Occurs::Count(0) | Occurs::Count(1)) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'all' must have minOccurs of 0 or 1, found '{}'", min_str),
+                }
+                .into());
+            }
+            all.min_occurs = min;
+        }
+        if let Some(max_str) = attrs.get("maxOccurs") {
+            let max =
+                Occurs::parse(max_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?;
+            if !matches!(max, Occurs::Count(1)) {
+                return Err(SchemaError::InvalidSchema {
+                    message: format!("'all' must have maxOccurs of 1, found '{}'", max_str),
+                }
+                .into());
+            }
         }
         all.max_occurs = Occurs::Count(1);
         self.stack.push(StackFrame::All(all));
@@ -854,8 +576,30 @@ impl XsdParser {
         Ok(())
     }
 
+    /// Validates a selector/field xpath against the restricted grammar of
+    /// XSD 1.0 §3.11.6, using the namespace bindings in scope.
+    fn check_identity_xpath(
+        &self,
+        xpath: &str,
+        kind: crate::schema::xsd::identity_xpath::IdentityXPathKind,
+    ) -> Result<()> {
+        crate::schema::xsd::identity_xpath::validate_identity_xpath(xpath, kind, |prefix| {
+            self.schema.namespace_bindings.contains_key(prefix)
+        })
+        .map_err(|message| {
+            crate::schema::error::SchemaError::InvalidSchema {
+                message: format!("invalid identity-constraint xpath '{xpath}': {message}"),
+            }
+            .into()
+        })
+    }
+
     pub(super) fn handle_selector(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+        self.check_identity_xpath(
+            &xpath,
+            crate::schema::xsd::identity_xpath::IdentityXPathKind::Selector,
+        )?;
 
         // Set the selector on the parent constraint
         for frame in self.stack.iter_mut().rev() {
@@ -872,6 +616,10 @@ impl XsdParser {
 
     pub(super) fn handle_field(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let xpath = attrs.get("xpath").cloned().unwrap_or_default();
+        self.check_identity_xpath(
+            &xpath,
+            crate::schema::xsd::identity_xpath::IdentityXPathKind::Field,
+        )?;
 
         // Add the field to the parent constraint
         for frame in self.stack.iter_mut().rev() {
@@ -954,72 +702,6 @@ impl XsdParser {
             };
         }
         self.stack.push(StackFrame::AnyAttribute(any));
-        Ok(())
-    }
-
-    /// Validates that existing facets in a restriction are consistent with a new facet.
-    fn validate_facet_consistency(facets: &[XsdFacet], new_facet: &XsdFacet) -> Result<()> {
-        use crate::schema::error::SchemaError;
-
-        match new_facet {
-            XsdFacet::MinLength(min_len) => {
-                // Check if maxLength exists and is less than minLength
-                for f in facets {
-                    if let XsdFacet::MaxLength(max_len) = f {
-                        if min_len > max_len {
-                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
-                                min_length: *min_len as u64,
-                                max_length: *max_len as u64,
-                            }
-                            .into());
-                        }
-                    }
-                }
-            }
-            XsdFacet::MaxLength(max_len) => {
-                // Check if minLength exists and is greater than maxLength
-                for f in facets {
-                    if let XsdFacet::MinLength(min_len) = f {
-                        if min_len > max_len {
-                            return Err(SchemaError::MinLengthGreaterThanMaxLength {
-                                min_length: *min_len as u64,
-                                max_length: *max_len as u64,
-                            }
-                            .into());
-                        }
-                    }
-                }
-            }
-            XsdFacet::FractionDigits(frac) => {
-                // fractionDigits must be <= totalDigits
-                for f in facets {
-                    if let XsdFacet::TotalDigits(total) = f {
-                        if frac > total {
-                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
-                                fraction_digits: *frac as u64,
-                                total_digits: *total as u64,
-                            }
-                            .into());
-                        }
-                    }
-                }
-            }
-            XsdFacet::TotalDigits(total) => {
-                // totalDigits must be >= fractionDigits
-                for f in facets {
-                    if let XsdFacet::FractionDigits(frac) = f {
-                        if frac > total {
-                            return Err(SchemaError::FractionDigitsGreaterThanTotalDigits {
-                                fraction_digits: *frac as u64,
-                                total_digits: *total as u64,
-                            }
-                            .into());
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
         Ok(())
     }
 

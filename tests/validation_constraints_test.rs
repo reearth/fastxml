@@ -188,10 +188,10 @@ fn test_missing_namespace_declaration() {
         </xs:schema>"#;
 
     let result = Schema::from_xsd(xsd.as_bytes());
-    // XSD parser accepts undeclared prefixes during parsing
-    // Type resolution with the undeclared prefix happens at validation time
+    // A QName with an undeclared prefix cannot denote any component; the
+    // reference-integrity pass rejects the schema at compile time.
     assert!(
-        result.is_ok(),
-        "Parser accepts undeclared prefixes during parsing"
+        result.is_err(),
+        "undeclared prefix in a type reference must be rejected"
     );
 }
