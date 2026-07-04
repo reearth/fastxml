@@ -318,8 +318,11 @@ mod malformed_xml {
     fn test_invalid_namespace_prefix() {
         let xml = r#"<unknown:root/>"#;
         let result = Parser::from(xml).parse();
-        // quick-xml accepts undeclared namespace prefixes
-        assert!(result.is_ok(), "quick-xml accepts undeclared prefixes");
+        // fastxml is namespace-aware: an element prefix must be bound in scope.
+        assert!(
+            matches!(result, Err(Error::Parse(ParseError::NotWellFormed { .. }))),
+            "Expected NotWellFormed for an unbound element prefix, got: {result:?}"
+        );
     }
 
     #[test]

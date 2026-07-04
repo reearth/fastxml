@@ -19,7 +19,7 @@ use fastxml::{Parser, ParserOptions, QueryExt, parse_schema_locations};
 /// Test: //*[name()='Building']
 #[test]
 fn test_xpath_pattern_name_equals() {
-    let xml = r#"<root>
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml/3.2">
         <Building gml:id="bldg1"/>
         <Room gml:id="room1"/>
         <Window gml:id="win1"/>
@@ -38,7 +38,7 @@ fn test_xpath_pattern_name_equals() {
 /// Test: //*[(name()='Building' or name()='Room')]
 #[test]
 fn test_xpath_pattern_or_condition() {
-    let xml = r#"<root>
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml/3.2">
         <Building gml:id="bldg1"/>
         <Room gml:id="room1"/>
         <Window gml:id="win1"/>
@@ -60,7 +60,7 @@ fn test_xpath_pattern_or_condition() {
 /// Test: //*[(name()='Building' or name()='Room') and not(name()='Window')]
 #[test]
 fn test_xpath_pattern_and_not_condition() {
-    let xml = r#"<root>
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml/3.2">
         <Building gml:id="bldg1"/>
         <Room gml:id="room1"/>
         <Window gml:id="win1"/>
@@ -118,6 +118,7 @@ fn test_xpath_pattern_gml_dictionary() {
 fn test_xpath_pattern_uro_building_id() {
     let xml = r#"<bldg:Building xmlns:bldg="http://www.opengis.net/citygml/building/2.0"
                               xmlns:uro="http://www.kantei.go.jp/jp/singi/tiiki/toshisaisei/itoshisaisei/iur/uro/3.0"
+                              xmlns:gml="http://www.opengis.net/gml/3.2"
                               gml:id="bldg_001">
         <uro:buildingIDAttribute>
             <uro:BuildingIDAttribute>
@@ -436,7 +437,8 @@ fn test_citygml_building_structure() {
 /// Test: Multiple element types selection
 #[test]
 fn test_citygml_multiple_element_types() {
-    let xml = r#"<root xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
+    let xml = r#"<root xmlns:bldg="http://www.opengis.net/citygml/building/2.0"
+                 xmlns:gml="http://www.opengis.net/gml/3.2">
         <bldg:Building gml:id="bldg1"/>
         <bldg:BuildingPart gml:id="part1"/>
         <bldg:Room gml:id="room1"/>
