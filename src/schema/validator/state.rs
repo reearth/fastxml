@@ -24,6 +24,10 @@ pub(crate) struct ValidationState {
 pub(crate) struct ElementContext {
     /// Element name (local name) - stored as Arc<str> to avoid allocation
     pub name: Arc<str>,
+    /// Interned symbol id of the element's qualified name (streaming
+    /// validator only; the DOM path leaves it at 0). Kept so per-element
+    /// resolution can be memoized by integer symbol rather than by string.
+    pub name_sym: u32,
     /// Element namespace URI (for future use)
     #[allow(dead_code)]
     pub namespace: Option<Arc<str>>,
@@ -33,8 +37,14 @@ pub(crate) struct ElementContext {
     pub text_content: String,
     /// Whether this element has been validated against schema
     pub schema_validated: bool,
-    /// Type reference for this element (if known from schema)
-    pub type_ref: Option<String>,
+    /// Type reference for this element (if known from schema). Shared as an
+    /// `Arc<str>` so per-element assignment is a refcount bump, not a `String`
+    /// allocation.
+    pub type_ref: Option<Arc<str>>,
+    /// Interned symbol of `type_ref` (streaming validator only). Used as the
+    /// cache key for resolving this element's children when it is a parent,
+    /// so the lookup keys on an integer rather than re-hashing the type name.
+    pub type_sym: Option<u32>,
     /// Pre-computed flattened children constraints from schema cache.
     /// Using Arc to avoid cloning for every element - this is a reference to
     /// the pre-computed cache in CompiledSchema.
@@ -66,11 +76,13 @@ impl ElementContext {
     pub fn new(name: Arc<str>, namespace: Option<Arc<str>>) -> Self {
         Self {
             name,
+            name_sym: 0,
             namespace,
             child_counts: SmallVec::new(),
             text_content: String::new(),
             schema_validated: false,
             type_ref: None,
+            type_sym: None,
             flattened_children: None,
             sequence_index: 0,
             automaton_state: Default::default(),
@@ -191,6 +203,18 @@ impl ValidationState {
         }
         self.element_stack
             .push(ElementContext::new(name, namespace));
+        self.depth += 1;
+    }
+
+    /// Pushes a new element, recording its interned name symbol (streaming
+    /// validator hot path).
+    pub fn push_element_sym(&mut self, name: Arc<str>, namespace: Option<Arc<str>>, name_sym: u32) {
+        if let Some(parent) = self.element_stack.last_mut() {
+            parent.increment_child_arc(&name);
+        }
+        let mut ctx = ElementContext::new(name, namespace);
+        ctx.name_sym = name_sym;
+        self.element_stack.push(ctx);
         self.depth += 1;
     }
 

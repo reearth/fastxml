@@ -1,10 +1,13 @@
 //! One-pass streaming schema validator implementation.
 
+mod bound_automaton;
 mod content;
 mod event_handler;
 mod identity;
 mod lookup;
 mod occurrence;
+mod symbols;
+mod text;
 
 use std::io::BufRead;
 use std::sync::Arc;
@@ -76,14 +79,42 @@ pub struct OnePassSchemaValidator {
     /// Memoized collected attribute declarations per named complex type (C7).
     pub(crate) attr_cache:
         rustc_hash::FxHashMap<String, std::sync::Arc<super::attributes::CollectedAttrs>>,
+    /// Memoized flattened-children resolution keyed by type reference string
+    /// (S2). Resolving a `type_ref` to its `FlattenedChildren` otherwise
+    /// allocates a two-`String` `NsName` on every element; this caches the
+    /// resolved `Arc` so the allocation happens once per distinct type.
+    pub(crate) type_ref_children: rustc_hash::FxHashMap<
+        String,
+        Option<std::sync::Arc<crate::schema::types::FlattenedChildren>>,
+    >,
+    /// Memoized inline (parent-content-model) element resolution keyed by
+    /// `(parent type symbol, child local symbol)` (S3). Resolving a child's
+    /// declared type from its parent's content model otherwise walks and
+    /// linearly scans the parent's flattened element list and clones its
+    /// `type_ref` on every element; this caches the resolved picture so it is
+    /// computed once per distinct (parent-type, child) pair.
+    pub(crate) inline_cache:
+        rustc_hash::FxHashMap<(u32, u32), std::sync::Arc<lookup::InlineResolved>>,
+    /// Memoized text-content validation plan keyed by type symbol (S5).
+    /// Deciding how a declared type's text must be checked otherwise costs a
+    /// `get_type` probe plus a facet-cache probe on every element close; this
+    /// caches the resolved [`text::TextOp`] once per distinct type.
+    pub(crate) text_op_cache: rustc_hash::FxHashMap<u32, text::TextOp>,
+    /// Symbol-bound content-model automatons keyed by the wrapped
+    /// automaton's `Arc` pointer (S6). Binding interns each position's name
+    /// set once, so per-child matching becomes `SymbolId` binary searches
+    /// instead of string-set hash probes.
+    pub(crate) bound_automatons:
+        rustc_hash::FxHashMap<usize, std::sync::Arc<bound_automaton::BoundAutomaton>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
     /// `aggregate_errors` is on.
     pub(crate) aggregate_index: crate::error::ErrorAggregateIndex,
-    /// Interned element/namespace names, so per-element qualified names and
-    /// namespace URIs don't allocate on every start tag.
-    pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// Interned element/attribute names (`SymbolId`s), so per-element
+    /// qualified names don't hash/allocate on every start tag. Holds both
+    /// qualified and local names in one namespace; see [`symbols`].
+    pub(crate) symbols: symbols::SymbolTable,
     /// Reusable buffer for building qualified names.
     pub(crate) qname_buf: String,
     /// Anti-regression work counters (see [`ValidationCounters`]).
@@ -109,9 +140,13 @@ impl OnePassSchemaValidator {
             facet_cache: Default::default(),
             elements_cache: Default::default(),
             attr_cache: Default::default(),
+            type_ref_children: Default::default(),
+            inline_cache: Default::default(),
+            text_op_cache: Default::default(),
+            bound_automatons: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
-            name_pool: Default::default(),
+            symbols: Default::default(),
             qname_buf: String::new(),
             counters: super::ValidationCounters::default(),
         }

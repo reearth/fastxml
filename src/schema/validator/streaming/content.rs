@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ComplexType, ContentModel, SimpleType, TypeDef};
-use crate::schema::xsd::facets::FacetValidator;
+use crate::schema::types::{ComplexType, TypeDef};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
 use super::super::ValidationMode;
@@ -16,7 +15,7 @@ impl OnePassSchemaValidator {
     pub(crate) fn validate_element(
         &mut self,
         name: &Arc<str>,
-        prefix: Option<&Arc<str>>,
+        prefix: Option<&str>,
         qualified_name: &Arc<str>,
         namespace: Option<&str>,
         attributes: &[(&str, &str)],
@@ -73,19 +72,15 @@ impl OnePassSchemaValidator {
         // and as an inline element in the parent's content model with different types.
         // For example, gml:exterior in Solid (SurfacePropertyType) vs Polygon (AbstractRingPropertyType)
         if is_expected_by_parent {
-            // Compute the global-element fallback first: the inline lookup
-            // below needs &mut self for its memoization cache.
-            let fallback = elem_def.map(|elem| {
-                (
-                    elem.type_ref.clone(),
-                    self.get_flattened_children_for_element(elem),
-                    elem.inline_type.clone(),
-                )
-            });
-
-            // Try inline element first - declared in parent's type definition
+            // Try the inline element (declared in the parent's type) first.
+            // The global-element fallback is computed only when the inline
+            // lookup finds nothing, so the hot path (inline hit) no longer
+            // pays for a redundant per-element type resolution. `elem_def`
+            // borrows the locally-cloned schema Arc, so it stays valid across
+            // the &mut self inline lookup.
+            let child_local_sym = self.current_local_sym();
             let (inline_type_ref, inline_flattened, inline_anon_type) =
-                self.get_inline_element_info(name);
+                self.get_inline_element_info(child_local_sym, name);
 
             // Use inline type if available, otherwise fall back to global element
             let (type_ref, flattened_children, anon_type) = if inline_type_ref.is_some()
@@ -93,8 +88,14 @@ impl OnePassSchemaValidator {
                 || inline_anon_type.is_some()
             {
                 (inline_type_ref, inline_flattened, inline_anon_type)
+            } else if let Some(elem) = elem_def {
+                (
+                    elem.type_ref.as_deref().map(Arc::from),
+                    self.get_flattened_children_for_element(elem),
+                    elem.inline_type.clone(),
+                )
             } else {
-                fallback.unwrap_or_default()
+                (None, None, None)
             };
 
             // Content-model automaton replaces the count-based occurrence
@@ -108,16 +109,18 @@ impl OnePassSchemaValidator {
             }
 
             // Update current element context with type info
+            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
+                ctx.type_sym = type_sym;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
-            let type_ref = elem.type_ref.clone();
+            let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
             let flattened_children = self.get_flattened_children_for_element(elem);
             let anon_type = elem.inline_type.clone();
 
@@ -130,9 +133,11 @@ impl OnePassSchemaValidator {
             }
 
             // Update current element context with type info
+            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
+                ctx.type_sym = type_sym;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
@@ -182,8 +187,11 @@ impl OnePassSchemaValidator {
                         }
                         _ => None,
                     };
+                    let substituted_sym = self.symbols.intern(&substituted).0;
+                    let substituted: Arc<str> = Arc::from(substituted);
                     if let Some(ctx) = self.state.current_element_mut() {
                         ctx.type_ref = Some(substituted);
+                        ctx.type_sym = Some(substituted_sym);
                         if flattened.is_some() {
                             ctx.flattened_children = flattened;
                         }
@@ -243,6 +251,15 @@ impl OnePassSchemaValidator {
 
         // Validate attributes
         self.validate_attributes(name, attributes);
+    }
+
+    /// The local-name symbol of the current (most recently started) element,
+    /// used to key per-parent-type child resolution memoization.
+    fn current_local_sym(&self) -> u32 {
+        self.state
+            .current_element()
+            .map(|c| self.symbols.local(super::symbols::SymbolId(c.name_sym)).0)
+            .unwrap_or(0)
     }
 
     /// Handles identity-constraint bookkeeping at element start.
@@ -524,7 +541,7 @@ impl OnePassSchemaValidator {
             .current_element()
             .and_then(|ctx| ctx.type_ref.clone())
         {
-            if let Some(cached) = self.attr_cache.get(&type_ref) {
+            if let Some(cached) = self.attr_cache.get(type_ref.as_ref()) {
                 return Some(Arc::clone(cached));
             }
             let schema = Arc::clone(&self.schema);
@@ -532,7 +549,8 @@ impl OnePassSchemaValidator {
                 return None;
             };
             let built = Arc::new(CollectedAttrs::collect(&schema, complex));
-            self.attr_cache.insert(type_ref, Arc::clone(&built));
+            self.attr_cache
+                .insert(type_ref.to_string(), Arc::clone(&built));
             return Some(built);
         }
 
@@ -664,7 +682,7 @@ impl OnePassSchemaValidator {
     }
 
     /// Validates an element when it closes.
-    pub(crate) fn validate_element_end(&mut self, _name: &Arc<str>) {
+    pub(crate) fn validate_element_end(&mut self) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
             // Identity constraint bookkeeping (works on the popped depth)
@@ -740,167 +758,6 @@ impl OnePassSchemaValidator {
             if !self.finish_automaton(&ctx) {
                 self.validate_min_occurs(&ctx);
             }
-        }
-    }
-
-    /// Validates text content against the element's type definition.
-    pub(crate) fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
-        // Anti-regression guardrail: count every text-content check
-        // unconditionally, before any type resolution or early return.
-        self.counters.text_nodes_checked += 1;
-        // C2: clone the schema *Arc* (a cheap refcount bump), not the whole
-        // TypeDef. The borrowed &TypeDef then lives independently of self, so
-        // validate_text_against_type_def (which takes &mut self) can be called
-        // without cloning the type on every text node.
-        let schema = Arc::clone(&self.schema);
-        // Try to get type definition from type_ref first
-        if let Some(ref type_ref) = ctx.type_ref {
-            if let Some(type_def) = schema.get_type(type_ref) {
-                self.validate_text_against_type_def(ctx, type_def);
-                return;
-            }
-        }
-
-        // Elements admitted by a wildcard have no declared type to check.
-        if ctx.wildcard_mode.is_some() && ctx.type_ref.is_none() && ctx.inline_type.is_none() {
-            return;
-        }
-
-        // Inline (anonymous) type captured at element start
-        if let Some(inline_type) = ctx.inline_type.as_ref() {
-            self.validate_text_against_type_def(ctx, inline_type);
-            return;
-        }
-
-        // If no type_ref, try to get inline type from element definition
-        if let Some(inline_type) = self.get_element_inline_type(ctx.name.as_ref()) {
-            self.validate_text_against_type_def(ctx, &inline_type);
-        }
-    }
-
-    /// Validates text content against a specific type definition.
-    pub(crate) fn validate_text_against_type_def(
-        &mut self,
-        ctx: &ElementContext,
-        type_def: &TypeDef,
-    ) {
-        match type_def {
-            TypeDef::Simple(simple) => {
-                self.validate_text_against_simple_type(ctx, simple);
-            }
-            TypeDef::Complex(complex) => {
-                // For complex types with simple content, validate the base type
-                if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    // C2: borrow the base simple type via a cheap schema-Arc
-                    // clone instead of cloning the TypeDef.
-                    let schema = Arc::clone(&self.schema);
-                    if let Some(TypeDef::Simple(simple)) = schema.get_type(base_type) {
-                        self.validate_text_against_simple_type(ctx, simple);
-                    }
-                } else if !complex.mixed {
-                    // Non-mixed complex types shouldn't have text content
-                    let trimmed = ctx.text_content.trim();
-                    if !trimmed.is_empty() {
-                        let error = self
-                            .make_error(
-                                ValidationErrorType::InvalidContent,
-                                format!(
-                                    "element '{}' has element-only content but contains text",
-                                    ctx.name
-                                ),
-                            )
-                            .with_node_name(ctx.name.as_ref())
-                            .with_level(ErrorLevel::Error);
-                        self.add_error(error);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Validates the accumulated text content of `ctx` against a `SimpleType`:
-    /// runs both user-declared facet constraints and (when applicable) the
-    /// built-in primitive lexical/value-space check.
-    fn validate_text_against_simple_type(&mut self, ctx: &ElementContext, simple: &SimpleType) {
-        // Skip everything for an empty element that is nillable or carries a
-        // default/fixed value constraint (the constraint value applies).
-        if ctx.text_content.is_empty()
-            && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some())
-        {
-            return;
-        }
-
-        // User-declared facets. Empty content is still checked — a pattern
-        // or enumeration facet can legitimately reject the empty string.
-        // C4: the (memoized) FacetConstraints already resolve the primitive
-        // value kind, so capture it here and reuse it for the built-in check
-        // below instead of re-running PrimitiveKind::resolve per text node.
-        let value_kind = {
-            let constraints = self.create_facet_constraints(simple);
-
-            // Fixed value constraint: non-empty content must match.
-            if let Some(ref fixed) = ctx.fixed_value {
-                let text = ctx.text_content.trim();
-                if text != fixed.trim()
-                    && crate::schema::xsd::value_compare::compare_values(
-                        constraints.value_kind,
-                        text,
-                        fixed,
-                    ) != Some(std::cmp::Ordering::Equal)
-                {
-                    let error = self
-                        .make_error(
-                            ValidationErrorType::InvalidContent,
-                            format!(
-                                "element '{}' must have the fixed value '{}', found '{}'",
-                                ctx.name, fixed, text
-                            ),
-                        )
-                        .with_node_name(ctx.name.as_ref())
-                        .with_level(ErrorLevel::Error);
-                    self.add_error(error);
-                }
-            }
-
-            let validator = FacetValidator::new(&constraints);
-            if let Err(facet_error) = validator.validate(&ctx.text_content) {
-                let error = self
-                    .make_error(
-                        ValidationErrorType::InvalidContent,
-                        format!(
-                            "invalid content for element '{}': {}",
-                            ctx.name, facet_error
-                        ),
-                    )
-                    .with_node_name(ctx.name.as_ref())
-                    .with_level(ErrorLevel::Error);
-                self.add_error(error);
-            }
-
-            // Track ID/IDREF values carried as element content
-            let mut id_values = super::super::attributes::AttrValidation::default();
-            super::super::attributes::push_id_values_from_constraints(
-                &constraints,
-                &ctx.text_content,
-                &mut id_values,
-            );
-            self.record_ids(id_values.ids, id_values.idrefs);
-            constraints.value_kind
-        };
-
-        // Built-in primitive lexical/value-space check (C4: reuse the cached
-        // value_kind rather than re-resolving the primitive chain).
-        if let Some(kind) = value_kind
-            && let Err(prim_error) = kind.validate(&ctx.text_content)
-        {
-            let error = self
-                .make_error(
-                    ValidationErrorType::InvalidTextContent,
-                    format!("element '{}': {}", ctx.name, prim_error),
-                )
-                .with_node_name(ctx.name.as_ref())
-                .with_level(ErrorLevel::Error);
-            self.add_error(error);
         }
     }
 }

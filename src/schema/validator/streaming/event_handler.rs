@@ -7,17 +7,6 @@ use crate::event::{RawEvent, XmlEventHandler};
 
 use super::OnePassSchemaValidator;
 
-/// Returns the pooled copy of `s`, inserting it on first sight.
-fn intern_str(pool: &mut rustc_hash::FxHashSet<Arc<str>>, s: &str) -> Arc<str> {
-    if let Some(existing) = pool.get(s) {
-        Arc::clone(existing)
-    } else {
-        let arc: Arc<str> = Arc::from(s);
-        pool.insert(Arc::clone(&arc));
-        arc
-    }
-}
-
 impl XmlEventHandler for OnePassSchemaValidator {
     fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
         match event {
@@ -32,35 +21,35 @@ impl XmlEventHandler for OnePassSchemaValidator {
                 self.current_line = *line;
                 self.current_column = *column;
                 self.state.push_namespaces(namespace_decls);
-                // Use prefixed name to distinguish elements with same local name but different namespaces
-                // e.g., gml:boundedBy vs brid:boundedBy
-                let interned_name = intern_str(&mut self.name_pool, name);
-                let interned_prefix = prefix.map(|p| intern_str(&mut self.name_pool, p));
-                let qualified_name = match prefix {
+                // Use the prefixed name to distinguish elements with the same
+                // local name but different namespaces (gml:boundedBy vs
+                // brid:boundedBy). Intern the qualified name once — its record
+                // links to the eagerly-interned local-name symbol, so both the
+                // qname and local symbols are obtained with a single probe.
+                let qname_sym = match prefix {
                     Some(p) if !p.is_empty() => {
                         self.qname_buf.clear();
                         self.qname_buf.push_str(p);
                         self.qname_buf.push(':');
                         self.qname_buf.push_str(name);
-                        intern_str(&mut self.name_pool, &self.qname_buf)
+                        self.symbols.intern(&self.qname_buf)
                     }
-                    _ => Arc::clone(&interned_name),
+                    _ => self.symbols.intern(name),
                 };
+                let name_sym = self.symbols.local(qname_sym);
+                let name_arc = Arc::clone(self.symbols.arc(name_sym));
+                let qname_arc = Arc::clone(self.symbols.arc(qname_sym));
                 // Streaming events carry no resolved namespace URI.
-                self.state.push_element(Arc::clone(&qualified_name), None);
+                self.state
+                    .push_element_sym(Arc::clone(&qname_arc), None, qname_sym.0);
                 let attrs: smallvec::SmallVec<[(&str, &str); 8]> =
                     attributes.iter().map(|(k, v)| (*k, v.as_ref())).collect();
-                self.validate_element(
-                    &interned_name,
-                    interned_prefix.as_ref(),
-                    &qualified_name,
-                    None,
-                    &attrs,
-                );
+                self.validate_element(&name_arc, prefix.as_deref(), &qname_arc, None, &attrs);
             }
-            RawEvent::EndElement { name, .. } => {
-                let interned_name = intern_str(&mut self.name_pool, name);
-                self.validate_element_end(&interned_name);
+            RawEvent::EndElement { .. } => {
+                // The closing name is unused — the element being closed is the
+                // top of the state stack — so no interning is needed here.
+                self.validate_element_end();
                 self.state.pop_namespaces();
             }
             RawEvent::Text(text) => {
