@@ -104,3 +104,72 @@ fn lax_wildcard_validates_declared_elements() {
         "streaming must validate declared elements under lax"
     );
 }
+
+/// Regression for wildG031: two schema documents declare the same local name
+/// (`foo`) in different target namespaces — one with a target namespace and a
+/// lax wildcard content model, one with no namespace and no type (anyType).
+/// The instance's root element and a lax-wildcard-matched child both use the
+/// local name `foo` in different namespaces. Element resolution and the
+/// multi-document merge must be deterministic so the verdict does not flip
+/// between runs (previously it did, because schemas were merged in HashMap
+/// iteration order). The W3C-expected verdict is `valid`.
+#[test]
+fn wildcard_same_local_name_cross_namespace_is_deterministically_valid() {
+    const NS_SCHEMA: &[u8] = br#"<?xml version="1.0"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" targetNamespace="http://foobar">
+  <xsd:element name="foo">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:any namespace="A B C D E ##targetNamespace ##local" maxOccurs="unbounded" processContents="lax"/>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:element name="bar" type="xsd:string"/>
+</xsd:schema>"#;
+    const NO_NS_SCHEMA: &[u8] = br#"<?xml version="1.0"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <xsd:element name="foo"/>
+  <xsd:element name="bar" type="xsd:string"/>
+</xsd:schema>"#;
+    const INSTANCE: &str = r#"<?xml version="1.0"?>
+<a:foo xmlns:a="http://foobar">
+  <a:bar>foo bar</a:bar>
+  <bar>foo bar</bar>
+  <foo/>
+  <A:foo xmlns:A="A"/>
+  <A:foo xmlns:A="B"/>
+  <foo xmlns="C"/>
+  <D:foo xmlns:D="D"/>
+  <e:foo xmlns:e="E"/>
+</a:foo>"#;
+
+    // Build the combined schema many times: an unstable merge order would make
+    // some of these builds pick the wrong `foo` declaration and report errors.
+    for _ in 0..8 {
+        let schema = Arc::new(
+            Schema::builder()
+                .add("ns.xsd", NS_SCHEMA)
+                .add("nons.xsd", NO_NS_SCHEMA)
+                .resolve()
+                .expect("resolve combined schema"),
+        );
+
+        let doc = fastxml::Parser::from(INSTANCE).parse().expect("parse");
+        let dom = Validator::from(&doc)
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("dom validate")
+            .into_entries();
+        let stream = Validator::from(INSTANCE.as_bytes())
+            .schema(Arc::clone(&schema))
+            .run()
+            .expect("stream validate")
+            .into_entries();
+
+        assert!(dom.is_empty(), "DOM should be valid, got: {dom:?}");
+        assert!(
+            stream.is_empty(),
+            "streaming should be valid, got: {stream:?}"
+        );
+    }
+}

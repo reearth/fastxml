@@ -3,7 +3,9 @@
 //! This module provides the async implementation of schema resolution
 //! for import/include chains.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
+
+use indexmap::IndexMap;
 
 use crate::error::Result;
 use crate::schema::fetcher::AsyncSchemaFetcher;
@@ -15,8 +17,11 @@ use super::common::resolve_uri;
 /// Async schema resolver that handles import/include chains.
 pub struct AsyncSchemaResolver<'a, F: AsyncSchemaFetcher> {
     fetcher: &'a F,
-    /// Resolved schemas by URI
-    schemas: HashMap<String, XsdSchema>,
+    /// Resolved schemas by URI, in stable discovery order. See the sync
+    /// [`super::sync::SchemaResolver`] for why insertion order (an `IndexMap`)
+    /// matters: HashMap order made same-local-name / cross-namespace schemas
+    /// validate nondeterministically.
+    schemas: IndexMap<String, XsdSchema>,
     /// URIs currently being resolved (for cycle detection)
     resolving: HashSet<String>,
 }
@@ -26,7 +31,7 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
     pub fn new(fetcher: &'a F) -> Self {
         Self {
             fetcher,
-            schemas: HashMap::new(),
+            schemas: IndexMap::new(),
             resolving: HashSet::new(),
         }
     }
@@ -118,7 +123,7 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
         }
 
         // Add entry schema last
-        if let Some(entry) = self.schemas.remove(entry_uri) {
+        if let Some(entry) = self.schemas.shift_remove(entry_uri) {
             result.push(entry);
         }
 
@@ -229,7 +234,7 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
     }
 
     /// Consumes the resolver and returns the resolved schemas.
-    pub fn into_schemas(self) -> HashMap<String, XsdSchema> {
+    pub fn into_schemas(self) -> IndexMap<String, XsdSchema> {
         self.schemas
     }
 }
