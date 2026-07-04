@@ -62,22 +62,13 @@ impl OnePassSchemaValidator {
     /// which uses (namespace_uri, local_name) keys to avoid cross-namespace collisions.
     /// Falls back to runtime computation if not cached.
     pub(crate) fn get_flattened_children_for_element(
-        &self,
+        &mut self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
-        // Try to get from type reference first
+        // Try to get from type reference first (memoized: resolving the
+        // type_ref otherwise allocates a two-String NsName per element).
         if let Some(ref type_ref) = elem.type_ref {
-            // Namespace-aware cache lookup
-            if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref) {
-                if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
-                    return Some(Arc::clone(cached));
-                }
-            }
-
-            // Fallback: compute at runtime
-            if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
-                return Some(Arc::new(self.compute_flattened_children(complex)));
-            }
+            return self.resolve_children_for_type_ref(type_ref);
         }
 
         // Fall back to computing from inline type if present
@@ -87,6 +78,49 @@ impl OnePassSchemaValidator {
             }
         }
 
+        None
+    }
+
+    /// Resolves (and memoizes) the [`FlattenedChildren`] for a named type
+    /// reference. Replays the previous per-element resolution verbatim — the
+    /// namespace-aware `ns_type_children_cache` first, then a runtime compute
+    /// — but caches the result so the `NsName` allocation and the cache probe
+    /// happen once per distinct type instead of once per element.
+    pub(crate) fn resolve_children_for_type_ref(
+        &mut self,
+        type_ref: &str,
+    ) -> Option<Arc<FlattenedChildren>> {
+        if let Some(cached) = self.type_ref_children.get(type_ref) {
+            return cached.clone();
+        }
+        let resolved = self.compute_children_for_type_ref(type_ref);
+        // Debug-only: memoization must match a fresh resolution.
+        #[cfg(test)]
+        {
+            let fresh = self.compute_children_for_type_ref(type_ref);
+            debug_assert_eq!(
+                resolved.as_deref().map(|f| f.ordered_elements.clone()),
+                fresh.as_deref().map(|f| f.ordered_elements.clone()),
+                "memoized children for type_ref {type_ref:?} differ from fresh lookup"
+            );
+        }
+        self.type_ref_children
+            .insert(type_ref.to_string(), resolved.clone());
+        resolved
+    }
+
+    /// The uncached resolution used by [`Self::resolve_children_for_type_ref`].
+    fn compute_children_for_type_ref(&self, type_ref: &str) -> Option<Arc<FlattenedChildren>> {
+        // Namespace-aware cache lookup first.
+        if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref) {
+            if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
+                return Some(Arc::clone(cached));
+            }
+        }
+        // Fallback: compute at runtime.
+        if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
+            return Some(Arc::new(self.compute_flattened_children(complex)));
+        }
         None
     }
 
@@ -273,7 +307,7 @@ impl OnePassSchemaValidator {
 
     /// Finds `name` in an inherited-element list and resolves its type info.
     fn inline_info_from_elements(
-        &self,
+        &mut self,
         name: &str,
         elements: &[ElementDef],
     ) -> (
@@ -290,26 +324,12 @@ impl OnePassSchemaValidator {
                 let type_ref = elem.type_ref.clone();
                 let inline_type = elem.inline_type.clone();
 
-                // Get flattened children for this inline element
+                // Get flattened children for this inline element (memoized by
+                // type_ref, so no per-element NsName allocation).
                 let flattened_children = if let Some(ref tr) = type_ref {
-                    // Try namespace-aware cache first
-                    if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(tr) {
-                        if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
-                            return (type_ref, Some(Arc::clone(cached)), inline_type);
-                        }
-                    }
-                    // Fallback: compute at runtime
-                    if let Some(TypeDef::Complex(child_complex)) = self.schema.get_type(tr) {
-                        Some(Arc::new(self.compute_flattened_children(child_complex)))
-                    } else {
-                        None
-                    }
-                } else if let Some(ref inline) = elem.inline_type {
-                    if let TypeDef::Complex(child_complex) = inline {
-                        Some(Arc::new(self.compute_flattened_children(child_complex)))
-                    } else {
-                        None
-                    }
+                    self.resolve_children_for_type_ref(tr)
+                } else if let Some(TypeDef::Complex(child_complex)) = elem.inline_type.as_ref() {
+                    Some(Arc::new(self.compute_flattened_children(child_complex)))
                 } else {
                     None
                 };

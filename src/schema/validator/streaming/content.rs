@@ -73,17 +73,12 @@ impl OnePassSchemaValidator {
         // and as an inline element in the parent's content model with different types.
         // For example, gml:exterior in Solid (SurfacePropertyType) vs Polygon (AbstractRingPropertyType)
         if is_expected_by_parent {
-            // Compute the global-element fallback first: the inline lookup
-            // below needs &mut self for its memoization cache.
-            let fallback = elem_def.map(|elem| {
-                (
-                    elem.type_ref.clone(),
-                    self.get_flattened_children_for_element(elem),
-                    elem.inline_type.clone(),
-                )
-            });
-
-            // Try inline element first - declared in parent's type definition
+            // Try the inline element (declared in the parent's type) first.
+            // The global-element fallback is computed only when the inline
+            // lookup finds nothing, so the hot path (inline hit) no longer
+            // pays for a redundant per-element type resolution. `elem_def`
+            // borrows the locally-cloned schema Arc, so it stays valid across
+            // the &mut self inline lookup.
             let (inline_type_ref, inline_flattened, inline_anon_type) =
                 self.get_inline_element_info(name);
 
@@ -93,8 +88,14 @@ impl OnePassSchemaValidator {
                 || inline_anon_type.is_some()
             {
                 (inline_type_ref, inline_flattened, inline_anon_type)
+            } else if let Some(elem) = elem_def {
+                (
+                    elem.type_ref.clone(),
+                    self.get_flattened_children_for_element(elem),
+                    elem.inline_type.clone(),
+                )
             } else {
-                fallback.unwrap_or_default()
+                (None, None, None)
             };
 
             // Content-model automaton replaces the count-based occurrence

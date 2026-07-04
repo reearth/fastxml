@@ -77,6 +77,14 @@ pub struct OnePassSchemaValidator {
     /// Memoized collected attribute declarations per named complex type (C7).
     pub(crate) attr_cache:
         rustc_hash::FxHashMap<String, std::sync::Arc<super::attributes::CollectedAttrs>>,
+    /// Memoized flattened-children resolution keyed by type reference string
+    /// (S2). Resolving a `type_ref` to its `FlattenedChildren` otherwise
+    /// allocates a two-`String` `NsName` on every element; this caches the
+    /// resolved `Arc` so the allocation happens once per distinct type.
+    pub(crate) type_ref_children: rustc_hash::FxHashMap<
+        String,
+        Option<std::sync::Arc<crate::schema::types::FlattenedChildren>>,
+    >,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -111,6 +119,7 @@ impl OnePassSchemaValidator {
             facet_cache: Default::default(),
             elements_cache: Default::default(),
             attr_cache: Default::default(),
+            type_ref_children: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             symbols: Default::default(),
