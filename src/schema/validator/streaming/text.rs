@@ -1,0 +1,245 @@
+//! Text-content validation with per-type memoized dispatch.
+//!
+//! Deciding how a declared type's text content must be checked (facets +
+//! primitive kind, element-only rejection, or nothing) is a pure function of
+//! the type. Resolving it otherwise costs a `get_type` probe plus a
+//! facet-cache probe on every element close; [`TextOp`] captures the outcome
+//! once per distinct type, keyed by its interned type symbol.
+
+use std::sync::Arc;
+
+use crate::error::{ErrorLevel, ValidationErrorType};
+use crate::schema::types::{ContentModel, TypeDef};
+use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
+
+use super::super::state::ElementContext;
+use super::OnePassSchemaValidator;
+
+/// Memoized text-validation plan for a declared type (S5).
+#[derive(Clone)]
+pub(crate) enum TextOp {
+    /// The declared type could not be resolved: fall through to the inline /
+    /// element-declaration fallbacks (mirrors the original control flow).
+    NotFound,
+    /// The type is resolved and imposes no text check here (mixed complex
+    /// content, or simple content whose base is not a simple type).
+    Allow,
+    /// Element-only (non-mixed complex) content: non-empty text is an error.
+    RejectText,
+    /// Simple or simple-content type: validate against these facet
+    /// constraints (and the built-in primitive kind they carry).
+    Simple(Arc<FacetConstraints>),
+}
+
+impl OnePassSchemaValidator {
+    /// Validates text content against the element's type definition.
+    pub(crate) fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
+        // Anti-regression guardrail: count every text-content check
+        // unconditionally, before any type resolution or early return.
+        self.counters.text_nodes_checked += 1;
+
+        // Fast path: a declared named type resolves through the memoized plan,
+        // avoiding a get_type + facet-cache probe per element.
+        if let (Some(type_sym), Some(type_ref)) = (ctx.type_sym, ctx.type_ref.clone()) {
+            let op = self.resolve_text_op(type_sym, &type_ref);
+            if !matches!(op, TextOp::NotFound) {
+                self.apply_text_op(ctx, &op);
+                return;
+            }
+            // The type_ref did not resolve to a type: fall through to the
+            // inline / element-declaration fallbacks, exactly as before.
+        }
+
+        // Elements admitted by a wildcard have no declared type to check.
+        if ctx.wildcard_mode.is_some() && ctx.type_ref.is_none() && ctx.inline_type.is_none() {
+            return;
+        }
+
+        // Inline (anonymous) type captured at element start.
+        if let Some(inline_type) = ctx.inline_type.as_ref() {
+            self.validate_text_against_type_def(ctx, inline_type);
+            return;
+        }
+
+        // If no type_ref, try to get the inline type from the element declaration.
+        if let Some(inline_type) = self.get_element_inline_type(ctx.name.as_ref()) {
+            self.validate_text_against_type_def(ctx, &inline_type);
+        }
+    }
+
+    /// Returns the (memoized) [`TextOp`] for a declared named type.
+    fn resolve_text_op(&mut self, type_sym: u32, type_ref: &str) -> TextOp {
+        if let Some(op) = self.text_op_cache.get(&type_sym) {
+            return op.clone();
+        }
+        let op = self.compute_text_op(type_ref);
+        self.text_op_cache.insert(type_sym, op.clone());
+        op
+    }
+
+    /// Resolves the text-validation plan for `type_ref` from the schema. This
+    /// replays the previous per-element `get_type`-based dispatch verbatim.
+    fn compute_text_op(&mut self, type_ref: &str) -> TextOp {
+        // C2: borrow the type via a cheap schema-Arc clone, so the borrow
+        // lives independently of `self` across the &mut self facet lookup.
+        let schema = Arc::clone(&self.schema);
+        match schema.get_type(type_ref) {
+            Some(TypeDef::Simple(simple)) => TextOp::Simple(self.create_facet_constraints(simple)),
+            Some(TypeDef::Complex(complex)) => {
+                if let ContentModel::SimpleContent { base_type } = &complex.content {
+                    match schema.get_type(base_type) {
+                        Some(TypeDef::Simple(simple)) => {
+                            TextOp::Simple(self.create_facet_constraints(simple))
+                        }
+                        // Base is not a simple type: original did nothing.
+                        _ => TextOp::Allow,
+                    }
+                } else if !complex.mixed {
+                    TextOp::RejectText
+                } else {
+                    // Mixed complex content: text is allowed, nothing to check.
+                    TextOp::Allow
+                }
+            }
+            None => TextOp::NotFound,
+        }
+    }
+
+    /// Applies a resolved [`TextOp`] to the element's accumulated text.
+    fn apply_text_op(&mut self, ctx: &ElementContext, op: &TextOp) {
+        match op {
+            TextOp::Simple(constraints) => self.validate_text_against_facets(ctx, constraints),
+            TextOp::RejectText => self.reject_text_if_present(ctx),
+            TextOp::Allow | TextOp::NotFound => {}
+        }
+    }
+
+    /// Validates text content against a specific type definition (uncached
+    /// path for inline/anonymous types).
+    pub(crate) fn validate_text_against_type_def(
+        &mut self,
+        ctx: &ElementContext,
+        type_def: &TypeDef,
+    ) {
+        match type_def {
+            TypeDef::Simple(simple) => {
+                let constraints = self.create_facet_constraints(simple);
+                self.validate_text_against_facets(ctx, &constraints);
+            }
+            TypeDef::Complex(complex) => {
+                // For complex types with simple content, validate the base type.
+                if let ContentModel::SimpleContent { base_type } = &complex.content {
+                    // C2: borrow the base simple type via a cheap schema-Arc
+                    // clone instead of cloning the TypeDef.
+                    let schema = Arc::clone(&self.schema);
+                    if let Some(TypeDef::Simple(simple)) = schema.get_type(base_type) {
+                        let constraints = self.create_facet_constraints(simple);
+                        self.validate_text_against_facets(ctx, &constraints);
+                    }
+                } else if !complex.mixed {
+                    self.reject_text_if_present(ctx);
+                }
+            }
+        }
+    }
+
+    /// Reports an error if a non-mixed complex element carries text content.
+    fn reject_text_if_present(&mut self, ctx: &ElementContext) {
+        if !ctx.text_content.trim().is_empty() {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidContent,
+                    format!(
+                        "element '{}' has element-only content but contains text",
+                        ctx.name
+                    ),
+                )
+                .with_node_name(ctx.name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+    }
+
+    /// Validates the accumulated text content of `ctx` against resolved facet
+    /// constraints: user-declared facets plus (when applicable) the built-in
+    /// primitive lexical/value-space check. Single source of truth for both
+    /// the memoized fast path and the uncached inline path.
+    fn validate_text_against_facets(
+        &mut self,
+        ctx: &ElementContext,
+        constraints: &FacetConstraints,
+    ) {
+        // Skip everything for an empty element that is nillable or carries a
+        // default/fixed value constraint (the constraint value applies).
+        if ctx.text_content.is_empty()
+            && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some())
+        {
+            return;
+        }
+
+        // Fixed value constraint: non-empty content must match.
+        if let Some(ref fixed) = ctx.fixed_value {
+            let text = ctx.text_content.trim();
+            if text != fixed.trim()
+                && crate::schema::xsd::value_compare::compare_values(
+                    constraints.value_kind,
+                    text,
+                    fixed,
+                ) != Some(std::cmp::Ordering::Equal)
+            {
+                let error = self
+                    .make_error(
+                        ValidationErrorType::InvalidContent,
+                        format!(
+                            "element '{}' must have the fixed value '{}', found '{}'",
+                            ctx.name, fixed, text
+                        ),
+                    )
+                    .with_node_name(ctx.name.as_ref())
+                    .with_level(ErrorLevel::Error);
+                self.add_error(error);
+            }
+        }
+
+        // User-declared facets. Empty content is still checked — a pattern or
+        // enumeration facet can legitimately reject the empty string.
+        let validator = FacetValidator::new(constraints);
+        if let Err(facet_error) = validator.validate(&ctx.text_content) {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidContent,
+                    format!(
+                        "invalid content for element '{}': {}",
+                        ctx.name, facet_error
+                    ),
+                )
+                .with_node_name(ctx.name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+
+        // Track ID/IDREF values carried as element content.
+        let mut id_values = super::super::attributes::AttrValidation::default();
+        super::super::attributes::push_id_values_from_constraints(
+            constraints,
+            &ctx.text_content,
+            &mut id_values,
+        );
+        self.record_ids(id_values.ids, id_values.idrefs);
+
+        // Built-in primitive lexical/value-space check (reuse the cached
+        // value_kind rather than re-resolving the primitive chain).
+        if let Some(kind) = constraints.value_kind
+            && let Err(prim_error) = kind.validate(&ctx.text_content)
+        {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidTextContent,
+                    format!("element '{}': {}", ctx.name, prim_error),
+                )
+                .with_node_name(ctx.name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+    }
+}

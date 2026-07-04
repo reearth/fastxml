@@ -6,6 +6,7 @@ mod identity;
 mod lookup;
 mod occurrence;
 mod symbols;
+mod text;
 
 use std::io::BufRead;
 use std::sync::Arc;
@@ -93,6 +94,11 @@ pub struct OnePassSchemaValidator {
     /// computed once per distinct (parent-type, child) pair.
     pub(crate) inline_cache:
         rustc_hash::FxHashMap<(u32, u32), std::sync::Arc<lookup::InlineResolved>>,
+    /// Memoized text-content validation plan keyed by type symbol (S5).
+    /// Deciding how a declared type's text must be checked otherwise costs a
+    /// `get_type` probe plus a facet-cache probe on every element close; this
+    /// caches the resolved [`text::TextOp`] once per distinct type.
+    pub(crate) text_op_cache: rustc_hash::FxHashMap<u32, text::TextOp>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -129,6 +135,7 @@ impl OnePassSchemaValidator {
             attr_cache: Default::default(),
             type_ref_children: Default::default(),
             inline_cache: Default::default(),
+            text_op_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             symbols: Default::default(),
