@@ -147,13 +147,13 @@ impl<'a> Validator<'a> {
             max_errors,
             aggregate_errors,
         } = self;
-        let entries = match schema {
+        let (entries, counters) = match schema {
             Some(schema) => {
                 validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
             }
-            None => run_location_default(source)?,
+            None => (run_location_default(source)?, None),
         };
-        Ok(Report::new(entries))
+        Ok(Report::with_counters(entries, counters))
     }
 
     /// Runs validation, resolving any `xsi:schemaLocation` through `fetcher`.
@@ -167,25 +167,30 @@ impl<'a> Validator<'a> {
             max_errors,
             aggregate_errors,
         } = self;
-        let entries = match schema {
+        let (entries, counters) = match schema {
             Some(schema) => {
                 validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
             }
-            None => match source {
-                Source::Dom(doc) => {
-                    super::api::validate_with_schema_location_and_fetcher(doc, &fetcher)?
-                }
-                Source::Bytes(bytes) => {
-                    super::api::streaming_validate_with_schema_location_and_fetcher(bytes, fetcher)?
-                }
-                Source::Reader(reader) => {
-                    super::api::streaming_validate_with_schema_location_and_fetcher(
-                        reader, fetcher,
-                    )?
-                }
-            },
+            None => {
+                let entries = match source {
+                    Source::Dom(doc) => {
+                        super::api::validate_with_schema_location_and_fetcher(doc, &fetcher)?
+                    }
+                    Source::Bytes(bytes) => {
+                        super::api::streaming_validate_with_schema_location_and_fetcher(
+                            bytes, fetcher,
+                        )?
+                    }
+                    Source::Reader(reader) => {
+                        super::api::streaming_validate_with_schema_location_and_fetcher(
+                            reader, fetcher,
+                        )?
+                    }
+                };
+                (entries, None)
+            }
         };
-        Ok(Report::new(entries))
+        Ok(Report::with_counters(entries, counters))
     }
 
     /// Async version of [`run_with`](Self::run_with), resolving
@@ -206,25 +211,28 @@ impl<'a> Validator<'a> {
             max_errors,
             aggregate_errors,
         } = self;
-        let entries = match schema {
+        let (entries, counters) = match schema {
             Some(schema) => {
                 validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
             }
-            None => match source {
-                Source::Dom(doc) => {
-                    super::api::validate_with_schema_location_with_async_fetcher(doc, fetcher)
-                        .await?
-                }
-                _ => {
-                    return Err(crate::error::Error::InvalidOperation(
-                        "async xsi:schemaLocation resolution is only supported for DOM input; \
-                         use run_with for streaming input, or provide a schema"
-                            .to_string(),
-                    ));
-                }
-            },
+            None => {
+                let entries = match source {
+                    Source::Dom(doc) => {
+                        super::api::validate_with_schema_location_with_async_fetcher(doc, fetcher)
+                            .await?
+                    }
+                    _ => {
+                        return Err(crate::error::Error::InvalidOperation(
+                            "async xsi:schemaLocation resolution is only supported for DOM input; \
+                             use run_with for streaming input, or provide a schema"
+                                .to_string(),
+                        ));
+                    }
+                };
+                (entries, None)
+            }
         };
-        Ok(Report::new(entries))
+        Ok(Report::with_counters(entries, counters))
     }
 
     /// Async version of [`run`](Self::run), using the default async fetcher.
@@ -235,13 +243,15 @@ impl<'a> Validator<'a> {
     }
 }
 
+type ValidationOutcome = (Vec<StructuredError>, Option<super::ValidationCounters>);
+
 fn validate_with_schema(
     source: Source<'_>,
     schema: Arc<CompiledSchema>,
     mode: ValidationMode,
     max_errors: Option<usize>,
     aggregate_errors: bool,
-) -> Result<Vec<StructuredError>> {
+) -> Result<ValidationOutcome> {
     match source {
         Source::Dom(doc) => {
             let mut validator = DomSchemaValidator::new(schema).with_mode(mode);
@@ -251,7 +261,7 @@ fn validate_with_schema(
             if aggregate_errors {
                 validator = validator.with_aggregate_errors();
             }
-            validator.validate(doc)
+            Ok((validator.validate(doc)?, None))
         }
         Source::Bytes(bytes) => {
             run_streaming_with_schema(bytes, schema, mode, max_errors, aggregate_errors)
@@ -268,7 +278,7 @@ fn run_streaming_with_schema<R: BufRead>(
     mode: ValidationMode,
     max_errors: Option<usize>,
     aggregate_errors: bool,
-) -> Result<Vec<StructuredError>> {
+) -> Result<ValidationOutcome> {
     let mut validator = OnePassSchemaValidator::new(schema).set_mode(mode);
     if let Some(max) = max_errors {
         validator = validator.with_max_errors(max);
@@ -276,7 +286,8 @@ fn run_streaming_with_schema<R: BufRead>(
     if aggregate_errors {
         validator = validator.with_aggregate_errors();
     }
-    validator.validate(reader)
+    let (entries, counters) = validator.validate_capturing(reader)?;
+    Ok((entries, Some(counters)))
 }
 
 #[cfg(feature = "ureq")]
@@ -304,11 +315,22 @@ fn run_location_default(_source: Source<'_>) -> Result<Vec<StructuredError>> {
 #[derive(Debug, Clone)]
 pub struct Report {
     entries: Vec<StructuredError>,
+    counters: Option<super::ValidationCounters>,
 }
 
 impl Report {
-    fn new(entries: Vec<StructuredError>) -> Self {
-        Self { entries }
+    fn with_counters(
+        entries: Vec<StructuredError>,
+        counters: Option<super::ValidationCounters>,
+    ) -> Self {
+        Self { entries, counters }
+    }
+
+    /// Anti-regression work counters, present only for streaming validation
+    /// against an explicit schema. See [`ValidationCounters`](super::ValidationCounters).
+    #[doc(hidden)]
+    pub fn counters(&self) -> Option<super::ValidationCounters> {
+        self.counters
     }
 
     /// True if there are no error-level entries (warnings are allowed).

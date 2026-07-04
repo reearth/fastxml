@@ -1,6 +1,5 @@
 //! XSD schema type definitions.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use indexmap::IndexMap as IndexMapBase;
@@ -9,6 +8,12 @@ use indexmap::IndexMap as IndexMapBase;
 /// lookups happen per element/attribute during validation, so hashing speed
 /// matters more than HashDoS resistance here.
 pub type IndexMap<K, V> = IndexMapBase<K, V, rustc_hash::FxBuildHasher>;
+
+/// Unordered map with the same fast non-cryptographic hasher, used for the
+/// per-schema caches and namespace/substitution tables consulted per element
+/// (C6): the built-in `HashMap` SipHash cost showed up in per-element cache
+/// lookups such as `ns_type_children_cache`.
+type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 
 /// A namespace-qualified name for collision-free lookups.
 ///
@@ -72,7 +77,7 @@ impl FlattenedChildren {
     /// Creates a new empty FlattenedChildren.
     pub fn new() -> Self {
         Self {
-            constraints: HashMap::new(),
+            constraints: HashMap::default(),
             content_model_type: ContentModelType::Empty,
             ordered_elements: Arc::from([]),
             wildcard: None,
@@ -83,7 +88,7 @@ impl FlattenedChildren {
     /// Creates a FlattenedChildren with the given content model type.
     pub fn with_content_model(content_model_type: ContentModelType) -> Self {
         Self {
-            constraints: HashMap::new(),
+            constraints: HashMap::default(),
             content_model_type,
             ordered_elements: Arc::from([]),
             wildcard: None,
@@ -157,17 +162,17 @@ impl CompiledSchema {
             elements: IndexMap::default(),
             types: IndexMap::default(),
             attributes: IndexMap::default(),
-            imports: HashMap::new(),
-            substitution_groups: HashMap::new(),
+            imports: HashMap::default(),
+            substitution_groups: HashMap::default(),
             // Namespace resolution
-            namespace_prefixes: HashMap::new(),
-            prefix_namespaces: HashMap::new(),
+            namespace_prefixes: HashMap::default(),
+            prefix_namespaces: HashMap::default(),
             // Namespace-aware caches
-            ns_type_children_cache: HashMap::new(),
+            ns_type_children_cache: HashMap::default(),
             // Legacy prefix-based caches
-            type_children_cache: HashMap::new(),
-            transitive_substitution_groups: HashMap::new(),
-            substitution_group_heads: HashMap::new(),
+            type_children_cache: HashMap::default(),
+            transitive_substitution_groups: HashMap::default(),
+            substitution_group_heads: HashMap::default(),
         }
     }
 

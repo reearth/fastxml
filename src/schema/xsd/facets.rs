@@ -24,6 +24,7 @@
 //! ## Whitespace Handling
 //! - `whiteSpace` - preserve, replace, or collapse
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -457,7 +458,7 @@ impl<'a> FacetValidator<'a> {
     pub fn validate(&self, value: &str) -> std::result::Result<(), FacetError> {
         // Apply whitespace handling first
         let processed = self.apply_whitespace(value);
-        let value = processed.as_deref().unwrap_or(value);
+        let value: &str = &processed;
 
         // Length constraints
         self.validate_length(value)?;
@@ -520,50 +521,39 @@ impl<'a> FacetValidator<'a> {
     }
 
     /// Applies whitespace handling to a value.
-    fn apply_whitespace(&self, value: &str) -> Option<String> {
+    ///
+    /// C5: returns a `Cow` that borrows the input when normalization is a
+    /// no-op (the common case — most typed values, including CityGML posLists,
+    /// arrive already collapsed), and otherwise builds the result in a single
+    /// pass. The previous implementation always allocated (two Strings for the
+    /// collapse case), even when the value was unchanged.
+    fn apply_whitespace<'v>(&self, value: &'v str) -> Cow<'v, str> {
         match self.constraints.whitespace {
-            WhitespaceHandling::Preserve => None,
+            WhitespaceHandling::Preserve => Cow::Borrowed(value),
             WhitespaceHandling::Replace => {
-                // Replace \t, \n, \r with space
-                Some(
-                    value
-                        .chars()
-                        .map(|c| {
-                            if c == '\t' || c == '\n' || c == '\r' {
-                                ' '
-                            } else {
-                                c
-                            }
-                        })
-                        .collect(),
-                )
-            }
-            WhitespaceHandling::Collapse => {
-                // Replace whitespace and collapse to single spaces
-                let replaced: String = value
-                    .chars()
-                    .map(|c| if c.is_whitespace() { ' ' } else { c })
-                    .collect();
-                // Collapse consecutive spaces and trim
-                let mut result = String::new();
-                let mut prev_space = true; // Start true to trim leading
-                for c in replaced.chars() {
-                    if c == ' ' {
-                        if !prev_space {
-                            result.push(c);
-                        }
-                        prev_space = true;
-                    } else {
-                        result.push(c);
-                        prev_space = false;
-                    }
+                // Replace \t, \n, \r with space.
+                if value
+                    .as_bytes()
+                    .iter()
+                    .any(|&b| b == b'\t' || b == b'\n' || b == b'\r')
+                {
+                    Cow::Owned(
+                        value
+                            .chars()
+                            .map(|c| {
+                                if c == '\t' || c == '\n' || c == '\r' {
+                                    ' '
+                                } else {
+                                    c
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    Cow::Borrowed(value)
                 }
-                // Trim trailing space
-                if result.ends_with(' ') {
-                    result.pop();
-                }
-                Some(result)
             }
+            WhitespaceHandling::Collapse => collapse_whitespace(value),
         }
     }
 
@@ -1087,6 +1077,52 @@ fn count_significant_digits(value: &str) -> usize {
 }
 
 /// Number of octets a base64Binary lexical value decodes to.
+/// XSD `whiteSpace=collapse`: replace every whitespace char with a space,
+/// collapse runs to a single space, and trim leading/trailing whitespace.
+///
+/// Returns a borrow when the value is already collapsed (no leading/trailing
+/// whitespace, no consecutive whitespace, and every whitespace char is a plain
+/// U+0020 space) — otherwise builds the normalized form in a single pass.
+/// Byte-for-byte identical output to the previous two-String implementation.
+fn collapse_whitespace(value: &str) -> Cow<'_, str> {
+    // Fast path: is normalization a no-op?
+    let mut prev_space = true; // start true so a leading whitespace is caught
+    let mut needs_build = false;
+    for c in value.chars() {
+        if c.is_whitespace() {
+            if c != ' ' || prev_space {
+                needs_build = true;
+                break;
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
+    }
+    if !needs_build && !value.ends_with(' ') {
+        return Cow::Borrowed(value);
+    }
+
+    // Single-pass build.
+    let mut out = String::with_capacity(value.len());
+    let mut prev_space = true; // start true to trim leading whitespace
+    for c in value.chars() {
+        if c.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(c);
+            prev_space = false;
+        }
+    }
+    if out.ends_with(' ') {
+        out.pop();
+    }
+    Cow::Owned(out)
+}
+
 fn base64_decoded_len(value: &str) -> usize {
     let chars: Vec<char> = value.chars().filter(|c| !c.is_whitespace()).collect();
     let padding = chars.iter().rev().take_while(|&&c| c == '=').count();

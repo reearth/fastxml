@@ -17,28 +17,34 @@ impl OnePassSchemaValidator {
         &mut self,
         name: &Arc<str>,
         prefix: Option<&Arc<str>>,
+        qualified_name: &Arc<str>,
         namespace: Option<&str>,
         attributes: &[(&str, &str)],
     ) {
+        // Anti-regression guardrail: count every element unconditionally,
+        // before any lookup or early return.
+        self.counters.elements_validated += 1;
+        // C1: the interned qualified name is built once at the tag boundary and
+        // threaded here, so neither the lookup nor the error paths re-`format!`
+        // it. `qualified_name` equals `name` when there is no prefix.
+        let qname: &str = qualified_name.as_ref();
+
+        // C3: hold a local clone of the schema Arc so the looked-up ElementDef
+        // is decoupled from `self` and stays borrowable across the &mut self
+        // calls below. This lets identity constraints be passed as a slice
+        // instead of cloning the constraint Vec on every element.
+        let schema = Arc::clone(&self.schema);
         // Optimization: Try local name lookup first (most common case)
-        // Only construct qname if local lookup fails AND prefix exists
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
-        let elem_def = self.lookup_element_optimized(name, prefix, namespace);
+        let elem_def = self.lookup_element_optimized(&schema, name, prefix, qname, namespace);
         let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
         let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
         let elem_default = elem_def.and_then(|e| e.default.clone());
         let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
-        // Construct qname only when needed for error messages or when prefix exists
-        let qname_owned: Option<String> = match prefix {
-            Some(p) if !p.is_empty() => Some(format!("{}:{}", p.as_ref(), name.as_ref())),
-            _ => None,
-        };
-        let qname: &str = qname_owned.as_deref().unwrap_or_else(|| name.as_ref());
-
         let elem_known = elem_def.is_some();
-        let elem_constraints: Vec<crate::schema::types::CompiledConstraint> =
-            elem_def.map(|e| e.constraints.clone()).unwrap_or_default();
+        let elem_constraints: &[crate::schema::types::CompiledConstraint] =
+            elem_def.map(|e| e.constraints.as_slice()).unwrap_or(&[]);
         let nilled = attributes
             .iter()
             .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
@@ -233,7 +239,7 @@ impl OnePassSchemaValidator {
 
         // Identity constraints: open scopes declared on this element, and
         // match this element against the selectors of enclosing scopes.
-        self.identity_element_start(&elem_constraints, attributes);
+        self.identity_element_start(elem_constraints, attributes);
 
         // Validate attributes
         self.validate_attributes(name, attributes);
@@ -260,6 +266,13 @@ impl OnePassSchemaValidator {
         elem_constraints: &[crate::schema::types::CompiledConstraint],
         attributes: &[(&str, &str)],
     ) {
+        // C8 (lazy): with no identity scopes open and no constraints declared
+        // on this element, there is nothing to match and nothing to open —
+        // skip building the per-element attr_kinds / local_names vectors.
+        if self.identity_scopes.is_empty() && elem_constraints.is_empty() {
+            return;
+        }
+
         let depth = self.state.element_stack.len();
 
         // Resolve the value-space kind of each present attribute once, so the
@@ -492,6 +505,52 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Returns the (memoized when named) collected attribute picture of the
+    /// current element's complex type, or `None` when it has no complex type.
+    ///
+    /// Resolution mirrors the previous inline logic: explicit `type_ref`
+    /// first, then an inline (anonymous) type on the context, then the
+    /// element's inline type from the parent content model. Named types are
+    /// cached by type name (C7); anonymous types build fresh.
+    fn collected_element_attrs(
+        &mut self,
+        element_name: &Arc<str>,
+    ) -> Option<Arc<super::super::attributes::CollectedAttrs>> {
+        use super::super::attributes::CollectedAttrs;
+
+        // Named type via the context's resolved type_ref.
+        if let Some(type_ref) = self
+            .state
+            .current_element()
+            .and_then(|ctx| ctx.type_ref.clone())
+        {
+            if let Some(cached) = self.attr_cache.get(&type_ref) {
+                return Some(Arc::clone(cached));
+            }
+            let schema = Arc::clone(&self.schema);
+            let TypeDef::Complex(complex) = schema.get_type(&type_ref)? else {
+                return None;
+            };
+            let built = Arc::new(CollectedAttrs::collect(&schema, complex));
+            self.attr_cache.insert(type_ref, Arc::clone(&built));
+            return Some(built);
+        }
+
+        // Inline (anonymous) type captured on the context at element start.
+        if let Some(ctx) = self.state.current_element()
+            && let Some(TypeDef::Complex(complex)) = ctx.inline_type.as_ref()
+        {
+            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
+        }
+
+        // Fallback: the element's inline type from the parent content model.
+        let inline_owned = self.get_element_inline_type(element_name);
+        if let Some(TypeDef::Complex(complex)) = inline_owned.as_ref() {
+            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
+        }
+        None
+    }
+
     /// Validates attributes on an element against the attribute
     /// declarations of its complex type.
     pub(crate) fn validate_attributes(
@@ -499,32 +558,14 @@ impl OnePassSchemaValidator {
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
+        // C7: resolve the (memoized) collected attribute picture of the
+        // element's complex type. Returns None when the element has no complex
+        // type, i.e. no attributes to validate.
+        let Some(collected) = self.collected_element_attrs(element_name) else {
+            return;
+        };
+
         let result = {
-            // Resolve the element's complex type: explicit type_ref first,
-            // then an inline (anonymous) type from the parent's content model.
-            let inline_owned;
-            let type_def: Option<&TypeDef> = match self
-                .state
-                .current_element()
-                .and_then(|ctx| ctx.type_ref.as_deref())
-            {
-                Some(tr) => self.schema.get_type(tr),
-                None => {
-                    if let Some(ctx) = self.state.current_element()
-                        && ctx.inline_type.is_some()
-                    {
-                        ctx.inline_type.as_ref()
-                    } else {
-                        inline_owned = self.get_element_inline_type(element_name);
-                        inline_owned.as_ref()
-                    }
-                }
-            };
-
-            let Some(TypeDef::Complex(complex)) = type_def else {
-                return;
-            };
-
             // Resolve each attribute's namespace from its prefix using the
             // in-scope namespace declarations (unprefixed attributes are in
             // no namespace).
@@ -539,7 +580,7 @@ impl OnePassSchemaValidator {
                 .collect();
             super::super::attributes::validate_element_attributes(
                 &self.schema,
-                complex,
+                &collected,
                 with_ns.iter().copied(),
                 &mut self.facet_cache,
             )
@@ -704,12 +745,18 @@ impl OnePassSchemaValidator {
 
     /// Validates text content against the element's type definition.
     pub(crate) fn validate_text_content_against_type(&mut self, ctx: &ElementContext) {
+        // Anti-regression guardrail: count every text-content check
+        // unconditionally, before any type resolution or early return.
+        self.counters.text_nodes_checked += 1;
+        // C2: clone the schema *Arc* (a cheap refcount bump), not the whole
+        // TypeDef. The borrowed &TypeDef then lives independently of self, so
+        // validate_text_against_type_def (which takes &mut self) can be called
+        // without cloning the type on every text node.
+        let schema = Arc::clone(&self.schema);
         // Try to get type definition from type_ref first
         if let Some(ref type_ref) = ctx.type_ref {
-            // Note: .cloned() is required to break the borrow from self.schema
-            // before calling validate_text_against_type_def which takes &mut self
-            if let Some(type_def) = self.schema.get_type(type_ref).cloned() {
-                self.validate_text_against_type_def(ctx, &type_def);
+            if let Some(type_def) = schema.get_type(type_ref) {
+                self.validate_text_against_type_def(ctx, type_def);
                 return;
             }
         }
@@ -720,8 +767,8 @@ impl OnePassSchemaValidator {
         }
 
         // Inline (anonymous) type captured at element start
-        if let Some(inline_type) = ctx.inline_type.clone() {
-            self.validate_text_against_type_def(ctx, &inline_type);
+        if let Some(inline_type) = ctx.inline_type.as_ref() {
+            self.validate_text_against_type_def(ctx, inline_type);
             return;
         }
 
@@ -744,9 +791,10 @@ impl OnePassSchemaValidator {
             TypeDef::Complex(complex) => {
                 // For complex types with simple content, validate the base type
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    if let Some(TypeDef::Simple(simple)) =
-                        self.schema.get_type(base_type).cloned().as_ref()
-                    {
+                    // C2: borrow the base simple type via a cheap schema-Arc
+                    // clone instead of cloning the TypeDef.
+                    let schema = Arc::clone(&self.schema);
+                    if let Some(TypeDef::Simple(simple)) = schema.get_type(base_type) {
                         self.validate_text_against_simple_type(ctx, simple);
                     }
                 } else if !complex.mixed {
@@ -784,7 +832,10 @@ impl OnePassSchemaValidator {
 
         // User-declared facets. Empty content is still checked — a pattern
         // or enumeration facet can legitimately reject the empty string.
-        {
+        // C4: the (memoized) FacetConstraints already resolve the primitive
+        // value kind, so capture it here and reuse it for the built-in check
+        // below instead of re-running PrimitiveKind::resolve per text node.
+        let value_kind = {
             let constraints = self.create_facet_constraints(simple);
 
             // Fixed value constraint: non-empty content must match.
@@ -834,10 +885,12 @@ impl OnePassSchemaValidator {
                 &mut id_values,
             );
             self.record_ids(id_values.ids, id_values.idrefs);
-        }
+            constraints.value_kind
+        };
 
-        // Built-in primitive lexical/value-space check.
-        if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
+        // Built-in primitive lexical/value-space check (C4: reuse the cached
+        // value_kind rather than re-resolving the primitive chain).
+        if let Some(kind) = value_kind
             && let Err(prim_error) = kind.validate(&ctx.text_content)
         {
             let error = self

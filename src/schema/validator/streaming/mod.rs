@@ -73,6 +73,9 @@ pub struct OnePassSchemaValidator {
     /// Memoized inherited-element lists per complex type name
     pub(crate) elements_cache:
         rustc_hash::FxHashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
+    /// Memoized collected attribute declarations per named complex type (C7).
+    pub(crate) attr_cache:
+        rustc_hash::FxHashMap<String, std::sync::Arc<super::attributes::CollectedAttrs>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// (message, node_name) -> index into `errors`, used when
@@ -83,6 +86,8 @@ pub struct OnePassSchemaValidator {
     pub(crate) name_pool: rustc_hash::FxHashSet<std::sync::Arc<str>>,
     /// Reusable buffer for building qualified names.
     pub(crate) qname_buf: String,
+    /// Anti-regression work counters (see [`ValidationCounters`]).
+    pub(crate) counters: super::ValidationCounters,
 }
 
 impl OnePassSchemaValidator {
@@ -103,10 +108,12 @@ impl OnePassSchemaValidator {
             identity_scopes: Vec::new(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
+            attr_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
             name_pool: Default::default(),
             qname_buf: String::new(),
+            counters: super::ValidationCounters::default(),
         }
     }
 
@@ -150,21 +157,28 @@ impl OnePassSchemaValidator {
     ///     .with_max_errors(100)
     ///     .validate(reader)?;
     /// ```
-    pub fn validate<R: BufRead>(self, reader: R) -> Result<Vec<StructuredError>> {
+    /// Runs streaming validation, returning collected errors and the
+    /// accumulated [`ValidationCounters`](super::ValidationCounters). The
+    /// counters are used by the bench harness as an anti-regression guardrail.
+    pub(crate) fn validate_capturing<R: BufRead>(
+        self,
+        reader: R,
+    ) -> Result<(Vec<StructuredError>, super::ValidationCounters)> {
         let mut parser = StreamingParser::new(reader);
         parser.add_handler(Box::new(self));
         parser.parse()?;
 
-        // Extract the validator from the parser to get errors
+        // Extract the validator from the parser to get errors + counters
         let handlers = parser.into_handlers();
         for handler in handlers {
             if let Ok(validator) = handler.as_any().downcast::<OnePassSchemaValidator>() {
-                return Ok(validator.into_errors());
+                let counters = validator.counters;
+                return Ok((validator.into_errors(), counters));
             }
         }
 
         // Fallback: return empty errors (should not happen)
-        Ok(Vec::new())
+        Ok((Vec::new(), super::ValidationCounters::default()))
     }
 
     /// Returns collected validation errors.
@@ -225,6 +239,11 @@ impl OnePassSchemaValidator {
 /// Error-introspection helpers used only by the in-crate engine tests.
 #[cfg(test)]
 impl OnePassSchemaValidator {
+    /// Convenience wrapper: runs validation and returns only the errors.
+    pub fn validate<R: BufRead>(self, reader: R) -> Result<Vec<StructuredError>> {
+        Ok(self.validate_capturing(reader)?.0)
+    }
+
     /// Sets the maximum number of errors to collect (setter pattern).
     pub fn set_max_errors(&mut self, max: usize) {
         self.max_errors = max;

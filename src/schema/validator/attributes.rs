@@ -6,6 +6,32 @@ use crate::schema::types::{
 use crate::schema::xsd::facets::{FacetCache, FacetConstraints, FacetValidator};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
+/// The attribute picture of a complex type after walking its derivation
+/// chain: the (shadow-resolved) declarations, the effective attribute
+/// wildcard, and whether the type is `xs:anyType`.
+///
+/// C7: building this walks the base chain 4-6 levels deep and allocates a
+/// Vec, far too expensive to repeat per element. The streaming validator
+/// memoizes it per named type; anonymous types build it fresh.
+pub(crate) struct CollectedAttrs {
+    pub defs: Vec<AttributeDef>,
+    pub wildcard: Option<crate::schema::types::WildcardConstraint>,
+    pub is_any_type: bool,
+}
+
+impl CollectedAttrs {
+    pub(crate) fn collect(schema: &CompiledSchema, complex: &ComplexType) -> Self {
+        Self {
+            defs: collect_attributes(schema, complex)
+                .into_iter()
+                .cloned()
+                .collect(),
+            wildcard: collect_attr_wildcard(schema, complex).cloned(),
+            is_any_type: complex.name == "anyType",
+        }
+    }
+}
+
 /// Collects the attribute declarations of a complex type, walking the
 /// derivation base chain. A declaration in a derived type shadows a base
 /// declaration with the same name.
@@ -199,16 +225,16 @@ const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 /// used for `xs:anyAttribute` wildcard matching.
 pub(crate) fn validate_element_attributes<'a>(
     schema: &CompiledSchema,
-    complex: &ComplexType,
+    collected: &CollectedAttrs,
     attributes: impl Iterator<Item = (&'a str, Option<&'a str>, &'a str)> + Clone,
     cache: &mut FacetCache,
 ) -> AttrValidation {
-    let defs = collect_attributes(schema, complex);
-    let wildcard = collect_attr_wildcard(schema, complex);
+    let defs = &collected.defs;
+    let wildcard = collected.wildcard.as_ref();
     let mut out = AttrValidation::default();
 
     // xs:anyType places no constraints on attributes.
-    if complex.name == "anyType" {
+    if collected.is_any_type {
         return out;
     }
 
@@ -261,7 +287,7 @@ pub(crate) fn validate_element_attributes<'a>(
         }
     }
 
-    for def in &defs {
+    for def in defs {
         if def.required
             && !attributes
                 .clone()

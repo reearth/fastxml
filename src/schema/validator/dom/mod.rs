@@ -590,9 +590,12 @@ impl DomSchemaValidator {
             }
         }
 
+        // DOM validation collects the attribute picture per element (no
+        // per-type cache); the streaming validator memoizes it (C7).
+        let collected = super::attributes::CollectedAttrs::collect(&self.schema, complex);
         let result = super::attributes::validate_element_attributes(
             &self.schema,
-            complex,
+            &collected,
             filtered.iter().copied(),
             &mut self.facet_cache.borrow_mut(),
         );
