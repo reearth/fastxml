@@ -5,6 +5,7 @@ mod content;
 mod event_handler;
 mod identity;
 mod lookup;
+mod numeric;
 mod occurrence;
 mod symbols;
 mod text;

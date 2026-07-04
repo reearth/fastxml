@@ -14,6 +14,7 @@ use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
 use super::super::state::ElementContext;
 use super::OnePassSchemaValidator;
+use super::numeric::{self, NumClass, NumericPlan};
 
 /// Memoized text-validation plan for a declared type (S5).
 #[derive(Clone)]
@@ -29,6 +30,28 @@ pub(crate) enum TextOp {
     /// Simple or simple-content type: validate against these facet
     /// constraints (and the built-in primitive kind they carry).
     Simple(Arc<FacetConstraints>),
+    /// Value-check fast path (PR-B) for an *unconstrained* numeric scalar: a
+    /// single value of a numeric primitive with no facets beyond
+    /// `whiteSpace=collapse`. A lean lexical scan replaces the
+    /// `FacetValidator` + regex path; on any rejection we defer to the
+    /// canonical slow path (via `constraints`) so error messages stay
+    /// byte-identical.
+    Numeric {
+        /// Numeric lexical family to scan for.
+        kind: NumClass,
+        /// Canonical constraints for the fallback slow path.
+        constraints: Arc<FacetConstraints>,
+    },
+    /// Value-check fast path (PR-B) for an *unconstrained* numeric list: e.g.
+    /// `gml:posList` / `gml:coordinates` (a list of `double`). One pass over
+    /// the raw bytes tokenizing on whitespace, scanning each item; deferring
+    /// to the slow path on any rejection.
+    NumericList {
+        /// Numeric lexical family of the list items.
+        kind: NumClass,
+        /// Canonical constraints for the fallback slow path.
+        constraints: Arc<FacetConstraints>,
+    },
 }
 
 impl OnePassSchemaValidator {
@@ -84,12 +107,14 @@ impl OnePassSchemaValidator {
         // lives independently of `self` across the &mut self facet lookup.
         let schema = Arc::clone(&self.schema);
         match schema.get_type(type_ref) {
-            Some(TypeDef::Simple(simple)) => TextOp::Simple(self.create_facet_constraints(simple)),
+            Some(TypeDef::Simple(simple)) => {
+                Self::classify_simple(self.create_facet_constraints(simple))
+            }
             Some(TypeDef::Complex(complex)) => {
                 if let ContentModel::SimpleContent { base_type } = &complex.content {
                     match schema.get_type(base_type) {
                         Some(TypeDef::Simple(simple)) => {
-                            TextOp::Simple(self.create_facet_constraints(simple))
+                            Self::classify_simple(self.create_facet_constraints(simple))
                         }
                         // Base is not a simple type: original did nothing.
                         _ => TextOp::Allow,
@@ -105,12 +130,65 @@ impl OnePassSchemaValidator {
         }
     }
 
+    /// Wraps a type's resolved facet constraints in the most specific
+    /// [`TextOp`]: the numeric value-check fast path when the type is an
+    /// unconstrained numeric scalar / list, otherwise the general
+    /// facet-driven [`TextOp::Simple`].
+    fn classify_simple(constraints: Arc<FacetConstraints>) -> TextOp {
+        match numeric::classify(&constraints) {
+            Some(NumericPlan::Scalar(kind)) => TextOp::Numeric { kind, constraints },
+            Some(NumericPlan::List(kind)) => TextOp::NumericList { kind, constraints },
+            None => TextOp::Simple(constraints),
+        }
+    }
+
     /// Applies a resolved [`TextOp`] to the element's accumulated text.
     fn apply_text_op(&mut self, ctx: &ElementContext, op: &TextOp) {
         match op {
             TextOp::Simple(constraints) => self.validate_text_against_facets(ctx, constraints),
+            TextOp::Numeric { kind, constraints } => {
+                self.validate_numeric_fast(ctx, *kind, constraints, false)
+            }
+            TextOp::NumericList { kind, constraints } => {
+                self.validate_numeric_fast(ctx, *kind, constraints, true)
+            }
             TextOp::RejectText => self.reject_text_if_present(ctx),
             TextOp::Allow | TextOp::NotFound => {}
+        }
+    }
+
+    /// Value-check fast path: scan the accumulated text with the lean numeric
+    /// scanner. The scanner is an accelerator only — the canonical slow path
+    /// remains the single source of truth for error messages, so on any
+    /// rejection (or on the rare constrained cases the fast path does not
+    /// model: fixed values, empty nillable/default content) we delegate to
+    /// [`validate_text_against_facets`], producing byte-identical output.
+    fn validate_numeric_fast(
+        &mut self,
+        ctx: &ElementContext,
+        kind: NumClass,
+        constraints: &FacetConstraints,
+        is_list: bool,
+    ) {
+        // Rare element-level cases carry semantics the byte-level scan does not
+        // model; hand them to the canonical path unchanged.
+        if ctx.fixed_value.is_some()
+            || (ctx.text_content.is_empty()
+                && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some()))
+        {
+            self.validate_text_against_facets(ctx, constraints);
+            return;
+        }
+
+        let bytes = ctx.text_content.as_bytes();
+        let ok = if is_list {
+            numeric::scan_list(bytes, kind)
+        } else {
+            numeric::scan_scalar(bytes, kind)
+        };
+        if !ok {
+            // Defer to the canonical path so the emitted error is identical.
+            self.validate_text_against_facets(ctx, constraints);
         }
     }
 
