@@ -109,7 +109,7 @@ memory-bounded.
 
 ```toml
 [dependencies]
-fastxml = "0.9"
+fastxml = "0.10"
 ```
 
 ### Cargo Features
@@ -123,10 +123,10 @@ fastxml = "0.9"
 
 ```toml
 # Recommended: sync schema fetching
-fastxml = { version = "0.9", features = ["ureq"] }
+fastxml = { version = "0.10", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.9", features = ["tokio"] }
+fastxml = { version = "0.10", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
