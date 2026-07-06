@@ -42,37 +42,45 @@ Benchmark results on current main (post-v0.9.0), PLATEAU building CityGML
 
 The libxml figures and the building-file numbers above are from that earlier
 run and are kept unchanged. Streaming-validation throughput has since been
-improved ~2x; the following is a same-machine before/after on a
+improved ~2.4x; the following is a same-machine before/after on a
 schema-rich CityGML DEM tile (PLATEAU, 53 XSD schemas / 2,635 types
 resolved), measured with `examples/bench.rs`:
 
 | Streaming + validate (DEM) | Before | After | Parse-only |
 |----------------------------|-------:|------:|-----------:|
-| 15 MB tile  | 43.2 MB/s | **85.4 MB/s** | 183 MB/s (unchanged) |
-| 220 MB tile | 43.5 MB/s | **85.4 MB/s** | 184 MB/s (unchanged) |
+| 15 MB tile  | 43.2 MB/s | **105.4 MB/s** | 183 MB/s (unchanged) |
+| 220 MB tile | 43.5 MB/s | **105.6 MB/s** | 183 MB/s (unchanged) |
 
-The most recent step replaced per-element string hashing/allocation with
-interned integer symbols: names are interned once into `SymbolId`s,
-per-element type resolution (element lookup, flattened children, inline
-child types, text-validation plan) is memoized by symbol, and the
+Two steps drove the gains. First, per-element string hashing/allocation was
+replaced with interned integer symbols: names are interned once into
+`SymbolId`s, per-element type resolution (element lookup, flattened children,
+inline child types, text-validation plan) is memoized by symbol, and the
 content-model automaton matches children by symbol binary search instead of
-string-set probes. This lifted the DEM tile from ~75.7 to ~85.4 MB/s.
-Memory is unchanged (≈17 MB delta on the 220 MB tile, before and after) —
-the caches and the symbol table are bounded by schema size, not document
-size. The parse path is untouched (parse-only throughput is flat), and the
-W3C XML/XSD conformance outcomes are byte-for-byte identical before and
-after.
+string-set probes — lifting the DEM tile from ~43 to ~85 MB/s. Second, a
+value-check fast path (this release) handles the common case that dominates
+CityGML: an *unconstrained* numeric scalar or list (a `gml:posList` /
+`gml:coordinates` text node is one string of tens of thousands of
+whitespace-separated doubles). Instead of collapse-normalizing the whole
+string, splitting it, and running a compiled regex per item, a lean scanner
+tokenizes on whitespace and lexes each token in one allocation-free pass;
+any rejection defers to the canonical path, so error messages are unchanged.
+This lifted the tile from ~85 to ~105 MB/s. Memory is unchanged (≈18 MB
+delta on the 220 MB tile, before and after) — the caches and the symbol
+table are bounded by schema size, not document size. The parse path is
+untouched (parse-only throughput is flat), and the W3C XML/XSD conformance
+outcomes are byte-for-byte identical before and after.
 
-Where the remaining time goes (measured by selectively disabling validator
-stages on the 15 MB DEM tile): of the 11.7 ms/MB total, parsing is
-5.5 ms/MB (a hard floor) and validation overhead is 6.2 ms/MB. That
-overhead is now dominated by *value* validation — ~55% is facet/primitive
-checking of text content (the DEM is mostly huge `gml:posList` number
-lists), with automaton stepping ~11%, attribute validation ~7%, text
-buffering ~8%, and residual per-element resolution/bookkeeping ~19%.
-Name-handling (hashing/allocation) no longer registers. So the next
-validator-side win is cheaper text value checking; the parser (~183 MB/s)
-is the eventual ceiling on the way to libxml's ~270 MB/s.
+Where the remaining time goes: of the ~9.5 ms/MB total on the 15 MB DEM
+tile, parsing is ~5.5 ms/MB (a hard floor) and validation overhead is now
+~4.0 ms/MB (down from 6.2). Value checking — previously the dominant ~55%
+of overhead — is now ~30% (~1.2 ms/MB); it is roughly tied with residual
+per-element resolution/bookkeeping (~30%), followed by automaton stepping
+(~17%), text buffering (~12%), and attribute validation (~11%). (Value
+checking is the stage this release changed; the split is derived from the
+measured throughput delta on top of the earlier stage-by-stage
+apportionment.) The parser (~183 MB/s parse-only) is the eventual hard
+ceiling on the way to libxml's ~270 MB/s; the remaining gap is now split
+fairly evenly between residual value checking and per-element bookkeeping.
 
 - **fastxml DOM uses less memory than libxml** on this file (367 vs
   405 MB): nodes are 128 bytes plus a compact interned attribute list. On
@@ -798,29 +806,34 @@ Known issues and planned improvements, roughly in priority order:
 
 **Performance / memory**
 
-- Validation throughput: streaming validation runs at ~85 MB/s (up from
+- Validation throughput: streaming validation runs at ~105 MB/s (up from
   ~44 MB/s) vs libxml's ~270 MB/s on schema-rich CityGML. Earlier gains
   removed per-element/per-value allocations (borrowing compiled types via the
   schema `Arc` instead of cloning them, `Cow` whitespace normalization that
   borrows already-collapsed values, memoized attribute collection, and
   skipping identity bookkeeping when nothing is tracked). The **symbol-ID
-  validator layer is now done**: names are interned once into integer
-  `SymbolId`s, per-element resolution (global element lookup, flattened
-  children, inline child-type resolution, and the text-validation plan) is
-  memoized by symbol instead of re-hashing/re-allocating strings on every
-  start tag, and the content-model automaton matches by symbol binary
-  search. What remains of the gap is, in order (measured by selectively
-  disabling stages): **facet/primitive validation of text values** (~55% of
-  the 6.2 ms/MB validation overhead on text-heavy CityGML — the actual
-  checking of `posList`-style number lists, a per-value cost the symbol
-  work cannot remove; needs a faster value-checking path, e.g. skipping
-  facet machinery for unconstrained list types and a leaner numeric
-  scanner), residual per-element resolution/bookkeeping (~19%), automaton
-  stepping (~11%), text buffering (~8%), and attribute validation (~7%).
-  The parser (~183 MB/s parse-only) is the eventual hard ceiling: reaching
-  libxml parity ultimately also needs faster tokenization and an interned
-  event layer (the parser handing symbols to the validator), but the
-  current gap is still mostly validator-side value checking.
+  validator layer is done**: names are interned once into integer `SymbolId`s,
+  per-element resolution (global element lookup, flattened children, inline
+  child-type resolution, and the text-validation plan) is memoized by symbol
+  instead of re-hashing/re-allocating strings on every start tag, and the
+  content-model automaton matches by symbol binary search. The **numeric
+  value-check fast path is also done**: unconstrained numeric scalars and
+  lists (double/float/decimal/integer with `whiteSpace=collapse` and no other
+  facets — the `gml:posList` / `gml:coordinates` case) skip the facet
+  machinery and per-item regex for a single allocation-free byte scan,
+  deferring to the canonical path on any rejection so errors are unchanged.
+  This roughly halved the value-checking cost and lifted the DEM tile from
+  ~85 to ~105 MB/s. What remains of the gap is now split fairly evenly
+  (percentages of the reduced ~4.0 ms/MB validation overhead, derived from
+  the throughput delta): **residual per-element resolution/bookkeeping**
+  (~30%) and **remaining value checking** (~30%, now for bounded/sign-
+  constrained integer subtypes, unions, patterns/enumerations and non-numeric
+  types, which still take the canonical path), then automaton stepping (~17%),
+  text buffering (~12%), and attribute validation (~11%). Next candidates:
+  trimming per-element bookkeeping, and an interned event layer (the parser
+  handing symbols to the validator). The parser (~183 MB/s parse-only) is the
+  eventual hard ceiling: reaching libxml parity ultimately also needs faster
+  tokenization on top of the above.
 
 
 ## Development
