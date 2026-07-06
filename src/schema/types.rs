@@ -42,6 +42,35 @@ impl NsName {
     }
 }
 
+/// Borrowed key for probing [`NsName`]-keyed [`IndexMap`]s without allocating.
+///
+/// The instance side of validation holds `(&str, &str)`; building an owned
+/// `NsName` per element lookup would put two `Arc<str>` allocations on the
+/// hot path. This mirror type hashes exactly like `NsName` (both hash the
+/// `str` contents field-by-field in the same order) and implements
+/// [`indexmap::Equivalent`], so `IndexMap::get` accepts it directly.
+#[derive(Debug, Clone, Copy)]
+pub struct NsNameRef<'a> {
+    /// Namespace URI (empty string for no-namespace).
+    pub namespace_uri: &'a str,
+    /// Local name.
+    pub local_name: &'a str,
+}
+
+impl std::hash::Hash for NsNameRef<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Must match NsName's derived Hash: Arc<str> delegates to str.
+        self.namespace_uri.hash(state);
+        self.local_name.hash(state);
+    }
+}
+
+impl indexmap::Equivalent<NsName> for NsNameRef<'_> {
+    fn equivalent(&self, key: &NsName) -> bool {
+        *key.namespace_uri == *self.namespace_uri && *key.local_name == *self.local_name
+    }
+}
+
 /// Content model type for an element (used in caches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContentModelType {
@@ -315,14 +344,18 @@ impl CompiledSchema {
     /// [`element_ns_any`](Self::element_ns_any) and is only appropriate when
     /// the instance namespace could not be resolved at all.
     pub fn element_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&ElementDef> {
-        if let Some(e) = self
-            .elements_ns
-            .get(&NsName::new(namespace_uri, local_name))
-        {
+        // Borrowed-key probes: no per-lookup allocation on the hot path.
+        if let Some(e) = self.elements_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
             return Some(e);
         }
         if !namespace_uri.is_empty()
-            && let Some(e) = self.elements_ns.get(&NsName::new("", local_name))
+            && let Some(e) = self.elements_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
         {
             return Some(e);
         }
@@ -344,11 +377,17 @@ impl CompiledSchema {
     /// Looks up a type by namespace URI and local name in the collision-free
     /// [`types_ns`](Self::types_ns) map (exact key, then chameleon `""`).
     pub fn type_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&TypeDef> {
-        if let Some(t) = self.types_ns.get(&NsName::new(namespace_uri, local_name)) {
+        if let Some(t) = self.types_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
             return Some(t);
         }
         if !namespace_uri.is_empty()
-            && let Some(t) = self.types_ns.get(&NsName::new("", local_name))
+            && let Some(t) = self.types_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
         {
             return Some(t);
         }
@@ -367,18 +406,61 @@ impl CompiledSchema {
     /// Looks up a top-level attribute by namespace URI and local name in the
     /// collision-free [`attributes_ns`](Self::attributes_ns) map.
     pub fn attribute_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&AttributeDef> {
-        if let Some(a) = self
-            .attributes_ns
-            .get(&NsName::new(namespace_uri, local_name))
-        {
+        if let Some(a) = self.attributes_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
             return Some(a);
         }
         if !namespace_uri.is_empty()
-            && let Some(a) = self.attributes_ns.get(&NsName::new("", local_name))
+            && let Some(a) = self.attributes_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
         {
             return Some(a);
         }
         None
+    }
+
+    /// Resolves a compile-time-resolved reference: the ns-qualified map first
+    /// (collision-free), then the legacy string lookup as fallback.
+    pub fn type_by_ref(&self, ns: Option<&NsName>, name: &str) -> Option<&TypeDef> {
+        if let Some(n) = ns
+            && let Some(t) = self.type_ns(&n.namespace_uri, &n.local_name)
+        {
+            return Some(t);
+        }
+        self.get_type(name)
+    }
+
+    /// Resolves a complex type's base-type definition, hopping via the
+    /// compile-time resolved `base_ns` when it corresponds to the base
+    /// reference, with the legacy string lookup as fallback.
+    ///
+    /// The base reference lives either in the content model
+    /// (`ComplexExtension` / `SimpleContent`) or in `base_type`; both are
+    /// compiled from the same QName, so `base_ns` applies whenever the
+    /// strings agree (built-in GML types set only the content-model string).
+    pub fn complex_base_def(&self, c: &ComplexType) -> Option<&TypeDef> {
+        let base = match &c.content {
+            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
+            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
+            _ => c.base_type.as_deref(),
+        }?;
+        let ns = c
+            .base_ns
+            .as_ref()
+            .filter(|_| c.base_type.as_deref() == Some(base));
+        self.type_by_ref(ns, base)
+    }
+
+    /// Resolves a simple type's base-type definition (ns-first, string
+    /// fallback). The synthetic `list(...)`/`union(...)` markers carry no
+    /// `base_ns` and miss the string lookup too, returning `None` as before.
+    pub fn simple_base_def(&self, s: &SimpleType) -> Option<&TypeDef> {
+        let base = s.base_type.as_deref()?;
+        self.type_by_ref(s.base_ns.as_ref(), base)
     }
 
     /// Resolves a prefixed type reference to a NsName using prefix_namespaces.
@@ -879,6 +961,10 @@ pub struct AttributeDef {
     pub type_ref: Option<String>,
     /// Namespace-resolved form of [`type_ref`](Self::type_ref).
     pub type_ns: Option<NsName>,
+    /// For an attribute *reference* (`<xs:attribute ref="q:name"/>`), the
+    /// resolved namespace of the referenced global attribute. `name` keeps
+    /// the bare local for message stability.
+    pub ref_ns: Option<NsName>,
     /// Inline simple type definition
     pub inline_type: Option<Box<SimpleType>>,
     /// Whether the attribute is required
@@ -898,6 +984,7 @@ impl AttributeDef {
             name: name.into(),
             type_ref: None,
             type_ns: None,
+            ref_ns: None,
             inline_type: None,
             required: false,
             default: None,

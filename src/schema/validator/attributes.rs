@@ -47,12 +47,9 @@ pub(crate) fn collect_attributes<'a>(
                 out.push(attr);
             }
         }
-        let base = match &current.content {
-            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
-            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
-            _ => current.base_type.as_deref(),
-        };
-        match base.and_then(|b| schema.get_type(b)) {
+        // C4: ns-first base hop (compile-time resolved base_ns), string
+        // fallback inside complex_base_def.
+        match schema.complex_base_def(current) {
             Some(TypeDef::Complex(c)) => current = c,
             _ => break,
         }
@@ -71,12 +68,7 @@ fn collect_attr_wildcard<'a>(
         if let Some(ref w) = current.attr_wildcard {
             return Some(w);
         }
-        let base = match &current.content {
-            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
-            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
-            _ => current.base_type.as_deref(),
-        };
-        match base.and_then(|b| schema.get_type(b)) {
+        match schema.complex_base_def(current) {
             Some(TypeDef::Complex(c)) => current = c,
             _ => break,
         }
@@ -89,6 +81,13 @@ fn collect_attr_wildcard<'a>(
 fn resolve_ref<'a>(schema: &'a CompiledSchema, attr: &'a AttributeDef) -> &'a AttributeDef {
     if !attr.is_ref {
         return attr;
+    }
+    // C4: the resolved reference namespace probes the collision-free map
+    // first; the legacy string probes remain as fallback.
+    if let Some(rn) = &attr.ref_ns
+        && let Some(global) = schema.attribute_ns(&rn.namespace_uri, &rn.local_name)
+    {
+        return global;
     }
     if let Some(global) = schema.attributes.get(&attr.name) {
         return global;
@@ -112,7 +111,8 @@ fn attribute_simple_type<'a>(
     if let Some(ref inline) = attr.inline_type {
         return Some(inline);
     }
-    match attr.type_ref.as_deref().and_then(|t| schema.get_type(t)) {
+    let type_ref = attr.type_ref.as_deref()?;
+    match schema.type_by_ref(attr.type_ns.as_ref(), type_ref) {
         Some(TypeDef::Simple(s)) => Some(s),
         _ => None,
     }
@@ -146,8 +146,8 @@ pub(crate) fn element_text_primitive_kind(
     match type_def {
         TypeDef::Simple(simple) => PrimitiveKind::resolve(schema, simple),
         TypeDef::Complex(complex) => {
-            if let ContentModel::SimpleContent { base_type } = &complex.content
-                && let Some(TypeDef::Simple(simple)) = schema.get_type(base_type)
+            if matches!(&complex.content, ContentModel::SimpleContent { .. })
+                && let Some(TypeDef::Simple(simple)) = schema.complex_base_def(complex)
             {
                 return PrimitiveKind::resolve(schema, simple);
             }

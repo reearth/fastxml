@@ -622,6 +622,7 @@ impl XsdCompiler {
         // Handle attribute reference
         if let Some(ref_qname) = &attr.ref_ {
             let mut compiled = AttributeDef::new(ref_qname.local.clone());
+            compiled.ref_ns = self.resolve_qname_ns(ref_qname);
             compiled.required = attr.use_ == AttributeUse::Required;
             compiled.is_ref = true;
             return Ok(compiled);

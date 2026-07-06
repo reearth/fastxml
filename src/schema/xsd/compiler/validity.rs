@@ -37,7 +37,12 @@ fn check_value_constraints(
     let Some(value) = elem.default.as_deref().or(elem.fixed.as_deref()) else {
         return Ok(());
     };
-    let simple = match elem.type_ref.as_deref().and_then(|t| schema.get_type(t)) {
+    // C4: ns-first (compile-time resolved), string fallback.
+    let simple = match elem
+        .type_ref
+        .as_deref()
+        .and_then(|t| schema.type_by_ref(elem.type_ns.as_ref(), t))
+    {
         Some(TypeDef::Simple(st)) => st,
         _ => return Ok(()),
     };
@@ -67,7 +72,8 @@ fn check_complex_restriction(
     let Some(base_name) = ct.base_type.as_deref() else {
         return Ok(());
     };
-    let Some(TypeDef::Complex(base)) = schema.get_type(base_name) else {
+    // C4: ns-first (compile-time resolved base_ns), string fallback.
+    let Some(TypeDef::Complex(base)) = schema.type_by_ref(ct.base_ns.as_ref(), base_name) else {
         return Ok(());
     };
     // Self-reference via placeholder or unrelated lookup

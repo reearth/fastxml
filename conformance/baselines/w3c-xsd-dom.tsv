@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38063	fail=1104	unsupported=28	blocked=418	panic=0
+#counts	total=39613	pass=38065	fail=1102	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -1521,8 +1521,6 @@ schema-invalid	valueconstraint00402m6::sunMeta/../sunData/ElemDecl/valueConstrai
 schema-invalid	valueconstraint00402m8::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00402m/valueConstraint00402m8.xsd	fail	compiled a schema that should be invalid
 schema-invalid	valueconstraint00601m2::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00601m/valueConstraint00601m2.xsd	fail	compiled a schema that should be invalid
 schema-invalid	valueconstraint00601m4::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00601m/valueConstraint00601m4.xsd	fail	compiled a schema that should be invalid
-schema-invalid	valueconstraint00601m6::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00601m/valueConstraint00601m6.xsd	fail	compiled a schema that should be invalid
-schema-invalid	valueconstraint00601m8::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00601m/valueConstraint00601m8.xsd	fail	compiled a schema that should be invalid
 schema-invalid	valueconstraint01001m2::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint01001m/valueConstraint01001m2.xsd	fail	compiled a schema that should be invalid
 schema-invalid	valueconstraint01001m3::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint01001m/valueConstraint01001m3.xsd	fail	compiled a schema that should be invalid
 schema-invalid	valueconstraint01001m5::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint01001m/valueConstraint01001m5.xsd	fail	compiled a schema that should be invalid

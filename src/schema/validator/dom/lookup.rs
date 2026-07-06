@@ -22,6 +22,22 @@ impl DomSchemaValidator {
         prefix: Option<&str>,
         namespace_uri: Option<&str>,
     ) -> Option<&ElementDef> {
+        // C4: collision-free namespace-qualified lookup first (see the
+        // streaming counterpart in streaming/lookup.rs). DOM nodes carry
+        // native namespace URIs; `None` means a no-namespace element.
+        match namespace_uri {
+            Some(ns) => {
+                if let Some(elem) = self.schema.element_ns(ns, name) {
+                    return Some(elem);
+                }
+            }
+            None => {
+                if let Some(elem) = self.schema.element_ns("", name) {
+                    return Some(elem);
+                }
+            }
+        }
+
         if let Some(p) = prefix
             && !p.is_empty()
         {
@@ -49,6 +65,13 @@ impl DomSchemaValidator {
         &self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
+        // C4: the compile-time resolved (namespace, local) of the type
+        // reference probes the owning-namespace-keyed cache directly.
+        if let Some(ref type_ns) = elem.type_ns
+            && let Some(cached) = self.schema.ns_type_children_cache.get(type_ns)
+        {
+            return Some(Arc::clone(cached));
+        }
         // Try type reference first; the namespace-aware cache avoids
         // cross-namespace collisions between same-local-name types.
         if let Some(ref type_ref) = elem.type_ref {

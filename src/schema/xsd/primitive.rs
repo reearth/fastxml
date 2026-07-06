@@ -144,23 +144,40 @@ impl PrimitiveKind {
             return Some(kind);
         }
 
-        // C4: walk the base-type chain by reference, no per-level String clone.
-        let mut current: &str = simple.base_type.as_deref()?;
+        // Walk the base-type chain by reference, no per-level String clone.
+        let mut current: &SimpleType = simple;
         // Defensive bound on chain length to avoid pathological cycles or
         // very deep accidental recursion. XSD's built-in tree is shallow (at
         // most ~6 levels), so 16 is more than enough.
         for _ in 0..16 {
-            if let Some(kind) = Self::from_type_name(current) {
-                return Some(kind);
+            let base_str = current.base_type.as_deref()?;
+            // C4: built-in detection is namespace-aware when the base
+            // reference was resolved at compile time: only a base in the XSD
+            // namespace names a built-in; a user type that happens to be
+            // named "integer" in its own namespace is followed into its
+            // definition instead. Unresolved bases keep the legacy
+            // string-shape check.
+            match &current.base_ns {
+                Some(bn) if &*bn.namespace_uri == crate::schema::xsd::builtin::XS_NAMESPACE => {
+                    if let Some(kind) = Self::from_type_name(&bn.local_name) {
+                        return Some(kind);
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    if let Some(kind) = Self::from_type_name(base_str) {
+                        return Some(kind);
+                    }
+                }
             }
-            let next = match schema.get_type(current)? {
+            let next = match schema.simple_base_def(current)? {
                 TypeDef::Simple(s) => s,
                 TypeDef::Complex(_) => return None,
             };
             if let Some(kind) = Self::from_type_name(&next.name) {
                 return Some(kind);
             }
-            current = next.base_type.as_deref()?;
+            current = next;
         }
         None
     }

@@ -20,22 +20,30 @@ impl XsdCompiler {
     /// which is collision-free. The legacy `type_children_cache` (keyed by "prefix:local")
     /// is also populated for backward compatibility.
     pub(crate) fn build_type_children_cache(&self, schema: &mut CompiledSchema) {
-        // Collect type names first to avoid borrowing issues
-        let type_names: Vec<String> = schema.types.keys().cloned().collect();
+        // --- Namespace-aware cache (primary) ---
+        //
+        // Keyed straight off `types_ns`, whose keys carry the OWNING
+        // document's target namespace recorded at registration time. The
+        // previous scheme re-derived the namespace here from the type-map
+        // string key via the accumulated (last-document-wins) prefix
+        // bindings, which mis-keyed types from earlier documents whenever
+        // documents bound the same prefix to different URIs (errA002 class).
+        let ns_keys: Vec<NsName> = schema.types_ns.keys().cloned().collect();
+        for ns_name in ns_keys {
+            if let Some(TypeDef::Complex(complex)) = schema.types_ns.get(&ns_name) {
+                let flattened = Arc::new(self.flatten_type_children_ns(complex, schema));
+                schema.ns_type_children_cache.insert(ns_name, flattened);
+            }
+        }
 
-        // Build cache for main schema types
+        // --- Legacy prefix-based cache ---
+        // (The former "imported schema types" pass is gone: CompiledSchema::
+        // imports is never populated by this compiler, so it was dead code.)
+        let type_names: Vec<String> = schema.types.keys().cloned().collect();
         for type_name in &type_names {
             if let Some(TypeDef::Complex(complex)) = schema.types.get(type_name) {
                 let flattened = Arc::new(self.flatten_type_children_ns(complex, schema));
 
-                // --- Namespace-aware cache (primary) ---
-                if let Some(ns_name) = self.resolve_to_ns(type_name) {
-                    schema
-                        .ns_type_children_cache
-                        .insert(ns_name, Arc::clone(&flattened));
-                }
-
-                // --- Legacy prefix-based cache ---
                 schema
                     .type_children_cache
                     .insert(type_name.clone(), Arc::clone(&flattened));
@@ -50,47 +58,6 @@ impl XsdCompiler {
                     .entry(local_name.to_string())
                     .or_insert(Arc::clone(&flattened));
             }
-        }
-
-        // Build cache for imported schema types
-        let import_types: Vec<(String, FlattenedChildren)> = schema
-            .imports
-            .values()
-            .flat_map(|imported| {
-                imported.types.iter().filter_map(|(type_name, type_def)| {
-                    if let TypeDef::Complex(complex) = type_def {
-                        let flattened = self.flatten_type_children_ns(complex, schema);
-                        Some((type_name.clone(), flattened))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect();
-
-        for (type_name, flattened) in import_types {
-            let flattened = Arc::new(flattened);
-
-            // --- Namespace-aware cache ---
-            if let Some(ns_name) = self.resolve_to_ns(&type_name) {
-                schema
-                    .ns_type_children_cache
-                    .insert(ns_name, Arc::clone(&flattened));
-            }
-
-            // --- Legacy prefix-based cache ---
-            schema
-                .type_children_cache
-                .insert(type_name.clone(), Arc::clone(&flattened));
-
-            let local_name = type_name
-                .split_once(':')
-                .map(|(_, local)| local)
-                .unwrap_or(&type_name);
-            schema
-                .type_children_cache
-                .entry(local_name.to_string())
-                .or_insert(Arc::clone(&flattened));
         }
     }
 
@@ -134,9 +101,16 @@ impl XsdCompiler {
             let base_part = if base_local == "anyType" {
                 None
             } else {
-                let base = self
-                    .resolve_to_ns(base_name)
-                    .and_then(|ns| schema.get_type_by_ns(&ns.namespace_uri, &ns.local_name))
+                // C4: the type's own compile-time resolved base_ns first,
+                // then the legacy accumulated-bindings resolution.
+                let base = complex
+                    .base_ns
+                    .as_ref()
+                    .and_then(|bn| schema.type_ns(&bn.namespace_uri, &bn.local_name))
+                    .or_else(|| {
+                        self.resolve_to_ns(base_name)
+                            .and_then(|ns| schema.get_type_by_ns(&ns.namespace_uri, &ns.local_name))
+                    })
                     .or_else(|| schema.get_type(base_name));
                 match base {
                     Some(TypeDef::Complex(b)) => self.effective_particle(b, schema, depth + 1)?,
@@ -240,12 +214,17 @@ impl XsdCompiler {
                 if !visited.contains(base_type.as_str()) {
                     visited.insert(base_type.clone());
 
-                    // Resolve base type using namespace URI for correct cross-namespace lookup
-                    let base_complex = if let Some(ns_name) = self.resolve_to_ns(base_type) {
-                        schema.get_type_by_ns(&ns_name.namespace_uri, &ns_name.local_name)
-                    } else {
-                        None
-                    };
+                    // C4: the type's own compile-time resolved base_ns first
+                    // (per owning document), then the legacy resolutions.
+                    let base_complex = complex
+                        .base_ns
+                        .as_ref()
+                        .and_then(|bn| schema.type_ns(&bn.namespace_uri, &bn.local_name))
+                        .or_else(|| {
+                            self.resolve_to_ns(base_type).and_then(|ns_name| {
+                                schema.get_type_by_ns(&ns_name.namespace_uri, &ns_name.local_name)
+                            })
+                        });
                     // Fallback to legacy prefix-based lookup
                     let base_complex = base_complex.or_else(|| schema.get_type(base_type.as_str()));
 
@@ -276,15 +255,29 @@ pub(crate) fn inherited_wildcard(
     if complex.wildcard.is_some() {
         return complex.wildcard.clone();
     }
-    let mut base = complex.base_type.clone();
+    // C4: ns-first base hops (compile-time resolved base_ns, string
+    // fallback inside simple/complex base resolution).
+    let mut current = complex;
     for _ in 0..16 {
-        let Some(b) = base else { break };
-        match schema.get_type(&b) {
+        if current.base_type.is_none() {
+            break;
+        }
+        let base = current
+            .base_ns
+            .as_ref()
+            .and_then(|bn| schema.type_ns(&bn.namespace_uri, &bn.local_name))
+            .or_else(|| {
+                current
+                    .base_type
+                    .as_deref()
+                    .and_then(|b| schema.get_type(b))
+            });
+        match base {
             Some(crate::schema::types::TypeDef::Complex(c)) => {
                 if c.wildcard.is_some() {
                     return c.wildcard.clone();
                 }
-                base = c.base_type.clone();
+                current = c;
             }
             _ => break,
         }

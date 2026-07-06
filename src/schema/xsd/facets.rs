@@ -307,18 +307,17 @@ impl FacetConstraints {
 
             if let Some(ref item_type) = current.item_type {
                 c.is_list = true;
-                c.item_kind = match schema.get_type(item_type) {
+                // C4: ns-first item-type resolution (string fallback inside
+                // type_by_ref), keeping the name-shape fallback for built-ins
+                // that have no definition entry.
+                c.item_kind = match schema.type_by_ref(current.item_ns.as_ref(), item_type) {
                     Some(TypeDef::Simple(item)) => PrimitiveKind::resolve(schema, item),
                     _ => PrimitiveKind::from_type_name(item_type),
                 };
                 break;
             }
 
-            match current
-                .base_type
-                .as_deref()
-                .and_then(|b| schema.get_type(b))
-            {
+            match schema.simple_base_def(current) {
                 Some(TypeDef::Simple(next)) => current = next,
                 _ => break,
             }
