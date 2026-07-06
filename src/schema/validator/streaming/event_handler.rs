@@ -39,12 +39,23 @@ impl XmlEventHandler for OnePassSchemaValidator {
                 let name_sym = self.symbols.local(qname_sym);
                 let name_arc = Arc::clone(self.symbols.arc(name_sym));
                 let qname_arc = Arc::clone(self.symbols.arc(qname_sym));
-                // Streaming events carry no resolved namespace URI.
+                // Resolve the element's namespace URI from the in-scope
+                // declarations (its prefix, or the default namespace). The
+                // URI drives wildcard namespace-set matching and
+                // namespace-aware element lookup — leaving it `None` made
+                // `##local` wildcards admit any prefixed element.
+                let namespace = self.state.resolve_element_namespace(prefix.as_deref());
                 self.state
-                    .push_element_sym(Arc::clone(&qname_arc), None, qname_sym.0);
+                    .push_element_sym(Arc::clone(&qname_arc), namespace.clone(), qname_sym.0);
                 let attrs: smallvec::SmallVec<[(&str, &str); 8]> =
                     attributes.iter().map(|(k, v)| (*k, v.as_ref())).collect();
-                self.validate_element(&name_arc, prefix.as_deref(), &qname_arc, None, &attrs);
+                self.validate_element(
+                    &name_arc,
+                    prefix.as_deref(),
+                    &qname_arc,
+                    namespace.as_deref(),
+                    &attrs,
+                );
             }
             RawEvent::EndElement { .. } => {
                 // The closing name is unused — the element being closed is the

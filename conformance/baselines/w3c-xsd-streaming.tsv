@@ -1,4 +1,4 @@
-#counts	total=39613	pass=37977	fail=1189	unsupported=28	blocked=419	panic=0
+#counts	total=39613	pass=38041	fail=1126	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -256,8 +256,6 @@ instance-invalid	nillable00102m::sunMeta/../sunData/ElemDecl/nillable/nillable00
 instance-invalid	nillable00201m::sunMeta/../sunData/ElemDecl/nillable/nillable00201m/nillable00201m2_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	notatH002v::msMeta/../msData/notations/notatH002.xml	fail	expected invalid but validator accepted it
 instance-invalid	notatH003::msMeta/../msData/notations/notatH003.xml	fail	expected invalid but validator accepted it
-instance-invalid	nsconstraint00201m1::sunMeta/../sunData/Wildcard/nsConstraint/nsConstraint00201m/nsConstraint00201m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	nsconstraint00301m1::sunMeta/../sunData/Wildcard/nsConstraint/nsConstraint00301m/nsConstraint00301m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	particles00201m1::sunMeta/../sunData/MGroup/particles/particles00201m/particles00201m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	particles00202m1::sunMeta/../sunData/MGroup/particles/particles00202m/particles00202m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	particles00203m1::sunMeta/../sunData/MGroup/particles/particles00203m/particles00203m1_n.xml	fail	expected invalid but validator accepted it
@@ -265,14 +263,9 @@ instance-invalid	particles00204m1::sunMeta/../sunData/MGroup/particles/particles
 instance-invalid	particles00303m1::sunMeta/../sunData/MGroup/particles/particles00303m/particles00303m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesC010::msMeta/../msData/particles/particlesC010.xml	blocked	schema failed to compile
 instance-invalid	particlesC022::msMeta/../msData/particles/particlesC022.xml	blocked	schema failed to compile
-instance-invalid	particlesC024::msMeta/../msData/particles/particlesC024.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesC025::msMeta/../msData/particles/particlesC025.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesC026::msMeta/../msData/particles/particlesC026.xml	blocked	schema failed to compile
 instance-invalid	particlesC033::msMeta/../msData/particles/particlesC033.xml	blocked	schema failed to compile
-instance-invalid	particlesC035::msMeta/../msData/particles/particlesC035.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesC036::msMeta/../msData/particles/particlesC036.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesC038::msMeta/../msData/particles/particlesC038.xml	blocked	schema failed to compile
-instance-invalid	particlesC039::msMeta/../msData/particles/particlesC039.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesC042::msMeta/../msData/particles/particlesC042.xml	blocked	schema failed to compile
 instance-invalid	particlesC047::msMeta/../msData/particles/particlesC047.xml	blocked	schema failed to compile
 instance-invalid	particlesC048::msMeta/../msData/particles/particlesC048.xml	blocked	schema failed to compile
@@ -337,7 +330,6 @@ instance-invalid	reS42::msMeta/../msData/regex/reS42.xml	fail	expected invalid b
 instance-invalid	reT63::msMeta/../msData/regex/reT63.xml	fail	expected invalid but validator accepted it
 instance-invalid	reT84::msMeta/../msData/regex/reT84.xml	fail	expected invalid but validator accepted it
 instance-invalid	reZ002::msMeta/../msData/regex/reZ002.xml	fail	expected invalid but validator accepted it
-instance-invalid	s3_10_1ii04::ibmMeta/../ibmData/instance_invalid/S3_10_1/s3_10_1ii04.xml	fail	expected invalid but validator accepted it
 instance-invalid	s3_10_1ii08::ibmMeta/../ibmData/instance_invalid/S3_10_1/s3_10_1ii08.xml	fail	expected invalid but validator accepted it
 instance-invalid	s3_10_1ii09::ibmMeta/../ibmData/instance_invalid/S3_10_1/s3_10_1ii09.xml	fail	expected invalid but validator accepted it
 instance-invalid	s3_10_6ii01::ibmMeta/../ibmData/instance_invalid/S3_10_6/s3_10_6ii01.xml	fail	expected invalid but validator accepted it
@@ -430,20 +422,7 @@ instance-invalid	valueconstraint00501m3::sunMeta/../sunData/ElemDecl/valueConstr
 instance-invalid	valueconstraint00501m6::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00501m/valueConstraint00501m6_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	valueconstraint00701m1::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00701m/valueConstraint00701m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	valueconstraint00801m1::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00801m/valueConstraint00801m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG003::msMeta/../msData/wildcards/wildG003.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG008::msMeta/../msData/wildcards/wildG008.xml	fail	expected invalid but validator accepted it
 instance-invalid	wildG009::msMeta/../msData/wildcards/wildG009.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG017::msMeta/../msData/wildcards/wildG017.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG019::msMeta/../msData/wildcards/wildG019.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG022::msMeta/../msData/wildcards/wildG022.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG024::msMeta/../msData/wildcards/wildG024.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG025::msMeta/../msData/wildcards/wildG025.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG028::msMeta/../msData/wildcards/wildG028.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG029::msMeta/../msData/wildcards/wildG029.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG032::msMeta/../msData/wildcards/wildG032.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildG039::msMeta/../msData/wildcards/wildG039.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildH002::msMeta/../msData/wildcards/wildH002.xml	fail	expected invalid but validator accepted it
-instance-invalid	wildH006::msMeta/../msData/wildcards/wildH006.xml	fail	expected invalid but validator accepted it
 instance-invalid	wildO006::msMeta/../msData/wildcards/wildO006.xml	fail	expected invalid but validator accepted it
 instance-invalid	wildZ010::msMeta/../msData/wildcards/wildZ010.xml	blocked	schema failed to compile
 instance-invalid	wildZ011::msMeta/../msData/wildcards/wildZ011.xml	blocked	schema failed to compile
@@ -500,13 +479,11 @@ instance-valid	addA006::msMeta/../msData/additional/adhocAddB002.xml	blocked	sch
 instance-valid	addA008::msMeta/../msData/additional/adhocAddB004.xml	blocked	schema failed to compile
 instance-valid	addB076::msMeta/../msData/additional/addB076.xml	fail	expected valid but validator reported errors
 instance-valid	addB088::msMeta/../msData/additional/addB088.xml	blocked	schema failed to compile
-instance-valid	addB090::msMeta/../msData/additional/addB090.xml	fail	expected valid but validator reported errors
 instance-valid	addB104::msMeta/../msData/additional/addB104.xml	fail	expected valid but validator reported errors
 instance-valid	addB116::msMeta/../msData/additional/test75092.xml	fail	expected valid but validator reported errors
 instance-valid	addB129::msMeta/../msData/additional/test74834.xml	fail	expected valid but validator reported errors
 instance-valid	addB132::msMeta/../msData/additional/test66745.xml	blocked	schema failed to compile
 instance-valid	addB134::msMeta/../msData/additional/test72131.xml	blocked	schema failed to compile
-instance-valid	addB140::msMeta/../msData/additional/test78000.xml	fail	expected valid but validator reported errors
 instance-valid	addB148::msMeta/../msData/additional/test93276.xml	blocked	schema failed to compile
 instance-valid	addB155::msMeta/../msData/additional/test93490_1.xml	blocked	schema failed to compile
 instance-valid	addB157::msMeta/../msData/additional/test93490_3.xml	blocked	schema failed to compile
@@ -610,12 +587,10 @@ instance-valid	idL086::msMeta/../msData/identityConstraint/idL086.xml	fail	expec
 instance-valid	idL088::msMeta/../msData/identityConstraint/idL088.xml	fail	expected valid but validator reported errors
 instance-valid	idL090::msMeta/../msData/identityConstraint/idL090.xml	fail	expected valid but validator reported errors
 instance-valid	idL102::msMeta/../msData/identityConstraint/idL102.xml	fail	expected valid but validator reported errors
-instance-valid	idc004.nogen::sunMeta/../sunData/combined/identity/idc004/idc004.nogen.v00.xml	fail	expected valid but validator reported errors
 instance-valid	idconstrdefs00201m::sunMeta/../sunData/ElemDecl/identityConstraintDefs/idConstrDefs00201m/idConstrDefs00201m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest002::sunMeta/../sunData/combined/identity/IdentityTestSuite/002/test.2.v.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest003::sunMeta/../sunData/combined/identity/IdentityTestSuite/003/test.1.v.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest003::sunMeta/../sunData/combined/identity/IdentityTestSuite/003/test.2.v.xml	fail	expected valid but validator reported errors
-instance-valid	identitytestsuitetest004::sunMeta/../sunData/combined/identity/IdentityTestSuite/004/test.1.v.xml	fail	expected valid but validator reported errors
 instance-valid	introspection::common/../boeingMeta/BoeingXSDTestSet.testSet	blocked	schema failed to compile
 instance-valid	introspection::common/../common/introspection.testSet	blocked	schema failed to compile
 instance-valid	introspection::common/../ibmMeta/allGroup.testSet	blocked	schema failed to compile
@@ -728,37 +703,20 @@ instance-valid	memberType008::msMeta/../msData/additional/memberType008.xml	fail
 instance-valid	memberType022::msMeta/../msData/additional/memberType022.xml	fail	expected valid but validator reported errors
 instance-valid	mgAa003::msMeta/../msData/modelGroups/mgAa003.xml	fail	expected valid but validator reported errors
 instance-valid	mgD013::msMeta/../msData/modelGroups/mgD013.xml	fail	expected valid but validator reported errors
-instance-valid	mgF008::msMeta/../msData/modelGroups/mgF008.xml	fail	expected valid but validator reported errors
-instance-valid	mgF009::msMeta/../msData/modelGroups/mgF009.xml	fail	expected valid but validator reported errors
-instance-valid	mgF010::msMeta/../msData/modelGroups/mgF010.xml	fail	expected valid but validator reported errors
-instance-valid	mgF011::msMeta/../msData/modelGroups/mgF011.xml	fail	expected valid but validator reported errors
-instance-valid	mgF012::msMeta/../msData/modelGroups/mgF012.xml	fail	expected valid but validator reported errors
-instance-valid	mgF013::msMeta/../msData/modelGroups/mgF013.xml	fail	expected valid but validator reported errors
-instance-valid	mgF014::msMeta/../msData/modelGroups/mgF014.xml	fail	expected valid but validator reported errors
-instance-valid	mgI008::msMeta/../msData/modelGroups/mgI008.xml	fail	expected valid but validator reported errors
-instance-valid	mgI011::msMeta/../msData/modelGroups/mgI011.xml	fail	expected valid but validator reported errors
 instance-valid	mgI018::msMeta/../msData/modelGroups/mgI018.xml	fail	expected valid but validator reported errors
 instance-valid	mgO006::msMeta/../msData/modelGroups/mgO006.xml	blocked	schema failed to compile
 instance-valid	mgO034::msMeta/../msData/modelGroups/mgO034.xml	blocked	schema failed to compile
 instance-valid	mgZ003::msMeta/../msData/modelGroups/mgZ003.xml	fail	expected valid but validator reported errors
 instance-valid	name00201m1::sunMeta/../sunData/IdConstrDefs/name/name00201m/name00201m1_p.xml	fail	expected valid but validator reported errors
-instance-valid	nsconstraint00301m1::sunMeta/../sunData/Wildcard/nsConstraint/nsConstraint00301m/nsConstraint00301m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	particles00205m1::sunMeta/../sunData/MGroup/particles/particles00205m/particles00205m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	particles00305m1::sunMeta/../sunData/MGroup/particles/particles00305m/particles00305m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	particlesB013::msMeta/../msData/particles/particlesB013.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC008::msMeta/../msData/particles/particlesC008.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC011::msMeta/../msData/particles/particlesC011.xml	fail	expected valid but validator reported errors
 instance-valid	particlesC015::msMeta/../msData/particles/particlesC015.xml	fail	expected valid but validator reported errors
 instance-valid	particlesC016::msMeta/../msData/particles/particlesC016.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC021::msMeta/../msData/particles/particlesC021.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC028::msMeta/../msData/particles/particlesC028.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC029::msMeta/../msData/particles/particlesC029.xml	fail	expected valid but validator reported errors
-instance-valid	particlesC030::msMeta/../msData/particles/particlesC030.xml	fail	expected valid but validator reported errors
 instance-valid	particlesEb027::msMeta/../msData/particles/particlesEb027.xml	fail	expected valid but validator reported errors
 instance-valid	particlesEb036::msMeta/../msData/particles/particlesEb036.xml	fail	expected valid but validator reported errors
 instance-valid	particlesEb038::msMeta/../msData/particles/particlesEb038.xml	fail	expected valid but validator reported errors
 instance-valid	particlesEc001::msMeta/../msData/particles/particlesEc001.xml	fail	expected valid but validator reported errors
-instance-valid	particlesFa005::msMeta/../msData/particles/particlesFa005.xml	fail	expected valid but validator reported errors
 instance-valid	particlesIa002::msMeta/../msData/particles/particlesIa002.xml	fail	expected valid but validator reported errors
 instance-valid	particlesIc005::msMeta/../msData/particles/particlesIc005.xml	blocked	schema failed to compile
 instance-valid	particlesIc006::msMeta/../msData/particles/particlesIc006.xml	blocked	schema failed to compile
@@ -816,20 +774,6 @@ instance-valid	particlesJu001::msMeta/../msData/particles/particlesJu001.xml	blo
 instance-valid	particlesJu002::msMeta/../msData/particles/particlesJu002.xml	blocked	schema failed to compile
 instance-valid	particlesJu003::msMeta/../msData/particles/particlesJu003.xml	blocked	schema failed to compile
 instance-valid	particlesK008::msMeta/../msData/particles/particlesK008.xml	blocked	schema failed to compile
-instance-valid	particlesOb003::msMeta/../msData/particles/particlesOb003.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb005::msMeta/../msData/particles/particlesOb005.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb006::msMeta/../msData/particles/particlesOb006.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb012::msMeta/../msData/particles/particlesOb012.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb015::msMeta/../msData/particles/particlesOb015.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb032::msMeta/../msData/particles/particlesOb032.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb042::msMeta/../msData/particles/particlesOb042.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb047::msMeta/../msData/particles/particlesOb047.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb048::msMeta/../msData/particles/particlesOb048.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb053::msMeta/../msData/particles/particlesOb053.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb054::msMeta/../msData/particles/particlesOb054.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb056::msMeta/../msData/particles/particlesOb056.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb059::msMeta/../msData/particles/particlesOb059.xml	fail	expected valid but validator reported errors
-instance-valid	particlesOb060::msMeta/../msData/particles/particlesOb060.xml	fail	expected valid but validator reported errors
 instance-valid	particlesQ016::msMeta/../msData/particles/particlesQ016.xml	blocked	schema failed to compile
 instance-valid	particlesQ017::msMeta/../msData/particles/particlesQ017.xml	blocked	schema failed to compile
 instance-valid	particlesQ020::msMeta/../msData/particles/particlesQ020.xml	blocked	schema failed to compile
@@ -907,19 +851,11 @@ instance-valid	wildG004::msMeta/../msData/wildcards/wildG004.xml	blocked	schema 
 instance-valid	wildG006::msMeta/../msData/wildcards/wildG006.xml	blocked	schema failed to compile
 instance-valid	wildG010::msMeta/../msData/wildcards/wildG010.xml	blocked	schema failed to compile
 instance-valid	wildG013::msMeta/../msData/wildcards/wildG013.xml	blocked	schema failed to compile
-instance-valid	wildG031::msMeta/../msData/wildcards/wildG031.xml	blocked	nondeterministic wildcard validation in fastxml
-instance-valid	wildH004::msMeta/../msData/wildcards/wildH004.xml	fail	expected valid but validator reported errors
-instance-valid	wildH005::msMeta/../msData/wildcards/wildH005.xml	fail	expected valid but validator reported errors
 instance-valid	wildH007::msMeta/../msData/wildcards/wildH007.xml	blocked	schema failed to compile
-instance-valid	wildH010::msMeta/../msData/wildcards/wildH010.xml	fail	expected valid but validator reported errors
-instance-valid	wildH011::msMeta/../msData/wildcards/wildH011.xml	fail	expected valid but validator reported errors
-instance-valid	wildH012::msMeta/../msData/wildcards/wildH012.xml	fail	expected valid but validator reported errors
 instance-valid	wildI005::msMeta/../msData/wildcards/wildI005.xml	fail	expected valid but validator reported errors
 instance-valid	wildI006::msMeta/../msData/wildcards/wildI006.xml	fail	expected valid but validator reported errors
-instance-valid	wildI007::msMeta/../msData/wildcards/wildI007.xml	fail	expected valid but validator reported errors
 instance-valid	wildI011::msMeta/../msData/wildcards/wildI011.xml	fail	expected valid but validator reported errors
 instance-valid	wildI012::msMeta/../msData/wildcards/wildI012.xml	fail	expected valid but validator reported errors
-instance-valid	wildZ002::msMeta/../msData/wildcards/wildZ002.xml	fail	expected valid but validator reported errors
 instance-valid	wildZ003::msMeta/../msData/wildcards/wildZ003.xml	blocked	schema failed to compile
 instance-valid	wildZ004::msMeta/../msData/wildcards/wildZ004.xml	fail	expected valid but validator reported errors
 instance-valid	wildZ013b::msMeta/../msData/wildcards/test328873b.xml	blocked	schema failed to compile

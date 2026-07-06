@@ -14,23 +14,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 
-/// Instance documents whose validity verdict is nondeterministic in fastxml
-/// (its wildcard/namespace-set processing iterates unordered collections, so
-/// the same input can validate or not across runs). We record these as
-/// `Blocked` with a clear reason rather than let a coin-flip destabilize the
-/// baseline ratchet. This is an honest "cannot decide", not a hidden pass; the
-/// underlying nondeterminism is a fastxml bug worth fixing separately. Matched
-/// by path suffix so it is independent of the data-directory layout.
-const NONDETERMINISTIC_INSTANCE_SUFFIXES: &[&str] = &["msData/wildcards/wildG031.xml"];
-
-/// Whether an instance is known to validate nondeterministically in fastxml.
-fn is_nondeterministic(path: &Path) -> bool {
-    let s = path.to_string_lossy().replace('\\', "/");
-    NONDETERMINISTIC_INSTANCE_SUFFIXES
-        .iter()
-        .any(|suffix| s.ends_with(suffix))
-}
-
 /// Run the whole W3C XSD suite with one engine.
 pub fn run_xsd_suite(engine: Engine, suite: &XsdTestSuite) -> SuiteRun {
     let mut run = SuiteRun::default();
@@ -138,12 +121,6 @@ fn eval_instance(
 ) -> Eval {
     if instance.expected == InstanceValidity::Indeterminate {
         return Eval::new(Outcome::Unsupported, Some("indeterminate".into()));
-    }
-    if is_nondeterministic(&instance.path) {
-        return Eval::new(
-            Outcome::Blocked,
-            Some("nondeterministic wildcard validation in fastxml".into()),
-        );
     }
     let Some(schema) = compiled else {
         return Eval::new(Outcome::Blocked, Some("schema failed to compile".into()));

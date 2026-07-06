@@ -3,7 +3,9 @@
 //! This module provides the synchronous implementation of schema resolution
 //! for import/include chains.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
+
+use indexmap::IndexMap;
 
 use crate::error::Result;
 use crate::schema::fetcher::SchemaFetcher;
@@ -15,8 +17,14 @@ use super::common::resolve_uri;
 /// Schema resolver that handles import/include chains.
 pub struct SchemaResolver<'a, F: SchemaFetcher> {
     fetcher: &'a F,
-    /// Resolved schemas by URI
-    schemas: HashMap<String, XsdSchema>,
+    /// Resolved schemas by URI, in stable discovery order. An `IndexMap`
+    /// (not `HashMap`) is essential: `take_all_schemas` feeds the compiler,
+    /// and when two documents declare the same local name in different
+    /// namespaces (e.g. `foo` in a target namespace vs. `foo` in no namespace)
+    /// the last-compiled one wins the key collision. HashMap iteration order
+    /// varies per process, which made such schemas validate nondeterministically
+    /// (see wildG031). Insertion order keeps the verdict stable.
+    schemas: IndexMap<String, XsdSchema>,
     /// URIs currently being resolved (for cycle detection)
     resolving: HashSet<String>,
 }
@@ -26,7 +34,7 @@ impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
     pub fn new(fetcher: &'a F) -> Self {
         Self {
             fetcher,
-            schemas: HashMap::new(),
+            schemas: IndexMap::new(),
             resolving: HashSet::new(),
         }
     }
@@ -114,7 +122,7 @@ impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
         }
 
         // Add entry schema last
-        if let Some(entry) = self.schemas.remove(entry_uri) {
+        if let Some(entry) = self.schemas.shift_remove(entry_uri) {
             result.push(entry);
         }
 
@@ -225,7 +233,7 @@ impl<'a, F: SchemaFetcher> SchemaResolver<'a, F> {
     }
 
     /// Consumes the resolver and returns the resolved schemas.
-    pub fn into_schemas(self) -> HashMap<String, XsdSchema> {
+    pub fn into_schemas(self) -> IndexMap<String, XsdSchema> {
         self.schemas
     }
 }

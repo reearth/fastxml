@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38062	fail=1104	unsupported=28	blocked=419	panic=0
+#counts	total=39613	pass=38063	fail=1104	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -829,7 +829,6 @@ instance-valid	wildG004::msMeta/../msData/wildcards/wildG004.xml	blocked	schema 
 instance-valid	wildG006::msMeta/../msData/wildcards/wildG006.xml	blocked	schema failed to compile
 instance-valid	wildG010::msMeta/../msData/wildcards/wildG010.xml	blocked	schema failed to compile
 instance-valid	wildG013::msMeta/../msData/wildcards/wildG013.xml	blocked	schema failed to compile
-instance-valid	wildG031::msMeta/../msData/wildcards/wildG031.xml	blocked	nondeterministic wildcard validation in fastxml
 instance-valid	wildH007::msMeta/../msData/wildcards/wildH007.xml	blocked	schema failed to compile
 instance-valid	wildI005::msMeta/../msData/wildcards/wildI005.xml	fail	expected valid but validator reported errors
 instance-valid	wildI006::msMeta/../msData/wildcards/wildI006.xml	fail	expected valid but validator reported errors
