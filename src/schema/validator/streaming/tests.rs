@@ -349,6 +349,7 @@ fn test_streaming_validator_min_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        base_ns: None,
         derivation: None,
         block: Default::default(),
         wildcard: None,

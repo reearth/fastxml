@@ -344,6 +344,15 @@ pub struct ElementDef {
     pub name: String,
     /// Type reference (name of a type definition)
     pub type_ref: Option<String>,
+    /// Namespace-resolved form of [`type_ref`](Self::type_ref), computed at
+    /// compile time against the owning document's bindings. The string
+    /// `type_ref` is kept verbatim for message stability; this parallel field
+    /// carries the collision-free `(namespace, local)` for lookups.
+    pub type_ns: Option<NsName>,
+    /// For an element *reference* (`<xs:element ref="q:name"/>`), the resolved
+    /// namespace of the referenced global element. The `name` field holds the
+    /// bare local for message stability; this carries the namespace.
+    pub ref_ns: Option<NsName>,
     /// Inline type definition
     pub inline_type: Option<TypeDef>,
     /// Minimum occurrences
@@ -354,6 +363,9 @@ pub struct ElementDef {
     pub is_abstract: bool,
     /// Substitution group head
     pub substitution_group: Option<String>,
+    /// Namespace-resolved form of
+    /// [`substitution_group`](Self::substitution_group).
+    pub substitution_ns: Option<NsName>,
     /// Whether the element is nillable
     pub nillable: bool,
     /// Default value applied when the element is empty
@@ -370,11 +382,14 @@ impl ElementDef {
         Self {
             name: name.into(),
             type_ref: None,
+            type_ns: None,
+            ref_ns: None,
             inline_type: None,
             min_occurs: 1,
             max_occurs: Some(1),
             is_abstract: false,
             substitution_group: None,
+            substitution_ns: None,
             nillable: false,
             default: None,
             fixed: None,
@@ -424,6 +439,9 @@ pub struct SimpleType {
     pub name: String,
     /// Base type (restriction or extension)
     pub base_type: Option<String>,
+    /// Namespace-resolved form of [`base_type`](Self::base_type). `None` for
+    /// the synthetic `list(...)`/`union(...)` markers, which are not QNames.
+    pub base_ns: Option<NsName>,
     /// Enumeration values
     pub enumeration: Vec<String>,
     /// Pattern restriction
@@ -448,8 +466,14 @@ pub struct SimpleType {
     pub fraction_digits: Option<u32>,
     /// Item type for list types (`<xs:list itemType="..."/>`)
     pub item_type: Option<String>,
+    /// Namespace-resolved form of [`item_type`](Self::item_type).
+    pub item_ns: Option<NsName>,
     /// Member types for union types (`<xs:union memberTypes="..."/>`)
     pub member_types: Vec<String>,
+    /// Namespace-resolved form of each entry in
+    /// [`member_types`](Self::member_types) (index-aligned; `None` where the
+    /// member reference could not be resolved).
+    pub member_ns: Vec<Option<NsName>>,
     /// Whitespace normalization declared by a whiteSpace facet
     pub white_space: Option<WhiteSpace>,
     /// Explicit timezone requirement (XSD 1.1 explicitTimezone facet)
@@ -484,6 +508,7 @@ impl SimpleType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             enumeration: Vec::new(),
             pattern: None,
             length: None,
@@ -496,7 +521,9 @@ impl SimpleType {
             total_digits: None,
             fraction_digits: None,
             item_type: None,
+            item_ns: None,
             member_types: Vec::new(),
+            member_ns: Vec::new(),
             white_space: None,
             explicit_timezone: None,
         }
@@ -560,6 +587,9 @@ pub struct ComplexType {
     pub name: String,
     /// Base type (for extension or restriction)
     pub base_type: Option<String>,
+    /// Namespace-resolved form of [`base_type`](Self::base_type), computed at
+    /// compile time against the owning document's bindings.
+    pub base_ns: Option<NsName>,
     /// How this type derives from `base_type`
     pub derivation: Option<DerivationMethod>,
     /// Derivation methods blocked for xsi:type substitution
@@ -587,6 +617,7 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             derivation: None,
             block: BlockSet::default(),
             content: ContentModel::Empty,
@@ -604,6 +635,7 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             derivation: None,
             block: BlockSet::default(),
             content: ContentModel::Sequence(elements),
@@ -752,6 +784,8 @@ pub struct AttributeDef {
     pub name: String,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Namespace-resolved form of [`type_ref`](Self::type_ref).
+    pub type_ns: Option<NsName>,
     /// Inline simple type definition
     pub inline_type: Option<Box<SimpleType>>,
     /// Whether the attribute is required
@@ -770,6 +804,7 @@ impl AttributeDef {
         Self {
             name: name.into(),
             type_ref: None,
+            type_ns: None,
             inline_type: None,
             required: false,
             default: None,

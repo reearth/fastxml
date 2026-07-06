@@ -250,6 +250,7 @@ impl XsdCompiler {
         // Handle element reference
         if let Some(ref_qname) = &elem.ref_ {
             let mut compiled = ElementDef::new(ref_qname.local.clone());
+            compiled.ref_ns = self.resolve_qname_ns(ref_qname);
             compiled.min_occurs = elem.min_occurs.to_option().unwrap_or(1);
             compiled.max_occurs = elem.max_occurs.to_option();
             return Ok(compiled);
@@ -260,6 +261,7 @@ impl XsdCompiler {
         // Set type reference
         if let Some(type_ref) = &elem.type_ref {
             compiled.type_ref = Some(self.resolve_qname(type_ref));
+            compiled.type_ns = self.resolve_qname_ns(type_ref);
         }
 
         // Compile inline type
@@ -279,6 +281,7 @@ impl XsdCompiler {
 
         if let Some(sg) = &elem.substitution_group {
             compiled.substitution_group = Some(self.resolve_qname(sg));
+            compiled.substitution_ns = self.resolve_qname_ns(sg);
         }
 
         // Compile identity constraints (unique / key / keyref)

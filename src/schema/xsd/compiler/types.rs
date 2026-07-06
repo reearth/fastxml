@@ -179,6 +179,7 @@ impl XsdCompiler {
             XsdSimpleTypeContent::Restriction(r) => {
                 if let Some(base) = &r.base {
                     compiled.base_type = Some(self.resolve_qname(base));
+                    compiled.base_ns = self.resolve_qname_ns(base);
                 }
 
                 // Multiple pattern facets within one restriction step are
@@ -261,8 +262,10 @@ impl XsdCompiler {
                 if let Some(inline) = &r.inline_base {
                     if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
                         compiled.item_type = inner.item_type;
+                        compiled.item_ns = inner.item_ns;
                         if compiled.base_type.is_none() {
                             compiled.base_type = inner.base_type;
+                            compiled.base_ns = inner.base_ns;
                         }
                     }
                 }
@@ -270,6 +273,7 @@ impl XsdCompiler {
             XsdSimpleTypeContent::List(list) => {
                 if let Some(item_type) = &list.item_type {
                     let resolved = self.resolve_qname(item_type);
+                    compiled.item_ns = self.resolve_qname_ns(item_type);
                     compiled.item_type = Some(resolved.clone());
                     // Keep the legacy marker so PrimitiveKind::resolve does
                     // not accidentally walk into the item type: a list's
@@ -278,6 +282,7 @@ impl XsdCompiler {
                 } else if let Some(inline) = &list.inline_type {
                     if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
                         let item = inner.base_type.unwrap_or_default();
+                        compiled.item_ns = inner.base_ns;
                         compiled.item_type = Some(item.clone());
                         compiled.base_type = Some(format!("list({})", item));
                     }
@@ -290,6 +295,11 @@ impl XsdCompiler {
                         .member_types
                         .iter()
                         .map(|q| self.resolve_qname(q))
+                        .collect();
+                    compiled.member_ns = union
+                        .member_types
+                        .iter()
+                        .map(|q| self.resolve_qname_ns(q))
                         .collect();
                     compiled.member_types = members.clone();
                     compiled.base_type = Some(format!("union({})", members.join(", ")));
@@ -353,10 +363,12 @@ impl XsdCompiler {
             XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
                 XsdSimpleContentDerivation::Extension(ext) => {
                     compiled.base_type = Some(self.resolve_qname(&ext.base));
+                    compiled.base_ns = self.resolve_qname_ns(&ext.base);
                     compiled.derivation = Some(DerivationMethod::Extension);
                 }
                 XsdSimpleContentDerivation::Restriction(r) => {
                     compiled.base_type = Some(self.resolve_qname(&r.base));
+                    compiled.base_ns = self.resolve_qname_ns(&r.base);
                     compiled.derivation = Some(DerivationMethod::Restriction);
                 }
             },
@@ -384,11 +396,13 @@ impl XsdCompiler {
                         }
                         .into());
                     }
+                    compiled.base_ns = self.resolve_qname_ns(&ext.base);
                     compiled.base_type = Some(base);
                     compiled.derivation = Some(DerivationMethod::Extension);
                 }
                 XsdComplexContentDerivation::Restriction(r) => {
                     compiled.base_type = Some(self.resolve_qname(&r.base));
+                    compiled.base_ns = self.resolve_qname_ns(&r.base);
                     compiled.derivation = Some(DerivationMethod::Restriction);
                 }
             },
@@ -618,6 +632,7 @@ impl XsdCompiler {
 
         if let Some(type_ref) = &attr.type_ref {
             compiled.type_ref = Some(self.resolve_qname(type_ref));
+            compiled.type_ns = self.resolve_qname_ns(type_ref);
         } else if let Some(inline) = &attr.inline_type {
             if let TypeDef::Simple(simple) = self.compile_simple_type(inline)? {
                 compiled.inline_type = Some(Box::new(simple));

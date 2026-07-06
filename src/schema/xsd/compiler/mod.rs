@@ -48,6 +48,11 @@ pub struct XsdCompiler {
     pub(crate) current_target_ns: Option<String>,
     /// Current target namespace prefix (from the schema being processed)
     pub(crate) current_target_prefix: Option<String>,
+    /// Namespace bindings of the document currently being compiled (prefix ->
+    /// URI). Unlike `namespace_bindings`, this is NOT accumulated across
+    /// documents, so QName references can be resolved against the owning
+    /// document exactly as the reference checker does.
+    pub(crate) current_doc_bindings: HashMap<String, String>,
 }
 
 impl XsdCompiler {
@@ -63,6 +68,7 @@ impl XsdCompiler {
             group_expansion: HashSet::new(),
             current_target_ns: None,
             current_target_prefix: None,
+            current_doc_bindings: HashMap::new(),
         }
     }
 
@@ -155,6 +161,10 @@ impl XsdCompiler {
 
         validity::check_schema_validity(&result)?;
 
+        if std::env::var_os("FASTXML_NS_SURVEY").is_some() {
+            survey_ns_divergences(&result);
+        }
+
         Ok(result)
     }
 
@@ -240,6 +250,10 @@ impl XsdCompiler {
     fn compile_schema(&mut self, schema: XsdSchema, result: &mut CompiledSchema) -> Result<()> {
         self.current_target_ns = schema.target_namespace.clone();
         self.current_block_default = schema.block_default.clone();
+        // Snapshot the owning document's own bindings (not accumulated) so
+        // QName references can be resolved per-document (mirrors the reference
+        // checker), independent of the last-wins accumulated prefix table.
+        self.current_doc_bindings = schema.namespace_bindings.clone();
 
         // Find the prefix for THIS schema's target namespace.
         // First try the schema's OWN bindings (deterministic for each schema),
@@ -361,12 +375,110 @@ impl XsdCompiler {
     pub fn resolve_type(&self, type_ref: &str) -> Option<&crate::schema::types::TypeDef> {
         self.type_cache.get(type_ref)
     }
+
+    /// Resolves a [`QName`] (as written in the owning schema document) to a
+    /// namespace-qualified [`NsName`], mirroring the reference checker's rules
+    /// (`references.rs::resolve_ns`):
+    ///
+    /// - the `xml` prefix maps to the XML namespace;
+    /// - a declared prefix resolves against the owning document's bindings
+    ///   (returns `None` for an undeclared prefix);
+    /// - an unprefixed name takes the document's default namespace when one is
+    ///   bound, otherwise the owning document's target namespace (the same
+    ///   leniency [`resolve_qname`](Self::resolve_qname) applies when it
+    ///   requalifies an unprefixed reference), falling back to the
+    ///   no-namespace `""`.
+    ///
+    /// This is the per-document counterpart of [`resolve_qname`], which keys
+    /// off the accumulated, last-wins prefix table and therefore mis-resolves
+    /// when documents bind the same prefix to different URIs. The string form
+    /// of every reference is still kept verbatim for message stability.
+    pub(crate) fn resolve_qname_ns(&self, qname: &QName) -> Option<NsName> {
+        let local = qname.local.trim();
+        let ns: std::sync::Arc<str> = match qname.prefix.as_deref().map(str::trim) {
+            Some("xml") => crate::namespace::common::XML_NS.into(),
+            Some(p) => self.current_doc_bindings.get(p)?.as_str().into(),
+            None => {
+                let default_ns = self
+                    .current_doc_bindings
+                    .get("")
+                    .map(String::as_str)
+                    .filter(|d| !d.is_empty());
+                match default_ns {
+                    Some(d) => d.into(),
+                    None => self.current_target_ns.as_deref().unwrap_or("").into(),
+                }
+            }
+        };
+        Some(NsName::new(ns, local))
+    }
 }
 
 impl Default for XsdCompiler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Temporary instrumentation (env `FASTXML_NS_SURVEY`): compares the new
+/// per-document resolved `*_ns` fields against the legacy prefix-table
+/// resolver [`CompiledSchema::resolve_type_ref_to_ns`] that the runtime
+/// readers use today, printing every divergence. Divergences are the bug
+/// evidence: they are exactly the references the last-wins prefix table
+/// mis-resolves. Removed once the readers are flipped onto `*_ns`.
+fn survey_ns_divergences(result: &CompiledSchema) {
+    use crate::schema::types::{NsName, TypeDef};
+    let mut count = 0usize;
+    let mut report = |kind: &str, owner: &str, s: &str, new: &Option<NsName>| {
+        let Some(new) = new else { return };
+        let old = result.resolve_type_ref_to_ns(s);
+        if old.as_ref() != Some(new) {
+            count += 1;
+            eprintln!(
+                "NS-DIVERGENCE [{kind}] owner={owner} ref={s:?} old={:?} new=({:?},{:?})",
+                old.map(|o| (o.namespace_uri.to_string(), o.local_name.to_string())),
+                new.namespace_uri,
+                new.local_name,
+            );
+        }
+    };
+    for (name, ty) in &result.types {
+        match ty {
+            TypeDef::Complex(c) => {
+                if let Some(b) = &c.base_type {
+                    report("complex-base", name, b, &c.base_ns);
+                }
+                for a in &c.attributes {
+                    if let Some(t) = &a.type_ref {
+                        report("attr-type", name, t, &a.type_ns);
+                    }
+                }
+            }
+            TypeDef::Simple(s) => {
+                if let Some(b) = &s.base_type
+                    && !b.starts_with("list(")
+                    && !b.starts_with("union(")
+                {
+                    report("simple-base", name, b, &s.base_ns);
+                }
+                if let Some(it) = &s.item_type {
+                    report("item-type", name, it, &s.item_ns);
+                }
+                for (m, mns) in s.member_types.iter().zip(s.member_ns.iter()) {
+                    report("member-type", name, m, mns);
+                }
+            }
+        }
+    }
+    for (name, e) in &result.elements {
+        if let Some(t) = &e.type_ref {
+            report("elem-type", name, t, &e.type_ns);
+        }
+        if let Some(sg) = &e.substitution_group {
+            report("subst-group", name, sg, &e.substitution_ns);
+        }
+    }
+    eprintln!("NS-DIVERGENCE-TOTAL {count}");
 }
 
 /// Compiles XSD AST schemas into a CompiledSchema.

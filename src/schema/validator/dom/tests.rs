@@ -64,6 +64,7 @@ fn test_dom_validator_min_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        base_ns: None,
         derivation: None,
         block: Default::default(),
         wildcard: None,
@@ -102,6 +103,7 @@ fn test_dom_validator_max_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        base_ns: None,
         derivation: None,
         block: Default::default(),
         wildcard: None,
