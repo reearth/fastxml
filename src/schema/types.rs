@@ -112,12 +112,25 @@ impl Default for FlattenedChildren {
 pub struct CompiledSchema {
     /// Target namespace
     pub target_namespace: Option<String>,
-    /// Element definitions
+    /// Element definitions (legacy prefix/local string keys).
     pub elements: IndexMap<String, ElementDef>,
-    /// Type definitions
+    /// Type definitions (legacy prefix/local string keys).
     pub types: IndexMap<String, TypeDef>,
-    /// Attribute definitions
+    /// Attribute definitions (legacy prefix/local string keys).
     pub attributes: IndexMap<String, AttributeDef>,
+
+    // === Namespace-qualified component maps (collision-free) ===
+    /// Global element definitions keyed by `(target namespace, local name)`.
+    /// Collision-free counterpart of [`elements`](Self::elements); the readers
+    /// key off this once flipped. Registered with the owning document's target
+    /// namespace, so same-local-name globals in different namespaces no longer
+    /// collide on a bare key.
+    pub elements_ns: IndexMap<NsName, ElementDef>,
+    /// Type definitions keyed by `(target namespace, local name)`.
+    pub types_ns: IndexMap<NsName, TypeDef>,
+    /// Top-level attribute definitions keyed by `(target namespace, local name)`.
+    pub attributes_ns: IndexMap<NsName, AttributeDef>,
+
     /// Imported schemas (namespace -> schema)
     pub imports: HashMap<String, CompiledSchema>,
     /// Substitution groups (head element name -> list of substitute element names)
@@ -166,6 +179,9 @@ impl CompiledSchema {
             elements: IndexMap::default(),
             types: IndexMap::default(),
             attributes: IndexMap::default(),
+            elements_ns: IndexMap::default(),
+            types_ns: IndexMap::default(),
+            attributes_ns: IndexMap::default(),
             imports: HashMap::default(),
             substitution_groups: HashMap::default(),
             // Namespace resolution
@@ -285,6 +301,83 @@ impl CompiledSchema {
             }
         }
 
+        None
+    }
+
+    /// Looks up a global element by namespace URI and local name in the
+    /// collision-free [`elements_ns`](Self::elements_ns) map.
+    ///
+    /// Strict resolution: tries the exact `(namespace, local)` key, then a
+    /// chameleon fallback under the no-namespace `""` (an included chameleon
+    /// schema's components adopt the includer's target namespace, but may also
+    /// have been registered under `""`). It deliberately does NOT scan across
+    /// other namespaces — that leniency lives in
+    /// [`element_ns_any`](Self::element_ns_any) and is only appropriate when
+    /// the instance namespace could not be resolved at all.
+    pub fn element_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&ElementDef> {
+        if let Some(e) = self
+            .elements_ns
+            .get(&NsName::new(namespace_uri, local_name))
+        {
+            return Some(e);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(e) = self.elements_ns.get(&NsName::new("", local_name))
+        {
+            return Some(e);
+        }
+        None
+    }
+
+    /// Leniency fallback: the first global element whose local name matches,
+    /// regardless of namespace. Only appropriate when the instance element's
+    /// namespace could not be resolved (no in-scope binding); a cleanly
+    /// resolved namespace that misses [`element_ns`](Self::element_ns) must
+    /// stay a miss, or invalid instances would be silently accepted.
+    pub fn element_ns_any(&self, local_name: &str) -> Option<&ElementDef> {
+        self.elements_ns
+            .iter()
+            .find(|(k, _)| &*k.local_name == local_name)
+            .map(|(_, e)| e)
+    }
+
+    /// Looks up a type by namespace URI and local name in the collision-free
+    /// [`types_ns`](Self::types_ns) map (exact key, then chameleon `""`).
+    pub fn type_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&TypeDef> {
+        if let Some(t) = self.types_ns.get(&NsName::new(namespace_uri, local_name)) {
+            return Some(t);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(t) = self.types_ns.get(&NsName::new("", local_name))
+        {
+            return Some(t);
+        }
+        None
+    }
+
+    /// Leniency fallback for types: first type with a matching local name in
+    /// any namespace. See [`element_ns_any`](Self::element_ns_any).
+    pub fn type_ns_any(&self, local_name: &str) -> Option<&TypeDef> {
+        self.types_ns
+            .iter()
+            .find(|(k, _)| &*k.local_name == local_name)
+            .map(|(_, t)| t)
+    }
+
+    /// Looks up a top-level attribute by namespace URI and local name in the
+    /// collision-free [`attributes_ns`](Self::attributes_ns) map.
+    pub fn attribute_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&AttributeDef> {
+        if let Some(a) = self
+            .attributes_ns
+            .get(&NsName::new(namespace_uri, local_name))
+        {
+            return Some(a);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(a) = self.attributes_ns.get(&NsName::new("", local_name))
+        {
+            return Some(a);
+        }
         None
     }
 
@@ -1005,5 +1098,74 @@ mod tests {
         let schema = CompiledSchema::new();
         assert!(schema.get_element("NonExistentElement").is_none());
         assert!(schema.get_element("prefix:NonExistentElement").is_none());
+    }
+
+    // === Namespace-qualified accessor semantics (C3) ===
+
+    /// Two globals sharing a local name in different namespaces must not
+    /// collide on the namespace-keyed map (the wildG031 class).
+    #[test]
+    fn ns_maps_resolve_same_local_in_different_namespaces() {
+        const NS_A: &str = "http://example.com/a";
+        const NS_B: &str = "http://example.com/b";
+        let mut schema = CompiledSchema::new();
+        let mut a = ElementDef::new("value");
+        a.type_ref = Some("a:AType".into());
+        let mut b = ElementDef::new("value");
+        b.type_ref = Some("b:BType".into());
+        schema.elements_ns.insert(NsName::new(NS_A, "value"), a);
+        schema.elements_ns.insert(NsName::new(NS_B, "value"), b);
+
+        // Each namespace resolves to its OWN declaration, not the other's.
+        assert_eq!(
+            schema
+                .element_ns(NS_A, "value")
+                .unwrap()
+                .type_ref
+                .as_deref(),
+            Some("a:AType")
+        );
+        assert_eq!(
+            schema
+                .element_ns(NS_B, "value")
+                .unwrap()
+                .type_ref
+                .as_deref(),
+            Some("b:BType")
+        );
+    }
+
+    /// A cleanly-resolved namespace that misses (with no chameleon `""`
+    /// entry) must stay a miss — `element_ns` must NOT scan other namespaces
+    /// (amendment #1: the any-ns scan can only hide "not declared" errors).
+    #[test]
+    fn ns_element_lookup_does_not_leak_across_namespaces() {
+        const NS_A: &str = "http://example.com/a";
+        const NS_C: &str = "http://example.com/c";
+        let mut schema = CompiledSchema::new();
+        schema
+            .elements_ns
+            .insert(NsName::new(NS_A, "value"), ElementDef::new("value"));
+
+        // Wrong namespace -> strict miss (no cross-namespace leak).
+        assert!(schema.element_ns(NS_C, "value").is_none());
+        // The leniency scan (only for unresolvable instance namespaces) DOES
+        // find it by local name.
+        assert!(schema.element_ns_any("value").is_some());
+    }
+
+    /// Chameleon-include fallback: a component registered under the
+    /// no-namespace `""` is reachable from a qualified lookup.
+    #[test]
+    fn ns_type_lookup_chameleon_fallback() {
+        const NS_A: &str = "http://example.com/a";
+        let mut schema = CompiledSchema::new();
+        schema.types_ns.insert(
+            NsName::new("", "ChameleonType"),
+            TypeDef::Complex(ComplexType::new("ChameleonType")),
+        );
+        assert!(schema.type_ns(NS_A, "ChameleonType").is_some());
+        assert!(schema.type_ns("", "ChameleonType").is_some());
+        assert!(schema.type_ns(NS_A, "Missing").is_none());
     }
 }

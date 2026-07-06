@@ -301,6 +301,17 @@ impl XsdCompiler {
                 // between types with same local name in different namespaces
                 // (e.g., gml:TrackType vs tran:TrackType)
                 let qname = self.make_qname(name);
+                // Collision-free namespace-qualified registration first. The
+                // authoritative namespace is the owning document's target
+                // namespace (unambiguous here, unlike the prefix baked into
+                // qname), so same-local globals in different namespaces do not
+                // collide. Last-wins, matching the qname insert below.
+                let ns_name = NsName::new(
+                    self.current_target_ns.clone().unwrap_or_default(),
+                    name.to_string(),
+                );
+                result.types_ns.insert(ns_name, compiled.clone());
+
                 result.types.insert(qname.clone(), compiled.clone());
 
                 // Also store with just the local name for same-namespace lookups
@@ -318,6 +329,14 @@ impl XsdCompiler {
         // Compile elements
         for element in schema.elements {
             let compiled = self.compile_element(&element)?;
+            // Global top-level elements are always qualified in the target
+            // namespace regardless of elementFormDefault.
+            let ns_name = NsName::new(
+                self.current_target_ns.clone().unwrap_or_default(),
+                element.name.clone(),
+            );
+            result.elements_ns.insert(ns_name, compiled.clone());
+
             // Store with namespace-qualified name to avoid collisions
             let qname = self.make_qname(&element.name);
             result.elements.insert(qname, compiled.clone());
@@ -333,6 +352,11 @@ impl XsdCompiler {
         for attr in schema.attributes {
             if let Some(name) = &attr.name {
                 let compiled = self.compile_attribute(&attr)?;
+                let ns_name = NsName::new(
+                    self.current_target_ns.clone().unwrap_or_default(),
+                    name.to_string(),
+                );
+                result.attributes_ns.insert(ns_name, compiled.clone());
                 // Store with namespace-qualified name to avoid collisions
                 let qname = self.make_qname(name);
                 result.attributes.insert(qname, compiled);

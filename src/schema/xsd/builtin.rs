@@ -728,11 +728,18 @@ fn create_bounding_shape_type() -> ComplexType {
 
 /// Registers all built-in types into a CompiledSchema.
 pub fn register_builtin_types(schema: &mut crate::schema::types::CompiledSchema) {
+    use crate::schema::types::NsName;
+
     // Register XSD primitive types
     for (name, type_def) in create_xsd_primitive_types() {
         // Also register without prefix
         if let Some(local) = name.strip_prefix("xs:") {
             schema.types.insert(local.to_string(), type_def.clone());
+            // Collision-free key in the XSD namespace.
+            schema
+                .types_ns
+                .entry(NsName::new(XS_NAMESPACE, local))
+                .or_insert_with(|| type_def.clone());
         }
         schema.types.insert(name, type_def);
     }
@@ -742,6 +749,17 @@ pub fn register_builtin_types(schema: &mut crate::schema::types::CompiledSchema)
         // Also register without prefix
         if let Some(local) = name.strip_prefix("gml:") {
             schema.types.insert(local.to_string(), type_def.clone());
+            // GML 3.1.1 and 3.2 share these built-in local names but under
+            // different namespace URIs, so register under both. Do not clobber
+            // a schema-provided definition (or_insert).
+            schema
+                .types_ns
+                .entry(NsName::new(GML_NAMESPACE, local))
+                .or_insert_with(|| type_def.clone());
+            schema
+                .types_ns
+                .entry(NsName::new(GML31_NAMESPACE, local))
+                .or_insert_with(|| type_def.clone());
         }
         schema.types.insert(name, type_def);
     }
