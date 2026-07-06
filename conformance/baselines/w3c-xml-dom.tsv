@@ -1,4 +1,4 @@
-#counts	total=2585	pass=1682	fail=160	unsupported=743	blocked=0	panic=0
+#counts	total=2585	pass=1691	fail=147	unsupported=747	blocked=0	panic=0
 error	ibm-invalid-P68-ibm68i01.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i02.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i03.xml	unsupported	optional-error-test
@@ -49,6 +49,8 @@ invalid	invalid-bo-5	fail	parse error: text decode error: at 1..7: unrecognized 
 invalid	invalid-bo-6	fail	parse error: text decode error: at 1..8: unrecognized entity `bombom8`
 invalid	invalid-sa-140	unsupported	5th-edition
 invalid	invalid-sa-141	unsupported	5th-edition
+invalid	o-p04pass1	unsupported	namespace-processing-off not supported
+invalid	o-p05pass1	unsupported	namespace-processing-off not supported
 invalid	rmt-015	unsupported	xml-1.1
 invalid	rmt-017	unsupported	xml-1.1
 invalid	rmt-018	unsupported	xml-1.1
@@ -395,22 +397,9 @@ not-wf	rmt-042	unsupported	xml-1.1
 not-wf	rmt-e2e-27	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 0
 not-wf	rmt-e2e-61	unsupported	encoding: UTF-16
 not-wf	rmt-e3e-12	fail	parser accepted not-well-formed input
-not-wf	rmt-ns-e1.0-13a	fail	parser accepted not-well-formed input
-not-wf	rmt-ns-e1.0-13b	fail	parser accepted not-well-formed input
-not-wf	rmt-ns-e1.0-13c	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-010	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-011	fail	parser accepted not-well-formed input
 not-wf	rmt-ns10-012	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-013	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-014	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-015	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-025	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-026	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-030	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-033	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-042	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-043	fail	parser accepted not-well-formed input
-not-wf	rmt-ns10-044	fail	parser accepted not-well-formed input
 not-wf	rmt-ns11-005	unsupported	xml-1.1
 not-wf	x-ibm-1-0.5-not-wf-P04-ibm04n02.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P04-ibm04n03.xml	unsupported	5th-edition
@@ -833,6 +822,7 @@ valid	ibm-valid-P89-ibm89n03.xml	unsupported	5th-edition
 valid	ibm-valid-P89-ibm89n04.xml	unsupported	5th-edition
 valid	ibm-valid-P89-ibm89n05.xml	unsupported	5th-edition
 valid	not-sa03	fail	parse error: attribute value decode error: at 1..9: unrecognized entity `internal`
+valid	o-p08pass1	unsupported	namespace-processing-off not supported
 valid	pr-xml-little	unsupported	utf-16 BOM
 valid	pr-xml-utf-16	unsupported	utf-16 BOM
 valid	pr-xml-utf-8	fail	parse error: parse error at position 5835: syntax error: unknown or missed symbol in markup
@@ -884,6 +874,7 @@ valid	valid-ext-sa-011	fail	parse error: text decode error: at 1..2: unrecognize
 valid	valid-ext-sa-013	fail	parse error: text decode error: at 1..2: unrecognized entity `x`
 valid	valid-ext-sa-014	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
 valid	valid-not-sa-031	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
+valid	valid-sa-012	unsupported	namespace-processing-off not supported
 valid	valid-sa-024	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
 valid	valid-sa-049	unsupported	utf-16 BOM
 valid	valid-sa-050	unsupported	utf-16 BOM

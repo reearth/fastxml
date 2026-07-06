@@ -116,6 +116,16 @@ pub fn xml_edition_applies(edition: Option<&str>) -> bool {
     }
 }
 
+/// Whether a test tagged with the given `NAMESPACE` attribute applies to
+/// fastxml. fastxml is always namespace-aware: it resolves prefixes and
+/// enforces the Namespaces in XML 1.0 well-formedness constraints. A test
+/// tagged `NAMESPACE="no"` deliberately assumes namespace processing is *off*
+/// (so a bare colon is an ordinary name character); fastxml cannot run in that
+/// mode, so such a test does not apply. Absent, `"yes"`, or `"both"` apply.
+pub fn xml_namespace_applies(namespace: Option<&str>) -> bool {
+    !matches!(namespace, Some("no"))
+}
+
 /// The result of sniffing a document's declared encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodingVerdict {
@@ -235,6 +245,14 @@ mod tests {
         assert!(xml_edition_applies(Some("4")));
         assert!(xml_edition_applies(Some("2 5")));
         assert!(!xml_edition_applies(Some("5")));
+    }
+
+    #[test]
+    fn namespace_gate() {
+        assert!(xml_namespace_applies(None));
+        assert!(xml_namespace_applies(Some("yes")));
+        assert!(xml_namespace_applies(Some("both")));
+        assert!(!xml_namespace_applies(Some("no")));
     }
 
     #[test]

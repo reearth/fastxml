@@ -36,6 +36,16 @@ fn err(message: impl Into<String>) -> ParseError {
     }
 }
 
+/// Rejects a colon in a name that must be an `NCName` under namespace
+/// processing (entity names, notation names, PI targets). The name has already
+/// satisfied the XML `Name` production, so only the colon needs excluding.
+fn reject_colon(name: &str, ctx: &str) -> R {
+    if name.contains(':') {
+        return Err(err(format!("a {ctx} must not contain a colon: '{name}'")));
+    }
+    Ok(())
+}
+
 /// Checks the raw `DOCTYPE` event text for well-formedness.
 pub(crate) fn check_doctype(raw: &str) -> R {
     let mut c = Cursor::new(raw);
@@ -362,6 +372,7 @@ fn parse_pi(c: &mut Cursor<'_>) -> R {
         return Err(err("a processing instruction must have a target"));
     }
     check_name(target, "processing-instruction target")?;
+    reject_colon(target, "processing-instruction target")?;
     if target.eq_ignore_ascii_case("xml") {
         return Err(err(format!(
             "'{target}' is a reserved processing-instruction target"
@@ -641,7 +652,7 @@ fn parse_entity_decl(body: &str) -> R {
     if is_pe {
         c.require_s("after '%' in a parameter-entity declaration")?;
     }
-    c.parse_name("entity name")?;
+    reject_colon(c.parse_name("entity name")?, "entity name")?;
     c.require_s("before the entity definition")?;
     // EntityValue | ExternalID [NDataDecl]
     if matches!(c.peek(), Some('"' | '\'')) {
@@ -672,7 +683,7 @@ fn parse_entity_decl(body: &str) -> R {
 fn parse_notation_decl(body: &str) -> R {
     let mut c = Cursor::new(body);
     c.require_s("after NOTATION")?;
-    c.parse_name("notation name")?;
+    reject_colon(c.parse_name("notation name")?, "notation name")?;
     c.require_s("before the notation identifier")?;
     if c.eat_str("SYSTEM") {
         c.require_s("after the SYSTEM keyword")?;
