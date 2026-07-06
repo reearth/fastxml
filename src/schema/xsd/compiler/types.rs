@@ -518,7 +518,7 @@ impl XsdCompiler {
                 match self
                     .attribute_groups
                     .iter()
-                    .find(|(k, _)| k.local_name == ag_ref.local)
+                    .find(|(k, _)| *k.local_name == *ag_ref.local)
                     .map(|(_, g)| g.clone())
                 {
                     Some(g) => g,

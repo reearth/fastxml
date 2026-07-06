@@ -22,15 +22,19 @@ type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 /// define types/elements with the same local name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NsName {
-    /// Namespace URI (empty string for no-namespace)
-    pub namespace_uri: String,
-    /// Local name
-    pub local_name: String,
+    /// Namespace URI (empty string for no-namespace).
+    ///
+    /// Stored as `Arc<str>` so cloning a key (which happens per cache
+    /// insertion and, once the readers are flipped, per element lookup) is a
+    /// pointer bump rather than a heap copy.
+    pub namespace_uri: Arc<str>,
+    /// Local name.
+    pub local_name: Arc<str>,
 }
 
 impl NsName {
     /// Creates a new NsName.
-    pub fn new(namespace_uri: impl Into<String>, local_name: impl Into<String>) -> Self {
+    pub fn new(namespace_uri: impl Into<Arc<str>>, local_name: impl Into<Arc<str>>) -> Self {
         Self {
             namespace_uri: namespace_uri.into(),
             local_name: local_name.into(),
