@@ -48,7 +48,7 @@ fn main() {
                     continue;
                 }
                 if let Ok(content) = fs::read(&schema_doc.path) {
-                    builder = builder.add(schema_doc.path.to_string_lossy(), content);
+                    builder = builder.add(format!("file://{}", schema_doc.path.display()), content);
                     have_docs = true;
                 }
             }

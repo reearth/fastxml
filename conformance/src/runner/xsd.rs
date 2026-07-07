@@ -199,7 +199,11 @@ fn compile_group_schemas(group: &SchemaTestGroup, _base: &Path) -> Option<Arc<Sc
             continue;
         }
         if let Ok(content) = std::fs::read(&schema_doc.path) {
-            builder = builder.add(schema_doc.path.to_string_lossy(), content);
+            // Use a `file://` URI as the document base so relative
+            // `schemaLocation` imports/includes resolve against it. A bare
+            // filesystem path is not a valid URL base and made every
+            // multi-document group fail to resolve ("schema failed to compile").
+            builder = builder.add(format!("file://{}", schema_doc.path.display()), content);
             have_docs = true;
         }
     }
