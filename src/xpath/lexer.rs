@@ -435,6 +435,13 @@ impl<'a> Lexer<'a> {
                     // Single ":" - part of QName (e.g., gml:root)
                     end = pos + 1;
                     self.advance();
+                    // `prefix:*` namespace wildcard: fold a trailing '*' into
+                    // the name so it parses as one QName node test.
+                    if let Some(&(spos, '*')) = self.chars.peek() {
+                        end = spos + '*'.len_utf8();
+                        self.advance();
+                        break;
+                    }
                 }
             } else {
                 break;

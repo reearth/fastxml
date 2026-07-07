@@ -399,10 +399,20 @@ impl OnePassSchemaValidator {
                         if field.steps.is_empty()
                             && let Some(ref attr) = field.attr
                         {
-                            let value = attributes.iter().enumerate().find_map(|(ai, &(n, v))| {
-                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
-                            });
-                            if let Some((ai, v)) = value {
+                            let mut matched: Option<(usize, &str)> = None;
+                            let mut multiple = false;
+                            for (ai, &(n, v)) in attributes.iter().enumerate() {
+                                if super::identity::attr_matches(n, attr) {
+                                    if matched.is_some() {
+                                        multiple = true;
+                                    } else {
+                                        matched = Some((ai, v));
+                                    }
+                                }
+                            }
+                            if multiple {
+                                fields[i] = super::identity::FieldState::Multiple;
+                            } else if let Some((ai, v)) = matched {
                                 let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
@@ -425,10 +435,20 @@ impl OnePassSchemaValidator {
                         if let Some(ref attr) = field.attr
                             && super::identity::field_steps_match(field, rel)
                         {
-                            let value = attributes.iter().enumerate().find_map(|(ai, &(n, v))| {
-                                (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
-                            });
-                            if let Some((ai, v)) = value {
+                            let mut matched: Option<(usize, &str)> = None;
+                            let mut multiple_here = false;
+                            for (ai, &(n, v)) in attributes.iter().enumerate() {
+                                if super::identity::attr_matches(n, attr) {
+                                    if matched.is_some() {
+                                        multiple_here = true;
+                                    } else {
+                                        matched = Some((ai, v));
+                                    }
+                                }
+                            }
+                            if multiple_here {
+                                selected.fields[i] = super::identity::FieldState::Multiple;
+                            } else if let Some((ai, v)) = matched {
                                 let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
