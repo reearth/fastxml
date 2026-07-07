@@ -21,13 +21,64 @@ pub(crate) fn check_schema_validity(schema: &CompiledSchema) -> Result<()> {
                         check_value_constraints(schema, elem)?;
                     }
                 }
+                for attr in &ct.attributes {
+                    check_attr_id_value_constraint(schema, attr)?;
+                }
             }
         }
     }
     for elem in schema.elements_ns.values() {
         check_value_constraints(schema, elem)?;
     }
+    for attr in schema.attributes_ns.values() {
+        check_attr_id_value_constraint(schema, attr)?;
+    }
     Ok(())
+}
+
+/// Schema Component Constraint: Attribute Declaration Properties Correct (§3.2.6
+/// clause 4) — an attribute whose type is (or derives from) `xs:ID` must not
+/// carry a value constraint (`default`/`fixed`).
+fn check_attr_id_value_constraint(
+    schema: &CompiledSchema,
+    attr: &crate::schema::types::AttributeDef,
+) -> Result<()> {
+    if attr.default.is_none() && attr.fixed.is_none() {
+        return Ok(());
+    }
+    if attr_primitive_kind(schema, attr) == Some(PrimitiveKind::Id) {
+        return Err(invalid(format!(
+            "attribute '{}': an xs:ID-typed attribute must not have a default or fixed value",
+            attr.name
+        )));
+    }
+    Ok(())
+}
+
+/// Resolves an attribute declaration's built-in primitive kind, following user
+/// simple-type derivations and (for a direct XSD-namespace reference not
+/// materialised in the type table) the built-in type name.
+fn attr_primitive_kind(
+    schema: &CompiledSchema,
+    attr: &crate::schema::types::AttributeDef,
+) -> Option<PrimitiveKind> {
+    if let Some(inline) = &attr.inline_type {
+        return PrimitiveKind::resolve(schema, inline);
+    }
+    let type_ref = attr.type_ref.as_deref()?;
+    if let Some(TypeDef::Simple(st)) = schema.type_by_ref(attr.type_ns.as_ref(), type_ref)
+        && let Some(kind) = PrimitiveKind::resolve(schema, st)
+    {
+        return Some(kind);
+    }
+    // A direct built-in reference (e.g. `xs:ID`) may not be stored as a
+    // SimpleType; map its XSD-namespace local name to the primitive kind.
+    match &attr.type_ns {
+        Some(ns) if &*ns.namespace_uri == crate::schema::xsd::builtin::XS_NAMESPACE => {
+            PrimitiveKind::from_type_name(&ns.local_name)
+        }
+        _ => None,
+    }
 }
 
 /// An element's default/fixed value must be a valid instance of its type.
@@ -424,6 +475,34 @@ mod tests {
                </xs:restriction></xs:simpleType>"#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_id_attribute_with_fixed() {
+        // §3.2.6 clause 4: an ID-typed attribute may not have a value
+        // constraint. Covers a direct built-in reference and a user type
+        // derived from xs:ID.
+        for ty in [r#"type="xs:ID""#, r#"type="idlike""#] {
+            let result = schema_of(&format!(
+                r#"<xs:simpleType name="idlike"><xs:restriction base="xs:ID"/></xs:simpleType>
+                   <xs:complexType name="ct"><xs:attribute name="a" {ty} fixed="abc"/></xs:complexType>"#,
+            ));
+            assert!(result.is_err(), "should reject ID attr with fixed ({ty})");
+        }
+    }
+
+    #[test]
+    fn rejects_global_id_attribute_with_default() {
+        let result = schema_of(r#"<xs:attribute name="a" type="xs:ID" default="x"/>"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn accepts_id_attribute_without_value_constraint() {
+        let result = schema_of(
+            r#"<xs:complexType name="ct"><xs:attribute name="a" type="xs:ID"/></xs:complexType>"#,
+        );
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

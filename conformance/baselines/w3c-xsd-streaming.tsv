@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38077	fail=1090	unsupported=28	blocked=418	panic=0
+#counts	total=39613	pass=38081	fail=1086	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -954,8 +954,6 @@ schema-invalid	attZ008_f::msMeta/../msData/attribute/attZ008_f.xsd	fail	compiled
 schema-invalid	attZ008_h::msMeta/../msData/attribute/attZ008_h.xsd	fail	compiled a schema that should be invalid
 schema-invalid	attZ011::msMeta/../msData/attribute/attZ011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	attZ012::msMeta/../msData/attribute/attZ012.xsd	fail	compiled a schema that should be invalid
-schema-invalid	attZ013a::msMeta/../msData/attribute/attZ013a.xsd	fail	compiled a schema that should be invalid
-schema-invalid	attZ013b::msMeta/../msData/attribute/attZ013b.xsd	fail	compiled a schema that should be invalid
 schema-invalid	attgB011::msMeta/../msData/attributeGroup/attgB011.xsd	fail	compiled a schema that should be invalid
 schema-invalid	attgB013::msMeta/../msData/attributeGroup/attgB013.xsd	fail	compiled a schema that should be invalid
 schema-invalid	attgB015::msMeta/../msData/attributeGroup/attgB015.xsd	fail	compiled a schema that should be invalid
@@ -1152,8 +1150,6 @@ schema-invalid	int_minInclusive006h_710::msMeta/../msData/datatypes/Facets/int/i
 schema-invalid	int_minInclusive006i_711::msMeta/../msData/datatypes/Facets/int/int_minInclusive006i.xsd	fail	compiled a schema that should be invalid
 schema-invalid	integer_fractionDigits004_567::msMeta/../msData/datatypes/Facets/Schemas/integer_fractionDigits004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	integer_fractionDigits007_570::msMeta/../msData/datatypes/Facets/Schemas/integer_fractionDigits007.xsd	fail	compiled a schema that should be invalid
-schema-invalid	isDefault060_2::msMeta/../msData/additional/test95960_2.xsd	fail	compiled a schema that should be invalid
-schema-invalid	isDefault069::msMeta/../msData/additional/test95960_2.xsd	fail	compiled a schema that should be invalid
 schema-invalid	list_minInclusive_1850::msMeta/../msData/datatypes/Facets/list/list_minInclusive.xsd	fail	compiled a schema that should be invalid
 schema-invalid	long_fractionDigits004_667::msMeta/../msData/datatypes/Facets/Schemas/long_fractionDigits004.xsd	fail	compiled a schema that should be invalid
 schema-invalid	long_fractionDigits007_670::msMeta/../msData/datatypes/Facets/Schemas/long_fractionDigits007.xsd	fail	compiled a schema that should be invalid
