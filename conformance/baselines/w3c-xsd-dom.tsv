@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38071	fail=1096	unsupported=28	blocked=418	panic=0
+#counts	total=39613	pass=38074	fail=1093	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -538,8 +538,6 @@ instance-valid	groupJ021v::msMeta/../msData/group/groupJ021.xml	fail	expected va
 instance-valid	groupL001v::msMeta/../msData/group/groupL001.xml	fail	expected valid but validator reported errors
 instance-valid	groupL004v::msMeta/../msData/group/groupL004.xml	fail	expected valid but validator reported errors
 instance-valid	groupL009v::msMeta/../msData/group/groupL009.xml	fail	expected valid but validator reported errors
-instance-valid	idF013::msMeta/../msData/identityConstraint/idF013.xml	fail	expected valid but validator reported errors
-instance-valid	idF014::msMeta/../msData/identityConstraint/idF014.xml	fail	expected valid but validator reported errors
 instance-valid	idF024::msMeta/../msData/identityConstraint/idF024.xml	blocked	schema failed to compile
 instance-valid	idF025::msMeta/../msData/identityConstraint/idF025.xml	blocked	schema failed to compile
 instance-valid	idF029::msMeta/../msData/identityConstraint/idF029.xml	blocked	schema failed to compile
@@ -567,7 +565,6 @@ instance-valid	idL048::msMeta/../msData/identityConstraint/idL048.xml	fail	expec
 instance-valid	idL049::msMeta/../msData/identityConstraint/idL049.xml	fail	expected valid but validator reported errors
 instance-valid	idL082::msMeta/../msData/identityConstraint/idL082.xml	fail	expected valid but validator reported errors
 instance-valid	idL088::msMeta/../msData/identityConstraint/idL088.xml	fail	expected valid but validator reported errors
-instance-valid	idL090::msMeta/../msData/identityConstraint/idL090.xml	fail	expected valid but validator reported errors
 instance-valid	idL096::msMeta/../msData/identityConstraint/idL096.xml	fail	expected valid but validator reported errors
 instance-valid	idL102::msMeta/../msData/identityConstraint/idL102.xml	fail	expected valid but validator reported errors
 instance-valid	idconstrdefs00201m::sunMeta/../sunData/ElemDecl/identityConstraintDefs/idConstrDefs00201m/idConstrDefs00201m1_p.xml	fail	expected valid but validator reported errors

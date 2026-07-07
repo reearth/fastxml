@@ -403,7 +403,7 @@ impl OnePassSchemaValidator {
                                 (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
                             if let Some((ai, v)) = value {
-                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
                                 );
@@ -429,7 +429,7 @@ impl OnePassSchemaValidator {
                                 (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
                             if let Some((ai, v)) = value {
-                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
                                 );
@@ -473,7 +473,7 @@ impl OnePassSchemaValidator {
             None
         };
         let text =
-            crate::schema::xsd::value_compare::canonical_value(text_kind, ctx.text_content.trim());
+            crate::schema::xsd::value_compare::identity_key(text_kind, ctx.text_content.trim());
         let ended_local = ctx
             .name
             .rsplit(':')

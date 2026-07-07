@@ -306,3 +306,57 @@ fn extension_same_name_fixed_is_positional() {
         "extension fixed violated on second occurrence",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Identity constraints: cross-primitive-type keys are distinct
+// ---------------------------------------------------------------------------
+
+/// `unique` over values of different primitive types: xs:float `1` and
+/// xs:decimal `1` belong to different primitive value spaces and are therefore
+/// distinct keys — the constraint is satisfied (valid).
+#[test]
+fn identity_float_and_decimal_one_are_distinct_keys() {
+    let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="uid" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+    <xs:unique name="u">
+      <xs:selector xpath=".//uid"/>
+      <xs:field xpath="."/>
+    </xs:unique>
+  </xs:element>
+  <xs:element name="uid" type="xs:anyType"/>
+</xs:schema>"#;
+    let xml = r#"<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <uid xsi:type="xs:float">1</uid>
+  <uid xsi:type="xs:decimal">1</uid>
+</root>"#;
+    assert_both_valid(xml, xsd, "float 1 vs decimal 1 distinct keys");
+}
+
+/// Within one primitive type, equal values still collide: two xs:decimal
+/// values `1` and `1.0` are the same key, violating `unique` (invalid).
+#[test]
+fn identity_same_primitive_equal_values_collide() {
+    let xsd = r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="root">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="uid" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+    <xs:unique name="u">
+      <xs:selector xpath=".//uid"/>
+      <xs:field xpath="."/>
+    </xs:unique>
+  </xs:element>
+  <xs:element name="uid" type="xs:decimal"/>
+</xs:schema>"#;
+    let xml = "<root><uid>1</uid><uid>1.0</uid></root>";
+    assert_both_invalid(xml, xsd, "decimal 1 == 1.0 collide");
+}
