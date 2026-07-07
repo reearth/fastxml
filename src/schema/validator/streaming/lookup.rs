@@ -247,8 +247,12 @@ impl OnePassSchemaValidator {
             } => {
                 if !visited.contains(base_type.as_str()) {
                     visited.insert(base_type.clone());
+                    // ns-first base hop (compile-time resolved `base_ns`),
+                    // string fallback inside `complex_base_def`: a no-namespace
+                    // base whose local name collides with a type in another
+                    // (imported) namespace must not be resolved by local name.
                     if let Some(TypeDef::Complex(base_complex)) =
-                        self.schema.get_type(base_type.as_str())
+                        self.schema.complex_base_def(complex)
                     {
                         let base_elements =
                             self.collect_elements_with_inheritance(base_complex, visited);
