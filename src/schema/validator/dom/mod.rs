@@ -334,7 +334,7 @@ impl DomSchemaValidator {
                 .lookup_element(&name, prefix.as_deref(), node_ns.as_deref())
                 .or(inline_def),
         };
-        let schema_has_elements = !self.schema.elements.is_empty();
+        let schema_has_elements = !self.schema.elements_ns.is_empty();
 
         // Check if element is allowed by parent's type definition
         let is_allowed_by_parent = parent_ctx

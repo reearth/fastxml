@@ -138,13 +138,15 @@ impl XsdCompiler {
         self.build_type_children_cache(&mut result);
 
         // Unique Particle Attribution: ambiguity discovered while building
-        // the content-model automata makes the schema invalid.
-        for (type_name, fc) in &result.type_children_cache {
+        // the content-model automata makes the schema invalid. (C5: iterate
+        // the ns-keyed cache; the diagnostic renders prefix:local via the
+        // schema's namespace-to-prefix table.)
+        for (ns_name, fc) in &result.ns_type_children_cache {
             if let Some(automaton) = &fc.automaton
                 && let Some(violation) = &automaton.upa_violation
             {
                 return Err(crate::schema::error::SchemaError::InvalidSchema {
-                    message: format!("type '{}': {}", type_name, violation),
+                    message: format!("type '{}': {}", result.display_name(ns_name), violation),
                 }
                 .into());
             }
@@ -160,10 +162,6 @@ impl XsdCompiler {
         }
 
         validity::check_schema_validity(&result)?;
-
-        if std::env::var_os("FASTXML_NS_SURVEY").is_some() {
-            survey_ns_divergences(&result);
-        }
 
         Ok(result)
     }
@@ -293,59 +291,34 @@ impl XsdCompiler {
             }
         }
 
-        // Compile types
+        // Compile types. Components are registered under the OWNING
+        // document's target namespace (unambiguous here) — the C5 cutover
+        // removed the legacy prefix/bare-local string keys entirely.
         for type_def in schema.types {
             let compiled = self.compile_type(&type_def)?;
             if let Some(name) = type_def.name() {
-                // Store with namespace-qualified name to avoid collisions
-                // between types with same local name in different namespaces
-                // (e.g., gml:TrackType vs tran:TrackType)
-                let qname = self.make_qname(name);
-                // Collision-free namespace-qualified registration first. The
-                // authoritative namespace is the owning document's target
-                // namespace (unambiguous here, unlike the prefix baked into
-                // qname), so same-local globals in different namespaces do not
-                // collide. Last-wins, matching the qname insert below.
                 let ns_name = NsName::new(
                     self.current_target_ns.clone().unwrap_or_default(),
                     name.to_string(),
                 );
                 result.types_ns.insert(ns_name, compiled.clone());
 
-                result.types.insert(qname.clone(), compiled.clone());
-
-                // Also store with just the local name for same-namespace lookups
-                // (e.g., when RoadType extends TransportationComplexType without prefix)
-                result
-                    .types
-                    .entry(name.to_string())
-                    .or_insert(compiled.clone());
-
-                // Also update cache with full definition
-                self.type_cache.insert(qname, compiled);
+                // The compiler-internal type cache keeps prefix-qualified
+                // string keys: resolve_qname's requalification probes it
+                // with "prefix:local" while compiling references.
+                self.type_cache.insert(self.make_qname(name), compiled);
             }
         }
 
-        // Compile elements
+        // Compile elements: global top-level elements are always qualified
+        // in the target namespace regardless of elementFormDefault.
         for element in schema.elements {
             let compiled = self.compile_element(&element)?;
-            // Global top-level elements are always qualified in the target
-            // namespace regardless of elementFormDefault.
             let ns_name = NsName::new(
                 self.current_target_ns.clone().unwrap_or_default(),
                 element.name.clone(),
             );
-            result.elements_ns.insert(ns_name, compiled.clone());
-
-            // Store with namespace-qualified name to avoid collisions
-            let qname = self.make_qname(&element.name);
-            result.elements.insert(qname, compiled.clone());
-
-            // Also store with just the local name for same-namespace lookups
-            result
-                .elements
-                .entry(element.name.clone())
-                .or_insert(compiled);
+            result.elements_ns.insert(ns_name, compiled);
         }
 
         // Compile top-level attributes
@@ -356,17 +329,15 @@ impl XsdCompiler {
                     self.current_target_ns.clone().unwrap_or_default(),
                     name.to_string(),
                 );
-                result.attributes_ns.insert(ns_name, compiled.clone());
-                // Store with namespace-qualified name to avoid collisions
-                let qname = self.make_qname(name);
-                result.attributes.insert(qname, compiled);
+                result.attributes_ns.insert(ns_name, compiled);
             }
         }
 
         Ok(())
     }
 
-    /// Makes a qualified name using current namespace prefix.
+    /// Makes a qualified name using current namespace prefix (used for the
+    /// compiler-internal `type_cache` keys consumed by `resolve_qname`).
     pub(crate) fn make_qname(&self, local: &str) -> String {
         // Use the schema's own prefix for its target namespace (set in compile_schema)
         // This ensures deterministic prefix selection
@@ -442,67 +413,6 @@ impl Default for XsdCompiler {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Temporary instrumentation (env `FASTXML_NS_SURVEY`): compares the new
-/// per-document resolved `*_ns` fields against the legacy prefix-table
-/// resolver [`CompiledSchema::resolve_type_ref_to_ns`] that the runtime
-/// readers use today, printing every divergence. Divergences are the bug
-/// evidence: they are exactly the references the last-wins prefix table
-/// mis-resolves. Removed once the readers are flipped onto `*_ns`.
-fn survey_ns_divergences(result: &CompiledSchema) {
-    use crate::schema::types::{NsName, TypeDef};
-    let mut count = 0usize;
-    let mut report = |kind: &str, owner: &str, s: &str, new: &Option<NsName>| {
-        let Some(new) = new else { return };
-        let old = result.resolve_type_ref_to_ns(s);
-        if old.as_ref() != Some(new) {
-            count += 1;
-            eprintln!(
-                "NS-DIVERGENCE [{kind}] owner={owner} ref={s:?} old={:?} new=({:?},{:?})",
-                old.map(|o| (o.namespace_uri.to_string(), o.local_name.to_string())),
-                new.namespace_uri,
-                new.local_name,
-            );
-        }
-    };
-    for (name, ty) in &result.types {
-        match ty {
-            TypeDef::Complex(c) => {
-                if let Some(b) = &c.base_type {
-                    report("complex-base", name, b, &c.base_ns);
-                }
-                for a in &c.attributes {
-                    if let Some(t) = &a.type_ref {
-                        report("attr-type", name, t, &a.type_ns);
-                    }
-                }
-            }
-            TypeDef::Simple(s) => {
-                if let Some(b) = &s.base_type
-                    && !b.starts_with("list(")
-                    && !b.starts_with("union(")
-                {
-                    report("simple-base", name, b, &s.base_ns);
-                }
-                if let Some(it) = &s.item_type {
-                    report("item-type", name, it, &s.item_ns);
-                }
-                for (m, mns) in s.member_types.iter().zip(s.member_ns.iter()) {
-                    report("member-type", name, m, mns);
-                }
-            }
-        }
-    }
-    for (name, e) in &result.elements {
-        if let Some(t) = &e.type_ref {
-            report("elem-type", name, t, &e.type_ns);
-        }
-        if let Some(sg) = &e.substitution_group {
-            report("subst-group", name, sg, &e.substitution_ns);
-        }
-    }
-    eprintln!("NS-DIVERGENCE-TOTAL {count}");
 }
 
 /// Compiles XSD AST schemas into a CompiledSchema.

@@ -72,24 +72,13 @@ impl DomSchemaValidator {
         {
             return Some(Arc::clone(cached));
         }
-        // Try type reference first; the namespace-aware cache avoids
-        // cross-namespace collisions between same-local-name types.
+        // Legacy string resolution of the reference into the ns cache
+        // (C5: the prefix-keyed type_children_cache is gone).
         if let Some(ref type_ref) = elem.type_ref {
             if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref)
                 && let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name)
             {
                 return Some(Arc::clone(cached));
-            }
-
-            if let Some(cached) = self.schema.type_children_cache.get(type_ref) {
-                return Some(Arc::clone(cached));
-            }
-
-            // Try without prefix
-            if let Some((_prefix, local)) = type_ref.split_once(':') {
-                if let Some(cached) = self.schema.type_children_cache.get(local) {
-                    return Some(Arc::clone(cached));
-                }
             }
 
             // Compute at runtime if not cached

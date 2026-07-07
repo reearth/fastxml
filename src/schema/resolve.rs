@@ -104,7 +104,7 @@ impl ResolveOptions {
 /// let options = ResolveOptions::with_base_dir("./schemas");
 ///
 /// let resolved = resolve_schema_from_xml(&xml, &fetcher, &options)?;
-/// println!("Compiled {} types", resolved.compiled.types.len());
+/// println!("Compiled {} types", resolved.compiled.types_ns.len());
 /// ```
 pub fn resolve_schema_from_xml<F: SchemaFetcher>(
     xml_content: &[u8],

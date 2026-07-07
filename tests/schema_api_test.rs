@@ -12,7 +12,7 @@ const SIMPLE_XSD: &str = r#"<?xml version="1.0"?>
 #[test]
 fn from_xsd_compiles_single_document() {
     let schema = Schema::from_xsd(SIMPLE_XSD.as_bytes()).unwrap();
-    assert!(schema.elements.contains_key("root"));
+    assert!(schema.get_element("root").is_some());
     assert_eq!(
         schema.target_namespace.as_deref(),
         Some("http://example.com/test")
@@ -24,7 +24,7 @@ fn from_xsd_accepts_owned_bytes() {
     // `impl AsRef<[u8]>` — a Vec<u8> must work as well as a &[u8].
     let owned: Vec<u8> = SIMPLE_XSD.as_bytes().to_vec();
     let schema = Schema::from_xsd(owned).unwrap();
-    assert!(schema.elements.contains_key("root"));
+    assert!(schema.get_element("root").is_some());
 }
 
 #[test]
@@ -36,11 +36,11 @@ fn from_xsd_rejects_malformed_input() {
 fn builtin_has_types_but_no_user_elements() {
     let schema = Schema::builtin();
     assert!(
-        schema.elements.is_empty(),
+        schema.elements_ns.is_empty(),
         "builtin schema should declare no user elements"
     );
     assert!(
-        !schema.types.is_empty(),
+        !schema.types_ns.is_empty(),
         "builtin schema should register built-in types"
     );
 }
@@ -51,7 +51,7 @@ fn builder_single_entry_resolves() {
         .add("http://example.com/test.xsd", SIMPLE_XSD.as_bytes())
         .resolve()
         .unwrap();
-    assert!(schema.elements.contains_key("root"));
+    assert!(schema.get_element("root").is_some());
 }
 
 #[test]
@@ -73,6 +73,6 @@ fn builder_combines_multiple_independent_entries() {
         .resolve()
         .unwrap();
 
-    assert!(schema.elements.contains_key("alpha"));
-    assert!(schema.elements.contains_key("beta"));
+    assert!(schema.get_element("alpha").is_some());
+    assert!(schema.get_element("beta").is_some());
 }

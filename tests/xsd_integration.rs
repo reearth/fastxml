@@ -54,17 +54,17 @@ fn test_citygml_schema_parsing() {
     let schema = Schema::from_xsd(citygml_like_xsd.as_bytes()).unwrap();
 
     // Check that elements are parsed
-    assert!(schema.elements.contains_key("ReliefFeature"));
-    assert!(schema.elements.contains_key("TINRelief"));
+    assert!(schema.get_element("ReliefFeature").is_some());
+    assert!(schema.get_element("TINRelief").is_some());
 
     // Check that types are parsed
-    assert!(schema.types.contains_key("ReliefFeatureType"));
-    assert!(schema.types.contains_key("TINReliefType"));
-    assert!(schema.types.contains_key("ReliefComponentPropertyType"));
+    assert!(schema.get_type("ReliefFeatureType").is_some());
+    assert!(schema.get_type("TINReliefType").is_some());
+    assert!(schema.get_type("ReliefComponentPropertyType").is_some());
 
     // Check that built-in types are available
-    assert!(schema.types.contains_key("xs:integer"));
-    assert!(schema.types.contains_key("gml:CodeType"));
+    assert!(schema.get_type("xs:integer").is_some());
+    assert!(schema.get_type("gml:CodeType").is_some());
 }
 
 /// Test creating a validation context with built-in types
@@ -131,13 +131,12 @@ fn test_plateau_building_pattern() {
     let schema = Schema::from_xsd(building_xsd.as_bytes()).unwrap();
 
     // Check that Building element exists (now stored with namespace prefix)
-    assert!(schema.elements.contains_key("bldg:Building"));
+    assert!(schema.get_element("bldg:Building").is_some());
 
     // Check that BuildingType exists and has correct structure (now stored with namespace prefix)
-    assert!(schema.types.contains_key("bldg:BuildingType"));
+    assert!(schema.get_type("bldg:BuildingType").is_some());
 
-    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
-        schema.types.get("bldg:BuildingType")
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.get_type("bldg:BuildingType")
     {
         // Check that it's a sequence with elements
         if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
@@ -205,17 +204,17 @@ fn test_plateau_iur_extension_pattern() {
     let schema = Schema::from_xsd(uro_xsd.as_bytes()).unwrap();
 
     // Check elements (now stored with namespace prefix)
-    assert!(schema.elements.contains_key("uro:buildingDetails"));
-    assert!(schema.elements.contains_key("uro:BuildingDetails"));
+    assert!(schema.get_element("uro:buildingDetails").is_some());
+    assert!(schema.get_element("uro:BuildingDetails").is_some());
 
     // Check types (now stored with namespace prefix)
-    assert!(schema.types.contains_key("uro:BuildingDetailsType"));
-    assert!(schema.types.contains_key("uro:BuildingDetailsPropertyType"));
-    assert!(schema.types.contains_key("uro:BuildingIDAttributeType"));
+    assert!(schema.get_type("uro:BuildingDetailsType").is_some());
+    assert!(schema.get_type("uro:BuildingDetailsPropertyType").is_some());
+    assert!(schema.get_type("uro:BuildingIDAttributeType").is_some());
 
     // Check simple type restriction
     if let Some(fastxml::schema::types::TypeDef::Simple(st)) =
-        schema.types.get("uro:BuildingIDAttributeType")
+        schema.get_type("uro:BuildingIDAttributeType")
     {
         assert_eq!(st.base_type.as_deref(), Some("xs:string"));
         assert!(st.pattern.is_some());
@@ -283,10 +282,9 @@ fn test_sequence_maxoccurs_propagation() {
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
     // Check that ArrayPropertyType exists
-    assert!(schema.types.contains_key("ArrayPropertyType"));
+    assert!(schema.get_type("ArrayPropertyType").is_some());
 
-    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
-        schema.types.get("ArrayPropertyType")
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.get_type("ArrayPropertyType")
     {
         if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
             let item = elements.iter().find(|e| e.name == "item").unwrap();
@@ -330,8 +328,7 @@ fn test_nested_sequence_maxoccurs_propagation() {
 
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
-    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.types.get("NestedArrayType")
-    {
+    if let Some(fastxml::schema::types::TypeDef::Complex(ct)) = schema.get_type("NestedArrayType") {
         if let fastxml::schema::types::ContentModel::Sequence(elements) = &ct.content {
             let inner = elements.iter().find(|e| e.name == "inner").unwrap();
             // outer: unbounded * inner: 3 * element: 1 = unbounded
@@ -368,7 +365,7 @@ fn test_choice_maxoccurs_propagation() {
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
 
     if let Some(fastxml::schema::types::TypeDef::Complex(ct)) =
-        schema.types.get("RepeatingChoiceType")
+        schema.get_type("RepeatingChoiceType")
     {
         if let fastxml::schema::types::ContentModel::Choice(elements) = &ct.content {
             let option_a = elements.iter().find(|e| e.name == "optionA").unwrap();

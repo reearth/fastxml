@@ -112,7 +112,7 @@ fn test_xsd_duplicate_element_name() {
     // Duplicate global element names
     // Later definition may override earlier
     if let Ok(schema) = result {
-        assert!(schema.elements.contains_key("test"));
+        assert!(schema.get_element("test").is_some());
     }
 }
 

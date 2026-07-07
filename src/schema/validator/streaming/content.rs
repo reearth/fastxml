@@ -90,7 +90,7 @@ impl OnePassSchemaValidator {
             return;
         }
 
-        let schema_has_elements = !self.schema.elements.is_empty();
+        let schema_has_elements = !self.schema.elements_ns.is_empty();
 
         // Priority: inline element definition > global element definition
         // This is important when the same element name exists both as a global element

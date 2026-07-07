@@ -550,7 +550,7 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
                         .as_ref()
                         .map(|r| r.schema_count)
                         .unwrap_or(0),
-                    resolved.compiled.types.len()
+                    resolved.compiled.types_ns.len()
                 );
                 if let Some(ref entry) = resolved.entry_filename {
                     println!("  Entry schema: {}", entry);

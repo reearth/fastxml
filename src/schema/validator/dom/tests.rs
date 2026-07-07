@@ -29,9 +29,10 @@ fn test_dom_validator_unknown_element_strict() {
     let doc = create_test_doc("<unknown/>");
 
     let mut schema = CompiledSchema::new();
-    schema
-        .elements
-        .insert("known".to_string(), ElementDef::new("known"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "known"),
+        ElementDef::new("known"),
+    );
 
     let validator = DomSchemaValidator::new(Arc::new(schema));
     let errors = validator.validate(&doc).unwrap();
@@ -45,9 +46,10 @@ fn test_dom_validator_unknown_element_lenient() {
     let doc = create_test_doc("<unknown/>");
 
     let mut schema = CompiledSchema::new();
-    schema
-        .elements
-        .insert("known".to_string(), ElementDef::new("known"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "known"),
+        ElementDef::new("known"),
+    );
 
     let validator = DomSchemaValidator::new(Arc::new(schema)).with_mode(ValidationMode::Lenient);
     let errors = validator.validate(&doc).unwrap();
@@ -78,14 +80,15 @@ fn test_dom_validator_min_occurs() {
         particle: None,
     };
 
-    schema.elements.insert(
-        "parent".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "parent"),
         ElementDef::new("parent").with_type("ParentType"),
     );
 
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(complex_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(complex_type),
+    );
 
     let validator = DomSchemaValidator::new(Arc::new(schema));
     let errors = validator.validate(&doc).unwrap();
@@ -115,19 +118,21 @@ fn test_dom_validator_max_occurs() {
         particle: None,
     };
 
-    schema.elements.insert(
-        "parent".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "parent"),
         ElementDef::new("parent").with_type("ParentType"),
     );
 
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(complex_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(complex_type),
+    );
 
     // Also define child as global element
-    schema
-        .elements
-        .insert("child".to_string(), ElementDef::new("child"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "child"),
+        ElementDef::new("child"),
+    );
 
     let validator = DomSchemaValidator::new(Arc::new(schema));
     let errors = validator.validate(&doc).unwrap();
@@ -148,21 +153,23 @@ fn test_dom_validator_choice_content_model() {
         ElementDef::new("Null").with_type("xs:string"),
     ]);
 
-    schema.types.insert(
-        "BoundingShapeType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "BoundingShapeType"),
         TypeDef::Complex(choice_type),
     );
 
-    schema.elements.insert(
-        "boundedBy".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "boundedBy"),
         ElementDef::new("boundedBy").with_type("BoundingShapeType"),
     );
-    schema
-        .elements
-        .insert("Envelope".to_string(), ElementDef::new("Envelope"));
-    schema
-        .elements
-        .insert("Null".to_string(), ElementDef::new("Null"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "Envelope"),
+        ElementDef::new("Envelope"),
+    );
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "Null"),
+        ElementDef::new("Null"),
+    );
 
     let validator = DomSchemaValidator::new(Arc::new(schema));
     let errors = validator.validate(&doc).unwrap();
@@ -182,13 +189,14 @@ fn test_dom_validator_substitution_group() {
     parent_type.content = ContentModel::Sequence(vec![
         ElementDef::new("_CityObject").with_type("AbstractCityObjectType"),
     ]);
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(parent_type),
+    );
 
     let abstract_type = ComplexType::new("AbstractCityObjectType");
-    schema.types.insert(
-        "AbstractCityObjectType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "AbstractCityObjectType"),
         TypeDef::Complex(abstract_type),
     );
 
@@ -196,16 +204,20 @@ fn test_dom_validator_substitution_group() {
     let mut head_elem = ElementDef::new("_CityObject");
     head_elem.is_abstract = true;
     head_elem.type_ref = Some("AbstractCityObjectType".to_string());
-    schema.elements.insert("_CityObject".to_string(), head_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "_CityObject"),
+        head_elem,
+    );
 
     let mut substitute_elem = ElementDef::new("ReliefFeature");
     substitute_elem.substitution_group = Some("_CityObject".to_string());
-    schema
-        .elements
-        .insert("ReliefFeature".to_string(), substitute_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "ReliefFeature"),
+        substitute_elem,
+    );
 
-    schema.elements.insert(
-        "parent".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "parent"),
         ElementDef::new("parent").with_type("ParentType"),
     );
 
@@ -237,9 +249,10 @@ fn test_dom_validator_with_max_errors() {
     let doc = create_test_doc("<root><a/><b/><c/><d/><e/></root>");
 
     let mut schema = CompiledSchema::new();
-    schema
-        .elements
-        .insert("root".to_string(), ElementDef::new("root"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "root"),
+        ElementDef::new("root"),
+    );
     // Only root is known, all children are unknown
 
     let validator = DomSchemaValidator::new(Arc::new(schema)).with_max_errors(2);
@@ -262,9 +275,10 @@ fn test_dom_validator_type_inheritance() {
             .with_type("xs:string")
             .optional(),
     ]);
-    schema
-        .types
-        .insert("BaseType".to_string(), TypeDef::Complex(base_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "BaseType"),
+        TypeDef::Complex(base_type),
+    );
 
     // ExtendedType extends BaseType
     let mut extended_type = ComplexType::new("ExtendedType");
@@ -272,16 +286,17 @@ fn test_dom_validator_type_inheritance() {
         base_type: "BaseType".to_string(),
         elements: vec![],
     };
-    schema
-        .types
-        .insert("ExtendedType".to_string(), TypeDef::Complex(extended_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ExtendedType"),
+        TypeDef::Complex(extended_type),
+    );
 
-    schema.elements.insert(
-        "root".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "root"),
         ElementDef::new("root").with_type("ExtendedType"),
     );
-    schema.elements.insert(
-        "baseElement".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "baseElement"),
         ElementDef::new("baseElement").with_type("xs:string"),
     );
 

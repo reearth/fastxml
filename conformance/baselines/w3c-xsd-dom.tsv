@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38065	fail=1102	unsupported=28	blocked=418	panic=0
+#counts	total=39613	pass=38066	fail=1101	unsupported=28	blocked=418	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -501,7 +501,6 @@ instance-valid	attgC035::msMeta/../msData/attributeGroup/attgC035.xml	blocked	sc
 instance-valid	attgC036::msMeta/../msData/attributeGroup/attgC036.xml	blocked	schema failed to compile
 instance-valid	attgC037::msMeta/../msData/attributeGroup/attgC037.xml	blocked	schema failed to compile
 instance-valid	attgC038::msMeta/../msData/attributeGroup/attgC038.xml	blocked	schema failed to compile
-instance-valid	attgD029::msMeta/../msData/attributeGroup/attgD029.xml	fail	expected valid but validator reported errors
 instance-valid	attgD034::msMeta/../msData/attributeGroup/attgD034.xml	fail	expected valid but validator reported errors
 instance-valid	attgD036::msMeta/../msData/attributeGroup/attgD036.xml	blocked	schema failed to compile
 instance-valid	complex013::saxonMeta/../saxonData/Complex/complex013.v2.xml	fail	expected valid but validator reported errors

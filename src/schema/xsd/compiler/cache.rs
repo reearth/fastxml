@@ -16,47 +16,16 @@ impl XsdCompiler {
     /// This pre-computes the flattened child element constraints for each complex type,
     /// including elements inherited through type extension.
     ///
-    /// The primary cache is `ns_type_children_cache` keyed by (namespace_uri, local_name),
-    /// which is collision-free. The legacy `type_children_cache` (keyed by "prefix:local")
-    /// is also populated for backward compatibility.
+    /// The cache is `ns_type_children_cache`, keyed straight off `types_ns`,
+    /// whose keys carry the OWNING document's target namespace recorded at
+    /// registration time — collision-free and immune to the accumulated
+    /// (last-document-wins) prefix bindings (errA002 class).
     pub(crate) fn build_type_children_cache(&self, schema: &mut CompiledSchema) {
-        // --- Namespace-aware cache (primary) ---
-        //
-        // Keyed straight off `types_ns`, whose keys carry the OWNING
-        // document's target namespace recorded at registration time. The
-        // previous scheme re-derived the namespace here from the type-map
-        // string key via the accumulated (last-document-wins) prefix
-        // bindings, which mis-keyed types from earlier documents whenever
-        // documents bound the same prefix to different URIs (errA002 class).
         let ns_keys: Vec<NsName> = schema.types_ns.keys().cloned().collect();
         for ns_name in ns_keys {
             if let Some(TypeDef::Complex(complex)) = schema.types_ns.get(&ns_name) {
                 let flattened = Arc::new(self.flatten_type_children_ns(complex, schema));
                 schema.ns_type_children_cache.insert(ns_name, flattened);
-            }
-        }
-
-        // --- Legacy prefix-based cache ---
-        // (The former "imported schema types" pass is gone: CompiledSchema::
-        // imports is never populated by this compiler, so it was dead code.)
-        let type_names: Vec<String> = schema.types.keys().cloned().collect();
-        for type_name in &type_names {
-            if let Some(TypeDef::Complex(complex)) = schema.types.get(type_name) {
-                let flattened = Arc::new(self.flatten_type_children_ns(complex, schema));
-
-                schema
-                    .type_children_cache
-                    .insert(type_name.clone(), Arc::clone(&flattened));
-
-                // Also insert with local name for fallback lookup (first-wins).
-                let local_name = type_name
-                    .split_once(':')
-                    .map(|(_, local)| local)
-                    .unwrap_or(type_name);
-                schema
-                    .type_children_cache
-                    .entry(local_name.to_string())
-                    .or_insert(Arc::clone(&flattened));
             }
         }
     }

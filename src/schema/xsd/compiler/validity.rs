@@ -10,11 +10,12 @@ use crate::schema::xsd::value_compare::compare_values;
 
 /// Checks every compiled type against schema-for-schemas constraints.
 pub(crate) fn check_schema_validity(schema: &CompiledSchema) -> Result<()> {
-    for (name, type_def) in &schema.types {
+    for (ns_name, type_def) in &schema.types_ns {
+        let name = schema.display_name(ns_name);
         match type_def {
-            TypeDef::Simple(st) => check_simple_type(schema, name, st)?,
+            TypeDef::Simple(st) => check_simple_type(schema, &name, st)?,
             TypeDef::Complex(ct) => {
-                check_complex_restriction(schema, name, ct)?;
+                check_complex_restriction(schema, &name, ct)?;
                 if let Some(elements) = content_elements(&ct.content) {
                     for elem in elements {
                         check_value_constraints(schema, elem)?;
@@ -23,7 +24,7 @@ pub(crate) fn check_schema_validity(schema: &CompiledSchema) -> Result<()> {
             }
         }
     }
-    for elem in schema.elements.values() {
+    for elem in schema.elements_ns.values() {
         check_value_constraints(schema, elem)?;
     }
     Ok(())

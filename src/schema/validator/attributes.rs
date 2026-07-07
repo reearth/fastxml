@@ -83,20 +83,16 @@ fn resolve_ref<'a>(schema: &'a CompiledSchema, attr: &'a AttributeDef) -> &'a At
         return attr;
     }
     // C4: the resolved reference namespace probes the collision-free map
-    // first; the legacy string probes remain as fallback.
+    // first; an any-namespace local-name scan remains as fallback.
     if let Some(rn) = &attr.ref_ns
         && let Some(global) = schema.attribute_ns(&rn.namespace_uri, &rn.local_name)
     {
         return global;
     }
-    if let Some(global) = schema.attributes.get(&attr.name) {
-        return global;
-    }
-    // The ref may have been stored with a prefix in the global table.
     if let Some((_, found)) = schema
-        .attributes
+        .attributes_ns
         .iter()
-        .find(|(k, _)| k.rsplit(':').next() == Some(attr.name.as_str()))
+        .find(|(k, _)| *k.local_name == *attr.name)
     {
         return found;
     }
@@ -257,10 +253,16 @@ pub(crate) fn validate_element_attributes<'a>(
                 crate::schema::types::ProcessContents::Skip => {}
                 crate::schema::types::ProcessContents::Lax
                 | crate::schema::types::ProcessContents::Strict => {
-                    let global = schema
-                        .attributes
-                        .get(name)
-                        .or_else(|| schema.attributes.get(local));
+                    // C5: the wildcard-matched attribute's own namespace is
+                    // in scope here — resolve against it first, then fall
+                    // back to an any-namespace local scan (legacy leniency).
+                    let global = schema.attribute_ns(ns.unwrap_or(""), local).or_else(|| {
+                        schema
+                            .attributes_ns
+                            .iter()
+                            .find(|(k, _)| *k.local_name == *local)
+                            .map(|(_, a)| a)
+                    });
                     match global {
                         Some(def) => {
                             if let Some(msg) = validate_attribute_value(schema, def, value, cache) {

@@ -26,21 +26,22 @@ fn test_element_type_ref_with_namespace() {
         ],
     );
 
-    schema.types.insert(
-        "gml:TrackType".to_string(),
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new("", "TrackType"),
         TypeDef::Complex(gml_track_type),
     );
-    schema.types.insert(
-        "tran:TrackType".to_string(),
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new("", "TrackType"),
         TypeDef::Complex(tran_track_type),
     );
 
     // Create tran:Track element with namespace-qualified type reference
     let track_element = ElementDef::new("Track").with_type("tran:TrackType");
 
-    schema
-        .elements
-        .insert("tran:Track".to_string(), track_element);
+    schema.elements_ns.insert(
+        fastxml::schema::types::NsName::new("", "Track"),
+        track_element,
+    );
 
     // Lookup the element
     let elem = schema.get_element("tran:Track");
@@ -239,10 +240,11 @@ fn test_inherited_elements_across_namespaces_via_import() {
 
     // Debug: Check what's in the type_children_cache for RoadType
     eprintln!("=== Type children cache contents ===");
-    for (type_name, flattened) in &schema.type_children_cache {
-        if type_name.contains("Road") || type_name.contains("Transportation") {
+    for (type_name, flattened) in &schema.ns_type_children_cache {
+        if type_name.local_name.contains("Road") || type_name.local_name.contains("Transportation")
+        {
             eprintln!(
-                "{}: {:?}",
+                "{:?}: {:?}",
                 type_name,
                 flattened.constraints.keys().collect::<Vec<_>>()
             );
@@ -419,7 +421,10 @@ fn test_deep_inheritance_chain_across_namespaces() {
 
     // Debug: Check type_children_cache contents for RoadType
     eprintln!("=== Deep inheritance test: type_children_cache ===");
-    if let Some(flattened) = schema.type_children_cache.get("RoadType") {
+    if let Some(flattened) = schema
+        .resolve_type_ref_to_ns("RoadType")
+        .and_then(|n| schema.ns_type_children_cache.get(&n))
+    {
         eprintln!(
             "RoadType children: {:?}",
             flattened.constraints.keys().collect::<Vec<_>>()
@@ -427,7 +432,10 @@ fn test_deep_inheritance_chain_across_namespaces() {
     } else {
         eprintln!("RoadType not found in cache!");
     }
-    if let Some(flattened) = schema.type_children_cache.get("tran:RoadType") {
+    if let Some(flattened) = schema
+        .resolve_type_ref_to_ns("tran:RoadType")
+        .and_then(|n| schema.ns_type_children_cache.get(&n))
+    {
         eprintln!(
             "tran:RoadType children: {:?}",
             flattened.constraints.keys().collect::<Vec<_>>()
@@ -510,11 +518,13 @@ fn test_same_namespace_inheritance_without_prefix() {
     // Check that types are stored
     eprintln!(
         "Types in schema: {:?}",
-        compiled.types.keys().collect::<Vec<_>>()
+        compiled.types_ns.keys().collect::<Vec<_>>()
     );
 
     // RoadType should inherit elements from TransportationComplexType
-    let road_type_cache = compiled.type_children_cache.get("RoadType");
+    let road_type_cache = compiled
+        .resolve_type_ref_to_ns("RoadType")
+        .and_then(|n| compiled.ns_type_children_cache.get(&n));
     eprintln!(
         "RoadType cache: {:?}",
         road_type_cache.map(|f| f.constraints.keys().collect::<Vec<_>>())

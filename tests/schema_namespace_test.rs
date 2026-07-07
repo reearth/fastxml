@@ -34,13 +34,22 @@ fn test_namespace_qualified_type_resolution() {
         ],
     );
 
-    // Insert with namespace-qualified names
-    schema.types.insert(
-        "gml:TrackType".to_string(),
+    // Insert under their real namespaces and bind the prefixes so the
+    // string-key compat shim can resolve "gml:TrackType"/"tran:TrackType".
+    const GML_NS: &str = "http://www.opengis.net/gml";
+    const TRAN_NS: &str = "http://www.opengis.net/citygml/transportation/2.0";
+    schema
+        .prefix_namespaces
+        .insert("gml".to_string(), GML_NS.to_string());
+    schema
+        .prefix_namespaces
+        .insert("tran".to_string(), TRAN_NS.to_string());
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new(GML_NS, "TrackType"),
         TypeDef::Complex(gml_track_type),
     );
-    schema.types.insert(
-        "tran:TrackType".to_string(),
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new(TRAN_NS, "TrackType"),
         TypeDef::Complex(tran_track_type),
     );
 
@@ -101,12 +110,14 @@ fn test_type_fallback_with_same_local_name() {
     );
 
     // If both are stored with same key "TrackType", last one wins
-    schema
-        .types
-        .insert("TrackType".to_string(), TypeDef::Complex(gml_track_type));
-    schema
-        .types
-        .insert("TrackType".to_string(), TypeDef::Complex(tran_track_type));
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new("", "TrackType"),
+        TypeDef::Complex(gml_track_type),
+    );
+    schema.types_ns.insert(
+        fastxml::schema::types::NsName::new("", "TrackType"),
+        TypeDef::Complex(tran_track_type),
+    );
 
     // Only tran:TrackType should exist now (it was inserted last)
     let found = schema.get_type("TrackType");
@@ -312,24 +323,24 @@ fn test_substitution_group_elements_from_imported_schema() {
             .get_element("core:_GenericApplicationPropertyOfCityObject")
             .is_some(),
         "core:_GenericApplicationPropertyOfCityObject should be found. Available elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
 
     // Transportation elements with substitutionGroup should be stored with tran: prefix
     assert!(
         schema.get_element("tran:class").is_some(),
         "tran:class should be found. Available elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
     assert!(
         schema.get_element("tran:function").is_some(),
         "tran:function should be found. Available elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
     assert!(
         schema.get_element("tran:lod1MultiSurface").is_some(),
         "tran:lod1MultiSurface should be found. Available elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
 
     // Verify the substitution group is correctly recorded
@@ -399,16 +410,16 @@ fn test_elements_without_explicit_target_namespace_prefix() {
     // Print available elements for debugging
     eprintln!(
         "Available elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
 
     // Elements are stored without prefix when no xmlns:tran is declared
     assert!(
-        schema.elements.contains_key("class"),
+        schema.get_element("class").is_some(),
         "class element is stored without prefix"
     );
     assert!(
-        schema.elements.contains_key("function"),
+        schema.get_element("function").is_some(),
         "function element is stored without prefix"
     );
 
@@ -587,14 +598,14 @@ fn test_validator_fails_with_different_prefix_same_namespace() {
     // Verify schema stores elements with tran: prefix
     eprintln!(
         "Schema elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
     assert!(
-        schema.elements.contains_key("tran:Road"),
+        schema.get_element("tran:Road").is_some(),
         "Road should be stored as tran:Road"
     );
     assert!(
-        schema.elements.contains_key("tran:class"),
+        schema.get_element("tran:class").is_some(),
         "class should be stored as tran:class"
     );
 

@@ -103,9 +103,9 @@ async fn example_simple_schema() -> Result<()> {
     println!("  Target namespace: {:?}", schema.target_namespace);
     println!(
         "  Elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
-    println!("  Types count: {}", schema.types.len());
+    println!("  Types count: {}", schema.types_ns.len());
     println!();
 
     Ok(())
@@ -161,14 +161,16 @@ async fn example_with_imports() -> Result<()> {
     println!("  Target namespace: {:?}", schema.target_namespace);
     println!(
         "  Elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
     println!(
         "  Custom types: {:?}",
         schema
-            .types
+            .types_ns
             .keys()
-            .filter(|k| !k.starts_with("xs:") && !k.starts_with("gml:"))
+            .filter(|k| {
+                !k.namespace_uri.contains("XMLSchema") && !k.namespace_uri.contains("opengis")
+            })
             .collect::<Vec<_>>()
     );
 
@@ -256,13 +258,13 @@ async fn example_nested_imports() -> Result<()> {
     println!("  Target namespace: {:?}", schema.target_namespace);
     println!(
         "  Root elements: {:?}",
-        schema.elements.keys().collect::<Vec<_>>()
+        schema.elements_ns.keys().collect::<Vec<_>>()
     );
 
     let custom_types: Vec<_> = schema
-        .types
+        .types_ns
         .keys()
-        .filter(|k| !k.starts_with("xs:") && !k.starts_with("gml:") && !k.contains(':'))
+        .filter(|k| !k.namespace_uri.contains("XMLSchema") && !k.namespace_uri.contains("opengis"))
         .collect();
     println!("  Custom types: {:?}", custom_types);
 

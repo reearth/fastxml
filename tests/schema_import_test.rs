@@ -139,7 +139,7 @@ fn test_gml_elements_from_include_chain() {
     eprintln!("=== GML include chain test ===");
     eprintln!(
         "Elements in schema: {:?}",
-        compiled.elements.keys().collect::<Vec<_>>()
+        compiled.elements_ns.keys().collect::<Vec<_>>()
     );
 
     // All GML elements should be accessible
@@ -235,7 +235,7 @@ fn test_gml_elements_accessible_by_local_name() {
     eprintln!("=== GML elements accessibility test ===");
     eprintln!(
         "Elements in schema: {:?}",
-        compiled.elements.keys().collect::<Vec<_>>()
+        compiled.elements_ns.keys().collect::<Vec<_>>()
     );
 
     // Elements should be accessible with prefix
@@ -386,11 +386,11 @@ fn test_parse_xsd_with_imports_multiple_shared_dependency() {
 
     // Both entry schemas' elements should be present
     assert!(
-        schema.elements.contains_key("itemA"),
+        schema.get_element("itemA").is_some(),
         "Should contain itemA from schema A"
     );
     assert!(
-        schema.elements.contains_key("itemB"),
+        schema.get_element("itemB").is_some(),
         "Should contain itemB from schema B"
     );
 
@@ -412,7 +412,7 @@ fn test_parse_xsd_with_imports_multiple_no_entries() {
     let schema = Schema::builder().resolve_with(&fetcher).unwrap();
 
     // Should have built-in types
-    assert!(schema.types.contains_key("xs:string"));
+    assert!(schema.get_type("xs:string").is_some());
 }
 
 #[test]
@@ -433,7 +433,7 @@ fn test_parse_xsd_with_imports_multiple_single_entry() {
         .resolve_with(&fetcher)
         .unwrap();
 
-    assert!(schema.elements.contains_key("root"));
+    assert!(schema.get_element("root").is_some());
 }
 
 #[test]
@@ -455,5 +455,5 @@ fn test_parse_xsd_with_imports_multiple_duplicate_entry() {
         .resolve_with(&fetcher)
         .unwrap();
 
-    assert!(schema.elements.contains_key("root"));
+    assert!(schema.get_element("root").is_some());
 }
