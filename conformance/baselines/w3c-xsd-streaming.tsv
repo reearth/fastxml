@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38285	fail=1117	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38294	fail=1108	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -594,15 +594,6 @@ instance-valid	s3_16_2v07::ibmMeta/../ibmData/valid/S3_16_2/s3_16_2v07.xml	fail	
 instance-valid	schA4::msMeta/../msData/schema/schA4.xml	blocked	schema failed to compile
 instance-valid	schD10::msMeta/../msData/schema/schD10.xml	fail	expected valid but validator reported errors
 instance-valid	schD7::msMeta/../msData/schema/schD7.xml	blocked	schema failed to compile
-instance-valid	schF1::msMeta/../msData/schema/schF1.xml	fail	expected valid but validator reported errors
-instance-valid	schF2::msMeta/../msData/schema/schF2.xml	fail	expected valid but validator reported errors
-instance-valid	schF5::msMeta/../msData/schema/schF5.xml	fail	expected valid but validator reported errors
-instance-valid	schG1::msMeta/../msData/schema/schG1.xml	fail	expected valid but validator reported errors
-instance-valid	schG2::msMeta/../msData/schema/schG2.xml	fail	expected valid but validator reported errors
-instance-valid	schG3::msMeta/../msData/schema/schG3.xml	fail	expected valid but validator reported errors
-instance-valid	schG4::msMeta/../msData/schema/schG4.xml	fail	expected valid but validator reported errors
-instance-valid	schG5::msMeta/../msData/schema/schG5.xml	fail	expected valid but validator reported errors
-instance-valid	schG7::msMeta/../msData/schema/schG7.xml	fail	expected valid but validator reported errors
 instance-valid	schG8::msMeta/../msData/schema/schG8.xml	blocked	schema failed to compile
 instance-valid	stE050::msMeta/../msData/simpleType/stE050.xml	fail	expected valid but validator reported errors
 instance-valid	stE096::msMeta/../msData/simpleType/stE096.xml	fail	expected valid but validator reported errors

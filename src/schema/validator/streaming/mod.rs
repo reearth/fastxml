@@ -77,9 +77,21 @@ pub struct OnePassSchemaValidator {
     /// Memoized inherited-element lists per complex type name
     pub(crate) elements_cache:
         rustc_hash::FxHashMap<String, std::sync::Arc<Vec<crate::schema::types::ElementDef>>>,
-    /// Memoized collected attribute declarations per named complex type (C7).
+    /// Memoized inherited-element lists per resolved `(namespace, local)` type
+    /// identity. The namespace-blind `elements_cache` (keyed by the bare
+    /// `type_ref` string) cannot distinguish same-local-name complex types in
+    /// different namespaces; this collision-free map keys on the compile-time
+    /// resolved [`NsName`](crate::schema::types::NsName).
+    pub(crate) elements_cache_ns: rustc_hash::FxHashMap<
+        crate::schema::types::NsName,
+        std::sync::Arc<Vec<crate::schema::types::ElementDef>>,
+    >,
+    /// Memoized collected attribute declarations per complex type, keyed by the
+    /// element's ns-safe type-identity symbol (C7). Keying on the resolved
+    /// identity rather than the bare `type_ref` string keeps same-local-name
+    /// types in different namespaces from sharing an entry.
     pub(crate) attr_cache:
-        rustc_hash::FxHashMap<String, std::sync::Arc<super::attributes::CollectedAttrs>>,
+        rustc_hash::FxHashMap<u32, std::sync::Arc<super::attributes::CollectedAttrs>>,
     /// Memoized flattened-children resolution keyed by type reference string
     /// (S2). Resolving a `type_ref` to its `FlattenedChildren` otherwise
     /// allocates a two-`String` `NsName` on every element; this caches the
@@ -140,6 +152,7 @@ impl OnePassSchemaValidator {
             identity_scopes: Vec::new(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
+            elements_cache_ns: Default::default(),
             attr_cache: Default::default(),
             type_ref_children: Default::default(),
             inline_cache: Default::default(),

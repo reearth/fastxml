@@ -5,7 +5,7 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::namespace::Namespace;
-use crate::schema::types::{ContentModelType, FlattenedChildren};
+use crate::schema::types::{ContentModelType, FlattenedChildren, NsName};
 
 /// One lexical scope of namespace declarations: `(prefix, uri)` pairs, the
 /// prefix `""` denoting the default namespace.
@@ -51,10 +51,18 @@ pub(crate) struct ElementContext {
     /// `Arc<str>` so per-element assignment is a refcount bump, not a `String`
     /// allocation.
     pub type_ref: Option<Arc<str>>,
-    /// Interned symbol of `type_ref` (streaming validator only). Used as the
-    /// cache key for resolving this element's children when it is a parent,
-    /// so the lookup keys on an integer rather than re-hashing the type name.
+    /// Interned symbol of the element's resolved type identity (streaming
+    /// validator only). Used as the cache key for resolving this element's
+    /// children when it is a parent. It is derived from the resolved
+    /// `(namespace, local)` type identity when available (see
+    /// `type_identity_sym`), so same-local-name types in different namespaces
+    /// key distinctly — the string `type_ref` alone would collide.
     pub type_sym: Option<u32>,
+    /// Compile-time resolved `(namespace, local)` of this element's declared
+    /// type, when known. This is the authoritative type identity (mirrors
+    /// `ElementDef::type_ns`); resolution prefers it over the namespace-blind
+    /// `type_ref` string, which is retained only as a fallback.
+    pub type_ns: Option<NsName>,
     /// Pre-computed flattened children constraints from schema cache.
     /// Using Arc to avoid cloning for every element - this is a reference to
     /// the pre-computed cache in CompiledSchema.
@@ -99,6 +107,7 @@ impl ElementContext {
             schema_validated: false,
             type_ref: None,
             type_sym: None,
+            type_ns: None,
             flattened_children: None,
             sequence_index: 0,
             automaton_state: Default::default(),

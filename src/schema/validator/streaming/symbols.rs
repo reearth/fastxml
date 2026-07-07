@@ -37,6 +37,12 @@ pub(crate) struct SymRecord {
 pub(crate) struct SymbolTable {
     map: FxHashMap<Box<str>, SymbolId>,
     records: Vec<SymRecord>,
+    /// Interned `(namespace-symbol, local-symbol)` pairs. Lets a type's
+    /// resolved `(namespace, local)` identity map to a single dense symbol
+    /// without allocating a combined string per element — the key is two
+    /// integers. Shares the [`SymbolId`] space with `records`, so a pair
+    /// symbol is distinct from every name symbol.
+    pairs: FxHashMap<(u32, u32), SymbolId>,
 }
 
 impl SymbolTable {
@@ -65,6 +71,30 @@ impl SymbolTable {
             has_prefix,
         });
         self.map.insert(Box::from(s), id);
+        id
+    }
+
+    /// Interns the `(namespace-symbol, local-symbol)` pair into a single dense
+    /// symbol, idempotently. Used to give a type its resolved
+    /// `(namespace, local)` identity as one comparable integer key — immune to
+    /// the bare-local-name collisions that plague the raw type-reference
+    /// string (e.g. two `ct-A` types in different namespaces). No allocation:
+    /// the key is an integer pair.
+    pub fn intern_pair(&mut self, ns: SymbolId, local: SymbolId) -> SymbolId {
+        if let Some(&id) = self.pairs.get(&(ns.0, local.0)) {
+            return id;
+        }
+        let id = SymbolId(self.records.len() as u32);
+        // Synthetic record so pair symbols share the id space with names and
+        // stay globally unique. The text mirrors the local part; it is never
+        // read back for a pair symbol (pairs are used only as cache keys).
+        let text = self.records[local.0 as usize].text.clone();
+        self.records.push(SymRecord {
+            text,
+            local,
+            has_prefix: false,
+        });
+        self.pairs.insert((ns.0, local.0), id);
         id
     }
 
