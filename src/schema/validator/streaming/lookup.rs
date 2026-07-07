@@ -12,6 +12,7 @@ use super::OnePassSchemaValidator;
 
 /// Memoized resolution of a child element within a parent's content model
 /// (see [`OnePassSchemaValidator::get_inline_element_info`]).
+#[derive(Default)]
 pub(crate) struct InlineResolved {
     /// The child's declared named type, shared as an `Arc<str>`.
     pub type_ref: Option<Arc<str>>,
@@ -19,6 +20,28 @@ pub(crate) struct InlineResolved {
     pub flattened: Option<Arc<FlattenedChildren>>,
     /// The child's anonymous inline type, if any.
     pub inline_type: Option<TypeDef>,
+    /// Whether a matching local element declaration was found at all (the
+    /// value constraints below are meaningful only when this is true).
+    pub found: bool,
+    /// The local declaration's `default` value constraint, if any.
+    pub default: Option<String>,
+    /// The local declaration's `fixed` value constraint, if any.
+    pub fixed: Option<String>,
+    /// Whether the local declaration is nillable.
+    pub nillable: bool,
+    /// When the content model declares this name at multiple positions with
+    /// *differing* value constraints (e.g. a sequence of two same-name
+    /// elements with distinct `fixed` values), the per-declaration constraints
+    /// in declaration order; the caller picks by the child's occurrence index.
+    pub positional: Option<Arc<Vec<ValueConstraint>>>,
+}
+
+/// The value-constraint facet of one element declaration.
+#[derive(Clone)]
+pub(crate) struct ValueConstraint {
+    pub default: Option<String>,
+    pub fixed: Option<String>,
+    pub nillable: bool,
 }
 
 impl OnePassSchemaValidator {
@@ -287,20 +310,16 @@ impl OnePassSchemaValidator {
         &mut self,
         child_local_sym: u32,
         name: &str,
-    ) -> (
-        Option<Arc<str>>,
-        Option<Arc<FlattenedChildren>>,
-        Option<TypeDef>,
-    ) {
+    ) -> Arc<InlineResolved> {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
-            return (None, None, None);
+            return Arc::new(InlineResolved::default());
         }
 
         let parent_idx = self.state.element_stack.len() - 2;
         let parent_ctx = match self.state.element_stack.get(parent_idx) {
             Some(p) => p,
-            None => return (None, None, None),
+            None => return Arc::new(InlineResolved::default()),
         };
 
         // Use parent's type_ref from ElementContext directly (already resolved during parent's validation)
@@ -312,37 +331,22 @@ impl OnePassSchemaValidator {
         {
             let key = (parent_type_sym, child_local_sym);
             if let Some(cached) = self.inline_cache.get(&key) {
-                return (
-                    cached.type_ref.clone(),
-                    cached.flattened.clone(),
-                    cached.inline_type.clone(),
-                );
+                return Arc::clone(cached);
             }
             let resolved = match self.collect_elements_cached(&type_ref) {
-                Some(elements) => {
-                    let (tr, fl, it) = self.inline_info_from_elements(name, &elements);
-                    InlineResolved {
-                        type_ref: tr,
-                        flattened: fl,
-                        inline_type: it,
-                    }
-                }
-                None => InlineResolved {
-                    type_ref: None,
-                    flattened: None,
-                    inline_type: None,
-                },
+                Some(elements) => self.inline_info_from_elements(name, &elements),
+                None => InlineResolved::default(),
             };
             // Debug-only: the memoized picture must equal a fresh resolution.
             #[cfg(test)]
             {
                 let fresh = match self.collect_elements_cached(&type_ref) {
                     Some(elements) => self.inline_info_from_elements(name, &elements),
-                    None => (None, None, None),
+                    None => InlineResolved::default(),
                 };
                 debug_assert_eq!(
                     resolved.type_ref.as_deref(),
-                    fresh.0.as_deref(),
+                    fresh.type_ref.as_deref(),
                     "memoized inline type_ref for child {name:?} differs from fresh lookup"
                 );
                 debug_assert_eq!(
@@ -350,17 +354,16 @@ impl OnePassSchemaValidator {
                         .flattened
                         .as_deref()
                         .map(|f| f.ordered_elements.clone()),
-                    fresh.1.as_deref().map(|f| f.ordered_elements.clone()),
+                    fresh
+                        .flattened
+                        .as_deref()
+                        .map(|f| f.ordered_elements.clone()),
                     "memoized inline children for child {name:?} differ from fresh lookup"
                 );
             }
             let resolved = Arc::new(resolved);
             self.inline_cache.insert(key, Arc::clone(&resolved));
-            return (
-                resolved.type_ref.clone(),
-                resolved.flattened.clone(),
-                resolved.inline_type.clone(),
-            );
+            return resolved;
         }
         let type_def = {
             // Fallback: try to look up parent element from schema
@@ -391,25 +394,18 @@ impl OnePassSchemaValidator {
         };
 
         let Some(TypeDef::Complex(complex)) = type_def else {
-            return (None, None, None);
+            return Arc::new(InlineResolved::default());
         };
 
         // Collect all elements including inherited ones
         let mut visited = std::collections::HashSet::new();
         let elements = self.collect_elements_with_inheritance(complex, &mut visited);
-        self.inline_info_from_elements(name, &elements)
+        Arc::new(self.inline_info_from_elements(name, &elements))
     }
 
-    /// Finds `name` in an inherited-element list and resolves its type info.
-    fn inline_info_from_elements(
-        &mut self,
-        name: &str,
-        elements: &[ElementDef],
-    ) -> (
-        Option<Arc<str>>,
-        Option<Arc<FlattenedChildren>>,
-        Option<TypeDef>,
-    ) {
+    /// Finds `name` in an inherited-element list and resolves its type info
+    /// together with its value constraints (`default`/`fixed`/`nillable`).
+    fn inline_info_from_elements(&mut self, name: &str, elements: &[ElementDef]) -> InlineResolved {
         // Search from the end to prioritize derived type's elements over base type's
         // This is important when an element is redefined in a derived type with a different type
         // (e.g., brid:boundedBy in AbstractBridgeType shadows gml:boundedBy in AbstractFeatureType)
@@ -436,11 +432,53 @@ impl OnePassSchemaValidator {
                     None
                 };
 
-                return (type_ref, flattened_children, inline_type);
+                // Value constraints are resolved by name, but a content model
+                // may declare the same name at multiple positions with
+                // *differing* value constraints (e.g. a sequence of two
+                // same-name elements with distinct `fixed` values, or a base
+                // `default` shadowed by an extension `fixed`). Then the
+                // constraint is positional: expose every declaration's
+                // constraints in declaration order and let the caller pick by
+                // the child's occurrence index. Type resolution keeps its
+                // derived-first pick.
+                let ambiguous = elements.iter().any(|e| {
+                    e.name == name && (e.default != elem.default || e.fixed != elem.fixed)
+                });
+                let positional = if ambiguous {
+                    Some(Arc::new(
+                        elements
+                            .iter()
+                            .filter(|e| e.name == name)
+                            .map(|e| ValueConstraint {
+                                default: e.default.clone(),
+                                fixed: e.fixed.clone(),
+                                nillable: e.nillable,
+                            })
+                            .collect::<Vec<_>>(),
+                    ))
+                } else {
+                    None
+                };
+                let (default, fixed, nillable) = if ambiguous {
+                    (None, None, false)
+                } else {
+                    (elem.default.clone(), elem.fixed.clone(), elem.nillable)
+                };
+
+                return InlineResolved {
+                    type_ref,
+                    flattened: flattened_children,
+                    inline_type,
+                    found: true,
+                    default,
+                    fixed,
+                    nillable,
+                    positional,
+                };
             }
         }
 
-        (None, None, None)
+        InlineResolved::default()
     }
 
     /// Gets inline type definition for an element (either global or from parent's content model).

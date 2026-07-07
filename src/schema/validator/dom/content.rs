@@ -35,11 +35,20 @@ impl DomSchemaValidator {
     ) {
         let text_content = self.collect_text_content(node);
 
-        // An empty element with a default/fixed value constraint takes the
-        // constraint value — nothing further to check.
-        if text_content.is_empty() && (elem.default.is_some() || elem.fixed.is_some()) {
-            return;
-        }
+        // An empty element takes its value constraint as its schema-normalized
+        // content — `fixed` if present, else `default` — and that value must
+        // itself satisfy the type (so a fixed/default that violates a narrowing
+        // `xsi:type` is rejected). A genuinely empty element (no constraint)
+        // validates as the empty string, which nillable/xsi:nil handling in
+        // `validate_simple_type_facets` lets through.
+        let effective_content: &str = if text_content.is_empty() {
+            elem.fixed
+                .as_deref()
+                .or(elem.default.as_deref())
+                .unwrap_or("")
+        } else {
+            &text_content
+        };
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
@@ -51,8 +60,10 @@ impl DomSchemaValidator {
             elem.inline_type.clone()
         };
 
-        // Fixed value constraint: non-empty content must match.
-        if let Some(ref fixed) = elem.fixed {
+        // Fixed value constraint: non-empty content must match. Empty content
+        // takes the fixed value as its content (validated above), so the match
+        // is only meaningful when the element actually carries content.
+        if let (Some(fixed), false) = (&elem.fixed, text_content.is_empty()) {
             let kind = match &type_def {
                 Some(TypeDef::Simple(simple)) => PrimitiveKind::resolve(&self.schema, simple),
                 _ => None,
@@ -87,7 +98,7 @@ impl DomSchemaValidator {
                 self.validate_simple_type_facets(
                     node,
                     &simple,
-                    &text_content,
+                    effective_content,
                     elem.nillable,
                     ids,
                     errors,
@@ -102,7 +113,7 @@ impl DomSchemaValidator {
                         self.validate_simple_type_facets(
                             node,
                             &simple,
-                            &text_content,
+                            effective_content,
                             elem.nillable,
                             ids,
                             errors,
