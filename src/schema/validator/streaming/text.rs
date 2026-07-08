@@ -249,42 +249,37 @@ impl OnePassSchemaValidator {
         ctx: &ElementContext,
         constraints: &FacetConstraints,
     ) {
-        // Skip everything for an empty element that is nillable or carries a
-        // default/fixed value constraint (the constraint value applies).
-        if ctx.text_content.is_empty()
-            && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some())
-        {
-            return;
-        }
-
-        // Fixed value constraint: non-empty content must match.
-        if let Some(ref fixed) = ctx.fixed_value {
-            let text = ctx.text_content.trim();
-            if text != fixed.trim()
-                && crate::schema::xsd::value_compare::compare_values(
-                    constraints.value_kind,
-                    text,
-                    fixed,
-                ) != Some(std::cmp::Ordering::Equal)
-            {
-                let error = self
-                    .make_error(
-                        ValidationErrorType::InvalidContent,
-                        format!(
-                            "element '{}' must have the fixed value '{}', found '{}'",
-                            ctx.name, fixed, text
-                        ),
-                    )
-                    .with_node_name(ctx.name.as_ref())
-                    .with_level(ErrorLevel::Error);
-                self.add_error(error);
+        // Resolve the text to validate. An empty element takes its value
+        // constraint as its schema-normalized content — `fixed` if present,
+        // else `default` — and that value must itself satisfy the type (so a
+        // `fixed`/`default` that violates a narrowing `xsi:type` is rejected).
+        // A nilled element, or a plain nillable element with no value
+        // constraint, contributes no value and is skipped. The fixed-value
+        // *match* check is hoisted to `validate_fixed_value` at element end so
+        // it also covers untyped (anyType) and mixed content — mirroring DOM.
+        let effective_text: &str = if ctx.text_content.is_empty() {
+            if ctx.nilled {
+                return;
             }
-        }
+            if let Some(fixed) = ctx.fixed_value.as_deref() {
+                fixed
+            } else if let Some(default) = ctx.default_value.as_deref() {
+                default
+            } else if ctx.nillable {
+                return;
+            } else {
+                // Genuinely empty, non-nillable: primitives like xs:integer
+                // must still reject the empty string.
+                ""
+            }
+        } else {
+            &ctx.text_content
+        };
 
         // User-declared facets. Empty content is still checked — a pattern or
         // enumeration facet can legitimately reject the empty string.
         let validator = FacetValidator::new(constraints);
-        if let Err(facet_error) = validator.validate(&ctx.text_content) {
+        if let Err(facet_error) = validator.validate(effective_text) {
             let error = self
                 .make_error(
                     ValidationErrorType::InvalidContent,
@@ -310,7 +305,7 @@ impl OnePassSchemaValidator {
         // Built-in primitive lexical/value-space check (reuse the cached
         // value_kind rather than re-resolving the primitive chain).
         if let Some(kind) = constraints.value_kind
-            && let Err(prim_error) = kind.validate(&ctx.text_content)
+            && let Err(prim_error) = kind.validate(effective_text)
         {
             let error = self
                 .make_error(

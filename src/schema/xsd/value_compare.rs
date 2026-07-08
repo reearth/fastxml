@@ -89,6 +89,61 @@ pub fn compare_values(kind: Option<PrimitiveKind>, a: &str, b: &str) -> Option<O
     }
 }
 
+/// Builds the identity-constraint comparison key for a field value.
+///
+/// The key is the value's canonical form within its primitive type's value
+/// space (so xs:decimal `1`, `1.0` and `01` collapse to one key), tagged with
+/// a discriminant identifying the *primitive* type. The discriminant makes
+/// values of different primitive types compare unequal — xs:float `1` and
+/// xs:decimal `1` are distinct keys — while values sharing a primitive type
+/// (xs:int `1` and xs:integer `1`, both derived from decimal) collapse
+/// together. This matches the value-space equality XSD identity constraints
+/// require: two values are equal only when they belong to the same primitive
+/// type. Types compared purely lexically (string-derived, QName, anyURI,
+/// binary) carry no discriminant, preserving their existing behavior.
+pub(crate) fn identity_key(kind: Option<PrimitiveKind>, v: &str) -> String {
+    match primitive_class_tag(kind) {
+        Some(tag) => {
+            let canon = canonical_value(kind, v);
+            let mut out = String::with_capacity(tag.len() + 1 + canon.len());
+            out.push_str(tag);
+            out.push('\u{1}');
+            out.push_str(&canon);
+            out
+        }
+        None => canonical_value(kind, v),
+    }
+}
+
+/// A stable discriminant for the *primitive* type governing `kind`'s value
+/// space, or `None` for types compared lexically (in which case identity keys
+/// carry no tag). Types sharing a primitive (all the decimal-derived integer
+/// types; both duration subtypes) share a tag so their equal values collapse.
+fn primitive_class_tag(kind: Option<PrimitiveKind>) -> Option<&'static str> {
+    use PrimitiveKind::*;
+    Some(match kind? {
+        Decimal | Integer | Long | Int | Short | Byte | NonNegativeInteger | PositiveInteger
+        | NonPositiveInteger | NegativeInteger | UnsignedLong | UnsignedInt | UnsignedShort
+        | UnsignedByte => "num",
+        Float => "flt",
+        Double => "dbl",
+        Boolean => "bool",
+        Date => "date",
+        DateTime | DateTimeStamp => "dt",
+        Time => "time",
+        GYear => "gy",
+        GYearMonth => "gym",
+        GMonth => "gmo",
+        GMonthDay => "gmd",
+        GDay => "gd",
+        Duration | DayTimeDuration | YearMonthDuration => "dur",
+        // Compared lexically today; a discriminant would only add risk with no
+        // failing test to justify it.
+        HexBinary | Base64Binary | AnyUri | QName | Name | Ncname | Nmtoken | Language | Id
+        | Idref | Entity => return None,
+    })
+}
+
 /// Produces a canonical string for a lexical value in the given value
 /// space, so equal values compare equal as strings (used by identity
 /// constraint tuples). Unknown kinds return the input unchanged.
@@ -600,5 +655,41 @@ mod tests {
             compare_durations("P1Y2M3DT4H5M6S", "P14M3DT4H5M6S"),
             Some(Ordering::Equal)
         );
+    }
+
+    #[test]
+    fn identity_key_distinguishes_primitive_types() {
+        // Cross-primitive-type values are distinct keys even when their
+        // canonical forms coincide (float 1 vs decimal 1, idF013/idF014).
+        assert_ne!(
+            identity_key(Some(PrimitiveKind::Float), "1"),
+            identity_key(Some(PrimitiveKind::Decimal), "1")
+        );
+        assert_ne!(
+            identity_key(Some(PrimitiveKind::Float), "1"),
+            identity_key(Some(PrimitiveKind::UnsignedByte), "1")
+        );
+        // A typed numeric key never collides with an untyped lexical "1"
+        // (idL090: xs:string "1" vs xs:decimal "1").
+        assert_ne!(
+            identity_key(Some(PrimitiveKind::Decimal), "1"),
+            identity_key(None, "1")
+        );
+    }
+
+    #[test]
+    fn identity_key_collapses_within_primitive_class() {
+        // The decimal-derived integer family shares decimal's value space.
+        assert_eq!(
+            identity_key(Some(PrimitiveKind::Int), "01"),
+            identity_key(Some(PrimitiveKind::Integer), "1")
+        );
+        assert_eq!(
+            identity_key(Some(PrimitiveKind::Decimal), "1.0"),
+            identity_key(Some(PrimitiveKind::Decimal), "1")
+        );
+        // Lexically compared kinds are untagged and unchanged.
+        assert_eq!(identity_key(None, " abc "), "abc");
+        assert_eq!(identity_key(Some(PrimitiveKind::Ncname), "abc"), "abc");
     }
 }

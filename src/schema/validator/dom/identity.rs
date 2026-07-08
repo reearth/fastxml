@@ -218,7 +218,7 @@ fn field_value(
                     Some(local) => attr_kinds.get(&(context.id(), local.to_string())).copied(),
                     None => node_kinds.get(&node.id()).copied(),
                 };
-                FieldOutcome::Value(crate::schema::xsd::value_compare::canonical_value(
+                FieldOutcome::Value(crate::schema::xsd::value_compare::identity_key(
                     kind,
                     string_value(node).trim(),
                 ))

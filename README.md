@@ -734,13 +734,13 @@ and re-parsing (see the roadmap).
 | Category | Pass rate | pass | fail | blocked |
 |----------|-----------|------|------|---------|
 | valid schemas accepted      | 100.0% | 11,139 | 0   | 0   |
-| invalid schemas rejected    | 79.6%  | 2,669  | 683 | 0   |
-| valid instances             | 99.4%  | 13,671 | 85  | 307 |
-| invalid instances rejected  | 96.9%  | 10,583 | 336 | 112 |
-| **overall**                 | **97.2%** | **38,062** | **1,104** | **419** |
+| invalid schemas rejected    | 79.7%  | 2,671  | 681 | 0   |
+| valid instances             | 99.4%  | 13,677 | 80  | 306 |
+| invalid instances rejected  | 97.0%  | 10,587 | 332 | 112 |
+| **overall**                 | **97.2%** | **38,074** | **1,093** | **418** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
-(zero false rejections), while 79.6% of invalid schemas are rejected. The
+(zero false rejections), while 79.7% of invalid schemas are rejected. The
 rejection rules cover reference integrity (dangling QName references into
 fully-present namespaces), circular definitions, cos-all-limited,
 identity-constraint XPath grammar, attribute/placement/lexical
@@ -749,7 +749,7 @@ validity, and a particle-restriction (rcase-*) engine — each rule only fires
 when its verdict is certain, so partially-resolved real-world schema sets
 (CityGML/PLATEAU) keep compiling. `blocked` instances are those whose schema
 could not be resolved/compiled, plus one wildcard instance whose validity is
-nondeterministic in fastxml. The streaming engine scores 97.0% overall. XSD
+nondeterministic in fastxml. The streaming engine scores 97.2% overall. XSD
 1.1-only test groups are excluded (XSD 1.0 target); the 28 indeterminate
 schema/instance tests are reported as `unsupported`.
 

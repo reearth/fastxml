@@ -36,10 +36,13 @@ impl OnePassSchemaValidator {
         // Optimization: Try local name lookup first (most common case)
         // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
         let elem_def = self.lookup_element_optimized(&schema, name, prefix, qname, namespace);
-        let elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
+        // Value constraints and nillability come from the governing element
+        // declaration. For a child matched inline in the parent's content
+        // model, the local declaration governs; these are merged in below.
+        let mut elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
         let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
-        let elem_default = elem_def.and_then(|e| e.default.clone());
-        let elem_fixed = elem_def.and_then(|e| e.fixed.clone());
+        let mut elem_default = elem_def.and_then(|e| e.default.clone());
+        let mut elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
         let elem_known = elem_def.is_some();
         let elem_constraints: &[crate::schema::types::CompiledConstraint] =
@@ -104,15 +107,56 @@ impl OnePassSchemaValidator {
             // borrows the locally-cloned schema Arc, so it stays valid across
             // the &mut self inline lookup.
             let child_local_sym = self.current_local_sym();
-            let (inline_type_ref, inline_flattened, inline_anon_type) =
-                self.get_inline_element_info(child_local_sym, name);
+            let info = self.get_inline_element_info(child_local_sym, name);
+
+            // When the child matches a local declaration in the parent's
+            // content model, that declaration's value constraints govern.
+            // Merge monotonically (prefer a present local constraint, else keep
+            // the global one) so a `ref=` to a global element with a fixed
+            // value is not lost.
+            if info.found {
+                if let Some(positional) = info.positional.as_ref() {
+                    // Same name declared at multiple positions with differing
+                    // value constraints: pick by occurrence index. The parent
+                    // counted this child at push time, so occurrence N (1-based)
+                    // maps to declaration N-1, clamped to the last (excess
+                    // occurrences are content-model errors reported elsewhere).
+                    let len = self.state.element_stack.len();
+                    let occurrence = if len >= 2 {
+                        self.state.element_stack[len - 2].get_child_count(name)
+                    } else {
+                        1
+                    };
+                    let idx = (occurrence.max(1) as usize - 1).min(positional.len() - 1);
+                    let vc = &positional[idx];
+                    if vc.default.is_some() {
+                        elem_default = vc.default.clone();
+                    }
+                    if vc.fixed.is_some() {
+                        elem_fixed = vc.fixed.clone();
+                    }
+                    elem_nillable = elem_nillable || vc.nillable;
+                } else {
+                    if info.default.is_some() {
+                        elem_default = info.default.clone();
+                    }
+                    if info.fixed.is_some() {
+                        elem_fixed = info.fixed.clone();
+                    }
+                    elem_nillable = elem_nillable || info.nillable;
+                }
+            }
 
             // Use inline type if available, otherwise fall back to global element
-            let (type_ref, flattened_children, anon_type) = if inline_type_ref.is_some()
-                || inline_flattened.is_some()
-                || inline_anon_type.is_some()
+            let (type_ref, flattened_children, anon_type) = if info.type_ref.is_some()
+                || info.flattened.is_some()
+                || info.inline_type.is_some()
             {
-                (inline_type_ref, inline_flattened, inline_anon_type)
+                (
+                    info.type_ref.clone(),
+                    info.flattened.clone(),
+                    info.inline_type.clone(),
+                )
             } else if let Some(elem) = elem_def {
                 (
                     elem.type_ref.as_deref().map(Arc::from),
@@ -359,7 +403,7 @@ impl OnePassSchemaValidator {
                                 (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
                             if let Some((ai, v)) = value {
-                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
                                 );
@@ -385,7 +429,7 @@ impl OnePassSchemaValidator {
                                 (n.rsplit(':').next().unwrap_or(n) == attr).then_some((ai, v))
                             });
                             if let Some((ai, v)) = value {
-                                let canon = crate::schema::xsd::value_compare::canonical_value(
+                                let canon = crate::schema::xsd::value_compare::identity_key(
                                     attr_kinds[ai],
                                     v,
                                 );
@@ -429,7 +473,7 @@ impl OnePassSchemaValidator {
             None
         };
         let text =
-            crate::schema::xsd::value_compare::canonical_value(text_kind, ctx.text_content.trim());
+            crate::schema::xsd::value_compare::identity_key(text_kind, ctx.text_content.trim());
         let ended_local = ctx
             .name
             .rsplit(':')
@@ -732,6 +776,52 @@ impl OnePassSchemaValidator {
     }
 
     /// Validates an element when it closes.
+    /// Enforces an element's `fixed` value constraint on non-empty content,
+    /// comparing in the value space of the element's simple type (e.g. fixed
+    /// `1.0` matches content `1.00`). Empty content takes the fixed value as
+    /// its effective content and is trivially satisfied. Mirrors the DOM
+    /// engine's fixed-value check and is deliberately type-independent so it
+    /// covers untyped (anyType) and mixed content too.
+    fn validate_fixed_value(&mut self, ctx: &ElementContext) {
+        let Some(fixed) = ctx.fixed_value.clone() else {
+            return;
+        };
+        if ctx.text_content.is_empty() {
+            return;
+        }
+        // Resolve the primitive kind from the element's simple type only
+        // (None for complex or untyped content → lexical comparison), matching
+        // the DOM engine.
+        let kind = if let Some(tr) = ctx.type_ref.as_deref() {
+            match self.schema.get_type(tr) {
+                Some(TypeDef::Simple(s)) => PrimitiveKind::resolve(&self.schema, s),
+                _ => None,
+            }
+        } else if let Some(TypeDef::Simple(s)) = ctx.inline_type.as_ref() {
+            PrimitiveKind::resolve(&self.schema, s)
+        } else {
+            None
+        };
+
+        let text = ctx.text_content.trim();
+        if text != fixed.trim()
+            && crate::schema::xsd::value_compare::compare_values(kind, text, &fixed)
+                != Some(std::cmp::Ordering::Equal)
+        {
+            let error = self
+                .make_error(
+                    ValidationErrorType::InvalidContent,
+                    format!(
+                        "element '{}' must have the fixed value '{}', found '{}'",
+                        ctx.name, fixed, text
+                    ),
+                )
+                .with_node_name(ctx.name.as_ref())
+                .with_level(ErrorLevel::Error);
+            self.add_error(error);
+        }
+    }
+
     pub(crate) fn validate_element_end(&mut self) {
         // Get the element context being closed
         if let Some(ctx) = self.state.pop_element() {
@@ -800,6 +890,11 @@ impl OnePassSchemaValidator {
                     .with_level(ErrorLevel::Error);
                 self.add_error(error);
             }
+
+            // Element fixed-value constraint, checked independently of the
+            // element's type (like the DOM engine) so it also covers untyped
+            // (anyType) and mixed content that the type-driven text path skips.
+            self.validate_fixed_value(&ctx);
 
             // Always run type validation — primitive types (e.g., xs:integer)
             // need to reject empty content, while types whose lexical space

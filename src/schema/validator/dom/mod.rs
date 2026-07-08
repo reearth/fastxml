@@ -520,8 +520,15 @@ impl DomSchemaValidator {
                 }
             }
 
-            // Validate text content
-            self.validate_text_content(node, elem, ids, errors);
+            // Validate text content. Value constraints (`default`/`fixed`)
+            // are positional when the parent's content model declares this
+            // name at multiple positions with differing constraints — pick
+            // the declaration matching this node's occurrence index instead
+            // of the by-name (derived-first) resolution.
+            match self.positional_value_constraint(node, elem, parent_ctx) {
+                Some(vc_elem) => self.validate_text_content(node, &vc_elem, ids, errors),
+                None => self.validate_text_content(node, elem, ids, errors),
+            }
 
             // Validate attributes against the type's attribute declarations
             self.validate_node_attributes(node, elem, ids, errors);
@@ -646,6 +653,52 @@ impl DomSchemaValidator {
                 .with_level(ErrorLevel::Error);
             self.push_error(errors, error);
         }
+    }
+
+    /// When the parent's content model declares `node`'s name at multiple
+    /// positions with *differing* value constraints (e.g. a sequence of two
+    /// same-name elements with distinct `fixed` values, or a base `default`
+    /// shadowed by an extension `fixed`), the by-name pick is wrong for all
+    /// but one occurrence. Returns a copy of `elem` carrying the value
+    /// constraints of the declaration matching this node's occurrence index
+    /// among its same-named siblings (clamped to the last declaration).
+    /// Returns `None` in the common unambiguous case.
+    fn positional_value_constraint(
+        &self,
+        node: &XmlNode,
+        elem: &ElementDef,
+        parent_ctx: Option<&ParentContext>,
+    ) -> Option<ElementDef> {
+        let name = node.get_name();
+        let decls: Vec<&ElementDef> = parent_ctx?
+            .elements
+            .iter()
+            .filter(|e| e.name == *name)
+            .collect();
+        if decls.len() < 2
+            || decls
+                .iter()
+                .all(|e| e.default == elem.default && e.fixed == elem.fixed)
+        {
+            return None;
+        }
+        // Occurrence index of `node` among same-named siblings.
+        let occurrence = node
+            .get_parent()
+            .map(|p| {
+                p.get_child_elements()
+                    .iter()
+                    .take_while(|c| c.id() != node.id())
+                    .filter(|c| c.get_name() == *name)
+                    .count()
+            })
+            .unwrap_or(0);
+        let vc = decls[occurrence.min(decls.len() - 1)];
+        let mut patched = elem.clone();
+        patched.default = vc.default.clone();
+        patched.fixed = vc.fixed.clone();
+        patched.nillable = vc.nillable;
+        Some(patched)
     }
 
     /// Collects the child element declarations of an element's type so
