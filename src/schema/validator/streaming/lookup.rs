@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::schema::types::{
     CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
-    SimpleType, TypeDef,
+    NsName, SimpleType, TypeDef,
 };
 use crate::schema::xsd::facets::FacetConstraints;
 
@@ -16,6 +16,10 @@ use super::OnePassSchemaValidator;
 pub(crate) struct InlineResolved {
     /// The child's declared named type, shared as an `Arc<str>`.
     pub type_ref: Option<Arc<str>>,
+    /// The child's compile-time resolved `(namespace, local)` type identity,
+    /// when the declaration carried one. Preferred over `type_ref` (which is
+    /// namespace-blind) when binding the child's context.
+    pub type_ns: Option<NsName>,
     /// The child's flattened children (for its own content model).
     pub flattened: Option<Arc<FlattenedChildren>>,
     /// The child's anonymous inline type, if any.
@@ -300,6 +304,42 @@ impl OnePassSchemaValidator {
         Some(collected)
     }
 
+    /// Namespace-aware variant of [`collect_elements_cached`]: resolves the
+    /// type through its compile-time `(namespace, local)` identity (collision
+    /// free), memoized in [`elements_cache_ns`]. Falls back to the
+    /// namespace-blind string path when no `type_ns` is available, or when the
+    /// ns-qualified lookup misses (leniency: an unresolvable reference stays
+    /// resolvable through the legacy string map, exactly as before).
+    ///
+    /// [`elements_cache_ns`]: OnePassSchemaValidator::elements_cache_ns
+    pub(crate) fn collect_elements_cached_ns(
+        &mut self,
+        type_ns: Option<&NsName>,
+        type_ref: &str,
+    ) -> Option<Arc<Vec<ElementDef>>> {
+        if let Some(ns) = type_ns {
+            if let Some(cached) = self.elements_cache_ns.get(ns) {
+                return Some(Arc::clone(cached));
+            }
+            // C2/C3: borrow the type via a schema-Arc clone so `complex` is
+            // decoupled from `self` across the &self collect and the &mut self
+            // cache insert below.
+            let schema = Arc::clone(&self.schema);
+            if let Some(TypeDef::Complex(complex)) =
+                schema.type_ns(&ns.namespace_uri, &ns.local_name)
+            {
+                let mut visited = std::collections::HashSet::new();
+                let collected =
+                    Arc::new(self.collect_elements_with_inheritance(complex, &mut visited));
+                self.elements_cache_ns
+                    .insert(ns.clone(), Arc::clone(&collected));
+                return Some(collected);
+            }
+        }
+        // Fallback: namespace-blind string resolution.
+        self.collect_elements_cached(type_ref)
+    }
+
     /// Gets type information for an inline element from the parent's content model.
     ///
     /// This searches through inherited elements as well when the parent type uses ComplexExtension.
@@ -322,28 +362,38 @@ impl OnePassSchemaValidator {
             None => return Arc::new(InlineResolved::default()),
         };
 
-        // Use parent's type_ref from ElementContext directly (already resolved during parent's validation)
-        // This avoids issues with prefixed element names (e.g., brid:BridgePart vs BridgePart)
-        // Fast path: the resolution depends only on the parent type and the
-        // child's (local) name, so memoize it by (parent type sym, child sym).
+        // Use the parent's resolved type identity from its ElementContext
+        // directly (settled during the parent's validation). This avoids
+        // issues with prefixed element names (e.g. brid:BridgePart vs
+        // BridgePart). Fast path: the resolution depends only on the parent
+        // type and the child's (local) name, so memoize it by (parent type
+        // sym, child sym). `parent_type_sym` is derived from the parent's
+        // *namespace-resolved* type identity, so same-local-name parent types
+        // in different namespaces key distinctly.
         if let (Some(parent_type_sym), Some(type_ref)) =
             (parent_ctx.type_sym, parent_ctx.type_ref.clone())
         {
+            let parent_type_ns = parent_ctx.type_ns.clone();
             let key = (parent_type_sym, child_local_sym);
             if let Some(cached) = self.inline_cache.get(&key) {
                 return Arc::clone(cached);
             }
-            let resolved = match self.collect_elements_cached(&type_ref) {
+            // Prefer the namespace-resolved parent type; the bare `type_ref`
+            // string is a namespace-blind fallback (used only when the parent
+            // carried no resolved `type_ns`).
+            let resolved = match self.collect_elements_cached_ns(parent_type_ns.as_ref(), &type_ref)
+            {
                 Some(elements) => self.inline_info_from_elements(name, &elements),
                 None => InlineResolved::default(),
             };
             // Debug-only: the memoized picture must equal a fresh resolution.
             #[cfg(test)]
             {
-                let fresh = match self.collect_elements_cached(&type_ref) {
-                    Some(elements) => self.inline_info_from_elements(name, &elements),
-                    None => InlineResolved::default(),
-                };
+                let fresh =
+                    match self.collect_elements_cached_ns(parent_type_ns.as_ref(), &type_ref) {
+                        Some(elements) => self.inline_info_from_elements(name, &elements),
+                        None => InlineResolved::default(),
+                    };
                 debug_assert_eq!(
                     resolved.type_ref.as_deref(),
                     fresh.type_ref.as_deref(),
@@ -413,6 +463,7 @@ impl OnePassSchemaValidator {
             if elem.name == name {
                 // Found the inline element - get its type info
                 let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
+                let type_ns = elem.type_ns.clone();
                 let inline_type = elem.inline_type.clone();
 
                 // Get flattened children for this inline element: the
@@ -467,6 +518,7 @@ impl OnePassSchemaValidator {
 
                 return InlineResolved {
                     type_ref,
+                    type_ns,
                     flattened: flattened_children,
                     inline_type,
                     found: true,

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ComplexType, TypeDef};
+use crate::schema::types::{ComplexType, NsName, TypeDef};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
 use super::super::ValidationMode;
@@ -148,23 +148,25 @@ impl OnePassSchemaValidator {
             }
 
             // Use inline type if available, otherwise fall back to global element
-            let (type_ref, flattened_children, anon_type) = if info.type_ref.is_some()
+            let (type_ref, type_ns, flattened_children, anon_type) = if info.type_ref.is_some()
                 || info.flattened.is_some()
                 || info.inline_type.is_some()
             {
                 (
                     info.type_ref.clone(),
+                    info.type_ns.clone(),
                     info.flattened.clone(),
                     info.inline_type.clone(),
                 )
             } else if let Some(elem) = elem_def {
                 (
                     elem.type_ref.as_deref().map(Arc::from),
+                    elem.type_ns.clone(),
                     self.get_flattened_children_for_element(elem),
                     elem.inline_type.clone(),
                 )
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
             // Content-model automaton replaces the count-based occurrence
@@ -177,12 +179,15 @@ impl OnePassSchemaValidator {
                 self.validate_sequence_order(name);
             }
 
-            // Update current element context with type info
-            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
+            // Update current element context with type info. The type symbol
+            // encodes the resolved (namespace, local) identity so child
+            // resolution keyed on it is collision-free across namespaces.
+            let type_sym = self.type_identity_sym(type_ns.as_ref(), type_ref.as_deref());
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.type_sym = type_sym;
+                ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
@@ -190,6 +195,7 @@ impl OnePassSchemaValidator {
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
             let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
+            let type_ns = elem.type_ns.clone();
             let flattened_children = self.get_flattened_children_for_element(elem);
             let anon_type = elem.inline_type.clone();
 
@@ -201,12 +207,15 @@ impl OnePassSchemaValidator {
                 self.validate_sequence_order(name);
             }
 
-            // Update current element context with type info
-            let type_sym = type_ref.as_deref().map(|t| self.symbols.intern(t).0);
+            // Update current element context with type info. The type symbol
+            // encodes the resolved (namespace, local) identity so child
+            // resolution keyed on it is collision-free across namespaces.
+            let type_sym = self.type_identity_sym(type_ns.as_ref(), type_ref.as_deref());
             if let Some(ctx) = self.state.current_element_mut() {
                 ctx.schema_validated = true;
                 ctx.type_ref = type_ref;
                 ctx.type_sym = type_sym;
+                ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
                 ctx.nillable = elem_nillable;
@@ -264,6 +273,12 @@ impl OnePassSchemaValidator {
                     if let Some(ctx) = self.state.current_element_mut() {
                         ctx.type_ref = Some(substituted);
                         ctx.type_sym = Some(substituted_sym);
+                        // The substituted type is resolved through the string
+                        // key (`resolve_xsi_type` returns a bare/qualified key),
+                        // so clear any resolved `type_ns` from the declared type
+                        // — leaving it set would misdirect the ns-first
+                        // resolution to the declared (pre-substitution) type.
+                        ctx.type_ns = None;
                         if flattened.is_some() {
                             ctx.flattened_children = flattened;
                         }
@@ -325,6 +340,29 @@ impl OnePassSchemaValidator {
         self.validate_attributes(name, attributes);
     }
 
+    /// The namespace-safe cache-key symbol for an element's resolved type.
+    /// When the compile-time `(namespace, local)` identity is known it is
+    /// interned as an integer pair — so same-local-name types in different
+    /// namespaces (e.g. two `ct-A` types) get distinct symbols — otherwise the
+    /// bare `type_ref` string is interned as a namespace-blind fallback. No
+    /// per-element allocation: interning is idempotent and pair keys are
+    /// integers.
+    fn type_identity_sym(
+        &mut self,
+        type_ns: Option<&NsName>,
+        type_ref: Option<&str>,
+    ) -> Option<u32> {
+        match (type_ns, type_ref) {
+            (Some(ns), _) => {
+                let ns_sym = self.symbols.intern(&ns.namespace_uri);
+                let local_sym = self.symbols.intern(&ns.local_name);
+                Some(self.symbols.intern_pair(ns_sym, local_sym).0)
+            }
+            (None, Some(tr)) => Some(self.symbols.intern(tr).0),
+            (None, None) => None,
+        }
+    }
+
     /// The local-name symbol of the current (most recently started) element,
     /// used to key per-parent-type child resolution memoization.
     fn current_local_sym(&self) -> u32 {
@@ -341,7 +379,8 @@ impl OnePassSchemaValidator {
     fn current_element_complex_type(&self) -> Option<&ComplexType> {
         let ctx = self.state.current_element()?;
         let type_def = match ctx.type_ref.as_deref() {
-            Some(tr) => self.schema.get_type(tr),
+            // C4: ns-first (compile-time resolved), string fallback.
+            Some(tr) => self.schema.type_by_ref(ctx.type_ns.as_ref(), tr),
             None => ctx.inline_type.as_ref(),
         };
         match type_def {
@@ -484,9 +523,12 @@ impl OnePassSchemaValidator {
         // or descendant-text field key compares correctly (e.g. xs:integer
         // "01" and "1" denote the same key).
         let text_kind: Option<PrimitiveKind> = if let Some(tr) = ctx.type_ref.as_deref() {
-            self.schema.get_type(tr).and_then(|td| {
-                super::super::attributes::element_text_primitive_kind(&self.schema, td)
-            })
+            // C4: ns-first (compile-time resolved), string fallback.
+            self.schema
+                .type_by_ref(ctx.type_ns.as_ref(), tr)
+                .and_then(|td| {
+                    super::super::attributes::element_text_primitive_kind(&self.schema, td)
+                })
         } else if let Some(ref it) = ctx.inline_type {
             super::super::attributes::element_text_primitive_kind(&self.schema, it)
         } else {
@@ -649,22 +691,28 @@ impl OnePassSchemaValidator {
     ) -> Option<Arc<super::super::attributes::CollectedAttrs>> {
         use super::super::attributes::CollectedAttrs;
 
-        // Named type via the context's resolved type_ref.
-        if let Some(type_ref) = self
-            .state
-            .current_element()
-            .and_then(|ctx| ctx.type_ref.clone())
-        {
-            if let Some(cached) = self.attr_cache.get(type_ref.as_ref()) {
+        // Named type via the context's resolved type identity. The cache keys
+        // on the ns-safe type symbol so same-local-name types in different
+        // namespaces do not share collected-attribute sets; resolution prefers
+        // the resolved `type_ns` over the namespace-blind `type_ref` string.
+        if let Some((type_ref, type_ns, type_sym)) = self.state.current_element().and_then(|ctx| {
+            ctx.type_ref
+                .clone()
+                .map(|tr| (tr, ctx.type_ns.clone(), ctx.type_sym))
+        }) {
+            if let Some(sym) = type_sym
+                && let Some(cached) = self.attr_cache.get(&sym)
+            {
                 return Some(Arc::clone(cached));
             }
             let schema = Arc::clone(&self.schema);
-            let TypeDef::Complex(complex) = schema.get_type(&type_ref)? else {
+            let TypeDef::Complex(complex) = schema.type_by_ref(type_ns.as_ref(), &type_ref)? else {
                 return None;
             };
             let built = Arc::new(CollectedAttrs::collect(&schema, complex));
-            self.attr_cache
-                .insert(type_ref.to_string(), Arc::clone(&built));
+            if let Some(sym) = type_sym {
+                self.attr_cache.insert(sym, Arc::clone(&built));
+            }
             return Some(built);
         }
 
@@ -813,7 +861,8 @@ impl OnePassSchemaValidator {
         // (None for complex or untyped content → lexical comparison), matching
         // the DOM engine.
         let kind = if let Some(tr) = ctx.type_ref.as_deref() {
-            match self.schema.get_type(tr) {
+            // C4: ns-first (compile-time resolved), string fallback.
+            match self.schema.type_by_ref(ctx.type_ns.as_ref(), tr) {
                 Some(TypeDef::Simple(s)) => PrimitiveKind::resolve(&self.schema, s),
                 _ => None,
             }

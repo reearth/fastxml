@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ContentModel, TypeDef};
+use crate::schema::types::{ContentModel, NsName, TypeDef};
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
 use super::super::state::ElementContext;
@@ -64,7 +64,7 @@ impl OnePassSchemaValidator {
         // Fast path: a declared named type resolves through the memoized plan,
         // avoiding a get_type + facet-cache probe per element.
         if let (Some(type_sym), Some(type_ref)) = (ctx.type_sym, ctx.type_ref.clone()) {
-            let op = self.resolve_text_op(type_sym, &type_ref);
+            let op = self.resolve_text_op(type_sym, ctx.type_ns.as_ref(), &type_ref);
             if !matches!(op, TextOp::NotFound) {
                 self.apply_text_op(ctx, &op);
                 return;
@@ -90,23 +90,31 @@ impl OnePassSchemaValidator {
         }
     }
 
-    /// Returns the (memoized) [`TextOp`] for a declared named type.
-    fn resolve_text_op(&mut self, type_sym: u32, type_ref: &str) -> TextOp {
+    /// Returns the (memoized) [`TextOp`] for a declared named type. `type_sym`
+    /// encodes the resolved `(namespace, local)` identity, so the cache does
+    /// not conflate same-local-name types across namespaces.
+    fn resolve_text_op(
+        &mut self,
+        type_sym: u32,
+        type_ns: Option<&NsName>,
+        type_ref: &str,
+    ) -> TextOp {
         if let Some(op) = self.text_op_cache.get(&type_sym) {
             return op.clone();
         }
-        let op = self.compute_text_op(type_ref);
+        let op = self.compute_text_op(type_ns, type_ref);
         self.text_op_cache.insert(type_sym, op.clone());
         op
     }
 
-    /// Resolves the text-validation plan for `type_ref` from the schema. This
-    /// replays the previous per-element `get_type`-based dispatch verbatim.
-    fn compute_text_op(&mut self, type_ref: &str) -> TextOp {
+    /// Resolves the text-validation plan for a declared type from the schema,
+    /// preferring the compile-time resolved `(namespace, local)` identity over
+    /// the namespace-blind `type_ref` string (which stays a fallback).
+    fn compute_text_op(&mut self, type_ns: Option<&NsName>, type_ref: &str) -> TextOp {
         // C2: borrow the type via a cheap schema-Arc clone, so the borrow
         // lives independently of `self` across the &mut self facet lookup.
         let schema = Arc::clone(&self.schema);
-        match schema.get_type(type_ref) {
+        match schema.type_by_ref(type_ns, type_ref) {
             Some(TypeDef::Simple(simple)) => {
                 Self::classify_simple(self.create_facet_constraints(simple))
             }
