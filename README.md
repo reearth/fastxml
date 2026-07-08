@@ -109,7 +109,7 @@ memory-bounded.
 
 ```toml
 [dependencies]
-fastxml = "0.10"
+fastxml = "0.11"
 ```
 
 ### Cargo Features
