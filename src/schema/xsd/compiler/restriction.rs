@@ -32,16 +32,17 @@ use Verdict::{Ok as VOk, Unknown, Violation};
 /// content model. Runs after type compilation (particle trees and the
 /// substitution caches are available on `schema`).
 pub(crate) fn check_particle_restrictions(schema: &CompiledSchema) -> Result<()> {
-    for (name, type_def) in &schema.types {
-        // Prefixed keys only: every type is also stored under a prefixed
-        // alias when a namespace prefix exists, and checking the same type
-        // twice is wasted work. Types without any colon are no-namespace.
+    for (ns_name, type_def) in &schema.types_ns {
         if let TypeDef::Complex(ct) = type_def
             && ct.derivation == Some(DerivationMethod::Restriction)
             && let Violation(reason) = check_restriction(ct, schema)
         {
             return Err(SchemaError::InvalidSchema {
-                message: format!("type '{}' is not a valid restriction: {}", name, reason),
+                message: format!(
+                    "type '{}' is not a valid restriction: {}",
+                    schema.display_name(ns_name),
+                    reason
+                ),
             }
             .into());
         }

@@ -5,6 +5,14 @@ use crate::schema::types::{CompiledSchema, ComplexType, DerivationMethod, TypeDe
 /// Resolves an `xsi:type` attribute value against the schema and checks the
 /// substitution is allowed for the declared type.
 ///
+/// `resolve_prefix` maps the QName's prefix (`""` for none) to the namespace
+/// URI in scope at the carrying element — the instance document's own
+/// declarations, which are the authoritative interpretation of the QName
+/// (C4). When the prefix resolves and the ns-qualified type exists, that
+/// definition anchors the derivation-chain walk; the legacy string heuristic
+/// (qualified key, then bare local) remains the fallback for instances whose
+/// prefixes cannot be resolved.
+///
 /// Returns the schema key of the substituted type on success, or an error
 /// message when the type is unknown, not derived from the declared type, or
 /// the derivation is blocked.
@@ -12,14 +20,37 @@ pub(crate) fn resolve_xsi_type(
     schema: &CompiledSchema,
     declared: Option<&str>,
     xsi_type: &str,
+    resolve_prefix: impl Fn(&str) -> Option<String>,
 ) -> Result<String, String> {
     let xsi_type = xsi_type.trim();
-    let local = xsi_type.rsplit(':').next().unwrap_or(xsi_type);
+    let (prefix, local) = match xsi_type.split_once(':') {
+        Some((p, l)) => (p, l),
+        None => ("", xsi_type),
+    };
 
-    // Find the type under either its qualified or local name.
+    // C4: instance-namespace-qualified resolution first.
+    let ns_def: Option<&TypeDef> = resolve_prefix(prefix)
+        .and_then(|uri| schema.type_ns(&uri, local))
+        .or_else(|| {
+            // No in-scope binding: an unprefixed xsi:type may still target a
+            // no-namespace type.
+            if prefix.is_empty() {
+                schema.type_ns("", local)
+            } else {
+                None
+            }
+        });
+
+    // Find the string key under either its qualified or local name (this is
+    // what downstream lookups consume; the value stays as written for
+    // message stability).
     let key = if schema.get_type(xsi_type).is_some() {
         xsi_type.to_string()
     } else if schema.get_type(local).is_some() {
+        local.to_string()
+    } else if ns_def.is_some() {
+        // Resolvable only through the ns map; use the local name as the
+        // downstream key (bare local keys are registered for every type).
         local.to_string()
     } else {
         return Err(format!("xsi:type '{}' is not defined in schema", xsi_type));
@@ -41,17 +72,28 @@ pub(crate) fn resolve_xsi_type(
     }
 
     // Walk the substituted type's derivation chain up to the declared type,
-    // collecting the derivation methods used along the way.
+    // collecting the derivation methods used along the way. The walk hops
+    // definitions ns-first (compile-time resolved base_ns, string fallback),
+    // anchored at the instance-namespace-resolved definition when available.
     let mut methods: Vec<DerivationMethod> = Vec::new();
-    let mut current = key.clone();
+    let mut current: Option<&TypeDef> = ns_def.or_else(|| schema.get_type(&key));
     for _ in 0..32 {
-        let (base, method) = match schema.get_type(&current) {
+        let (base, base_def, method) = match current {
             Some(TypeDef::Complex(c)) => (
-                c.base_type.clone(),
+                c.base_type.as_deref(),
+                c.base_type
+                    .as_deref()
+                    .and_then(|b| schema.type_by_ref(c.base_ns.as_ref(), b)),
                 c.derivation.unwrap_or(DerivationMethod::Restriction),
             ),
-            Some(TypeDef::Simple(s)) => (s.base_type.clone(), DerivationMethod::Restriction),
-            None => (None, DerivationMethod::Restriction),
+            Some(TypeDef::Simple(s)) => (
+                s.base_type.as_deref(),
+                s.base_type
+                    .as_deref()
+                    .and_then(|b| schema.type_by_ref(s.base_ns.as_ref(), b)),
+                DerivationMethod::Restriction,
+            ),
+            None => (None, None, DerivationMethod::Restriction),
         };
         let Some(base) = base else {
             return Err(format!(
@@ -61,7 +103,7 @@ pub(crate) fn resolve_xsi_type(
         };
         methods.push(method);
 
-        if local_name(&base) == declared_local {
+        if local_name(base) == declared_local {
             // Reached the declared type: check its block constraints.
             if let Some(TypeDef::Complex(declared_type)) = schema
                 .get_type(declared)
@@ -81,7 +123,7 @@ pub(crate) fn resolve_xsi_type(
             }
             return Ok(key);
         }
-        current = base;
+        current = base_def;
     }
 
     Err(format!(
@@ -135,26 +177,29 @@ mod tests {
     #[test]
     fn extension_blocked_by_declared_type() {
         let s = schema();
-        let result = resolve_xsi_type(&s, Some("B"), "De");
+        let result = resolve_xsi_type(&s, Some("B"), "De", |_| None);
         assert!(result.is_err(), "extension is blocked, got {:?}", result);
     }
 
     #[test]
     fn restriction_allowed() {
         let s = schema();
-        let result = resolve_xsi_type(&s, Some("B"), "Dr");
+        let result = resolve_xsi_type(&s, Some("B"), "Dr", |_| None);
         assert_eq!(result.as_deref(), Ok("Dr"));
     }
 
     #[test]
     fn unknown_type_rejected() {
         let s = schema();
-        assert!(resolve_xsi_type(&s, Some("B"), "NoSuchType").is_err());
+        assert!(resolve_xsi_type(&s, Some("B"), "NoSuchType", |_| None).is_err());
     }
 
     #[test]
     fn same_type_allowed() {
         let s = schema();
-        assert_eq!(resolve_xsi_type(&s, Some("B"), "B").as_deref(), Ok("B"));
+        assert_eq!(
+            resolve_xsi_type(&s, Some("B"), "B", |_| None).as_deref(),
+            Ok("B")
+        );
     }
 }

@@ -11,7 +11,7 @@ impl XsdCompiler {
     /// Builds the substitution group index.
     pub(crate) fn build_substitution_groups(&mut self, schema: &mut CompiledSchema) {
         // Collect substitution group relationships
-        for elem in schema.elements.values() {
+        for elem in schema.elements_ns.values() {
             if let Some(sg_head) = &elem.substitution_group {
                 self.substitution_groups
                     .entry(sg_head.clone())

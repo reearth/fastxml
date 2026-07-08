@@ -339,6 +339,6 @@ mod tests {
 </xs:schema>"#;
 
         let schema = crate::schema::xsd::parse_xsd(xsd).unwrap();
-        assert!(!schema.elements.is_empty() || !schema.types.is_empty());
+        assert!(!schema.elements_ns.is_empty() || !schema.types_ns.is_empty());
     }
 }

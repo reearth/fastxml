@@ -37,6 +37,28 @@ impl OnePassSchemaValidator {
         // &mut self calls — letting the caller pass element constraints as a
         // slice instead of cloning them per element.
         //
+        // C4: collision-free namespace-qualified lookup FIRST. The instance
+        // element's namespace was resolved from its in-scope declarations
+        // (state.resolve_element_namespace), so `(namespace, local)` is the
+        // authoritative identity — prefix spelling differences and bare-key
+        // collisions between same-local-name globals in different namespaces
+        // (wildG031 class) cannot mislead it. `None` means the element is in
+        // no namespace, so probe the "" key. The legacy string paths below
+        // remain as fallback for schemas whose components were registered
+        // under shapes the ns map does not cover.
+        match namespace_uri {
+            Some(ns) => {
+                if let Some(elem) = schema.element_ns(ns, name.as_ref()) {
+                    return Some(elem);
+                }
+            }
+            None => {
+                if let Some(elem) = schema.element_ns("", name.as_ref()) {
+                    return Some(elem);
+                }
+            }
+        }
+
         // If prefix exists, try qname FIRST to ensure correct namespace resolution.
         // This is critical when multiple namespaces define elements with the same local name
         // (e.g., bldg:WallSurface vs tun:WallSurface vs brid:WallSurface).
@@ -76,6 +98,14 @@ impl OnePassSchemaValidator {
         &mut self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
+        // C4: the compile-time resolved (namespace, local) of the type
+        // reference probes the owning-namespace-keyed cache directly — one
+        // hash lookup, no allocation, immune to prefix-table poisoning.
+        if let Some(ref type_ns) = elem.type_ns
+            && let Some(cached) = self.schema.ns_type_children_cache.get(type_ns)
+        {
+            return Some(Arc::clone(cached));
+        }
         // Try to get from type reference first (memoized: resolving the
         // type_ref otherwise allocates a two-String NsName per element).
         if let Some(ref type_ref) = elem.type_ref {
@@ -389,9 +419,16 @@ impl OnePassSchemaValidator {
                 let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
                 let inline_type = elem.inline_type.clone();
 
-                // Get flattened children for this inline element (memoized by
-                // type_ref, so no per-element NsName allocation).
-                let flattened_children = if let Some(ref tr) = type_ref {
+                // Get flattened children for this inline element: the
+                // compile-time resolved type_ns probes the owning-namespace
+                // cache first (C4), then the legacy memoized string path.
+                let flattened_children = if let Some(cached) = elem
+                    .type_ns
+                    .as_ref()
+                    .and_then(|tn| self.schema.ns_type_children_cache.get(tn))
+                {
+                    Some(Arc::clone(cached))
+                } else if let Some(ref tr) = type_ref {
                     self.resolve_children_for_type_ref(tr)
                 } else if let Some(TypeDef::Complex(child_complex)) = elem.inline_type.as_ref() {
                     Some(Arc::new(self.compute_flattened_children(child_complex)))

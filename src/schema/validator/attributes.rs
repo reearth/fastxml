@@ -47,12 +47,9 @@ pub(crate) fn collect_attributes<'a>(
                 out.push(attr);
             }
         }
-        let base = match &current.content {
-            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
-            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
-            _ => current.base_type.as_deref(),
-        };
-        match base.and_then(|b| schema.get_type(b)) {
+        // C4: ns-first base hop (compile-time resolved base_ns), string
+        // fallback inside complex_base_def.
+        match schema.complex_base_def(current) {
             Some(TypeDef::Complex(c)) => current = c,
             _ => break,
         }
@@ -71,12 +68,7 @@ fn collect_attr_wildcard<'a>(
         if let Some(ref w) = current.attr_wildcard {
             return Some(w);
         }
-        let base = match &current.content {
-            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
-            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
-            _ => current.base_type.as_deref(),
-        };
-        match base.and_then(|b| schema.get_type(b)) {
+        match schema.complex_base_def(current) {
             Some(TypeDef::Complex(c)) => current = c,
             _ => break,
         }
@@ -90,14 +82,17 @@ fn resolve_ref<'a>(schema: &'a CompiledSchema, attr: &'a AttributeDef) -> &'a At
     if !attr.is_ref {
         return attr;
     }
-    if let Some(global) = schema.attributes.get(&attr.name) {
+    // C4: the resolved reference namespace probes the collision-free map
+    // first; an any-namespace local-name scan remains as fallback.
+    if let Some(rn) = &attr.ref_ns
+        && let Some(global) = schema.attribute_ns(&rn.namespace_uri, &rn.local_name)
+    {
         return global;
     }
-    // The ref may have been stored with a prefix in the global table.
     if let Some((_, found)) = schema
-        .attributes
+        .attributes_ns
         .iter()
-        .find(|(k, _)| k.rsplit(':').next() == Some(attr.name.as_str()))
+        .find(|(k, _)| *k.local_name == *attr.name)
     {
         return found;
     }
@@ -112,7 +107,8 @@ fn attribute_simple_type<'a>(
     if let Some(ref inline) = attr.inline_type {
         return Some(inline);
     }
-    match attr.type_ref.as_deref().and_then(|t| schema.get_type(t)) {
+    let type_ref = attr.type_ref.as_deref()?;
+    match schema.type_by_ref(attr.type_ns.as_ref(), type_ref) {
         Some(TypeDef::Simple(s)) => Some(s),
         _ => None,
     }
@@ -146,8 +142,8 @@ pub(crate) fn element_text_primitive_kind(
     match type_def {
         TypeDef::Simple(simple) => PrimitiveKind::resolve(schema, simple),
         TypeDef::Complex(complex) => {
-            if let ContentModel::SimpleContent { base_type } = &complex.content
-                && let Some(TypeDef::Simple(simple)) = schema.get_type(base_type)
+            if matches!(&complex.content, ContentModel::SimpleContent { .. })
+                && let Some(TypeDef::Simple(simple)) = schema.complex_base_def(complex)
             {
                 return PrimitiveKind::resolve(schema, simple);
             }
@@ -257,10 +253,16 @@ pub(crate) fn validate_element_attributes<'a>(
                 crate::schema::types::ProcessContents::Skip => {}
                 crate::schema::types::ProcessContents::Lax
                 | crate::schema::types::ProcessContents::Strict => {
-                    let global = schema
-                        .attributes
-                        .get(name)
-                        .or_else(|| schema.attributes.get(local));
+                    // C5: the wildcard-matched attribute's own namespace is
+                    // in scope here — resolve against it first, then fall
+                    // back to an any-namespace local scan (legacy leniency).
+                    let global = schema.attribute_ns(ns.unwrap_or(""), local).or_else(|| {
+                        schema
+                            .attributes_ns
+                            .iter()
+                            .find(|(k, _)| *k.local_name == *local)
+                            .map(|(_, a)| a)
+                    });
                     match global {
                         Some(def) => {
                             if let Some(msg) = validate_attribute_value(schema, def, value, cache) {

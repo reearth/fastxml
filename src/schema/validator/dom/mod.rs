@@ -64,6 +64,24 @@ fn propagated_wildcard(mode: ProcessContents) -> WildcardConstraint {
 /// XML Schema Instance namespace.
 const XSI_NS: &str = "http://www.w3.org/2001/XMLSchema-instance";
 
+/// Resolves a namespace prefix (`""` for the default namespace) against the
+/// declarations in scope at `node`, walking ancestors innermost-first.
+/// Returns `None` when unbound; an empty-URI binding un-declares the default
+/// namespace and also yields `None`.
+fn resolve_node_prefix(node: &XmlNode, prefix: &str) -> Option<String> {
+    let mut current = Some(node.clone());
+    while let Some(n) = current {
+        for ns in n.get_namespace_declarations() {
+            if ns.prefix() == prefix {
+                let uri = ns.uri();
+                return (!uri.is_empty()).then(|| uri.to_string());
+            }
+        }
+        current = n.get_parent();
+    }
+    None
+}
+
 /// Looks up an `xsi:*` attribute on a node. The DOM stores attributes under
 /// their local names, so the namespace is verified via the node's attribute
 /// namespace info.
@@ -316,7 +334,7 @@ impl DomSchemaValidator {
                 .lookup_element(&name, prefix.as_deref(), node_ns.as_deref())
                 .or(inline_def),
         };
-        let schema_has_elements = !self.schema.elements.is_empty();
+        let schema_has_elements = !self.schema.elements_ns.is_empty();
 
         // Check if element is allowed by parent's type definition
         let is_allowed_by_parent = parent_ctx
@@ -346,9 +364,23 @@ impl DomSchemaValidator {
             let mut elem = elem;
             if let Some(xsi_type) = get_xsi_attribute(node, "type") {
                 let declared = elem.type_ref.as_deref();
-                match super::xsi_type::resolve_xsi_type(&self.schema, declared, &xsi_type) {
+                // C4: the xsi:type QName is interpreted against the
+                // namespace declarations in scope at this node.
+                let resolve_prefix = |p: &str| resolve_node_prefix(node, p);
+                match super::xsi_type::resolve_xsi_type(
+                    &self.schema,
+                    declared,
+                    &xsi_type,
+                    resolve_prefix,
+                ) {
                     Ok(substituted) => {
                         elem_substituted = elem.clone();
+                        // The resolved xsi:type replaces the declared type;
+                        // the compile-time type_ns still points at the
+                        // DECLARED type and must not survive the swap, or the
+                        // ns-first children lookup would keep validating
+                        // against the declared type's content model.
+                        elem_substituted.type_ns = self.schema.resolve_type_ref_to_ns(&substituted);
                         elem_substituted.type_ref = Some(substituted);
                         elem_substituted.inline_type = None;
                         elem = &elem_substituted;
@@ -550,7 +582,8 @@ impl DomSchemaValidator {
         errors: &mut Vec<StructuredError>,
     ) {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            self.schema.get_type(type_ref)
+            // C4: ns-first (compile-time resolved), string fallback.
+            self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
         } else {
             elem.inline_type.as_ref()
         };
@@ -619,7 +652,8 @@ impl DomSchemaValidator {
     /// locally declared children can be resolved during recursion.
     fn element_child_declarations(&self, elem: &ElementDef) -> Vec<ElementDef> {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            self.schema.get_type(type_ref)
+            // C4: ns-first (compile-time resolved), string fallback.
+            self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
         } else {
             elem.inline_type.as_ref()
         };

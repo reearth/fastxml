@@ -48,6 +48,11 @@ pub struct XsdCompiler {
     pub(crate) current_target_ns: Option<String>,
     /// Current target namespace prefix (from the schema being processed)
     pub(crate) current_target_prefix: Option<String>,
+    /// Namespace bindings of the document currently being compiled (prefix ->
+    /// URI). Unlike `namespace_bindings`, this is NOT accumulated across
+    /// documents, so QName references can be resolved against the owning
+    /// document exactly as the reference checker does.
+    pub(crate) current_doc_bindings: HashMap<String, String>,
 }
 
 impl XsdCompiler {
@@ -63,6 +68,7 @@ impl XsdCompiler {
             group_expansion: HashSet::new(),
             current_target_ns: None,
             current_target_prefix: None,
+            current_doc_bindings: HashMap::new(),
         }
     }
 
@@ -132,13 +138,15 @@ impl XsdCompiler {
         self.build_type_children_cache(&mut result);
 
         // Unique Particle Attribution: ambiguity discovered while building
-        // the content-model automata makes the schema invalid.
-        for (type_name, fc) in &result.type_children_cache {
+        // the content-model automata makes the schema invalid. (C5: iterate
+        // the ns-keyed cache; the diagnostic renders prefix:local via the
+        // schema's namespace-to-prefix table.)
+        for (ns_name, fc) in &result.ns_type_children_cache {
             if let Some(automaton) = &fc.automaton
                 && let Some(violation) = &automaton.upa_violation
             {
                 return Err(crate::schema::error::SchemaError::InvalidSchema {
-                    message: format!("type '{}': {}", type_name, violation),
+                    message: format!("type '{}': {}", result.display_name(ns_name), violation),
                 }
                 .into());
             }
@@ -240,6 +248,10 @@ impl XsdCompiler {
     fn compile_schema(&mut self, schema: XsdSchema, result: &mut CompiledSchema) -> Result<()> {
         self.current_target_ns = schema.target_namespace.clone();
         self.current_block_default = schema.block_default.clone();
+        // Snapshot the owning document's own bindings (not accumulated) so
+        // QName references can be resolved per-document (mirrors the reference
+        // checker), independent of the last-wins accumulated prefix table.
+        self.current_doc_bindings = schema.namespace_bindings.clone();
 
         // Find the prefix for THIS schema's target namespace.
         // First try the schema's OWN bindings (deterministic for each schema),
@@ -279,56 +291,53 @@ impl XsdCompiler {
             }
         }
 
-        // Compile types
+        // Compile types. Components are registered under the OWNING
+        // document's target namespace (unambiguous here) — the C5 cutover
+        // removed the legacy prefix/bare-local string keys entirely.
         for type_def in schema.types {
             let compiled = self.compile_type(&type_def)?;
             if let Some(name) = type_def.name() {
-                // Store with namespace-qualified name to avoid collisions
-                // between types with same local name in different namespaces
-                // (e.g., gml:TrackType vs tran:TrackType)
-                let qname = self.make_qname(name);
-                result.types.insert(qname.clone(), compiled.clone());
+                let ns_name = NsName::new(
+                    self.current_target_ns.clone().unwrap_or_default(),
+                    name.to_string(),
+                );
+                result.types_ns.insert(ns_name, compiled.clone());
 
-                // Also store with just the local name for same-namespace lookups
-                // (e.g., when RoadType extends TransportationComplexType without prefix)
-                result
-                    .types
-                    .entry(name.to_string())
-                    .or_insert(compiled.clone());
-
-                // Also update cache with full definition
-                self.type_cache.insert(qname, compiled);
+                // The compiler-internal type cache keeps prefix-qualified
+                // string keys: resolve_qname's requalification probes it
+                // with "prefix:local" while compiling references.
+                self.type_cache.insert(self.make_qname(name), compiled);
             }
         }
 
-        // Compile elements
+        // Compile elements: global top-level elements are always qualified
+        // in the target namespace regardless of elementFormDefault.
         for element in schema.elements {
             let compiled = self.compile_element(&element)?;
-            // Store with namespace-qualified name to avoid collisions
-            let qname = self.make_qname(&element.name);
-            result.elements.insert(qname, compiled.clone());
-
-            // Also store with just the local name for same-namespace lookups
-            result
-                .elements
-                .entry(element.name.clone())
-                .or_insert(compiled);
+            let ns_name = NsName::new(
+                self.current_target_ns.clone().unwrap_or_default(),
+                element.name.clone(),
+            );
+            result.elements_ns.insert(ns_name, compiled);
         }
 
         // Compile top-level attributes
         for attr in schema.attributes {
             if let Some(name) = &attr.name {
                 let compiled = self.compile_attribute(&attr)?;
-                // Store with namespace-qualified name to avoid collisions
-                let qname = self.make_qname(name);
-                result.attributes.insert(qname, compiled);
+                let ns_name = NsName::new(
+                    self.current_target_ns.clone().unwrap_or_default(),
+                    name.to_string(),
+                );
+                result.attributes_ns.insert(ns_name, compiled);
             }
         }
 
         Ok(())
     }
 
-    /// Makes a qualified name using current namespace prefix.
+    /// Makes a qualified name using current namespace prefix (used for the
+    /// compiler-internal `type_cache` keys consumed by `resolve_qname`).
     pub(crate) fn make_qname(&self, local: &str) -> String {
         // Use the schema's own prefix for its target namespace (set in compile_schema)
         // This ensures deterministic prefix selection
@@ -360,6 +369,43 @@ impl XsdCompiler {
     /// Resolves a type reference to its definition.
     pub fn resolve_type(&self, type_ref: &str) -> Option<&crate::schema::types::TypeDef> {
         self.type_cache.get(type_ref)
+    }
+
+    /// Resolves a [`QName`] (as written in the owning schema document) to a
+    /// namespace-qualified [`NsName`], mirroring the reference checker's rules
+    /// (`references.rs::resolve_ns`):
+    ///
+    /// - the `xml` prefix maps to the XML namespace;
+    /// - a declared prefix resolves against the owning document's bindings
+    ///   (returns `None` for an undeclared prefix);
+    /// - an unprefixed name takes the document's default namespace when one is
+    ///   bound, otherwise the owning document's target namespace (the same
+    ///   leniency [`resolve_qname`](Self::resolve_qname) applies when it
+    ///   requalifies an unprefixed reference), falling back to the
+    ///   no-namespace `""`.
+    ///
+    /// This is the per-document counterpart of [`resolve_qname`], which keys
+    /// off the accumulated, last-wins prefix table and therefore mis-resolves
+    /// when documents bind the same prefix to different URIs. The string form
+    /// of every reference is still kept verbatim for message stability.
+    pub(crate) fn resolve_qname_ns(&self, qname: &QName) -> Option<NsName> {
+        let local = qname.local.trim();
+        let ns: std::sync::Arc<str> = match qname.prefix.as_deref().map(str::trim) {
+            Some("xml") => crate::namespace::common::XML_NS.into(),
+            Some(p) => self.current_doc_bindings.get(p)?.as_str().into(),
+            None => {
+                let default_ns = self
+                    .current_doc_bindings
+                    .get("")
+                    .map(String::as_str)
+                    .filter(|d| !d.is_empty());
+                match default_ns {
+                    Some(d) => d.into(),
+                    None => self.current_target_ns.as_deref().unwrap_or("").into(),
+                }
+            }
+        };
+        Some(NsName::new(ns, local))
     }
 }
 

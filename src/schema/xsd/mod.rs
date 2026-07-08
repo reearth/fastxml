@@ -94,7 +94,7 @@ pub use types::*;
 ///     </xs:schema>
 /// "#;
 /// let schema = parse_xsd(xsd.as_bytes())?;
-/// assert!(schema.elements.contains_key("root"));
+/// assert!(schema.get_element("root").is_some());
 /// ```
 #[doc(hidden)]
 pub fn parse_xsd(content: &[u8]) -> Result<CompiledSchema> {
@@ -335,7 +335,7 @@ mod tests {
         </xs:schema>"#;
 
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
-        assert!(schema.elements.contains_key("root"));
+        assert!(schema.get_element("root").is_some());
         assert_eq!(
             schema.target_namespace,
             Some("http://example.com/test".to_string())
@@ -356,8 +356,8 @@ mod tests {
         </xs:schema>"#;
 
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
-        assert!(schema.elements.contains_key("person"));
-        assert!(schema.types.contains_key("PersonType"));
+        assert!(schema.get_element("person").is_some());
+        assert!(schema.get_type("PersonType").is_some());
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
         </xs:schema>"#;
 
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
-        assert!(schema.types.contains_key("StatusType"));
+        assert!(schema.get_type("StatusType").is_some());
     }
 
     #[test]
@@ -386,14 +386,14 @@ mod tests {
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
 
         // XSD built-in types should be registered
-        assert!(schema.types.contains_key("xs:string"));
-        assert!(schema.types.contains_key("xs:integer"));
-        assert!(schema.types.contains_key("string"));
-        assert!(schema.types.contains_key("integer"));
+        assert!(schema.get_type("xs:string").is_some());
+        assert!(schema.get_type("xs:integer").is_some());
+        assert!(schema.get_type("string").is_some());
+        assert!(schema.get_type("integer").is_some());
 
         // GML types should be registered
-        assert!(schema.types.contains_key("gml:CodeType"));
-        assert!(schema.types.contains_key("gml:MeasureType"));
+        assert!(schema.get_type("gml:CodeType").is_some());
+        assert!(schema.get_type("gml:MeasureType").is_some());
     }
 
     #[test]
@@ -401,15 +401,15 @@ mod tests {
         let schema = create_builtin_schema();
 
         // Should have XSD types
-        assert!(schema.types.contains_key("xs:string"));
-        assert!(schema.types.contains_key("xs:integer"));
-        assert!(schema.types.contains_key("xs:double"));
-        assert!(schema.types.contains_key("xs:dateTime"));
+        assert!(schema.get_type("xs:string").is_some());
+        assert!(schema.get_type("xs:integer").is_some());
+        assert!(schema.get_type("xs:double").is_some());
+        assert!(schema.get_type("xs:dateTime").is_some());
 
         // Should have GML types
-        assert!(schema.types.contains_key("gml:CodeType"));
-        assert!(schema.types.contains_key("gml:MeasureType"));
-        assert!(schema.types.contains_key("gml:PointType"));
+        assert!(schema.get_type("gml:CodeType").is_some());
+        assert!(schema.get_type("gml:MeasureType").is_some());
+        assert!(schema.get_type("gml:PointType").is_some());
     }
 
     #[test]
@@ -436,8 +436,8 @@ mod tests {
         ])
         .unwrap();
 
-        assert!(schema.types.contains_key("NameType"));
-        assert!(schema.elements.contains_key("root"));
+        assert!(schema.get_type("NameType").is_some());
+        assert!(schema.get_element("root").is_some());
     }
 
     #[test]
@@ -467,13 +467,13 @@ mod tests {
 
         let schema = parse_xsd(xsd.as_bytes()).unwrap();
 
-        assert!(schema.elements.contains_key("Building"));
-        assert!(schema.types.contains_key("BuildingType"));
+        assert!(schema.get_element("Building").is_some());
+        assert!(schema.get_type("BuildingType").is_some());
 
         // Built-in GML types should be available
-        assert!(schema.types.contains_key("gml:CodeType"));
-        assert!(schema.types.contains_key("gml:LengthType"));
-        assert!(schema.types.contains_key("gml:AbstractFeatureType"));
+        assert!(schema.get_type("gml:CodeType").is_some());
+        assert!(schema.get_type("gml:LengthType").is_some());
+        assert!(schema.get_type("gml:AbstractFeatureType").is_some());
     }
 
     #[test]
@@ -507,8 +507,7 @@ mod tests {
 
         // MeasureType should be SimpleContent
         let measure_type = schema
-            .types
-            .get("MeasureType")
+            .get_type("MeasureType")
             .expect("MeasureType not found");
         if let crate::schema::types::TypeDef::Complex(ct) = measure_type {
             assert!(
@@ -524,10 +523,7 @@ mod tests {
         }
 
         // LengthType should also be SimpleContent (not ComplexExtension!)
-        let length_type = schema
-            .types
-            .get("LengthType")
-            .expect("LengthType not found");
+        let length_type = schema.get_type("LengthType").expect("LengthType not found");
         if let crate::schema::types::TypeDef::Complex(ct) = length_type {
             assert!(
                 matches!(
@@ -606,15 +602,15 @@ mod async_tests {
                 .await
                 .unwrap();
 
-        assert!(schema.elements.contains_key("root"));
+        assert!(schema.get_element("root").is_some());
         assert_eq!(
             schema.target_namespace,
             Some("http://example.com/test".to_string())
         );
 
         // Built-in types should be registered
-        assert!(schema.types.contains_key("xs:string"));
-        assert!(schema.types.contains_key("gml:CodeType"));
+        assert!(schema.get_type("xs:string").is_some());
+        assert!(schema.get_type("gml:CodeType").is_some());
     }
 
     #[tokio::test]
@@ -655,10 +651,10 @@ mod async_tests {
         .unwrap();
 
         // Main schema elements
-        assert!(schema.elements.contains_key("user"));
+        assert!(schema.get_element("user").is_some());
 
         // Imported type should be available (stored with namespace prefix)
-        assert!(schema.types.contains_key("t:EmailType"));
+        assert!(schema.get_type("t:EmailType").is_some());
     }
 
     #[tokio::test]
@@ -706,8 +702,8 @@ mod async_tests {
         .unwrap();
 
         // All types should be available (stored with namespace prefixes)
-        assert!(schema.elements.contains_key("entity"));
-        assert!(schema.types.contains_key("t:EntityType"));
-        assert!(schema.types.contains_key("b:IDType"));
+        assert!(schema.get_element("entity").is_some());
+        assert!(schema.get_type("t:EntityType").is_some());
+        assert!(schema.get_type("b:IDType").is_some());
     }
 }

@@ -19,8 +19,8 @@ fn test_compile_simple_schema() {
         compiled.target_namespace,
         Some("http://example.com/test".to_string())
     );
-    assert_eq!(compiled.elements.len(), 1);
-    assert!(compiled.elements.contains_key("root"));
+    assert_eq!(compiled.elements_ns.len(), 1);
+    assert!(compiled.get_element("root").is_some());
 }
 
 #[test]
@@ -38,8 +38,8 @@ fn test_compile_complex_type() {
     let ast = parse_xsd_ast(xsd.as_bytes()).unwrap();
     let compiled = compile_schemas(vec![ast]).unwrap();
 
-    assert!(compiled.types.contains_key("PersonType"));
-    if let Some(TypeDef::Complex(ct)) = compiled.types.get("PersonType") {
+    assert!(compiled.get_type("PersonType").is_some());
+    if let Some(TypeDef::Complex(ct)) = compiled.get_type("PersonType") {
         if let ContentModel::Sequence(elems) = &ct.content {
             assert_eq!(elems.len(), 2);
             assert_eq!(elems[0].name, "name");
@@ -68,7 +68,7 @@ fn test_compile_simple_type_enumeration() {
     let ast = parse_xsd_ast(xsd.as_bytes()).unwrap();
     let compiled = compile_schemas(vec![ast]).unwrap();
 
-    if let Some(TypeDef::Simple(st)) = compiled.types.get("StatusType") {
+    if let Some(TypeDef::Simple(st)) = compiled.get_type("StatusType") {
         assert_eq!(st.enumeration.len(), 2);
         assert!(st.enumeration.contains(&"active".to_string()));
         assert!(st.enumeration.contains(&"inactive".to_string()));
@@ -100,7 +100,7 @@ fn test_compile_extension() {
     let ast = parse_xsd_ast(xsd.as_bytes()).unwrap();
     let compiled = compile_schemas(vec![ast]).unwrap();
 
-    if let Some(TypeDef::Complex(ct)) = compiled.types.get("ExtendedType") {
+    if let Some(TypeDef::Complex(ct)) = compiled.get_type("ExtendedType") {
         if let ContentModel::ComplexExtension {
             base_type,
             elements,

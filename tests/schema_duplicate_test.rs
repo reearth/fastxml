@@ -119,15 +119,21 @@ fn test_duplicate_schemas_in_compile_schemas() {
     // Debug: Check what's in the type_children_cache
     eprintln!(
         "Types in schema: {:?}",
-        compiled.types.keys().collect::<Vec<_>>()
+        compiled.types_ns.keys().collect::<Vec<_>>()
     );
-    if let Some(flattened) = compiled.type_children_cache.get("RoadType") {
+    if let Some(flattened) = compiled
+        .resolve_type_ref_to_ns("tran:RoadType")
+        .and_then(|n| compiled.ns_type_children_cache.get(&n))
+    {
         eprintln!(
             "RoadType children: {:?}",
             flattened.constraints.keys().collect::<Vec<_>>()
         );
     }
-    if let Some(flattened) = compiled.type_children_cache.get("tran:RoadType") {
+    if let Some(flattened) = compiled
+        .resolve_type_ref_to_ns("tran:RoadType")
+        .and_then(|n| compiled.ns_type_children_cache.get(&n))
+    {
         eprintln!(
             "tran:RoadType children: {:?}",
             flattened.constraints.keys().collect::<Vec<_>>()
@@ -279,21 +285,21 @@ fn test_schema_with_default_namespace() {
 
     // Debug: Check type storage
     eprintln!("Types in schema:");
-    for type_name in compiled.types.keys() {
-        if type_name.contains("Road")
-            || type_name.contains("Transportation")
-            || type_name.contains("CityObject")
+    for type_name in compiled.types_ns.keys() {
+        if type_name.local_name.contains("Road")
+            || type_name.local_name.contains("Transportation")
+            || type_name.local_name.contains("CityObject")
         {
-            eprintln!("  {}", type_name);
+            eprintln!("  {:?}", type_name);
         }
     }
 
-    // Debug: Check type_children_cache
+    // Debug: Check the ns-keyed type children cache
     eprintln!("Type children cache:");
-    for (type_name, flattened) in &compiled.type_children_cache {
-        if type_name.contains("Road") {
+    for (type_name, flattened) in &compiled.ns_type_children_cache {
+        if type_name.local_name.contains("Road") {
             eprintln!(
-                "  {}: {:?}",
+                "  {:?}: {:?}",
                 type_name,
                 flattened.constraints.keys().collect::<Vec<_>>()
             );
@@ -302,9 +308,9 @@ fn test_schema_with_default_namespace() {
 
     // Debug: Check elements
     eprintln!("Elements:");
-    for (elem_name, elem_def) in &compiled.elements {
-        if elem_name.contains("Road") {
-            eprintln!("  {} -> type_ref: {:?}", elem_name, elem_def.type_ref);
+    for (elem_name, elem_def) in &compiled.elements_ns {
+        if elem_name.local_name.contains("Road") {
+            eprintln!("  {:?} -> type_ref: {:?}", elem_name, elem_def.type_ref);
         }
     }
 
@@ -432,7 +438,10 @@ fn test_duplicate_schemas_deduplication() {
     register_builtin_types(&mut compiled);
 
     // Check that RoadType has inherited elements from the full chain
-    let road_type_cache = compiled.type_children_cache.get("RoadType");
+    let road_type_cache = compiled.get_ns_type_children(
+        "http://www.opengis.net/citygml/transportation/2.0",
+        "RoadType",
+    );
     eprintln!(
         "RoadType cache: {:?}",
         road_type_cache.map(|f| f.constraints.keys().collect::<Vec<_>>())
@@ -465,37 +474,43 @@ fn test_duplicate_schemas_deduplication() {
         "RoadType should have boundedBy (inherited from AbstractFeatureType)"
     );
 
-    // Verify no double-prefix keys like "gml:tran:RoadType" or "core:tran:RoadType"
-    // This was a bug where prefixes were incorrectly concatenated
-    let double_prefix_keys: Vec<_> = compiled
-        .type_children_cache
+    // Local names must be clean identifiers: keys carry the namespace in
+    // the NsName, so no prefix can ever leak into the local part (the old
+    // double-prefix "gml:tran:RoadType" bug class).
+    let bad_local_keys: Vec<_> = compiled
+        .ns_type_children_cache
         .keys()
-        .filter(|k| k.matches(':').count() >= 2)
+        .filter(|k| k.local_name.contains(':'))
         .collect();
     assert!(
-        double_prefix_keys.is_empty(),
-        "Should not have double-prefix keys in type_children_cache, found: {:?}",
-        double_prefix_keys
+        bad_local_keys.is_empty(),
+        "No local name in ns_type_children_cache may contain ':', found: {:?}",
+        bad_local_keys
     );
 
-    // Also verify that types are correctly registered with proper prefixes
-    // The tran namespace types should be accessible
+    // Also verify that types are correctly registered under their namespaces
     assert!(
         compiled
-            .type_children_cache
-            .contains_key("TransportationComplexType"),
+            .get_ns_type_children(
+                "http://www.opengis.net/citygml/transportation/2.0",
+                "TransportationComplexType"
+            )
+            .is_some(),
         "Should have TransportationComplexType in cache"
     );
     assert!(
         compiled
-            .type_children_cache
-            .contains_key("AbstractCityObjectType"),
+            .get_ns_type_children(
+                "http://www.opengis.net/citygml/2.0",
+                "AbstractCityObjectType"
+            )
+            .is_some(),
         "Should have AbstractCityObjectType in cache"
     );
     assert!(
         compiled
-            .type_children_cache
-            .contains_key("AbstractFeatureType"),
+            .get_ns_type_children("http://www.opengis.net/gml", "AbstractFeatureType")
+            .is_some(),
         "Should have AbstractFeatureType in cache"
     );
 }

@@ -10,7 +10,9 @@ fn test_compiled_schema() {
     let elem = ElementDef::new("Building")
         .with_type("BuildingType")
         .optional();
-    schema.elements.insert("Building".to_string(), elem);
+    schema
+        .elements_ns
+        .insert(fastxml::schema::types::NsName::new("", "Building"), elem);
 
     // Verify lookup
     let found = schema.get_element("Building");

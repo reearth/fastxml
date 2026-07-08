@@ -22,19 +22,52 @@ type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 /// define types/elements with the same local name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NsName {
-    /// Namespace URI (empty string for no-namespace)
-    pub namespace_uri: String,
-    /// Local name
-    pub local_name: String,
+    /// Namespace URI (empty string for no-namespace).
+    ///
+    /// Stored as `Arc<str>` so cloning a key (which happens per cache
+    /// insertion and, once the readers are flipped, per element lookup) is a
+    /// pointer bump rather than a heap copy.
+    pub namespace_uri: Arc<str>,
+    /// Local name.
+    pub local_name: Arc<str>,
 }
 
 impl NsName {
     /// Creates a new NsName.
-    pub fn new(namespace_uri: impl Into<String>, local_name: impl Into<String>) -> Self {
+    pub fn new(namespace_uri: impl Into<Arc<str>>, local_name: impl Into<Arc<str>>) -> Self {
         Self {
             namespace_uri: namespace_uri.into(),
             local_name: local_name.into(),
         }
+    }
+}
+
+/// Borrowed key for probing [`NsName`]-keyed [`IndexMap`]s without allocating.
+///
+/// The instance side of validation holds `(&str, &str)`; building an owned
+/// `NsName` per element lookup would put two `Arc<str>` allocations on the
+/// hot path. This mirror type hashes exactly like `NsName` (both hash the
+/// `str` contents field-by-field in the same order) and implements
+/// [`indexmap::Equivalent`], so `IndexMap::get` accepts it directly.
+#[derive(Debug, Clone, Copy)]
+pub struct NsNameRef<'a> {
+    /// Namespace URI (empty string for no-namespace).
+    pub namespace_uri: &'a str,
+    /// Local name.
+    pub local_name: &'a str,
+}
+
+impl std::hash::Hash for NsNameRef<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Must match NsName's derived Hash: Arc<str> delegates to str.
+        self.namespace_uri.hash(state);
+        self.local_name.hash(state);
+    }
+}
+
+impl indexmap::Equivalent<NsName> for NsNameRef<'_> {
+    fn equivalent(&self, key: &NsName) -> bool {
+        *key.namespace_uri == *self.namespace_uri && *key.local_name == *self.local_name
     }
 }
 
@@ -104,18 +137,24 @@ impl Default for FlattenedChildren {
 }
 
 /// A compiled XSD schema.
+///
+/// Components are keyed by namespace-qualified [`NsName`] — the owning
+/// schema document's target namespace plus the local name — so same-local
+/// globals in different namespaces never collide and schema-document prefix
+/// conventions do not leak into the compiled artifact (C5 cutover).
 #[derive(Debug, Clone)]
 pub struct CompiledSchema {
     /// Target namespace
     pub target_namespace: Option<String>,
-    /// Element definitions
-    pub elements: IndexMap<String, ElementDef>,
-    /// Type definitions
-    pub types: IndexMap<String, TypeDef>,
-    /// Attribute definitions
-    pub attributes: IndexMap<String, AttributeDef>,
-    /// Imported schemas (namespace -> schema)
-    pub imports: HashMap<String, CompiledSchema>,
+
+    // === Namespace-qualified component maps (collision-free) ===
+    /// Global element definitions keyed by `(target namespace, local name)`.
+    pub elements_ns: IndexMap<NsName, ElementDef>,
+    /// Type definitions keyed by `(target namespace, local name)`.
+    pub types_ns: IndexMap<NsName, TypeDef>,
+    /// Top-level attribute definitions keyed by `(target namespace, local name)`.
+    pub attributes_ns: IndexMap<NsName, AttributeDef>,
+
     /// Substitution groups (head element name -> list of substitute element names)
     pub substitution_groups: HashMap<String, Vec<String>>,
 
@@ -133,13 +172,6 @@ pub struct CompiledSchema {
     /// This is the primary cache for type children lookups. It uses namespace URIs
     /// instead of prefixes to avoid cross-namespace collisions.
     pub ns_type_children_cache: HashMap<NsName, Arc<FlattenedChildren>>,
-
-    // === Performance optimization caches (legacy, prefix-based) ===
-    /// Pre-computed flattened child elements per type (type_name -> `Arc<FlattenedChildren>`).
-    ///
-    /// This cache stores the inheritance-flattened child element constraints for each type,
-    /// eliminating the need to traverse the type hierarchy at validation time.
-    pub type_children_cache: HashMap<String, Arc<FlattenedChildren>>,
 
     /// Pre-computed transitive substitution groups (head -> all members).
     ///
@@ -159,18 +191,15 @@ impl CompiledSchema {
     pub fn new() -> Self {
         Self {
             target_namespace: None,
-            elements: IndexMap::default(),
-            types: IndexMap::default(),
-            attributes: IndexMap::default(),
-            imports: HashMap::default(),
+            elements_ns: IndexMap::default(),
+            types_ns: IndexMap::default(),
+            attributes_ns: IndexMap::default(),
             substitution_groups: HashMap::default(),
             // Namespace resolution
             namespace_prefixes: HashMap::default(),
             prefix_namespaces: HashMap::default(),
             // Namespace-aware caches
             ns_type_children_cache: HashMap::default(),
-            // Legacy prefix-based caches
-            type_children_cache: HashMap::default(),
             transitive_substitution_groups: HashMap::default(),
             substitution_group_heads: HashMap::default(),
         }
@@ -184,104 +213,203 @@ impl CompiledSchema {
         }
     }
 
-    /// Looks up an element definition by qualified name.
+    /// Compatibility shim: looks up an element definition by a prefixed or
+    /// bare qualified-name string.
     ///
-    /// This method tries multiple strategies:
-    /// 1. Direct lookup with the full qname (e.g., "dem:ReliefFeature")
-    /// 2. If qname has a prefix, extract local name and try:
-    ///    a. The local name in imported schemas
-    ///    b. The local name in the main elements map (for merged schemas)
+    /// Deprecated in favor of [`element_ns`](Self::element_ns) /
+    /// [`element_ns_any`](Self::element_ns_any) with a resolved namespace
+    /// URI. Resolution: a prefixed name resolves its prefix through the
+    /// schema's accumulated prefix table; an unprefixed name tries the
+    /// target namespace, then no-namespace; both fall back to an any-
+    /// namespace local-name scan (the compiled reference strings this shim
+    /// serves are not always prefix-qualified — see `resolve_qname`'s
+    /// type-cache gating).
+    #[doc(hidden)]
     pub fn get_element(&self, qname: &str) -> Option<&ElementDef> {
-        // Try with full qname first
-        if let Some(elem) = self.elements.get(qname) {
-            return Some(elem);
-        }
-
-        // If qname has a prefix, try the local name
-        if let Some((_prefix, local)) = qname.split_once(':') {
-            // Try imported schemas first
-            for schema in self.imports.values() {
-                if let Some(elem) = schema.elements.get(local) {
-                    return Some(elem);
-                }
-            }
-            // Also try local name in main map (for merged schemas)
-            if let Some(elem) = self.elements.get(local) {
+        if let Some((prefix, local)) = qname.split_once(':') {
+            if let Some(uri) = self.prefix_namespaces.get(prefix)
+                && let Some(elem) = self.element_ns(uri, local)
+            {
                 return Some(elem);
             }
+            return self.element_ns_any(local);
         }
-
-        None
+        if let Some(tns) = self.target_namespace.as_deref()
+            && let Some(elem) = self.element_ns(tns, qname)
+        {
+            return Some(elem);
+        }
+        if let Some(elem) = self.element_ns("", qname) {
+            return Some(elem);
+        }
+        self.element_ns_any(qname)
     }
 
-    /// Looks up an element definition by namespace URI and local name.
+    /// Compatibility shim: looks up an element definition by namespace URI
+    /// and local name, with an any-namespace local-name scan as last resort.
     ///
-    /// This method resolves the namespace URI to the prefix used in the schema,
-    /// then constructs the qualified name and looks it up. This allows finding
-    /// elements even when the XML uses a different prefix than the schema.
-    ///
-    /// Example: If schema uses `tran:Road` but XML uses `tr:Road` (same namespace),
-    /// calling `get_element_by_ns("http://...transportation...", "Road")` will
-    /// correctly find the element.
+    /// Prefer [`element_ns`](Self::element_ns) (strict) — the trailing scan
+    /// here is leniency retained for legacy fallback paths.
+    #[doc(hidden)]
     pub fn get_element_by_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&ElementDef> {
-        // First, try to find the schema's prefix for this namespace URI
-        if let Some(prefix) = self.namespace_prefixes.get(namespace_uri) {
-            // Construct the qname using the schema's prefix
-            let qname = if prefix.is_empty() {
-                local_name.to_string()
-            } else {
-                format!("{}:{}", prefix, local_name)
-            };
-            if let Some(elem) = self.elements.get(&qname) {
-                return Some(elem);
-            }
-        }
-
-        // Try local name directly (for schemas without prefix)
-        if let Some(elem) = self.elements.get(local_name) {
+        if let Some(elem) = self.element_ns(namespace_uri, local_name) {
             return Some(elem);
         }
-
-        // Try all elements with matching local name (brute force fallback)
-        for (key, elem) in &self.elements {
-            if let Some((_prefix, local)) = key.split_once(':') {
-                if local == local_name {
-                    return Some(elem);
-                }
-            }
-        }
-
-        None
+        self.element_ns_any(local_name)
     }
 
-    /// Looks up a type definition by qualified name.
-    ///
-    /// This method tries multiple strategies:
-    /// 1. Direct lookup with the full qname (e.g., "core:AbstractCityObjectType")
-    /// 2. If qname has a prefix, extract local name and try:
-    ///    a. The local name in imported schemas
-    ///    b. The local name in the main types map (for merged schemas)
+    /// Compatibility shim: looks up a type definition by a prefixed or bare
+    /// qualified-name string. See [`get_element`](Self::get_element) for the
+    /// resolution rules.
+    #[doc(hidden)]
     pub fn get_type(&self, qname: &str) -> Option<&TypeDef> {
-        // Try with full qname first
-        if let Some(typ) = self.types.get(qname) {
-            return Some(typ);
-        }
-
-        // If qname has a prefix, try the local name
-        if let Some((_prefix, local)) = qname.split_once(':') {
-            // Try imported schemas first
-            for schema in self.imports.values() {
-                if let Some(typ) = schema.types.get(local) {
-                    return Some(typ);
-                }
-            }
-            // Also try local name in main map (for merged schemas)
-            if let Some(typ) = self.types.get(local) {
+        if let Some((prefix, local)) = qname.split_once(':') {
+            if let Some(uri) = self.prefix_namespaces.get(prefix)
+                && let Some(typ) = self.type_ns(uri, local)
+            {
                 return Some(typ);
             }
+            return self.type_ns_any(local);
         }
+        if let Some(tns) = self.target_namespace.as_deref()
+            && let Some(typ) = self.type_ns(tns, qname)
+        {
+            return Some(typ);
+        }
+        if let Some(typ) = self.type_ns("", qname) {
+            return Some(typ);
+        }
+        self.type_ns_any(qname)
+    }
 
+    /// Looks up a global element by namespace URI and local name in the
+    /// collision-free [`elements_ns`](Self::elements_ns) map.
+    ///
+    /// Strict resolution: tries the exact `(namespace, local)` key, then a
+    /// chameleon fallback under the no-namespace `""` (an included chameleon
+    /// schema's components adopt the includer's target namespace, but may also
+    /// have been registered under `""`). It deliberately does NOT scan across
+    /// other namespaces — that leniency lives in
+    /// [`element_ns_any`](Self::element_ns_any) and is only appropriate when
+    /// the instance namespace could not be resolved at all.
+    pub fn element_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&ElementDef> {
+        // Borrowed-key probes: no per-lookup allocation on the hot path.
+        if let Some(e) = self.elements_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
+            return Some(e);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(e) = self.elements_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
+        {
+            return Some(e);
+        }
         None
+    }
+
+    /// Leniency fallback: the first global element whose local name matches,
+    /// regardless of namespace. Only appropriate when the instance element's
+    /// namespace could not be resolved (no in-scope binding); a cleanly
+    /// resolved namespace that misses [`element_ns`](Self::element_ns) must
+    /// stay a miss, or invalid instances would be silently accepted.
+    pub fn element_ns_any(&self, local_name: &str) -> Option<&ElementDef> {
+        self.elements_ns
+            .iter()
+            .find(|(k, _)| &*k.local_name == local_name)
+            .map(|(_, e)| e)
+    }
+
+    /// Looks up a type by namespace URI and local name in the collision-free
+    /// [`types_ns`](Self::types_ns) map (exact key, then chameleon `""`).
+    pub fn type_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&TypeDef> {
+        if let Some(t) = self.types_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
+            return Some(t);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(t) = self.types_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
+        {
+            return Some(t);
+        }
+        None
+    }
+
+    /// Leniency fallback for types: first type with a matching local name in
+    /// any namespace. See [`element_ns_any`](Self::element_ns_any).
+    pub fn type_ns_any(&self, local_name: &str) -> Option<&TypeDef> {
+        self.types_ns
+            .iter()
+            .find(|(k, _)| &*k.local_name == local_name)
+            .map(|(_, t)| t)
+    }
+
+    /// Looks up a top-level attribute by namespace URI and local name in the
+    /// collision-free [`attributes_ns`](Self::attributes_ns) map.
+    pub fn attribute_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&AttributeDef> {
+        if let Some(a) = self.attributes_ns.get(&NsNameRef {
+            namespace_uri,
+            local_name,
+        }) {
+            return Some(a);
+        }
+        if !namespace_uri.is_empty()
+            && let Some(a) = self.attributes_ns.get(&NsNameRef {
+                namespace_uri: "",
+                local_name,
+            })
+        {
+            return Some(a);
+        }
+        None
+    }
+
+    /// Resolves a compile-time-resolved reference: the ns-qualified map first
+    /// (collision-free), then the legacy string lookup as fallback.
+    pub fn type_by_ref(&self, ns: Option<&NsName>, name: &str) -> Option<&TypeDef> {
+        if let Some(n) = ns
+            && let Some(t) = self.type_ns(&n.namespace_uri, &n.local_name)
+        {
+            return Some(t);
+        }
+        self.get_type(name)
+    }
+
+    /// Resolves a complex type's base-type definition, hopping via the
+    /// compile-time resolved `base_ns` when it corresponds to the base
+    /// reference, with the legacy string lookup as fallback.
+    ///
+    /// The base reference lives either in the content model
+    /// (`ComplexExtension` / `SimpleContent`) or in `base_type`; both are
+    /// compiled from the same QName, so `base_ns` applies whenever the
+    /// strings agree (built-in GML types set only the content-model string).
+    pub fn complex_base_def(&self, c: &ComplexType) -> Option<&TypeDef> {
+        let base = match &c.content {
+            ContentModel::ComplexExtension { base_type, .. } => Some(base_type.as_str()),
+            ContentModel::SimpleContent { base_type } => Some(base_type.as_str()),
+            _ => c.base_type.as_deref(),
+        }?;
+        let ns = c
+            .base_ns
+            .as_ref()
+            .filter(|_| c.base_type.as_deref() == Some(base));
+        self.type_by_ref(ns, base)
+    }
+
+    /// Resolves a simple type's base-type definition (ns-first, string
+    /// fallback). The synthetic `list(...)`/`union(...)` markers carry no
+    /// `base_ns` and miss the string lookup too, returning `None` as before.
+    pub fn simple_base_def(&self, s: &SimpleType) -> Option<&TypeDef> {
+        let base = s.base_type.as_deref()?;
+        self.type_by_ref(s.base_ns.as_ref(), base)
     }
 
     /// Resolves a prefixed type reference to a NsName using prefix_namespaces.
@@ -311,19 +439,25 @@ impl CompiledSchema {
 
     /// Looks up a type by namespace URI and local name.
     pub fn get_type_by_ns(&self, namespace_uri: &str, local_name: &str) -> Option<&TypeDef> {
-        // Use namespace_prefixes (uri → prefix) to construct the canonical key
-        if let Some(prefix) = self.namespace_prefixes.get(namespace_uri) {
-            let qname = if prefix.is_empty() {
-                local_name.to_string()
-            } else {
-                format!("{}:{}", prefix, local_name)
-            };
-            if let Some(typ) = self.types.get(&qname) {
-                return Some(typ);
-            }
+        // Compatibility shim over the ns-qualified map; the trailing
+        // any-namespace scan preserves the legacy bare-local fallback.
+        if let Some(typ) = self.type_ns(namespace_uri, local_name) {
+            return Some(typ);
         }
-        // Fallback: try local name
-        self.types.get(local_name)
+        self.type_ns_any(local_name)
+    }
+
+    /// Renders an [`NsName`] as `prefix:local` using the schema's
+    /// namespace-to-prefix table, for diagnostics. Falls back to the bare
+    /// local name when the namespace has no (non-empty) prefix.
+    pub fn display_name(&self, name: &NsName) -> String {
+        if !name.namespace_uri.is_empty()
+            && let Some(prefix) = self.namespace_prefixes.get(&*name.namespace_uri)
+            && !prefix.is_empty()
+        {
+            return format!("{}:{}", prefix, name.local_name);
+        }
+        name.local_name.to_string()
     }
 }
 
@@ -340,6 +474,15 @@ pub struct ElementDef {
     pub name: String,
     /// Type reference (name of a type definition)
     pub type_ref: Option<String>,
+    /// Namespace-resolved form of [`type_ref`](Self::type_ref), computed at
+    /// compile time against the owning document's bindings. The string
+    /// `type_ref` is kept verbatim for message stability; this parallel field
+    /// carries the collision-free `(namespace, local)` for lookups.
+    pub type_ns: Option<NsName>,
+    /// For an element *reference* (`<xs:element ref="q:name"/>`), the resolved
+    /// namespace of the referenced global element. The `name` field holds the
+    /// bare local for message stability; this carries the namespace.
+    pub ref_ns: Option<NsName>,
     /// Inline type definition
     pub inline_type: Option<TypeDef>,
     /// Minimum occurrences
@@ -350,6 +493,9 @@ pub struct ElementDef {
     pub is_abstract: bool,
     /// Substitution group head
     pub substitution_group: Option<String>,
+    /// Namespace-resolved form of
+    /// [`substitution_group`](Self::substitution_group).
+    pub substitution_ns: Option<NsName>,
     /// Whether the element is nillable
     pub nillable: bool,
     /// Default value applied when the element is empty
@@ -366,11 +512,14 @@ impl ElementDef {
         Self {
             name: name.into(),
             type_ref: None,
+            type_ns: None,
+            ref_ns: None,
             inline_type: None,
             min_occurs: 1,
             max_occurs: Some(1),
             is_abstract: false,
             substitution_group: None,
+            substitution_ns: None,
             nillable: false,
             default: None,
             fixed: None,
@@ -420,6 +569,9 @@ pub struct SimpleType {
     pub name: String,
     /// Base type (restriction or extension)
     pub base_type: Option<String>,
+    /// Namespace-resolved form of [`base_type`](Self::base_type). `None` for
+    /// the synthetic `list(...)`/`union(...)` markers, which are not QNames.
+    pub base_ns: Option<NsName>,
     /// Enumeration values
     pub enumeration: Vec<String>,
     /// Pattern restriction
@@ -444,8 +596,14 @@ pub struct SimpleType {
     pub fraction_digits: Option<u32>,
     /// Item type for list types (`<xs:list itemType="..."/>`)
     pub item_type: Option<String>,
+    /// Namespace-resolved form of [`item_type`](Self::item_type).
+    pub item_ns: Option<NsName>,
     /// Member types for union types (`<xs:union memberTypes="..."/>`)
     pub member_types: Vec<String>,
+    /// Namespace-resolved form of each entry in
+    /// [`member_types`](Self::member_types) (index-aligned; `None` where the
+    /// member reference could not be resolved).
+    pub member_ns: Vec<Option<NsName>>,
     /// Whitespace normalization declared by a whiteSpace facet
     pub white_space: Option<WhiteSpace>,
     /// Explicit timezone requirement (XSD 1.1 explicitTimezone facet)
@@ -480,6 +638,7 @@ impl SimpleType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             enumeration: Vec::new(),
             pattern: None,
             length: None,
@@ -492,7 +651,9 @@ impl SimpleType {
             total_digits: None,
             fraction_digits: None,
             item_type: None,
+            item_ns: None,
             member_types: Vec::new(),
+            member_ns: Vec::new(),
             white_space: None,
             explicit_timezone: None,
         }
@@ -556,6 +717,9 @@ pub struct ComplexType {
     pub name: String,
     /// Base type (for extension or restriction)
     pub base_type: Option<String>,
+    /// Namespace-resolved form of [`base_type`](Self::base_type), computed at
+    /// compile time against the owning document's bindings.
+    pub base_ns: Option<NsName>,
     /// How this type derives from `base_type`
     pub derivation: Option<DerivationMethod>,
     /// Derivation methods blocked for xsi:type substitution
@@ -583,6 +747,7 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             derivation: None,
             block: BlockSet::default(),
             content: ContentModel::Empty,
@@ -600,6 +765,7 @@ impl ComplexType {
         Self {
             name: name.into(),
             base_type: None,
+            base_ns: None,
             derivation: None,
             block: BlockSet::default(),
             content: ContentModel::Sequence(elements),
@@ -748,6 +914,12 @@ pub struct AttributeDef {
     pub name: String,
     /// Type reference
     pub type_ref: Option<String>,
+    /// Namespace-resolved form of [`type_ref`](Self::type_ref).
+    pub type_ns: Option<NsName>,
+    /// For an attribute *reference* (`<xs:attribute ref="q:name"/>`), the
+    /// resolved namespace of the referenced global attribute. `name` keeps
+    /// the bare local for message stability.
+    pub ref_ns: Option<NsName>,
     /// Inline simple type definition
     pub inline_type: Option<Box<SimpleType>>,
     /// Whether the attribute is required
@@ -766,6 +938,8 @@ impl AttributeDef {
         Self {
             name: name.into(),
             type_ref: None,
+            type_ns: None,
+            ref_ns: None,
             inline_type: None,
             required: false,
             default: None,
@@ -903,8 +1077,8 @@ mod tests {
     #[test]
     fn test_get_element_with_local_name() {
         let mut schema = CompiledSchema::new();
-        schema.elements.insert(
-            "ReliefFeature".to_string(),
+        schema.elements_ns.insert(
+            crate::schema::types::NsName::new("", "ReliefFeature"),
             ElementDef::new("ReliefFeature"),
         );
 
@@ -915,8 +1089,8 @@ mod tests {
     #[test]
     fn test_get_element_with_qualified_name() {
         let mut schema = CompiledSchema::new();
-        schema.elements.insert(
-            "ReliefFeature".to_string(),
+        schema.elements_ns.insert(
+            crate::schema::types::NsName::new("", "ReliefFeature"),
             ElementDef::new("ReliefFeature"),
         );
 
@@ -930,8 +1104,8 @@ mod tests {
     #[test]
     fn test_get_type_with_local_name() {
         let mut schema = CompiledSchema::new();
-        schema.types.insert(
-            "AbstractCityObjectType".to_string(),
+        schema.types_ns.insert(
+            crate::schema::types::NsName::new("", "AbstractCityObjectType"),
             TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
         );
 
@@ -942,8 +1116,8 @@ mod tests {
     #[test]
     fn test_get_type_with_qualified_name() {
         let mut schema = CompiledSchema::new();
-        schema.types.insert(
-            "AbstractCityObjectType".to_string(),
+        schema.types_ns.insert(
+            crate::schema::types::NsName::new("", "AbstractCityObjectType"),
             TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
         );
 
@@ -966,5 +1140,74 @@ mod tests {
         let schema = CompiledSchema::new();
         assert!(schema.get_element("NonExistentElement").is_none());
         assert!(schema.get_element("prefix:NonExistentElement").is_none());
+    }
+
+    // === Namespace-qualified accessor semantics (C3) ===
+
+    /// Two globals sharing a local name in different namespaces must not
+    /// collide on the namespace-keyed map (the wildG031 class).
+    #[test]
+    fn ns_maps_resolve_same_local_in_different_namespaces() {
+        const NS_A: &str = "http://example.com/a";
+        const NS_B: &str = "http://example.com/b";
+        let mut schema = CompiledSchema::new();
+        let mut a = ElementDef::new("value");
+        a.type_ref = Some("a:AType".into());
+        let mut b = ElementDef::new("value");
+        b.type_ref = Some("b:BType".into());
+        schema.elements_ns.insert(NsName::new(NS_A, "value"), a);
+        schema.elements_ns.insert(NsName::new(NS_B, "value"), b);
+
+        // Each namespace resolves to its OWN declaration, not the other's.
+        assert_eq!(
+            schema
+                .element_ns(NS_A, "value")
+                .unwrap()
+                .type_ref
+                .as_deref(),
+            Some("a:AType")
+        );
+        assert_eq!(
+            schema
+                .element_ns(NS_B, "value")
+                .unwrap()
+                .type_ref
+                .as_deref(),
+            Some("b:BType")
+        );
+    }
+
+    /// A cleanly-resolved namespace that misses (with no chameleon `""`
+    /// entry) must stay a miss — `element_ns` must NOT scan other namespaces
+    /// (amendment #1: the any-ns scan can only hide "not declared" errors).
+    #[test]
+    fn ns_element_lookup_does_not_leak_across_namespaces() {
+        const NS_A: &str = "http://example.com/a";
+        const NS_C: &str = "http://example.com/c";
+        let mut schema = CompiledSchema::new();
+        schema
+            .elements_ns
+            .insert(NsName::new(NS_A, "value"), ElementDef::new("value"));
+
+        // Wrong namespace -> strict miss (no cross-namespace leak).
+        assert!(schema.element_ns(NS_C, "value").is_none());
+        // The leniency scan (only for unresolvable instance namespaces) DOES
+        // find it by local name.
+        assert!(schema.element_ns_any("value").is_some());
+    }
+
+    /// Chameleon-include fallback: a component registered under the
+    /// no-namespace `""` is reachable from a qualified lookup.
+    #[test]
+    fn ns_type_lookup_chameleon_fallback() {
+        const NS_A: &str = "http://example.com/a";
+        let mut schema = CompiledSchema::new();
+        schema.types_ns.insert(
+            NsName::new("", "ChameleonType"),
+            TypeDef::Complex(ComplexType::new("ChameleonType")),
+        );
+        assert!(schema.type_ns(NS_A, "ChameleonType").is_some());
+        assert!(schema.type_ns("", "ChameleonType").is_some());
+        assert!(schema.type_ns(NS_A, "Missing").is_none());
     }
 }

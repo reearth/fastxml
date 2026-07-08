@@ -114,7 +114,7 @@ fn test_integer_type_with_string() {
         </xs:schema>"#;
 
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
-    assert!(schema.elements.contains_key("count"));
+    assert!(schema.get_element("count").is_some());
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn test_date_type_invalid_format() {
         </xs:schema>"#;
 
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
-    assert!(schema.elements.contains_key("birthday"));
+    assert!(schema.get_element("birthday").is_some());
     // Validation of "invalid-date" against xs:date would fail
 }
 
@@ -139,7 +139,7 @@ fn test_boolean_type_invalid_value() {
         </xs:schema>"#;
 
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
-    assert!(schema.elements.contains_key("flag"));
+    assert!(schema.get_element("flag").is_some());
     // Validation of "yes" against xs:boolean would fail
 }
 
@@ -156,7 +156,7 @@ fn test_decimal_type_precision() {
         </xs:schema>"#;
 
     let schema = Schema::from_xsd(xsd.as_bytes()).unwrap();
-    assert!(schema.types.contains_key("Price"));
+    assert!(schema.get_type("Price").is_some());
 }
 
 // =============================================================================

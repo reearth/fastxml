@@ -43,7 +43,10 @@ impl DomSchemaValidator {
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            self.schema.get_type(type_ref).cloned()
+            // C4: ns-first (compile-time resolved), string fallback.
+            self.schema
+                .type_by_ref(elem.type_ns.as_ref(), type_ref)
+                .cloned()
         } else {
             elem.inline_type.clone()
         };
@@ -92,8 +95,9 @@ impl DomSchemaValidator {
             }
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
-                if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    if let Some(TypeDef::Simple(simple)) = self.schema.get_type(base_type) {
+                if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
+                    // C4: ns-first base hop (string fallback inside).
+                    if let Some(TypeDef::Simple(simple)) = self.schema.complex_base_def(&complex) {
                         let simple = simple.clone();
                         self.validate_simple_type_facets(
                             node,

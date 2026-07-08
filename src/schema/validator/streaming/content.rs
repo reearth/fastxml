@@ -90,7 +90,7 @@ impl OnePassSchemaValidator {
             return;
         }
 
-        let schema_has_elements = !self.schema.elements.is_empty();
+        let schema_has_elements = !self.schema.elements_ns.is_empty();
 
         // Priority: inline element definition > global element definition
         // This is important when the same element name exists both as a global element
@@ -200,10 +200,13 @@ impl OnePassSchemaValidator {
                 .state
                 .current_element()
                 .and_then(|ctx| ctx.type_ref.clone());
+            // C4: the xsi:type QName is interpreted against the instance
+            // document's in-scope namespace declarations.
             match super::super::xsi_type::resolve_xsi_type(
-                &self.schema,
+                &schema,
                 declared.as_deref(),
                 xsi_type,
+                |p| self.state.resolve_prefix(p).map(str::to_string),
             ) {
                 Ok(substituted) => {
                     let flattened = match self.schema.get_type(&substituted) {

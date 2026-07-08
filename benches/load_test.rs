@@ -101,37 +101,44 @@ fn create_test_schema(with_namespaces: bool) -> Arc<CompiledSchema> {
     if with_namespaces {
         // CityGML-style schema
         schema.target_namespace = Some("http://www.opengis.net/citygml/2.0".to_string());
-        schema
-            .elements
-            .insert("core:CityModel".to_string(), ElementDef::new("CityModel"));
-        schema
-            .elements
-            .insert("bldg:Building".to_string(), ElementDef::new("Building"));
-        schema.elements.insert(
-            "bldg:measuredHeight".to_string(),
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "CityModel"),
+            ElementDef::new("CityModel"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "Building"),
+            ElementDef::new("Building"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "measuredHeight"),
             ElementDef::new("measuredHeight"),
         );
-        schema
-            .elements
-            .insert("gml:name".to_string(), ElementDef::new("name"));
-        schema.elements.insert(
-            "bldg:lod0FootPrint".to_string(),
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "name"),
+            ElementDef::new("name"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "lod0FootPrint"),
             ElementDef::new("lod0FootPrint"),
         );
     } else {
         // Simple schema for many-elements pattern
-        schema
-            .elements
-            .insert("root".to_string(), ElementDef::new("root"));
-        schema
-            .elements
-            .insert("element".to_string(), ElementDef::new("element"));
-        schema
-            .elements
-            .insert("item".to_string(), ElementDef::new("item"));
-        schema
-            .elements
-            .insert("data".to_string(), ElementDef::new("data"));
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "root"),
+            ElementDef::new("root"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "element"),
+            ElementDef::new("element"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "item"),
+            ElementDef::new("item"),
+        );
+        schema.elements_ns.insert(
+            fastxml::schema::types::NsName::new("", "data"),
+            ElementDef::new("data"),
+        );
     }
 
     Arc::new(schema)

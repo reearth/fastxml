@@ -111,8 +111,10 @@ impl OnePassSchemaValidator {
                 Self::classify_simple(self.create_facet_constraints(simple))
             }
             Some(TypeDef::Complex(complex)) => {
-                if let ContentModel::SimpleContent { base_type } = &complex.content {
-                    match schema.get_type(base_type) {
+                if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
+                    // C4: ns-first base hop (string fallback inside
+                    // complex_base_def).
+                    match schema.complex_base_def(complex) {
                         Some(TypeDef::Simple(simple)) => {
                             Self::classify_simple(self.create_facet_constraints(simple))
                         }
@@ -206,11 +208,11 @@ impl OnePassSchemaValidator {
             }
             TypeDef::Complex(complex) => {
                 // For complex types with simple content, validate the base type.
-                if let ContentModel::SimpleContent { base_type } = &complex.content {
+                if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
                     // C2: borrow the base simple type via a cheap schema-Arc
                     // clone instead of cloning the TypeDef.
                     let schema = Arc::clone(&self.schema);
-                    if let Some(TypeDef::Simple(simple)) = schema.get_type(base_type) {
+                    if let Some(TypeDef::Simple(simple)) = schema.complex_base_def(complex) {
                         let constraints = self.create_facet_constraints(simple);
                         self.validate_text_against_facets(ctx, &constraints);
                     }

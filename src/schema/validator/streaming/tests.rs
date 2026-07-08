@@ -170,14 +170,14 @@ fn test_streaming_validator_with_schema_elements() {
     let mut schema = CompiledSchema::new();
 
     // Add a simple element definition
-    schema.elements.insert(
-        "root".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "root"),
         ElementDef::new("root").with_type("xs:string"),
     );
 
     // Add type definition
-    schema.types.insert(
-        "xs:string".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "string"),
         TypeDef::Simple(SimpleType::new("xs:string")),
     );
 
@@ -203,9 +203,10 @@ fn test_streaming_validator_unknown_element_strict() {
     let mut schema = CompiledSchema::new();
 
     // Add at least one element so schema has elements
-    schema
-        .elements
-        .insert("known".to_string(), ElementDef::new("known"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "known"),
+        ElementDef::new("known"),
+    );
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
@@ -235,9 +236,10 @@ fn test_streaming_validator_unknown_element_lenient() {
     let mut schema = CompiledSchema::new();
 
     // Add at least one element so schema has elements
-    schema
-        .elements
-        .insert("known".to_string(), ElementDef::new("known"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "known"),
+        ElementDef::new("known"),
+    );
 
     let mut validator =
         OnePassSchemaValidator::new(Arc::new(schema)).set_mode(ValidationMode::Lenient);
@@ -349,6 +351,7 @@ fn test_streaming_validator_min_occurs() {
     let complex_type = ComplexType {
         name: "ParentType".to_string(),
         base_type: None,
+        base_ns: None,
         derivation: None,
         block: Default::default(),
         wildcard: None,
@@ -362,14 +365,15 @@ fn test_streaming_validator_min_occurs() {
         particle: None,
     };
 
-    schema.elements.insert(
-        "parent".to_string(),
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "parent"),
         ElementDef::new("parent").with_type("ParentType"),
     );
 
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(complex_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(complex_type),
+    );
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
@@ -647,9 +651,10 @@ fn test_inherited_elements_from_base_type() {
             .with_type("xs:string")
             .optional(),
     ]);
-    schema
-        .types
-        .insert("BaseType".to_string(), TypeDef::Complex(base_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "BaseType"),
+        TypeDef::Complex(base_type),
+    );
 
     // ExtendedType extends BaseType, adds "extElement"
     let mut extended_type = ComplexType::new("ExtendedType");
@@ -661,13 +666,16 @@ fn test_inherited_elements_from_base_type() {
                 .optional(),
         ],
     };
-    schema
-        .types
-        .insert("ExtendedType".to_string(), TypeDef::Complex(extended_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ExtendedType"),
+        TypeDef::Complex(extended_type),
+    );
 
     // Root element uses ExtendedType
     let root_elem = ElementDef::new("root").with_type("ExtendedType");
-    schema.elements.insert("root".to_string(), root_elem);
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "root"), root_elem);
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
@@ -771,8 +779,8 @@ fn test_multi_level_inheritance() {
             .with_type("xs:string")
             .optional(),
     ]);
-    schema.types.insert(
-        "GrandparentType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "GrandparentType"),
         TypeDef::Complex(grandparent_type),
     );
 
@@ -786,9 +794,10 @@ fn test_multi_level_inheritance() {
                 .optional(),
         ],
     };
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(parent_type),
+    );
 
     // ChildType extends ParentType, adds "childElem"
     let mut child_type = ComplexType::new("ChildType");
@@ -800,13 +809,16 @@ fn test_multi_level_inheritance() {
                 .optional(),
         ],
     };
-    schema
-        .types
-        .insert("ChildType".to_string(), TypeDef::Complex(child_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ChildType"),
+        TypeDef::Complex(child_type),
+    );
 
     // Root element uses ChildType
     let root_elem = ElementDef::new("root").with_type("ChildType");
-    schema.elements.insert("root".to_string(), root_elem);
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "root"), root_elem);
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
@@ -917,21 +929,22 @@ fn test_substitution_group_basic() {
         // Parent expects "_CityObject" as required child (min_occurs=1)
         ElementDef::new("_CityObject").with_type("AbstractCityObjectType"),
     ]);
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(parent_type),
+    );
 
     // Define the abstract type
     let abstract_type = ComplexType::new("AbstractCityObjectType");
-    schema.types.insert(
-        "AbstractCityObjectType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "AbstractCityObjectType"),
         TypeDef::Complex(abstract_type),
     );
 
     // Define the concrete type
     let concrete_type = ComplexType::new("ReliefFeatureType");
-    schema.types.insert(
-        "ReliefFeatureType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ReliefFeatureType"),
         TypeDef::Complex(concrete_type),
     );
 
@@ -939,19 +952,25 @@ fn test_substitution_group_basic() {
     let mut head_elem = ElementDef::new("_CityObject");
     head_elem.is_abstract = true;
     head_elem.type_ref = Some("AbstractCityObjectType".to_string());
-    schema.elements.insert("_CityObject".to_string(), head_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "_CityObject"),
+        head_elem,
+    );
 
     // Define the substitute element (concrete)
     let mut substitute_elem = ElementDef::new("ReliefFeature");
     substitute_elem.type_ref = Some("ReliefFeatureType".to_string());
     substitute_elem.substitution_group = Some("_CityObject".to_string());
-    schema
-        .elements
-        .insert("ReliefFeature".to_string(), substitute_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "ReliefFeature"),
+        substitute_elem,
+    );
 
     // Define parent element
     let parent_elem = ElementDef::new("parent").with_type("ParentType");
-    schema.elements.insert("parent".to_string(), parent_elem);
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "parent"), parent_elem);
 
     // Build substitution groups (head -> members)
     schema
@@ -1050,50 +1069,59 @@ fn test_substitution_group_max_occurs() {
             .with_type("AbstractCityObjectType")
             .with_occurs(0, Some(2)),
     ]);
-    schema
-        .types
-        .insert("ParentType".to_string(), TypeDef::Complex(parent_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ParentType"),
+        TypeDef::Complex(parent_type),
+    );
 
     // Define types
     let abstract_type = ComplexType::new("AbstractCityObjectType");
-    schema.types.insert(
-        "AbstractCityObjectType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "AbstractCityObjectType"),
         TypeDef::Complex(abstract_type),
     );
 
     let relief_type = ComplexType::new("ReliefFeatureType");
-    schema.types.insert(
-        "ReliefFeatureType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "ReliefFeatureType"),
         TypeDef::Complex(relief_type),
     );
 
     let building_type = ComplexType::new("BuildingType");
-    schema
-        .types
-        .insert("BuildingType".to_string(), TypeDef::Complex(building_type));
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "BuildingType"),
+        TypeDef::Complex(building_type),
+    );
 
     // Define elements
     let mut head_elem = ElementDef::new("_CityObject");
     head_elem.is_abstract = true;
     head_elem.type_ref = Some("AbstractCityObjectType".to_string());
-    schema.elements.insert("_CityObject".to_string(), head_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "_CityObject"),
+        head_elem,
+    );
 
     let mut relief_elem = ElementDef::new("ReliefFeature");
     relief_elem.type_ref = Some("ReliefFeatureType".to_string());
     relief_elem.substitution_group = Some("_CityObject".to_string());
-    schema
-        .elements
-        .insert("ReliefFeature".to_string(), relief_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "ReliefFeature"),
+        relief_elem,
+    );
 
     let mut building_elem = ElementDef::new("Building");
     building_elem.type_ref = Some("BuildingType".to_string());
     building_elem.substitution_group = Some("_CityObject".to_string());
-    schema
-        .elements
-        .insert("Building".to_string(), building_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "Building"),
+        building_elem,
+    );
 
     let parent_elem = ElementDef::new("parent").with_type("ParentType");
-    schema.elements.insert("parent".to_string(), parent_elem);
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "parent"), parent_elem);
 
     // Build substitution groups
     schema.substitution_groups.insert(
@@ -1194,14 +1222,17 @@ fn test_choice_content_model_basic() {
         ElementDef::new("Envelope").with_type("xs:string"),
         ElementDef::new("Null").with_type("xs:string"),
     ]);
-    schema.types.insert(
-        "BoundingShapeType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "BoundingShapeType"),
         TypeDef::Complex(choice_type),
     );
 
     // Define parent element that uses the choice type
     let parent_elem = ElementDef::new("boundedBy").with_type("BoundingShapeType");
-    schema.elements.insert("boundedBy".to_string(), parent_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "boundedBy"),
+        parent_elem,
+    );
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
@@ -1293,9 +1324,10 @@ fn test_validate_simple_api_with_max_errors() {
 
     let mut schema = CompiledSchema::new();
     // Add an element so unknown elements trigger errors
-    schema
-        .elements
-        .insert("known".to_string(), ElementDef::new("known"));
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "known"),
+        ElementDef::new("known"),
+    );
 
     let xml = r#"<unknown1><unknown2><unknown3/></unknown2></unknown1>"#;
     let reader = std::io::BufReader::new(xml.as_bytes());
@@ -1345,22 +1377,22 @@ fn test_substitution_group_with_prefixed_elements() {
         // Parent expects "_Ring" as required child
         ElementDef::new("_Ring").with_type("AbstractRingType"),
     ]);
-    schema.types.insert(
-        "AbstractRingPropertyType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "AbstractRingPropertyType"),
         TypeDef::Complex(parent_type),
     );
 
     // Define the abstract type
     let abstract_type = ComplexType::new("AbstractRingType");
-    schema.types.insert(
-        "AbstractRingType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "AbstractRingType"),
         TypeDef::Complex(abstract_type),
     );
 
     // Define the concrete type
     let concrete_type = ComplexType::new("LinearRingType");
-    schema.types.insert(
-        "LinearRingType".to_string(),
+    schema.types_ns.insert(
+        crate::schema::types::NsName::new("", "LinearRingType"),
         TypeDef::Complex(concrete_type),
     );
 
@@ -1368,19 +1400,25 @@ fn test_substitution_group_with_prefixed_elements() {
     let mut head_elem = ElementDef::new("_Ring");
     head_elem.is_abstract = true;
     head_elem.type_ref = Some("AbstractRingType".to_string());
-    schema.elements.insert("_Ring".to_string(), head_elem);
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "_Ring"), head_elem);
 
     // Define the substitute element
     let mut substitute_elem = ElementDef::new("LinearRing");
     substitute_elem.type_ref = Some("LinearRingType".to_string());
     substitute_elem.substitution_group = Some("_Ring".to_string());
-    schema
-        .elements
-        .insert("LinearRing".to_string(), substitute_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "LinearRing"),
+        substitute_elem,
+    );
 
     // Define parent element (like "exterior")
     let parent_elem = ElementDef::new("exterior").with_type("AbstractRingPropertyType");
-    schema.elements.insert("exterior".to_string(), parent_elem);
+    schema.elements_ns.insert(
+        crate::schema::types::NsName::new("", "exterior"),
+        parent_elem,
+    );
 
     // Build substitution groups (head -> members)
     schema
@@ -1465,7 +1503,25 @@ fn test_substitution_group_with_prefixed_elements() {
 fn test_same_local_name_different_namespaces() {
     use crate::schema::types::{ComplexType, ContentModel, ElementDef, TypeDef};
 
+    use crate::namespace::Namespace;
+    use crate::schema::types::NsName;
+
+    const GML_NS: &str = "http://www.opengis.net/gml";
+    const BRID_NS: &str = "http://www.opengis.net/citygml/bridge/2.0";
+
     let mut schema = CompiledSchema::new();
+    schema
+        .prefix_namespaces
+        .insert("gml".to_string(), GML_NS.to_string());
+    schema
+        .prefix_namespaces
+        .insert("brid".to_string(), BRID_NS.to_string());
+    schema
+        .namespace_prefixes
+        .insert(GML_NS.to_string(), "gml".to_string());
+    schema
+        .namespace_prefixes
+        .insert(BRID_NS.to_string(), "brid".to_string());
 
     // Define gml:BoundingShapeType with Choice(Envelope, Null)
     let mut gml_bounding_type = ComplexType::new("BoundingShapeType");
@@ -1473,8 +1529,8 @@ fn test_same_local_name_different_namespaces() {
         ElementDef::new("Envelope").with_type("xs:string"),
         ElementDef::new("Null").with_type("xs:string"),
     ]);
-    schema.types.insert(
-        "gml:BoundingShapeType".to_string(),
+    schema.types_ns.insert(
+        NsName::new(GML_NS, "BoundingShapeType"),
         TypeDef::Complex(gml_bounding_type),
     );
 
@@ -1484,27 +1540,29 @@ fn test_same_local_name_different_namespaces() {
         ElementDef::new("WallSurface").with_type("xs:string"),
         ElementDef::new("RoofSurface").with_type("xs:string"),
     ]);
-    schema.types.insert(
-        "brid:BridgeBoundedByType".to_string(),
+    schema.types_ns.insert(
+        NsName::new(BRID_NS, "BridgeBoundedByType"),
         TypeDef::Complex(brid_bounded_type),
     );
 
     // Define gml:boundedBy element
-    let gml_bounded_elem = ElementDef::new("boundedBy").with_type("gml:BoundingShapeType");
+    let mut gml_bounded_elem = ElementDef::new("boundedBy").with_type("gml:BoundingShapeType");
+    gml_bounded_elem.type_ns = Some(NsName::new(GML_NS, "BoundingShapeType"));
     schema
-        .elements
-        .insert("gml:boundedBy".to_string(), gml_bounded_elem);
+        .elements_ns
+        .insert(NsName::new(GML_NS, "boundedBy"), gml_bounded_elem);
 
     // Define brid:boundedBy element
-    let brid_bounded_elem = ElementDef::new("boundedBy").with_type("brid:BridgeBoundedByType");
+    let mut brid_bounded_elem = ElementDef::new("boundedBy").with_type("brid:BridgeBoundedByType");
+    brid_bounded_elem.type_ns = Some(NsName::new(BRID_NS, "BridgeBoundedByType"));
     schema
-        .elements
-        .insert("brid:boundedBy".to_string(), brid_bounded_elem);
+        .elements_ns
+        .insert(NsName::new(BRID_NS, "boundedBy"), brid_bounded_elem);
 
-    // Pre-populate type_children_cache
+    // Pre-populate the ns-keyed type children cache
     let gml_cache = FlattenedChildren::with_content_model(ContentModelType::Choice);
-    schema.type_children_cache.insert(
-        "gml:BoundingShapeType".to_string(),
+    schema.ns_type_children_cache.insert(
+        NsName::new(GML_NS, "BoundingShapeType"),
         Arc::new({
             let mut f = gml_cache;
             f.constraints.insert("Envelope".to_string(), (0, Some(1)));
@@ -1514,8 +1572,8 @@ fn test_same_local_name_different_namespaces() {
     );
 
     let brid_cache = FlattenedChildren::with_content_model(ContentModelType::Choice);
-    schema.type_children_cache.insert(
-        "brid:BridgeBoundedByType".to_string(),
+    schema.ns_type_children_cache.insert(
+        NsName::new(BRID_NS, "BridgeBoundedByType"),
         Arc::new({
             let mut f = brid_cache;
             f.constraints
@@ -1528,13 +1586,18 @@ fn test_same_local_name_different_namespaces() {
 
     let mut validator = OnePassSchemaValidator::new(Arc::new(schema));
 
+    let ns_decls = [
+        Namespace::new("brid", BRID_NS),
+        Namespace::new("gml", GML_NS),
+    ];
+
     // Start brid:boundedBy (expects WallSurface or RoofSurface)
     validator
         .handle(&RawEvent::StartElement {
             name: "boundedBy",
             prefix: Some("brid"),
             attributes: &[],
-            namespace_decls: &[],
+            namespace_decls: &ns_decls,
             line: Some(1),
             column: Some(1),
         })

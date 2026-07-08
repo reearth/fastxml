@@ -727,23 +727,34 @@ fn create_bounding_shape_type() -> ComplexType {
 }
 
 /// Registers all built-in types into a CompiledSchema.
+///
+/// XSD primitives live under the XSD namespace; the GML convenience types
+/// are registered under BOTH the GML 3.1 and GML 3.2 namespace URIs (they
+/// share local names across versions). Schema-provided definitions are
+/// never clobbered (`or_insert`).
 pub fn register_builtin_types(schema: &mut crate::schema::types::CompiledSchema) {
-    // Register XSD primitive types
+    use crate::schema::types::NsName;
+
     for (name, type_def) in create_xsd_primitive_types() {
-        // Also register without prefix
         if let Some(local) = name.strip_prefix("xs:") {
-            schema.types.insert(local.to_string(), type_def.clone());
+            schema
+                .types_ns
+                .entry(NsName::new(XS_NAMESPACE, local))
+                .or_insert(type_def);
         }
-        schema.types.insert(name, type_def);
     }
 
-    // Register GML types
     for (name, type_def) in create_gml_types() {
-        // Also register without prefix
         if let Some(local) = name.strip_prefix("gml:") {
-            schema.types.insert(local.to_string(), type_def.clone());
+            schema
+                .types_ns
+                .entry(NsName::new(GML_NAMESPACE, local))
+                .or_insert_with(|| type_def.clone());
+            schema
+                .types_ns
+                .entry(NsName::new(GML31_NAMESPACE, local))
+                .or_insert(type_def);
         }
-        schema.types.insert(name, type_def);
     }
 }
 
@@ -774,16 +785,16 @@ mod tests {
         register_builtin_types(&mut schema);
 
         // Should have xs: prefixed
-        assert!(schema.types.contains_key("xs:string"));
-        assert!(schema.types.contains_key("xs:integer"));
+        assert!(schema.get_type("xs:string").is_some());
+        assert!(schema.get_type("xs:integer").is_some());
 
         // Should also have unprefixed
-        assert!(schema.types.contains_key("string"));
-        assert!(schema.types.contains_key("integer"));
+        assert!(schema.get_type("string").is_some());
+        assert!(schema.get_type("integer").is_some());
 
         // GML types
-        assert!(schema.types.contains_key("gml:CodeType"));
-        assert!(schema.types.contains_key("CodeType"));
+        assert!(schema.get_type("gml:CodeType").is_some());
+        assert!(schema.get_type("CodeType").is_some());
     }
 
     #[test]
