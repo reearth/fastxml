@@ -520,9 +520,12 @@ impl<'a> XPathEvaluator<'a> {
                 }
                 let node_name = node.get_name();
                 let node_prefix = node.get_prefix().unwrap_or_default();
+                // `prefix:*` is a namespace wildcard: match any local name in
+                // the prefix's namespace.
+                let wildcard = local == "*";
 
                 // Match by prefix and local name
-                if node_prefix == *prefix && node_name == *local {
+                if node_prefix == *prefix && (wildcard || node_name == *local) {
                     return Ok(true);
                 }
 
@@ -534,7 +537,7 @@ impl<'a> XPathEvaluator<'a> {
                 })?;
 
                 if let Some(node_uri) = node.get_namespace_uri() {
-                    return Ok(node_uri == expected_uri && node_name == *local);
+                    return Ok(node_uri == expected_uri && (wildcard || node_name == *local));
                 }
 
                 Ok(false)

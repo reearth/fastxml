@@ -125,6 +125,13 @@ fn steps_match(steps: &[String], rel_path: &[&str]) -> bool {
     steps.iter().zip(rel_path).all(|(s, p)| s == "*" || s == p)
 }
 
+/// Whether an attribute (matched by local name) satisfies a field's attribute
+/// step. `pattern` is `"*"` for the attribute wildcard (`@*` / `attribute::*`),
+/// otherwise a literal local name.
+pub(crate) fn attr_matches(attr_name: &str, pattern: &str) -> bool {
+    pattern == "*" || attr_name.rsplit(':').next().unwrap_or(attr_name) == pattern
+}
+
 /// Captured value of one field for one selected node.
 #[derive(Debug, Clone)]
 pub(crate) enum FieldState {
