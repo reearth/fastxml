@@ -6,9 +6,13 @@
 //! - `last()` - returns the context size
 //! - `position()` - returns the context position
 //! - `count(node-set)` - returns the number of nodes
-//! - `name([node-set])` - returns the expanded-name
+//! - `name([node-set])` - returns the qualified name (`prefix:local`)
 //! - `local-name([node-set])` - returns the local part of the name
 //! - `namespace-uri([node-set])` - returns the namespace URI
+//! - `id(object)` - selects elements by ID. fastxml reads no DTD attribute
+//!   types, so an element's ID is the value of its attribute named `id`, as
+//!   returned by [`XmlNode::get_attribute("id")`](crate::node::XmlNode::get_attribute).
+//!   libxml only knows DTD-declared IDs and returns an empty node-set here.
 //!
 //! ## String Functions
 //! - `string([object])` - converts to string
@@ -27,6 +31,7 @@
 //! - `not(boolean)` - negates boolean
 //! - `true()` - returns true
 //! - `false()` - returns false
+//! - `lang(string)` - tests the context node's language
 //!
 //! ## Number Functions
 //! - `number([object])` - converts to number
@@ -34,6 +39,11 @@
 //! - `floor(number)` - rounds down
 //! - `ceiling(number)` - rounds up
 //! - `round(number)` - rounds to nearest integer
+//!
+//! ## Extension
+//! - `text()` - the string-value of the context node. The parser never
+//!   produces this call (`text()` in an expression is the text node test);
+//!   it is reachable only from a hand-built [`Expr::Function`](crate::xpath::Expr).
 
 mod boolean;
 mod helpers;
@@ -100,7 +110,7 @@ pub fn evaluate_function(
         "ceiling" => number::fn_ceiling(args, ctx),
         "round" => number::fn_round(args, ctx),
 
-        // text() is handled as a node test, but if called as function
+        // Extension: only reachable from a hand-built AST (see module docs)
         "text" => helpers::fn_text(args, ctx),
 
         _ => Err(XPathEvalError::UnknownFunction {
@@ -140,80 +150,59 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Calls the production function through the dispatcher.
+    fn call(name: &str, args: Vec<XPathValue>) -> XPathValue {
+        let doc = create_test_document();
+        let root = doc.get_root_element().unwrap();
+        let ctx = create_context(&doc, &root);
+        evaluate_function(name, args, &ctx).unwrap()
+    }
+
+    fn s(v: &str) -> XPathValue {
+        XPathValue::String(v.to_string())
+    }
+
+    fn n(v: f64) -> XPathValue {
+        XPathValue::Number(v)
+    }
+
     #[test]
     fn test_substring() {
-        // Test basic substring
-        assert_eq!(extract_substring("12345", 2.0, None), "2345");
-        assert_eq!(extract_substring("12345", 2.0, Some(3.0)), "234");
-        assert_eq!(extract_substring("12345", 0.0, Some(3.0)), "12");
-        assert_eq!(extract_substring("12345", -1.0, Some(5.0)), "123");
-    }
-
-    fn extract_substring(s: &str, start: f64, len: Option<f64>) -> String {
-        let chars: Vec<char> = s.chars().collect();
-        let start_idx = (start.round() as i64 - 1).max(0) as usize;
-
-        if let Some(length) = len {
-            if length.is_nan() || length <= 0.0 {
-                return String::new();
-            }
-            let actual_start = (start.round() as i64 - 1).max(0) as usize;
-            let end_idx = ((start.round() + length.round()) as i64 - 1).max(0) as usize;
-            let actual_len = end_idx.saturating_sub(actual_start);
-            chars.iter().skip(actual_start).take(actual_len).collect()
-        } else {
-            chars.iter().skip(start_idx).collect()
-        }
+        let substring = |args| call("substring", args).to_string_value();
+        assert_eq!(substring(vec![s("12345"), n(2.0)]), "2345");
+        assert_eq!(substring(vec![s("12345"), n(2.0), n(3.0)]), "234");
+        assert_eq!(substring(vec![s("12345"), n(0.0), n(3.0)]), "12");
+        assert_eq!(substring(vec![s("12345"), n(-1.0), n(5.0)]), "123");
+        assert_eq!(substring(vec![s("12345"), n(1.5), n(2.6)]), "234");
     }
 
     #[test]
-    fn test_normalize_space_helper() {
-        let normalize = |s: &str| -> String { s.split_whitespace().collect::<Vec<_>>().join(" ") };
-
+    fn test_normalize_space() {
+        let normalize = |v: &str| call("normalize-space", vec![s(v)]).to_string_value();
         assert_eq!(normalize("  hello   world  "), "hello world");
         assert_eq!(normalize("no\textra\nspace"), "no extra space");
         assert_eq!(normalize("   "), "");
     }
 
     #[test]
-    fn test_translate_helper() {
-        let translate = |s: &str, from: &str, to: &str| -> String {
-            let from_chars: Vec<char> = from.chars().collect();
-            let to_chars: Vec<char> = to.chars().collect();
-
-            s.chars()
-                .filter_map(|c| {
-                    if let Some(idx) = from_chars.iter().position(|&fc| fc == c) {
-                        if idx < to_chars.len() {
-                            Some(to_chars[idx])
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(c)
-                    }
-                })
-                .collect()
-        };
-
+    fn test_translate() {
+        let translate =
+            |a: &str, b: &str, c: &str| call("translate", vec![s(a), s(b), s(c)]).to_string_value();
         assert_eq!(translate("bar", "abc", "ABC"), "BAr");
         assert_eq!(translate("--aaa--", "abc-", "ABC"), "AAA");
     }
 
     #[test]
-    fn test_round_helper() {
-        // XPath rounding (0.5 rounds up)
-        let xpath_round = |n: f64| -> f64 {
-            if n.is_nan() || n.is_infinite() || n == 0.0 {
-                n
-            } else {
-                (n + 0.5).floor()
-            }
-        };
-
-        assert_eq!(xpath_round(1.5), 2.0);
-        assert_eq!(xpath_round(2.5), 3.0);
-        assert_eq!(xpath_round(-0.5), 0.0);
-        assert_eq!(xpath_round(-1.5), -1.0);
+    fn test_round() {
+        let round = |v: f64| call("round", vec![n(v)]).to_number();
+        assert_eq!(round(1.5), 2.0);
+        assert_eq!(round(2.5), 3.0);
+        assert_eq!(round(-1.5), -1.0);
+        assert_eq!(round(-2.5), -2.0);
+        assert_eq!(round(0.49999999999999994), 0.0);
+        // `[-0.5, 0)` rounds to negative zero; `==` alone cannot tell.
+        assert!(round(-0.5) == 0.0 && round(-0.5).is_sign_negative());
+        assert!(round(-0.2).is_sign_negative());
+        assert!(round(0.2).is_sign_positive());
     }
 }

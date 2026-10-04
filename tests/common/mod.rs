@@ -59,6 +59,36 @@ pub mod libxml_compare {
         Boolean(bool),
     }
 
+    /// Reads a libxml XPath object as a typed result.
+    ///
+    /// libxml-rs only exposes node-sets through safe methods, so scalar
+    /// results are read from the raw `xmlXPathObject`.
+    fn object_to_result(object: &libxml::xpath::Object) -> XPathResult {
+        use libxml::bindings::{
+            xmlXPathObjectType_XPATH_BOOLEAN, xmlXPathObjectType_XPATH_NUMBER,
+            xmlXPathObjectType_XPATH_STRING,
+        };
+        // SAFETY: `object.ptr` is a live xmlXPathObject owned by `object`.
+        let raw = unsafe { &*object.ptr };
+        #[allow(non_upper_case_globals)]
+        match raw.type_ {
+            xmlXPathObjectType_XPATH_NUMBER => XPathResult::Number(raw.floatval),
+            xmlXPathObjectType_XPATH_BOOLEAN => XPathResult::Boolean(raw.boolval != 0),
+            xmlXPathObjectType_XPATH_STRING => {
+                let s = if raw.stringval.is_null() {
+                    String::new()
+                } else {
+                    // SAFETY: stringval is a NUL-terminated xmlChar string.
+                    unsafe { std::ffi::CStr::from_ptr(raw.stringval as *const std::ffi::c_char) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                XPathResult::String(s)
+            }
+            _ => XPathResult::NodeSet(object.get_nodes_as_vec()),
+        }
+    }
+
     impl LibxmlDoc {
         pub fn root_name(&self) -> Option<String> {
             self.doc.get_root_element().map(|n| n.get_name())
@@ -84,16 +114,7 @@ pub mod libxml_compare {
                 .evaluate(xpath)
                 .map_err(|_| format!("XPath evaluation failed: {}", xpath))?;
 
-            // libxml-rs provides get_nodes_as_vec() which returns nodes for node-set results
-            // and empty vec for scalar results (number, string, boolean)
-            let nodes = result.get_nodes_as_vec();
-
-            // For scalar results, libxml returns empty nodes but we can get values through
-            // number_of_nodes (returns 0 for scalar) and the actual scalar value methods
-            // Unfortunately libxml-rs doesn't expose scalar value getters directly
-            // So we just return empty NodeSet for scalar results and rely on the fallback
-            // comparison logic
-            Ok(XPathResult::NodeSet(nodes))
+            Ok(object_to_result(&result))
         }
 
         pub fn root_attributes(&self) -> HashMap<String, String> {
@@ -297,8 +318,6 @@ pub mod libxml_compare {
         };
 
         // Compare results
-        // Since libxml-rs doesn't expose scalar values, we can only compare node-sets reliably
-        // For scalar results, libxml returns empty node-set, so we handle that case specially
         use fastxml::xpath::XPathResult as FastXmlResult;
 
         match (&fastxml_result, &libxml_result) {
@@ -334,24 +353,17 @@ pub mod libxml_compare {
                     CompareResult::ok()
                 }
             }
-            // fastxml returned scalar, libxml returned empty node-set (expected for scalar XPath)
-            (FastXmlResult::String(_), XPathResult::NodeSet(nodes)) if nodes.is_empty() => {
-                // libxml-rs can't return scalar values, so we accept this
+            (FastXmlResult::String(a), XPathResult::String(b)) if a == b => CompareResult::ok(),
+            (FastXmlResult::Boolean(a), XPathResult::Boolean(b)) if a == b => CompareResult::ok(),
+            (FastXmlResult::Number(a), XPathResult::Number(b))
+                if a == b || (a.is_nan() && b.is_nan()) =>
+            {
                 CompareResult::ok()
             }
-            (FastXmlResult::Number(_), XPathResult::NodeSet(nodes)) if nodes.is_empty() => {
-                CompareResult::ok()
-            }
-            (FastXmlResult::Boolean(_), XPathResult::NodeSet(nodes)) if nodes.is_empty() => {
-                CompareResult::ok()
-            }
-            _ => {
-                // Unexpected case - report it
-                CompareResult::diff(format!(
-                    "XPath '{}' result type mismatch:\n  fastxml: {:?}\n  libxml: {:?}",
-                    xpath, fastxml_result, libxml_result
-                ))
-            }
+            _ => CompareResult::diff(format!(
+                "XPath '{}' results differ:\n  fastxml: {:?}\n  libxml:  {:?}",
+                xpath, fastxml_result, libxml_result
+            )),
         }
     }
 

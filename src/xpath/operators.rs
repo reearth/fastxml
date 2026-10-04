@@ -29,7 +29,7 @@ use std::collections::HashSet;
 use crate::node::XmlNode;
 
 use super::parser::ComparisonOp;
-use super::types::XPathValue;
+use super::types::{XPathValue, string_to_number};
 
 /// Evaluates a comparison operation between two XPath values.
 ///
@@ -93,7 +93,7 @@ fn compare_nodeset_to_value(
             for node in nodes {
                 let node_num = node
                     .get_content()
-                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .map(|s| string_to_number(&s))
                     .unwrap_or(f64::NAN);
 
                 let result = if is_left_nodeset {
@@ -171,7 +171,8 @@ fn compare_strings(left: &str, right: &str, op: &ComparisonOp) -> bool {
         | ComparisonOp::GreaterThan
         | ComparisonOp::GreaterOrEqual => {
             // Try numeric comparison first
-            if let (Ok(l), Ok(r)) = (left.parse::<f64>(), right.parse::<f64>()) {
+            let (l, r) = (string_to_number(left), string_to_number(right));
+            if !l.is_nan() && !r.is_nan() {
                 compare_numbers(l, r, op)
             } else {
                 // Fall back to string comparison

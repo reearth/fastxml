@@ -1,8 +1,11 @@
 //! Unparsing: turn an XPath [`Expr`] AST back into an XPath 1.0 string.
 //!
 //! Provides `Display` for [`Expr`] and [`PathExpr`]. The output is a normalized
-//! but *equivalent* expression — it re-parses to the same AST, though spacing and
-//! redundant parentheses may differ from the original source. This backs
+//! but *equivalent* expression: spacing and redundant parentheses may differ
+//! from the original source, and it re-parses to the same AST with one
+//! exception. XPath 1.0 string literals have no escapes, so a string that
+//! contains both `'` and `"` is rendered as a `concat()` call, which evaluates
+//! to the same string but re-parses as an [`Expr::Function`]. This backs
 //! `Query::to_string()` / `StreamableQuery::to_string()` and is used in error
 //! messages.
 
@@ -246,9 +249,33 @@ mod tests {
             "/root/* | //other",
             "//item[@n > 3]",
             "//item[@n <= 5]",
+            "2 * 3",
+            "2 + 3 * 4",
+            "(2 + 3) * 4",
+            "-(1 - 2)",
+            "//a[1.5]",
+            "//a[0]",
+            "count(//a | //b)",
+            "concat('a', 1 + 2)",
+            "//div div 2",
+            "/root/text",
+            "self::node()",
+            "../x",
         ] {
             assert_roundtrips(xpath);
         }
+    }
+
+    #[test]
+    fn string_with_both_quotes_renders_as_concat() {
+        use super::super::parser::Expr;
+        let expr = Expr::String(r#"it's "x""#.to_string());
+        let rendered = expr.to_string();
+        assert_eq!(rendered, r#"concat('it', "'", 's "x"')"#);
+        // Not the same AST, but the same value.
+        let doc = crate::parse("<r/>").unwrap();
+        let value = crate::xpath::evaluate(&doc, &rendered).unwrap();
+        assert_eq!(value.to_string_value(), r#"it's "x""#);
     }
 
     #[test]

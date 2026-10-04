@@ -780,6 +780,75 @@ mod number_functions {
     }
 
     #[test]
+    fn test_round_keeps_negative_zero_and_exact_halves() {
+        let xml = r#"<root/>"#;
+        let doc = Parser::from(xml).parse().unwrap();
+
+        // XPath 1.0: an argument in [-0.5, 0) rounds to negative zero.
+        for xpath in ["1 div round(-0.5)", "1 div round(-0.2)"] {
+            let result = doc.query(xpath).unwrap().to_number();
+            assert_eq!(result, f64::NEG_INFINITY, "{xpath}");
+            compare_with_libxml!(xpath: xml, xpath, &doc);
+        }
+
+        // The largest double below 0.5 is not a tie: it rounds to 0.
+        let result = doc.query("round(0.49999999999999994)").unwrap();
+        assert_eq!(result.to_number(), 0.0);
+        compare_with_libxml!(xpath: xml, "round(0.49999999999999994)", &doc);
+
+        let result = doc.query("round(-2.5)").unwrap();
+        assert_eq!(result.to_number(), -2.0);
+    }
+
+    #[test]
+    fn test_number_conversion_follows_xpath_grammar() {
+        let xml = r#"<root><n>+5</n><n>inf</n></root>"#;
+        let doc = Parser::from(xml).parse().unwrap();
+
+        // XPath's Number production has no sign other than a leading '-',
+        // no exponent and no infinity spelling.
+        for xpath in [
+            "number('+5')",
+            "number('inf')",
+            "number('Infinity')",
+            "number('-infinity')",
+            "number('NaN')",
+            "number('')",
+            "number('.')",
+            "number(/root/n[1])",
+            "sum(/root/n)",
+            "'+5' + 0",
+        ] {
+            let result = doc.query(xpath).unwrap();
+            let is_nan_or_false = match &result {
+                fastxml::xpath::XPathResult::Boolean(b) => !b,
+                other => other.to_number().is_nan(),
+            };
+            assert!(is_nan_or_false, "{xpath}: {result:?}");
+            compare_with_libxml!(xpath: xml, xpath, &doc);
+        }
+
+        // libxml returns 1000 and -0 for these; XPath 1.0 says NaN.
+        assert!(doc.query("number('1e3')").unwrap().to_number().is_nan());
+        assert!(doc.query("number('-')").unwrap().to_number().is_nan());
+
+        // Node-set vs number comparison uses the same conversion.
+        assert_eq!(doc.query("count(/root[n = 5])").unwrap().to_number(), 0.0);
+        compare_with_libxml!(xpath: xml, "count(/root[n = 5])", &doc);
+
+        for (xpath, expected) in [
+            ("number(' 12 ')", 12.0),
+            ("number('-1.5')", -1.5),
+            ("number('.5')", 0.5),
+            ("number('5.')", 5.0),
+            ("number('\t7\n')", 7.0),
+        ] {
+            assert_eq!(doc.query(xpath).unwrap().to_number(), expected, "{xpath}");
+            compare_with_libxml!(xpath: xml, xpath, &doc);
+        }
+    }
+
+    #[test]
     fn test_round_wrong_args() {
         let xml = r#"<root/>"#;
         let doc = Parser::from(xml).parse().unwrap();

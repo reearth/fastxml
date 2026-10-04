@@ -483,8 +483,8 @@ mod tests {
 
     #[test]
     fn test_double_slash_at_end() {
-        // Just // should be streamable
-        assert!(is_streamable("//"));
+        // `//` must be followed by a step in XPath 1.0
+        assert!(parse_xpath("//").is_err());
     }
 
     #[test]

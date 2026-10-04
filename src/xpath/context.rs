@@ -12,6 +12,13 @@ use super::evaluator::{XPathEvaluator, XPathResult};
 /// XPath evaluation context.
 ///
 /// Holds namespace bindings and can be reused for multiple evaluations.
+/// It is `Send + Sync`, so a shared `&XmlContext` can evaluate from several
+/// threads; registering a namespace needs `&mut self`. See [`XmlSafeContext`]
+/// for registering through a shared reference.
+///
+/// Evaluating an `attribute::` (`@`) or `namespace::` step appends pseudo-nodes
+/// to the shared document, so repeated evaluation grows the document's node
+/// storage and takes its write lock.
 pub struct XmlContext {
     doc: XmlDocument,
     resolver: NamespaceResolver,
@@ -67,15 +74,19 @@ impl Clone for XmlContext {
     }
 }
 
-/// Thread-safe XPath evaluation context.
+/// XPath evaluation context whose namespace bindings can be changed through a
+/// shared reference.
 ///
-/// Wraps an `XmlContext` with a read-write lock for safe concurrent access.
+/// Wraps an [`XmlContext`] in a read-write lock: [`register_namespace`](Self::register_namespace)
+/// takes `&self` and the write lock, evaluation takes the read lock. Both
+/// context types are `Send + Sync`; use this one only when bindings must be
+/// added while the context is shared.
 pub struct XmlSafeContext {
     inner: RwLock<XmlContext>,
 }
 
 impl XmlSafeContext {
-    /// Creates a thread-safe context for the given document.
+    /// Creates a lock-wrapped context for the given document.
     pub fn new(doc: &XmlDocument) -> Self {
         Self {
             inner: RwLock::new(XmlContext::new(doc)),
@@ -118,7 +129,7 @@ pub fn create_context(doc: &XmlDocument) -> Result<XmlContext> {
     Ok(XmlContext::new(doc))
 }
 
-/// Creates a thread-safe XPath context for a document.
+/// Creates an [`XmlSafeContext`] (bindings registrable through `&self`) for a document.
 pub fn create_safe_context(doc: &XmlDocument) -> Result<XmlSafeContext> {
     Ok(XmlSafeContext::new(doc))
 }
@@ -138,7 +149,7 @@ pub fn find_readonly_nodes_by_xpath(
     Ok(result.into_iter().map(XmlRoNode::from_node).collect())
 }
 
-/// Finds read-only nodes by XPath expression using a thread-safe context.
+/// Finds read-only nodes by XPath expression using an [`XmlSafeContext`].
 pub fn find_safe_readonly_nodes_by_xpath(
     ctx: &XmlSafeContext,
     xpath: &str,
