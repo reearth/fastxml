@@ -21,29 +21,28 @@ use crate::schema::xsd::constraints::ConstraintValidator;
 use super::ValidationMode;
 use super::state::ValidationState;
 
-/// Options for controlling which validations are performed.
+/// Engine-internal switches shared by the DOM and streaming validators.
 ///
-/// By default, all validations are enabled. Disabling specific validations
-/// can significantly improve performance for large documents.
+/// Only `aggregate_errors` is reachable from the public API (through
+/// `Validator::aggregate_errors`). The `skip_*` switches are always `false`
+/// outside in-crate tests; they gate only the count-based occurrence checks
+/// used for content models without an automaton — when a type has a
+/// content-model automaton, occurrence bounds are enforced by the automaton
+/// regardless of these switches.
 #[derive(Debug, Clone, Default)]
 #[doc(hidden)]
 pub struct ValidationOptions {
-    /// Skip minOccurs validation (required child element checks).
-    /// Disabling this can improve performance but may miss missing required elements.
+    /// Skip the count-based minOccurs checks (required child elements).
     pub skip_min_occurs: bool,
 
-    /// Skip maxOccurs validation (element count limit checks).
-    /// Disabling this can significantly improve performance (~50%) but may miss
-    /// element count violations.
+    /// Skip the count-based maxOccurs checks.
     pub skip_max_occurs: bool,
 
-    /// Skip substitution group resolution in occurs validation.
-    /// Disabling this can improve performance but may cause false positives/negatives
-    /// for elements that use substitution groups.
+    /// Skip substitution-group expansion in the count-based checks.
     pub skip_substitution_groups: bool,
 
-    /// Collapse identical errors into one entry with a count, keeping
-    /// memory bounded on error-dense documents.
+    /// Collapse identical errors into one entry with a count, keeping the
+    /// number of entries small on error-dense documents.
     pub aggregate_errors: bool,
 }
 
@@ -54,6 +53,11 @@ pub struct ValidationOptions {
 #[doc(hidden)]
 pub struct OnePassSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
+    /// Global-element resolution and the undeclared-element policy.
+    pub(crate) resolver: super::decls::ElementResolver,
+    /// Run-time flattening of types outside the compile-time cache
+    /// (anonymous types and their children).
+    pub(crate) runtime_types: super::decls::RuntimeTypeCache,
     pub(crate) state: ValidationState,
     pub(crate) errors: Vec<StructuredError>,
     pub(crate) current_line: Option<usize>,
@@ -72,6 +76,10 @@ pub struct OnePassSchemaValidator {
     pub(crate) pending_idrefs: Vec<(String, Option<usize>, Option<usize>)>,
     /// In-scope identity constraints being tracked
     pub(crate) identity_scopes: Vec<identity::ScopeState>,
+    /// Names of identity constraints already reported as not checkable
+    /// (their XPath is outside the supported subset), so the warning is
+    /// emitted once per constraint rather than once per scoping element.
+    pub(crate) unsupported_constraints: rustc_hash::FxHashSet<String>,
     /// Memoized facet constraints per named simple type
     pub(crate) facet_cache: crate::schema::xsd::facets::FacetCache,
     /// Memoized inherited-element lists per complex type name
@@ -87,13 +95,13 @@ pub struct OnePassSchemaValidator {
         std::sync::Arc<Vec<crate::schema::types::ElementDef>>,
     >,
     /// Memoized collected attribute declarations per complex type, keyed by the
-    /// element's ns-safe type-identity symbol (C7). Keying on the resolved
+    /// element's ns-safe type-identity symbol. Keying on the resolved
     /// identity rather than the bare `type_ref` string keeps same-local-name
     /// types in different namespaces from sharing an entry.
     pub(crate) attr_cache:
         rustc_hash::FxHashMap<u32, std::sync::Arc<super::attributes::CollectedAttrs>>,
-    /// Memoized flattened-children resolution keyed by type reference string
-    /// (S2). Resolving a `type_ref` to its `FlattenedChildren` otherwise
+    /// Memoized flattened-children resolution keyed by type reference string.
+    /// Resolving a `type_ref` to its `FlattenedChildren` otherwise
     /// allocates a two-`String` `NsName` on every element; this caches the
     /// resolved `Arc` so the allocation happens once per distinct type.
     pub(crate) type_ref_children: rustc_hash::FxHashMap<
@@ -101,20 +109,20 @@ pub struct OnePassSchemaValidator {
         Option<std::sync::Arc<crate::schema::types::FlattenedChildren>>,
     >,
     /// Memoized inline (parent-content-model) element resolution keyed by
-    /// `(parent type symbol, child local symbol)` (S3). Resolving a child's
+    /// `(parent type symbol, child local symbol)`. Resolving a child's
     /// declared type from its parent's content model otherwise walks and
     /// linearly scans the parent's flattened element list and clones its
     /// `type_ref` on every element; this caches the resolved picture so it is
     /// computed once per distinct (parent-type, child) pair.
     pub(crate) inline_cache:
         rustc_hash::FxHashMap<(u32, u32), std::sync::Arc<lookup::InlineResolved>>,
-    /// Memoized text-content validation plan keyed by type symbol (S5).
+    /// Memoized text-content validation plan keyed by type symbol.
     /// Deciding how a declared type's text must be checked otherwise costs a
     /// `get_type` probe plus a facet-cache probe on every element close; this
     /// caches the resolved [`text::TextOp`] once per distinct type.
     pub(crate) text_op_cache: rustc_hash::FxHashMap<u32, text::TextOp>,
     /// Symbol-bound content-model automatons keyed by the wrapped
-    /// automaton's `Arc` pointer (S6). Binding interns each position's name
+    /// automaton's `Arc` pointer. Binding interns each position's name
     /// set once, so per-child matching becomes `SymbolId` binary searches
     /// instead of string-set hash probes.
     pub(crate) bound_automatons:
@@ -138,6 +146,8 @@ impl OnePassSchemaValidator {
     /// Creates a new one-pass validator in strict mode.
     pub fn new(schema: Arc<CompiledSchema>) -> Self {
         Self {
+            resolver: super::decls::ElementResolver::new(&schema),
+            runtime_types: Default::default(),
             schema,
             state: ValidationState::new(),
             errors: Vec::new(),
@@ -150,6 +160,7 @@ impl OnePassSchemaValidator {
             seen_ids: rustc_hash::FxHashSet::default(),
             pending_idrefs: Vec::new(),
             identity_scopes: Vec::new(),
+            unsupported_constraints: Default::default(),
             facet_cache: Default::default(),
             elements_cache: Default::default(),
             elements_cache_ns: Default::default(),
@@ -172,40 +183,20 @@ impl OnePassSchemaValidator {
         self
     }
 
-    /// Sets the maximum number of errors to collect (builder pattern).
-    ///
-    /// Set to 0 for unlimited errors (default).
     /// Collapses identical errors into one entry with a count (builder).
     pub fn with_aggregate_errors(mut self) -> Self {
         self.options.aggregate_errors = true;
         self
     }
 
+    /// Sets the maximum number of errors to collect (builder pattern).
+    ///
+    /// Set to 0 for unlimited errors (default).
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
     }
 
-    /// Validates an XML document from a reader and returns validation errors.
-    ///
-    /// This is a convenience method that internally creates a `StreamingParser`,
-    /// runs validation, and returns the collected errors.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::fs::File;
-    /// use std::io::BufReader;
-    /// use std::sync::Arc;
-    /// use fastxml::schema::validator::OnePassSchemaValidator;
-    ///
-    /// let file = File::open("document.xml")?;
-    /// let reader = BufReader::new(file);
-    ///
-    /// let errors = OnePassSchemaValidator::new(schema)
-    ///     .with_max_errors(100)
-    ///     .validate(reader)?;
-    /// ```
     /// Runs streaming validation, returning collected errors and the
     /// accumulated [`ValidationCounters`](super::ValidationCounters). The
     /// counters are used by the bench harness as an anti-regression guardrail.

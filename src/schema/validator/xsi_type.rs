@@ -1,49 +1,100 @@
 //! `xsi:type` substitution resolution and derivation checking.
 
-use crate::schema::types::{CompiledSchema, ComplexType, DerivationMethod, TypeDef};
+use crate::schema::types::{
+    CompiledSchema, ComplexType, DerivationMethod, ElementDef, NsName, TypeDef,
+};
+
+/// A resolved `xsi:type`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct XsiType {
+    /// The type's schema key, for the string-keyed lookups.
+    pub key: String,
+    /// The type's expanded name, when the QName's namespace is known. It is
+    /// the authoritative identity: the bare `key` can name a same-local-name
+    /// type of another namespace.
+    pub ns: Option<NsName>,
+}
+
+/// The type an element declaration gives its instances, as far as `xsi:type`
+/// checking is concerned.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DeclaredType<'a> {
+    /// A named type (`type="..."`), by its schema key.
+    Named(&'a str),
+    /// An anonymous type defined inline in the declaration. No named type
+    /// can be derived from it, so any `xsi:type` is rejected.
+    Anonymous,
+    /// No type at all: `xs:anyType`, from which every type derives.
+    AnyType,
+}
+
+impl<'a> DeclaredType<'a> {
+    /// The declared type of an element declaration.
+    pub(crate) fn of(elem: &'a ElementDef) -> Self {
+        Self::from_parts(elem.type_ref.as_deref(), elem.inline_type.is_some())
+    }
+
+    /// The declared type from a named-type key and whether an anonymous type
+    /// is present (a named type wins, as in the declaration itself).
+    pub(crate) fn from_parts(type_ref: Option<&'a str>, has_inline: bool) -> Self {
+        match type_ref {
+            Some(name) => Self::Named(name),
+            None if has_inline => Self::Anonymous,
+            None => Self::AnyType,
+        }
+    }
+}
 
 /// Resolves an `xsi:type` attribute value against the schema and checks the
 /// substitution is allowed for the declared type.
 ///
 /// `resolve_prefix` maps the QName's prefix (`""` for none) to the namespace
 /// URI in scope at the carrying element — the instance document's own
-/// declarations, which are the authoritative interpretation of the QName
-/// (C4). When the prefix resolves and the ns-qualified type exists, that
-/// definition anchors the derivation-chain walk; the legacy string heuristic
-/// (qualified key, then bare local) remains the fallback for instances whose
-/// prefixes cannot be resolved.
+/// declarations, which are the authoritative interpretation of the QName.
+/// An unprefixed name takes the in-scope default namespace (no namespace when
+/// there is none). Whenever the QName's namespace is known, the type must
+/// exist under that expanded name, and that definition anchors the
+/// derivation-chain walk; the legacy string heuristic (qualified key, then
+/// bare local) is used only for a prefix that is not bound at all.
 ///
 /// Returns the schema key of the substituted type on success, or an error
 /// message when the type is unknown, not derived from the declared type, or
 /// the derivation is blocked.
 pub(crate) fn resolve_xsi_type(
     schema: &CompiledSchema,
-    declared: Option<&str>,
+    declared: DeclaredType<'_>,
     xsi_type: &str,
     resolve_prefix: impl Fn(&str) -> Option<String>,
-) -> Result<String, String> {
+) -> Result<XsiType, String> {
     let xsi_type = xsi_type.trim();
     let (prefix, local) = match xsi_type.split_once(':') {
         Some((p, l)) => (p, l),
         None => ("", xsi_type),
     };
 
-    // C4: instance-namespace-qualified resolution first.
-    let ns_def: Option<&TypeDef> = resolve_prefix(prefix)
-        .and_then(|uri| schema.type_ns(&uri, local))
-        .or_else(|| {
-            // No in-scope binding: an unprefixed xsi:type may still target a
-            // no-namespace type.
-            if prefix.is_empty() {
-                schema.type_ns("", local)
-            } else {
-                None
-            }
-        });
+    // The QName's namespace: `None` only for an unbound prefix.
+    let namespace: Option<String> = if prefix.is_empty() {
+        Some(resolve_prefix("").unwrap_or_default())
+    } else {
+        resolve_prefix(prefix)
+    };
+    let ns_def: Option<&TypeDef> = namespace
+        .as_deref()
+        .and_then(|uri| schema.type_ns(uri, local));
+    if namespace.is_some() && ns_def.is_none() {
+        return Err(format!("xsi:type '{}' is not defined in schema", xsi_type));
+    }
 
     // Find the string key under either its qualified or local name (this is
     // what downstream lookups consume; the value stays as written for
     // message stability).
+    let resolved = |key: String| XsiType {
+        key,
+        ns: namespace
+            .as_deref()
+            .filter(|_| ns_def.is_some())
+            .map(|uri| NsName::new(uri, local)),
+    };
     let key = if schema.get_type(xsi_type).is_some() {
         xsi_type.to_string()
     } else if schema.get_type(local).is_some() {
@@ -56,19 +107,26 @@ pub(crate) fn resolve_xsi_type(
         return Err(format!("xsi:type '{}' is not defined in schema", xsi_type));
     };
 
-    let Some(declared) = declared else {
-        return Ok(key); // no declared type to conflict with
+    let declared = match declared {
+        DeclaredType::Named(name) => name,
+        DeclaredType::AnyType => return Ok(resolved(key)),
+        DeclaredType::Anonymous => {
+            return Err(format!(
+                "xsi:type '{}' is not derived from the element's anonymous type",
+                xsi_type
+            ));
+        }
     };
     let declared_local = declared.rsplit(':').next().unwrap_or(declared);
 
     // Every type derives from xs:anyType (and every simple type from
     // xs:anySimpleType), so substitution is always allowed.
     if declared_local == "anyType" || declared_local == "anySimpleType" {
-        return Ok(key);
+        return Ok(resolved(key));
     }
 
     if local_name(&key) == declared_local {
-        return Ok(key); // same type
+        return Ok(resolved(key)); // same type
     }
 
     // Walk the substituted type's derivation chain up to the declared type,
@@ -121,7 +179,7 @@ pub(crate) fn resolve_xsi_type(
                     ));
                 }
             }
-            return Ok(key);
+            return Ok(resolved(key));
         }
         current = base_def;
     }
@@ -177,28 +235,42 @@ mod tests {
     #[test]
     fn extension_blocked_by_declared_type() {
         let s = schema();
-        let result = resolve_xsi_type(&s, Some("B"), "De", |_| None);
+        let result = resolve_xsi_type(&s, DeclaredType::Named("B"), "De", |_| None);
         assert!(result.is_err(), "extension is blocked, got {:?}", result);
     }
 
     #[test]
     fn restriction_allowed() {
         let s = schema();
-        let result = resolve_xsi_type(&s, Some("B"), "Dr", |_| None);
-        assert_eq!(result.as_deref(), Ok("Dr"));
+        let result = resolve_xsi_type(&s, DeclaredType::Named("B"), "Dr", |_| None);
+        assert_eq!(result.map(|t| t.key).as_deref(), Ok("Dr"));
     }
 
     #[test]
     fn unknown_type_rejected() {
         let s = schema();
-        assert!(resolve_xsi_type(&s, Some("B"), "NoSuchType", |_| None).is_err());
+        assert!(resolve_xsi_type(&s, DeclaredType::Named("B"), "NoSuchType", |_| None).is_err());
     }
 
     #[test]
     fn same_type_allowed() {
         let s = schema();
         assert_eq!(
-            resolve_xsi_type(&s, Some("B"), "B", |_| None).as_deref(),
+            resolve_xsi_type(&s, DeclaredType::Named("B"), "B", |_| None)
+                .map(|t| t.key)
+                .as_deref(),
+            Ok("B")
+        );
+    }
+
+    #[test]
+    fn anonymous_declared_type_rejects_any_substitution() {
+        let s = schema();
+        assert!(resolve_xsi_type(&s, DeclaredType::Anonymous, "B", |_| None).is_err());
+        assert_eq!(
+            resolve_xsi_type(&s, DeclaredType::AnyType, "B", |_| None)
+                .map(|t| t.key)
+                .as_deref(),
             Ok("B")
         );
     }

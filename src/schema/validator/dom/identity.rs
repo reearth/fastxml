@@ -18,17 +18,24 @@ pub(crate) struct ConstraintTask {
     pub constraint: CompiledConstraint,
 }
 
+/// What traversal recorded about the nodes a field may select.
+pub(crate) struct FieldKinds<'a> {
+    /// Value-space kind of simple-typed element nodes.
+    pub node_kinds: &'a HashMap<crate::node::NodeId, crate::schema::xsd::primitive::PrimitiveKind>,
+    /// Value-space kind of attributes, keyed by (owner element, local name).
+    pub attr_kinds:
+        &'a HashMap<(crate::node::NodeId, String), crate::schema::xsd::primitive::PrimitiveKind>,
+    /// Element nodes whose type has no simple value.
+    pub no_simple_value: &'a HashSet<crate::node::NodeId>,
+}
+
 /// Evaluates all collected constraint tasks. Keys and uniques are processed
 /// first so keyrefs can resolve against the key tables.
 pub(crate) fn validate_identity_constraints(
     schema: &CompiledSchema,
     doc: &XmlDocument,
     tasks: &[ConstraintTask],
-    node_kinds: &HashMap<crate::node::NodeId, crate::schema::xsd::primitive::PrimitiveKind>,
-    attr_kinds: &HashMap<
-        (crate::node::NodeId, String),
-        crate::schema::xsd::primitive::PrimitiveKind,
-    >,
+    kinds: &FieldKinds<'_>,
 ) -> Vec<String> {
     let mut errors = Vec::new();
     // Key/unique tables by constraint local name, for keyref resolution.
@@ -63,8 +70,7 @@ pub(crate) fn validate_identity_constraints(
                         doc,
                         &selected,
                         f,
-                        node_kinds,
-                        attr_kinds,
+                        kinds,
                     )
                 })
                 .collect();
@@ -72,6 +78,17 @@ pub(crate) fn validate_identity_constraints(
             if outcomes.iter().any(|v| matches!(v, FieldOutcome::Multiple)) {
                 errors.push(format!(
                     "{} '{}': a field matches more than one node",
+                    if is_key { "key" } else { "unique" },
+                    task.constraint.name
+                ));
+                continue;
+            }
+            if outcomes
+                .iter()
+                .any(|v| matches!(v, FieldOutcome::NotSimple))
+            {
+                errors.push(format!(
+                    "{} '{}': a field selects an element without a simple value",
                     if is_key { "key" } else { "unique" },
                     task.constraint.name
                 ));
@@ -149,11 +166,20 @@ pub(crate) fn validate_identity_constraints(
                         doc,
                         &selected,
                         f,
-                        node_kinds,
-                        attr_kinds,
+                        kinds,
                     )
                 })
                 .collect();
+            if outcomes
+                .iter()
+                .any(|v| matches!(v, FieldOutcome::NotSimple))
+            {
+                errors.push(format!(
+                    "keyref '{}': a field selects an element without a simple value",
+                    task.constraint.name
+                ));
+                continue;
+            }
             if !outcomes.iter().all(|v| matches!(v, FieldOutcome::Value(_))) {
                 continue; // incomplete keyref tuples are not checked
             }
@@ -227,6 +253,8 @@ enum FieldOutcome {
     Absent,
     /// More than one node matched - an identity constraint violation
     Multiple,
+    /// The one matched node is an element without a simple value
+    NotSimple,
 }
 
 /// If `xpath` selects an attribute directly on the context node (`@name` or
@@ -250,11 +278,7 @@ fn field_value(
     doc: &XmlDocument,
     context: &XmlNode,
     xpath: &str,
-    node_kinds: &HashMap<crate::node::NodeId, crate::schema::xsd::primitive::PrimitiveKind>,
-    attr_kinds: &HashMap<
-        (crate::node::NodeId, String),
-        crate::schema::xsd::primitive::PrimitiveKind,
-    >,
+    kinds: &FieldKinds<'_>,
 ) -> FieldOutcome {
     let Some(query) = compile_with_schema_ns(schema, scoped, xpath) else {
         return FieldOutcome::Absent;
@@ -262,14 +286,18 @@ fn field_value(
     match query.eval_from(doc, context) {
         Ok(XPathResult::Nodes(nodes)) => match nodes.as_slice() {
             [] => FieldOutcome::Absent,
+            [node] if kinds.no_simple_value.contains(&node.id()) => FieldOutcome::NotSimple,
             [node] => {
                 // Compare in the field's value space (e.g. +0 and -0 are
                 // the same xs:decimal key). Attribute pseudo-nodes carry no
                 // recorded kind, so a field selecting an attribute directly on
                 // the selected node resolves its kind via the owner element.
                 let kind = match direct_attr_local(xpath) {
-                    Some(local) => attr_kinds.get(&(context.id(), local.to_string())).copied(),
-                    None => node_kinds.get(&node.id()).copied(),
+                    Some(local) => kinds
+                        .attr_kinds
+                        .get(&(context.id(), local.to_string()))
+                        .copied(),
+                    None => kinds.node_kinds.get(&node.id()).copied(),
                 };
                 FieldOutcome::Value(crate::schema::xsd::value_compare::identity_key(
                     kind,
