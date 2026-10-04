@@ -1,6 +1,7 @@
 //! Editable node for DOM manipulation during transformation.
 
 mod builder;
+mod insert;
 mod reference;
 mod serialize;
 mod types;
@@ -26,7 +27,7 @@ pub struct EditableNode {
     pub(crate) doc: XmlDocument,
     /// The root node ID of the matched subtree
     root_id: NodeId,
-    /// Pending modifications
+    /// Modifications made so far (each is applied to `doc` immediately)
     modifications: Vec<Modification>,
     /// Whether the node should be removed from output
     removed: bool,
@@ -158,18 +159,34 @@ impl EditableNode {
             .push(Modification::SetTextContent(text.to_string()));
     }
 
-    /// Appends a new child node.
+    /// Appends a new child node (after the existing children).
     pub fn append_child(&mut self, node: NewNode) {
+        insert::insert_new_node(
+            &self.doc,
+            self.root_id,
+            &node,
+            insert::InsertAt::Last,
+            &self.namespaces,
+        );
         self.modifications.push(Modification::AppendChild(node));
     }
 
-    /// Prepends a new child node.
+    /// Prepends a new child node (before the existing children).
     pub fn prepend_child(&mut self, node: NewNode) {
+        insert::insert_new_node(
+            &self.doc,
+            self.root_id,
+            &node,
+            insert::InsertAt::First,
+            &self.namespaces,
+        );
         self.modifications.push(Modification::PrependChild(node));
     }
 
-    /// Replaces text content while preserving structure.
+    /// Replaces every occurrence of `old` with `new` in the text (and CDATA)
+    /// of this element and its descendants, preserving the element structure.
     pub fn replace_text(&mut self, old: &str, new: &str) {
+        insert::replace_text_in_subtree(&self.doc, self.root_id, old, new);
         self.modifications.push(Modification::ReplaceText {
             old: old.to_string(),
             new: new.to_string(),
@@ -191,7 +208,7 @@ impl EditableNode {
         !self.modifications.is_empty() || self.removed
     }
 
-    /// Returns the pending modifications.
+    /// Returns the modifications made so far (already applied to the node).
     pub fn modifications(&self) -> &[Modification] {
         &self.modifications
     }

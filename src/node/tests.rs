@@ -281,7 +281,26 @@ fn test_xml_node_set_content() {
     let root = crate::compat::get_root_node(&doc).unwrap();
     let child = root.get_child_elements()[0].clone();
     child.set_content("new content");
-    // After set_content, children are cleared and content is set directly
+    // The element's children are replaced by a single text node
+    assert_eq!(child.get_content().as_deref(), Some("new content"));
+    let children = child.get_child_nodes();
+    assert_eq!(children.len(), 1);
+    assert!(children[0].is_text());
+    assert_eq!(children[0].get_parent().map(|p| p.id()), Some(child.id()));
+}
+
+#[test]
+fn test_xml_node_set_content_serializes() {
+    let doc = crate::parser::parse("<r><item>old<b/>text</item></r>").unwrap();
+    let item = doc.get_root_element().unwrap().get_child_elements()[0].clone();
+    item.set_content("a<b & c");
+    let out = crate::serialize::node_to_xml_string(&doc, &doc.get_root_element().unwrap()).unwrap();
+    assert_eq!(out, "<r><item>a&lt;b &amp; c</item></r>");
+
+    // Empty content leaves the element empty
+    item.set_content("");
+    assert_eq!(item.get_child_nodes().len(), 0);
+    assert_eq!(item.get_content(), None);
 }
 
 #[test]
