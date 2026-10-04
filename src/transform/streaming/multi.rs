@@ -9,8 +9,8 @@ use quick_xml::events::Event;
 use super::super::editable::EditableNodeBuilder;
 use super::super::error::{TransformError, TransformResult};
 use super::helpers::{
-    add_empty_to_builder, add_end_to_builder, add_start_to_builder, extract_element_info,
-    serialize_editable, xml_parse_error_with_location,
+    add_empty_to_builder, add_end_to_builder, add_pi_to_builder, add_start_to_builder,
+    extract_element_info, serialize_editable, split_bom, xml_parse_error_with_location,
 };
 use super::tracker::PathTracker;
 use super::{
@@ -138,6 +138,14 @@ pub fn process_for_each_multi<'a>(
                     if let Some(ref mut builder) = states[i].builder {
                         let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
                         builder.comment(text);
+                    }
+                }
+            }
+
+            Ok(Event::PI(e)) => {
+                for i in 0..states.len() {
+                    if let Some(ref mut builder) = states[i].builder {
+                        add_pi_to_builder(builder, &e)?;
                     }
                 }
             }
@@ -292,6 +300,14 @@ pub fn process_for_each_multi_with_context<'a>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                for i in 0..states.len() {
+                    if let Some(ref mut builder) = states[i].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
@@ -332,6 +348,9 @@ pub fn process_streaming_multi<'a, W: Write>(
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
@@ -485,6 +504,14 @@ pub fn process_streaming_multi<'a, W: Write>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -492,7 +519,8 @@ pub fn process_streaming_multi<'a, W: Write>(
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {
@@ -526,6 +554,9 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
@@ -688,6 +719,14 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -695,7 +734,8 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {

@@ -11,8 +11,8 @@ use super::super::editable::{EditableNode, EditableNodeBuilder};
 use super::super::error::{TransformError, TransformResult};
 use super::super::xpath_analyze::StreamableXPath;
 use super::helpers::{
-    add_empty_to_builder, add_end_to_builder, add_start_to_builder, extract_element_info,
-    serialize_editable, xml_parse_error_at_offset,
+    add_empty_to_builder, add_end_to_builder, add_pi_to_builder, add_start_to_builder, copy_bom,
+    extract_element_info, serialize_editable, xml_parse_error_at_offset,
 };
 use super::tracker::PathTracker;
 use super::{HandlerState, MultiHandler, MultiTransformHandler, TransformHandlerState};
@@ -118,6 +118,12 @@ where
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    add_pi_to_builder(builder, &e)?;
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
@@ -161,6 +167,9 @@ where
     W: Write,
     F: FnMut(&mut EditableNode),
 {
+    let mut reader = reader;
+    copy_bom(&mut reader, writer)?;
+
     let mut xml_reader = Reader::from_reader(reader);
     xml_reader.config_mut().trim_text(false);
 
@@ -289,12 +298,24 @@ where
                 }
             }
 
+            Ok(ref event @ Event::PI(_)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    if let Event::PI(e) = event {
+                        add_pi_to_builder(builder, e)?;
+                    }
+                } else {
+                    xml_writer
+                        .write_event(event.clone())
+                        .map_err(|err| TransformError::Io(std::io::Error::other(err)))?;
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
 
             Ok(event) => {
-                // PI, Decl, DocType - pass through
+                // Decl, DocType - pass through
                 xml_writer
                     .write_event(event)
                     .map_err(|err| TransformError::Io(std::io::Error::other(err)))?;
@@ -433,6 +454,14 @@ where
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                for i in 0..states.len() {
+                    if let Some(ref mut builder) = states[i].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
@@ -471,6 +500,9 @@ where
     R: BufRead,
     W: Write,
 {
+    let mut reader = reader;
+    copy_bom(&mut reader, writer)?;
+
     let mut xml_reader = Reader::from_reader(reader);
     xml_reader.config_mut().trim_text(false);
 
@@ -629,6 +661,20 @@ where
                         if let Event::Comment(e) = event {
                             let text = std::str::from_utf8(e).map_err(TransformError::Utf8)?;
                             builder.comment(text);
+                        }
+                    }
+                } else {
+                    xml_writer
+                        .write_event(event.clone())
+                        .map_err(|err| TransformError::Io(std::io::Error::other(err)))?;
+                }
+            }
+
+            Ok(ref event @ Event::PI(_)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        if let Event::PI(e) = event {
+                            add_pi_to_builder(builder, e)?;
                         }
                     }
                 } else {

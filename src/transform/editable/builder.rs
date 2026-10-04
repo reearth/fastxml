@@ -82,6 +82,11 @@ impl EditableNodeBuilder {
         self.builder.comment(content);
     }
 
+    /// Adds a processing instruction.
+    pub fn processing_instruction(&mut self, target: &str, content: Option<&str>) {
+        self.builder.processing_instruction(target, content);
+    }
+
     /// Returns true if the subtree is complete (depth returned to 0).
     pub fn is_complete(&self) -> bool {
         self.depth == 0

@@ -1,7 +1,7 @@
 //! Helper types and functions for streaming processing.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{BufRead, Write};
 
 use crate::namespace::Namespace;
 use crate::serialize::{SerializeOptions, node_to_xml_string_with_options};
@@ -11,7 +11,48 @@ use super::super::error::{ErrorLocation, TransformError, TransformResult};
 use super::tracker::ElementInfo;
 #[cfg(doc)]
 use super::tracker::PathTracker;
-use quick_xml::events::{BytesEnd, BytesStart};
+use quick_xml::events::{BytesEnd, BytesPI, BytesStart};
+
+/// The UTF-8 byte-order mark.
+pub(crate) const UTF8_BOM: &str = "\u{feff}";
+
+/// Splits a leading UTF-8 byte-order mark off `input`: `(bom, rest)`.
+///
+/// quick-xml skips the BOM and reports `buffer_position()` relative to the
+/// text after it, so the zero-copy engines slice `rest` with those offsets
+/// and write `bom` to the output first.
+pub(crate) fn split_bom(input: &str) -> (&str, &str) {
+    match input.strip_prefix(UTF8_BOM) {
+        Some(rest) => (UTF8_BOM, rest),
+        None => ("", input),
+    }
+}
+
+/// Writes a UTF-8 byte-order mark at the start of `reader` (without consuming
+/// it) to `writer`. quick-xml skips the BOM, so the reader-based engines would
+/// otherwise drop it from their output.
+pub(crate) fn copy_bom<R: BufRead, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+) -> TransformResult<()> {
+    if reader.fill_buf()?.starts_with(UTF8_BOM.as_bytes()) {
+        writer.write_all(UTF8_BOM.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Adds a processing instruction event to a subtree being built.
+pub(crate) fn add_pi_to_builder(
+    builder: &mut EditableNodeBuilder,
+    e: &BytesPI,
+) -> TransformResult<()> {
+    let target = std::str::from_utf8(e.target()).map_err(TransformError::Utf8)?;
+    let content = std::str::from_utf8(e.content()).map_err(TransformError::Utf8)?;
+    // The content starts with the whitespace separating it from the target
+    let content = content.trim_start();
+    builder.processing_instruction(target, (!content.is_empty()).then_some(content));
+    Ok(())
+}
 
 /// Creates an XML parse error with location information.
 pub(crate) fn xml_parse_error_with_location(
