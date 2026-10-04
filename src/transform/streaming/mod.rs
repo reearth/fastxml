@@ -24,6 +24,8 @@ pub use single::{
 };
 pub use tracker::{ElementInfo, PathTracker};
 
+pub(crate) use helpers::{add_pi_to_builder, extract_element_info, split_bom};
+
 /// Handler pair for multi-xpath processing: (xpath, callback).
 pub type MultiHandler<'a> = (&'a StreamableXPath, &'a mut dyn FnMut(&mut EditableNode));
 

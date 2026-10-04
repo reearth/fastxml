@@ -11,8 +11,8 @@ use super::super::editable::{EditableNode, EditableNodeBuilder};
 use super::super::error::{TransformError, TransformResult};
 use super::super::xpath_analyze::StreamableXPath;
 use super::helpers::{
-    add_empty_to_builder, add_end_to_builder, add_start_to_builder, extract_element_info,
-    serialize_editable, xml_parse_error_with_location,
+    add_empty_to_builder, add_end_to_builder, add_pi_to_builder, add_start_to_builder,
+    extract_element_info, serialize_editable, split_bom, xml_parse_error_with_location,
 };
 use super::tracker::PathTracker;
 
@@ -28,6 +28,9 @@ where
     W: Write,
     F: FnMut(&mut EditableNode),
 {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
@@ -143,6 +146,12 @@ where
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    add_pi_to_builder(builder, &e)?;
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -150,7 +159,8 @@ where
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {
@@ -182,6 +192,9 @@ where
     W: Write,
     F: FnMut(&mut EditableNode, &TransformContext),
 {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
@@ -306,6 +319,12 @@ where
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    add_pi_to_builder(builder, &e)?;
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -313,7 +332,8 @@ where
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {
@@ -432,6 +452,12 @@ where
                 if let Some(ref mut builder) = subtree_builder {
                     let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
                     builder.comment(text);
+                }
+            }
+
+            Ok(Event::PI(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    add_pi_to_builder(builder, &e)?;
                 }
             }
 
@@ -563,6 +589,12 @@ where
                 if let Some(ref mut builder) = subtree_builder {
                     let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
                     builder.comment(text);
+                }
+            }
+
+            Ok(Event::PI(e)) => {
+                if let Some(ref mut builder) = subtree_builder {
+                    add_pi_to_builder(builder, &e)?;
                 }
             }
 

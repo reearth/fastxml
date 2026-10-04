@@ -86,6 +86,7 @@ impl XmlNode {
             NodeType::Text
             | NodeType::CData
             | NodeType::Comment
+            | NodeType::ProcessingInstruction
             | NodeType::Attribute
             | NodeType::Namespace => node.content.clone(),
             NodeType::Element => {
