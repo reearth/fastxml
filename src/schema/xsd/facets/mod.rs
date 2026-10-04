@@ -34,8 +34,16 @@ use regex::Regex;
 use crate::error::Result;
 use crate::schema::types::{CompiledSchema, SimpleType, TypeDef};
 
+mod pattern;
+
+use self::pattern::compile_xsd_pattern;
 use super::primitive::PrimitiveKind;
 use super::value_compare::compare_values;
+
+/// Nesting bound for list item / union member types when building
+/// [`FacetConstraints`] (schemas reject cyclic definitions, so this only
+/// guards against pathological depth).
+const MAX_NESTED_TYPE_DEPTH: usize = 16;
 
 /// Whitespace handling modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -143,6 +151,11 @@ pub enum FacetError {
         /// Why the item is invalid
         message: String,
     },
+    /// A union value is not valid against any of the union's member types
+    NoMatchingUnionMember {
+        /// The value that failed validation
+        value: String,
+    },
 }
 
 impl std::fmt::Display for FacetError {
@@ -198,6 +211,13 @@ impl std::fmt::Display for FacetError {
             FacetError::InvalidListItem { item, message } => {
                 write!(f, "list item '{}': {}", item, message)
             }
+            FacetError::NoMatchingUnionMember { value } => {
+                write!(
+                    f,
+                    "value '{}' is not valid for any member type of the union",
+                    value
+                )
+            }
         }
     }
 }
@@ -242,6 +262,14 @@ pub struct FacetConstraints {
     pub is_list: bool,
     /// Primitive kind of the item type for list types.
     pub item_kind: Option<PrimitiveKind>,
+    /// Constraints of a list's item type (its facets and value space), each
+    /// item being validated against them. `None` when the item type has no
+    /// definition to resolve; `item_kind` then still checks the items.
+    pub item_constraints: Option<Arc<FacetConstraints>>,
+    /// Constraints of each member type of a union: a value is valid when it
+    /// is valid against at least one member. Empty for non-union types, and
+    /// when a member could not be resolved (the union is then not checked).
+    pub member_constraints: Vec<Arc<FacetConstraints>>,
 }
 
 impl FacetConstraints {
@@ -259,6 +287,12 @@ impl FacetConstraints {
     /// value space and list variety are resolved so range and length facets
     /// can be applied with the right semantics.
     pub fn from_simple_type(schema: &CompiledSchema, simple: &SimpleType) -> Self {
+        Self::build(schema, simple, 0)
+    }
+
+    /// [`from_simple_type`](Self::from_simple_type), with the nesting depth
+    /// of list item / union member types bounding the recursion.
+    fn build(schema: &CompiledSchema, simple: &SimpleType, depth: usize) -> Self {
         let mut c = FacetConstraints::new();
         c.value_kind = PrimitiveKind::resolve(schema, simple);
 
@@ -307,13 +341,32 @@ impl FacetConstraints {
 
             if let Some(ref item_type) = current.item_type {
                 c.is_list = true;
-                // C4: ns-first item-type resolution (string fallback inside
+                // ns-first item-type resolution (string fallback inside
                 // type_by_ref), keeping the name-shape fallback for built-ins
-                // that have no definition entry.
-                c.item_kind = match schema.type_by_ref(current.item_ns.as_ref(), item_type) {
-                    Some(TypeDef::Simple(item)) => PrimitiveKind::resolve(schema, item),
-                    _ => PrimitiveKind::from_type_name(item_type),
+                // that have no definition entry. An anonymous item type
+                // carries its own facets.
+                let item_def = match current.item_inline.as_deref() {
+                    Some(inline) => Some(inline),
+                    None => match schema.type_by_ref(current.item_ns.as_ref(), item_type) {
+                        Some(TypeDef::Simple(item)) => Some(item),
+                        _ => None,
+                    },
                 };
+                c.item_kind = match item_def {
+                    Some(item) => PrimitiveKind::resolve(schema, item),
+                    None => PrimitiveKind::from_type_name(item_type),
+                };
+                if depth < MAX_NESTED_TYPE_DEPTH {
+                    c.item_constraints =
+                        item_def.map(|item| Arc::new(Self::build(schema, item, depth + 1)));
+                }
+                break;
+            }
+
+            if !current.member_types.is_empty() || !current.inline_members.is_empty() {
+                if depth < MAX_NESTED_TYPE_DEPTH {
+                    c.member_constraints = Self::union_members(schema, current, depth);
+                }
                 break;
             }
 
@@ -336,6 +389,37 @@ impl FacetConstraints {
 
         let _ = c.compile_patterns();
         c
+    }
+
+    /// Builds the constraints of every member type of a union, or none when
+    /// some member cannot be resolved (checking against an incomplete member
+    /// set would reject values of the missing member).
+    fn union_members(
+        schema: &CompiledSchema,
+        union: &SimpleType,
+        depth: usize,
+    ) -> Vec<Arc<FacetConstraints>> {
+        let mut members = Vec::new();
+        for (i, name) in union.member_types.iter().enumerate() {
+            let ns = union.member_ns.get(i).and_then(Option::as_ref);
+            match schema.type_by_ref(ns, name) {
+                Some(TypeDef::Simple(member)) => {
+                    members.push(Arc::new(Self::build(schema, member, depth + 1)))
+                }
+                _ => match PrimitiveKind::from_type_name(name) {
+                    Some(kind) => members.push(Arc::new(FacetConstraints {
+                        value_kind: Some(kind),
+                        whitespace: WhitespaceHandling::Collapse,
+                        ..FacetConstraints::new()
+                    })),
+                    None => return Vec::new(),
+                },
+            }
+        }
+        for member in &union.inline_members {
+            members.push(Arc::new(Self::build(schema, member, depth + 1)));
+        }
+        members
     }
 
     /// Sets the length constraint.
@@ -455,6 +539,7 @@ impl<'a> FacetValidator<'a> {
 
     /// Validates a string value against all facet constraints.
     pub fn validate(&self, value: &str) -> std::result::Result<(), FacetError> {
+        let raw = value;
         // Apply whitespace handling first
         let processed = self.apply_whitespace(value);
         let value: &str = &processed;
@@ -477,7 +562,34 @@ impl<'a> FacetValidator<'a> {
         // Item-level checks for list types
         self.validate_list_items(value)?;
 
+        // Member-type check for union types (each member normalizes the
+        // value itself)
+        self.validate_union_members(raw)?;
+
         Ok(())
+    }
+
+    /// Validates a value against both the facets and the primitive value
+    /// space described by `constraints`.
+    fn accepts(constraints: &FacetConstraints, value: &str) -> std::result::Result<(), String> {
+        FacetValidator::new(constraints)
+            .validate(value)
+            .map_err(|e| e.to_string())?;
+        if let Some(kind) = constraints.value_kind {
+            kind.validate(value).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Checks that a union value is valid against at least one member type.
+    fn validate_union_members(&self, value: &str) -> std::result::Result<(), FacetError> {
+        let members = &self.constraints.member_constraints;
+        if members.is_empty() || members.iter().any(|m| Self::accepts(m, value).is_ok()) {
+            return Ok(());
+        }
+        Err(FacetError::NoMatchingUnionMember {
+            value: value.trim().to_string(),
+        })
     }
 
     /// Validates the XSD 1.1 explicitTimezone facet on temporal values.
@@ -503,6 +615,17 @@ impl<'a> FacetValidator<'a> {
     /// Validates each item of a list value against the list's item type.
     fn validate_list_items(&self, value: &str) -> std::result::Result<(), FacetError> {
         if !self.constraints.is_list {
+            return Ok(());
+        }
+        if let Some(item) = self.constraints.item_constraints.as_deref() {
+            for token in value.split_whitespace() {
+                if let Err(message) = Self::accepts(item, token) {
+                    return Err(FacetError::InvalidListItem {
+                        item: token.to_string(),
+                        message,
+                    });
+                }
+            }
             return Ok(());
         }
         let Some(item_kind) = self.constraints.item_kind else {
@@ -740,324 +863,6 @@ impl<'a> FacetValidator<'a> {
     }
 }
 
-/// XML NameStartChar set, as Rust regex character class members.
-const NAME_START_CHARS: &str = ":A-Z_a-z\\x{C0}-\\x{D6}\\x{D8}-\\x{F6}\\x{F8}-\\x{2FF}\\x{370}-\\x{37D}\\x{37F}-\\x{1FFF}\\x{200C}-\\x{200D}\\x{2070}-\\x{218F}\\x{2C00}-\\x{2FEF}\\x{3001}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFFD}\\x{10000}-\\x{EFFFF}";
-
-/// XML NameChar set (NameStartChar plus `- . 0-9 · ̀-ͯ ‿-⁀`).
-const NAME_CHARS: &str = "\\-.0-9\\x{B7}\\x{300}-\\x{36F}\\x{203F}-\\x{2040}:A-Z_a-z\\x{C0}-\\x{D6}\\x{D8}-\\x{F6}\\x{F8}-\\x{2FF}\\x{370}-\\x{37D}\\x{37F}-\\x{1FFF}\\x{200C}-\\x{200D}\\x{2070}-\\x{218F}\\x{2C00}-\\x{2FEF}\\x{3001}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFFD}\\x{10000}-\\x{EFFFF}";
-
-/// XSD `\s` set: exactly space, tab, newline, carriage return (unlike Rust's
-/// Unicode-aware `\s`).
-const XSD_SPACE_CHARS: &str = " \\t\\n\\r";
-
-/// XSD `\w` is "everything except punctuation, separators, and other"
-/// (`[#x0-#x10FFFF] - [\p{P}\p{Z}\p{C}]`), which is wider than Rust's `\w`.
-const XSD_NON_WORD_CHARS: &str = "\\p{P}\\p{Z}\\p{C}";
-
-/// Translates an XSD regular expression to Rust regex syntax:
-///
-/// - `\i` / `\I` / `\c` / `\C` (XML name character escapes) are expanded to
-///   explicit character classes,
-/// - `\s` / `\S` / `\w` / `\W` are redefined to XSD's sets,
-/// - `\p{IsBlock}` Unicode block escapes become explicit code-point ranges,
-/// - character class subtraction `[a-z-[aeiou]]` becomes Rust's
-///   `[a-z--[aeiou]]` difference syntax,
-/// - `^` and `$` are literal characters in XSD; escape them outside classes.
-fn translate_xsd_pattern(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len() + 16);
-    let mut chars = pattern.chars().peekable();
-    let mut class_depth = 0usize;
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => {
-                let Some(&next) = chars.peek() else {
-                    out.push('\\');
-                    break;
-                };
-                match next {
-                    'i' => {
-                        chars.next();
-                        if class_depth > 0 {
-                            out.push_str(NAME_START_CHARS);
-                        } else {
-                            out.push('[');
-                            out.push_str(NAME_START_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'c' => {
-                        chars.next();
-                        if class_depth > 0 {
-                            out.push_str(NAME_CHARS);
-                        } else {
-                            out.push('[');
-                            out.push_str(NAME_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'I' => {
-                        chars.next();
-                        // Negated classes can't be embedded inside another
-                        // class; only translate at top level.
-                        if class_depth == 0 {
-                            out.push_str("[^");
-                            out.push_str(NAME_START_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'C' => {
-                        chars.next();
-                        if class_depth == 0 {
-                            out.push_str("[^");
-                            out.push_str(NAME_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    's' => {
-                        chars.next();
-                        if class_depth > 0 {
-                            out.push_str(XSD_SPACE_CHARS);
-                        } else {
-                            out.push('[');
-                            out.push_str(XSD_SPACE_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'S' => {
-                        chars.next();
-                        if class_depth == 0 {
-                            out.push_str("[^");
-                            out.push_str(XSD_SPACE_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'w' => {
-                        chars.next();
-                        if class_depth == 0 {
-                            out.push_str("[^");
-                            out.push_str(XSD_NON_WORD_CHARS);
-                            out.push(']');
-                        } else {
-                            // Approximation: cannot negate inside a class
-                            out.push_str("\\w");
-                        }
-                    }
-                    'W' => {
-                        chars.next();
-                        if class_depth > 0 {
-                            out.push_str(XSD_NON_WORD_CHARS);
-                        } else {
-                            out.push('[');
-                            out.push_str(XSD_NON_WORD_CHARS);
-                            out.push(']');
-                        }
-                    }
-                    'p' | 'P' => {
-                        chars.next();
-                        translate_property_escape(next == 'P', &mut chars, class_depth, &mut out);
-                    }
-                    _ => {
-                        out.push('\\');
-                        out.push(next);
-                        chars.next();
-                    }
-                }
-            }
-            '[' => {
-                class_depth += 1;
-                out.push('[');
-            }
-            ']' => {
-                class_depth = class_depth.saturating_sub(1);
-                out.push(']');
-            }
-            '-' if class_depth > 0 && chars.peek() == Some(&'[') => {
-                // XSD class subtraction → Rust class difference
-                out.push_str("--");
-            }
-            '^' if class_depth == 0 => out.push_str("\\^"),
-            '$' if class_depth == 0 => out.push_str("\\$"),
-            _ => out.push(ch),
-        }
-    }
-
-    out
-}
-
-/// Translates a `\p{...}` / `\P{...}` property escape. General categories
-/// pass through to Rust's engine; `Is...` Unicode block names (which Rust
-/// does not support) are expanded to explicit code-point ranges.
-fn translate_property_escape(
-    negated: bool,
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-    class_depth: usize,
-    out: &mut String,
-) {
-    // Collect "{...}" if present; otherwise pass through verbatim.
-    if chars.peek() != Some(&'{') {
-        out.push('\\');
-        out.push(if negated { 'P' } else { 'p' });
-        return;
-    }
-    let mut name = String::new();
-    chars.next(); // consume '{'
-    for c in chars.by_ref() {
-        if c == '}' {
-            break;
-        }
-        name.push(c);
-    }
-
-    if let Some(block) = name.strip_prefix("Is") {
-        if let Some(ranges) = unicode_block_ranges(block) {
-            if class_depth > 0 {
-                // Embed the ranges as members (negation unsupported here)
-                if !negated {
-                    out.push_str(ranges);
-                } else {
-                    // Force a compile failure rather than wrong semantics
-                    out.push_str("\\P{unsupported-in-class}");
-                }
-            } else {
-                out.push('[');
-                if negated {
-                    out.push('^');
-                }
-                out.push_str(ranges);
-                out.push(']');
-            }
-        } else {
-            // Unknown block: emit something uncompilable so the pattern is
-            // skipped instead of misinterpreted.
-            out.push_str("\\p{unknown-block}");
-        }
-    } else {
-        // General category / script: Rust regex understands these natively.
-        out.push('\\');
-        out.push(if negated { 'P' } else { 'p' });
-        out.push('{');
-        out.push_str(&name);
-        out.push('}');
-    }
-}
-
-/// Code-point ranges (as Rust regex class members) for the Unicode 3.1
-/// blocks XSD 1.0 block escapes refer to.
-fn unicode_block_ranges(block: &str) -> Option<&'static str> {
-    Some(match block {
-        "BasicLatin" => "\\x{0000}-\\x{007F}",
-        "Latin-1Supplement" => "\\x{0080}-\\x{00FF}",
-        "LatinExtended-A" => "\\x{0100}-\\x{017F}",
-        "LatinExtended-B" => "\\x{0180}-\\x{024F}",
-        "IPAExtensions" => "\\x{0250}-\\x{02AF}",
-        "SpacingModifierLetters" => "\\x{02B0}-\\x{02FF}",
-        "CombiningDiacriticalMarks" => "\\x{0300}-\\x{036F}",
-        "Greek" => "\\x{0370}-\\x{03FF}",
-        "Cyrillic" => "\\x{0400}-\\x{04FF}",
-        "Armenian" => "\\x{0530}-\\x{058F}",
-        "Hebrew" => "\\x{0590}-\\x{05FF}",
-        "Arabic" => "\\x{0600}-\\x{06FF}",
-        "Syriac" => "\\x{0700}-\\x{074F}",
-        "Thaana" => "\\x{0780}-\\x{07BF}",
-        "Devanagari" => "\\x{0900}-\\x{097F}",
-        "Bengali" => "\\x{0980}-\\x{09FF}",
-        "Gurmukhi" => "\\x{0A00}-\\x{0A7F}",
-        "Gujarati" => "\\x{0A80}-\\x{0AFF}",
-        "Oriya" => "\\x{0B00}-\\x{0B7F}",
-        "Tamil" => "\\x{0B80}-\\x{0BFF}",
-        "Telugu" => "\\x{0C00}-\\x{0C7F}",
-        "Kannada" => "\\x{0C80}-\\x{0CFF}",
-        "Malayalam" => "\\x{0D00}-\\x{0D7F}",
-        "Sinhala" => "\\x{0D80}-\\x{0DFF}",
-        "Thai" => "\\x{0E00}-\\x{0E7F}",
-        "Lao" => "\\x{0E80}-\\x{0EFF}",
-        "Tibetan" => "\\x{0F00}-\\x{0FFF}",
-        "Myanmar" => "\\x{1000}-\\x{109F}",
-        "Georgian" => "\\x{10A0}-\\x{10FF}",
-        "HangulJamo" => "\\x{1100}-\\x{11FF}",
-        "Ethiopic" => "\\x{1200}-\\x{137F}",
-        "Cherokee" => "\\x{13A0}-\\x{13FF}",
-        "UnifiedCanadianAboriginalSyllabics" => "\\x{1400}-\\x{167F}",
-        "Ogham" => "\\x{1680}-\\x{169F}",
-        "Runic" => "\\x{16A0}-\\x{16FF}",
-        "Khmer" => "\\x{1780}-\\x{17FF}",
-        "Mongolian" => "\\x{1800}-\\x{18AF}",
-        "LatinExtendedAdditional" => "\\x{1E00}-\\x{1EFF}",
-        "GreekExtended" => "\\x{1F00}-\\x{1FFF}",
-        "GeneralPunctuation" => "\\x{2000}-\\x{206F}",
-        "SuperscriptsandSubscripts" => "\\x{2070}-\\x{209F}",
-        "CurrencySymbols" => "\\x{20A0}-\\x{20CF}",
-        "CombiningMarksforSymbols" => "\\x{20D0}-\\x{20FF}",
-        "LetterlikeSymbols" => "\\x{2100}-\\x{214F}",
-        "NumberForms" => "\\x{2150}-\\x{218F}",
-        "Arrows" => "\\x{2190}-\\x{21FF}",
-        "MathematicalOperators" => "\\x{2200}-\\x{22FF}",
-        "MiscellaneousTechnical" => "\\x{2300}-\\x{23FF}",
-        "ControlPictures" => "\\x{2400}-\\x{243F}",
-        "OpticalCharacterRecognition" => "\\x{2440}-\\x{245F}",
-        "EnclosedAlphanumerics" => "\\x{2460}-\\x{24FF}",
-        "BoxDrawing" => "\\x{2500}-\\x{257F}",
-        "BlockElements" => "\\x{2580}-\\x{259F}",
-        "GeometricShapes" => "\\x{25A0}-\\x{25FF}",
-        "MiscellaneousSymbols" => "\\x{2600}-\\x{26FF}",
-        "Dingbats" => "\\x{2700}-\\x{27BF}",
-        "BraillePatterns" => "\\x{2800}-\\x{28FF}",
-        "CJKRadicalsSupplement" => "\\x{2E80}-\\x{2EFF}",
-        "KangxiRadicals" => "\\x{2F00}-\\x{2FDF}",
-        "IdeographicDescriptionCharacters" => "\\x{2FF0}-\\x{2FFF}",
-        "CJKSymbolsandPunctuation" => "\\x{3000}-\\x{303F}",
-        "Hiragana" => "\\x{3040}-\\x{309F}",
-        "Katakana" => "\\x{30A0}-\\x{30FF}",
-        "Bopomofo" => "\\x{3100}-\\x{312F}",
-        "HangulCompatibilityJamo" => "\\x{3130}-\\x{318F}",
-        "Kanbun" => "\\x{3190}-\\x{319F}",
-        "BopomofoExtended" => "\\x{31A0}-\\x{31BF}",
-        "EnclosedCJKLettersandMonths" => "\\x{3200}-\\x{32FF}",
-        "CJKCompatibility" => "\\x{3300}-\\x{33FF}",
-        "CJKUnifiedIdeographsExtensionA" => "\\x{3400}-\\x{4DBF}",
-        "CJKUnifiedIdeographs" => "\\x{4E00}-\\x{9FFF}",
-        "YiSyllables" => "\\x{A000}-\\x{A48F}",
-        "YiRadicals" => "\\x{A490}-\\x{A4CF}",
-        "HangulSyllables" => "\\x{AC00}-\\x{D7AF}",
-        "PrivateUse" => "\\x{E000}-\\x{F8FF}\\x{F0000}-\\x{FFFFD}\\x{100000}-\\x{10FFFD}",
-        "CJKCompatibilityIdeographs" => "\\x{F900}-\\x{FAFF}",
-        "AlphabeticPresentationForms" => "\\x{FB00}-\\x{FB4F}",
-        "ArabicPresentationForms-A" => "\\x{FB50}-\\x{FDFF}",
-        "CombiningHalfMarks" => "\\x{FE20}-\\x{FE2F}",
-        "CJKCompatibilityForms" => "\\x{FE30}-\\x{FE4F}",
-        "SmallFormVariants" => "\\x{FE50}-\\x{FE6F}",
-        "ArabicPresentationForms-B" => "\\x{FE70}-\\x{FEFE}",
-        "Specials" => "\\x{FEFF}\\x{FFF0}-\\x{FFFD}",
-        "HalfwidthandFullwidthForms" => "\\x{FF00}-\\x{FFEF}",
-        "OldItalic" => "\\x{10300}-\\x{1032F}",
-        "Gothic" => "\\x{10330}-\\x{1034F}",
-        "Deseret" => "\\x{10400}-\\x{1044F}",
-        "ByzantineMusicalSymbols" => "\\x{1D000}-\\x{1D0FF}",
-        "MusicalSymbols" => "\\x{1D100}-\\x{1D1FF}",
-        "MathematicalAlphanumericSymbols" => "\\x{1D400}-\\x{1D7FF}",
-        "CJKUnifiedIdeographsExtensionB" => "\\x{20000}-\\x{2A6DF}",
-        "CJKCompatibilityIdeographsSupplement" => "\\x{2F800}-\\x{2FA1F}",
-        "Tags" => "\\x{E0000}-\\x{E007F}",
-        _ => return None,
-    })
-}
-
-/// Compiles an XSD pattern to an anchored Rust [`Regex`], translating
-/// XSD-specific constructs first. Returns `None` (with a log) when the
-/// pattern uses constructs the regex engine cannot express.
-fn compile_xsd_pattern(pattern: &str) -> Option<Regex> {
-    let translated = translate_xsd_pattern(pattern);
-    let anchored = format!("^(?:{})$", translated);
-    match Regex::new(&anchored) {
-        Ok(regex) => Some(regex),
-        Err(e) => {
-            tracing::warn!("Unsupported XSD pattern '{}': {}", pattern, e);
-            None
-        }
-    }
-}
-
 /// Counts significant digits in a numeric string per XSD `totalDigits`:
 /// leading zeros of the integer part and trailing zeros of the fraction part
 /// don't count, but trailing zeros of an integer do (e.g. "100" has 3).
@@ -1147,147 +952,4 @@ fn count_fraction_digits(value: &str) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_length_validation() {
-        let constraints = FacetConstraints::new()
-            .with_min_length(2)
-            .with_max_length(5);
-
-        let validator = FacetValidator::new(&constraints);
-
-        assert!(validator.validate("ab").is_ok());
-        assert!(validator.validate("abcde").is_ok());
-        assert!(validator.validate("a").is_err());
-        assert!(validator.validate("abcdef").is_err());
-    }
-
-    #[test]
-    fn test_exact_length() {
-        let constraints = FacetConstraints::new().with_length(3);
-        let validator = FacetValidator::new(&constraints);
-
-        assert!(validator.validate("abc").is_ok());
-        assert!(validator.validate("ab").is_err());
-        assert!(validator.validate("abcd").is_err());
-    }
-
-    #[test]
-    fn test_enumeration() {
-        let constraints = FacetConstraints::new().with_enumeration(["red", "green", "blue"]);
-
-        let validator = FacetValidator::new(&constraints);
-
-        assert!(validator.validate("red").is_ok());
-        assert!(validator.validate("green").is_ok());
-        assert!(validator.validate("yellow").is_err());
-    }
-
-    #[test]
-    fn test_pattern() {
-        // Pattern `[a-z]+` matches one or more lowercase letters
-        let mut constraints = FacetConstraints::new().with_pattern(r"[a-z]+");
-        constraints.compile_patterns().unwrap();
-
-        let validator = FacetValidator::new(&constraints);
-
-        // Valid: all lowercase letters
-        assert!(validator.validate("hello").is_ok());
-        assert!(validator.validate("world").is_ok());
-
-        // Invalid: contains uppercase
-        assert!(validator.validate("Hello").is_err());
-
-        // Invalid: contains numbers
-        assert!(validator.validate("hello123").is_err());
-
-        // Invalid: empty string (pattern requires at least one char)
-        assert!(validator.validate("").is_err());
-
-        // Pattern is stored
-        assert_eq!(constraints.patterns.len(), 1);
-        assert_eq!(constraints.compiled_patterns.len(), 1);
-    }
-
-    #[test]
-    fn test_pattern_multiple() {
-        // Multiple patterns - all must match
-        let mut constraints = FacetConstraints::new()
-            .with_pattern(r"[a-z]+")
-            .with_pattern(r".{3,}"); // At least 3 characters
-        constraints.compile_patterns().unwrap();
-
-        let validator = FacetValidator::new(&constraints);
-
-        // Valid: lowercase and at least 3 chars
-        assert!(validator.validate("hello").is_ok());
-
-        // Invalid: too short
-        assert!(validator.validate("hi").is_err());
-
-        // Invalid: contains uppercase
-        assert!(validator.validate("Hello").is_err());
-    }
-
-    #[test]
-    fn test_numeric_range() {
-        let constraints = FacetConstraints::new()
-            .with_min_inclusive("0")
-            .with_max_inclusive("100");
-
-        let validator = FacetValidator::new(&constraints);
-
-        assert!(validator.validate("0").is_ok());
-        assert!(validator.validate("50").is_ok());
-        assert!(validator.validate("100").is_ok());
-        assert!(validator.validate("-1").is_err());
-        assert!(validator.validate("101").is_err());
-    }
-
-    #[test]
-    fn test_whitespace_collapse() {
-        let constraints = FacetConstraints::new()
-            .with_whitespace(WhitespaceHandling::Collapse)
-            .with_enumeration(["hello world"]);
-
-        let validator = FacetValidator::new(&constraints);
-
-        // Multiple spaces should collapse to one
-        assert!(validator.validate("hello  world").is_ok());
-        assert!(validator.validate("  hello   world  ").is_ok());
-    }
-
-    #[test]
-    fn test_fraction_digits() {
-        let constraints = FacetConstraints {
-            fraction_digits: Some(2),
-            ..Default::default()
-        };
-
-        let validator = FacetValidator::new(&constraints);
-
-        assert!(validator.validate("1.23").is_ok());
-        assert!(validator.validate("1.2").is_ok());
-        assert!(validator.validate("1").is_ok());
-        assert!(validator.validate("1.234").is_err());
-    }
-
-    #[test]
-    fn test_count_significant_digits() {
-        assert_eq!(count_significant_digits("123"), 3);
-        assert_eq!(count_significant_digits("1.23"), 3);
-        assert_eq!(count_significant_digits("0.123"), 3);
-        assert_eq!(count_significant_digits("-123"), 3);
-        assert_eq!(count_significant_digits("00123"), 3);
-    }
-
-    #[test]
-    fn test_count_fraction_digits() {
-        assert_eq!(count_fraction_digits("1.23"), 2);
-        assert_eq!(count_fraction_digits("1"), 0);
-        assert_eq!(count_fraction_digits("1.0"), 1);
-        assert_eq!(count_fraction_digits("1.234"), 3);
-    }
-}
+mod tests;
