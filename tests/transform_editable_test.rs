@@ -367,3 +367,78 @@ fn test_collect_multi_three_xpaths() {
     assert_eq!(b_vals, vec!["2", "5"]);
     assert_eq!(c_vals, vec!["3", "6"]);
 }
+
+// =============================================================================
+// Structural modifications appear in the output
+// =============================================================================
+
+mod modification_output_tests {
+    use super::*;
+    use fastxml::transform::NewNode;
+    use indexmap::IndexMap;
+
+    const XML: &str = "<root><item>Hello</item></root>";
+
+    fn transform(f: impl FnMut(&mut EditableNode)) -> String {
+        Transformer::from(XML).on("//item", f).to_string().unwrap()
+    }
+
+    #[test]
+    fn test_set_text_content_is_written() {
+        let out = transform(|n| n.set_text_content("a<b & c"));
+        assert_eq!(out, "<root><item>a&lt;b &amp; c</item></root>");
+    }
+
+    #[test]
+    fn test_append_child_is_written() {
+        let out = transform(|n| n.append_child(NewNode::Text("APPENDED".into())));
+        assert_eq!(out, "<root><item>HelloAPPENDED</item></root>");
+    }
+
+    #[test]
+    fn test_prepend_child_is_written() {
+        let out = transform(|n| n.prepend_child(NewNode::Comment("PRE".into())));
+        assert_eq!(out, "<root><item><!--PRE-->Hello</item></root>");
+    }
+
+    #[test]
+    fn test_append_element_with_children_is_written() {
+        let mut attributes = IndexMap::new();
+        attributes.insert("a".to_string(), "1".to_string());
+        let out = transform(|n| {
+            n.append_child(NewNode::Element {
+                name: "child".into(),
+                prefix: None,
+                attributes: attributes.clone(),
+                children: vec![NewNode::Text("t".into()), NewNode::CData("<c>".into())],
+            })
+        });
+        assert_eq!(
+            out,
+            r#"<root><item>Hello<child a="1">t<![CDATA[<c>]]></child></item></root>"#
+        );
+    }
+
+    #[test]
+    fn test_replace_text_is_written() {
+        let xml = "<root><item>Hello <b>Hello</b> world</item></root>";
+        let out = Transformer::from(xml)
+            .on("//item", |n| n.replace_text("Hello", "Bye"))
+            .to_string()
+            .unwrap();
+        assert_eq!(out, "<root><item>Bye <b>Bye</b> world</item></root>");
+    }
+
+    #[test]
+    fn test_modifications_visible_to_later_reads() {
+        let mut seen = String::new();
+        Transformer::from(XML)
+            .on("//item", |n| {
+                n.append_child(NewNode::Text(" there".into()));
+                seen = n.get_content().unwrap_or_default();
+            })
+            .for_each()
+            .unwrap();
+        assert_eq!(seen, "Hello there");
+    }
+}
