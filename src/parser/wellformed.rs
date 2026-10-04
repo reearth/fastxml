@@ -3,8 +3,10 @@
 //!
 //! The underlying tokenizer (quick-xml) is lenient about character legality,
 //! so it admits documents the XML specification requires to be rejected. This
-//! module enforces the `Char` production, which is identical across XML 1.0
-//! and 1.1 for *literal* characters:
+//! module enforces the XML 1.0 `Char` production (fastxml targets XML 1.0;
+//! XML 1.1 differs, e.g. it forbids some literal C1 controls that XML 1.0
+//! allows and permits references to C0 controls such as `&#1;`, which are
+//! rejected here):
 //!
 //! ```text
 //! Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
@@ -14,7 +16,7 @@
 //! block, and the non-characters `#xFFFE`/`#xFFFF` — makes the document
 //! not well-formed wherever it appears (names, text, attribute values, the
 //! internal DTD subset, …). A conforming document never contains such a
-//! codepoint, so this check cannot reject valid input.
+//! codepoint, so this check cannot reject a valid XML 1.0 document.
 
 use super::error::ParseError;
 
@@ -99,7 +101,8 @@ pub(crate) fn check_char_refs(s: &str, context: &str) -> Result<(), ParseError> 
     let mut rest = s;
     while let Some(pos) = rest.find("&#") {
         let after = &rest[pos + 2..];
-        let (hex, digits_and_rest) = match after.strip_prefix(['x', 'X']) {
+        // Only a lowercase `x` introduces a hexadecimal reference (P66).
+        let (hex, digits_and_rest) = match after.strip_prefix('x') {
             Some(d) => (true, d),
             None => (false, after),
         };

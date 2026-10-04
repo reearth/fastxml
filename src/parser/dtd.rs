@@ -430,8 +430,8 @@ fn parse_contentspec(c: &mut Cursor<'_>) -> R {
 
 /// `Mixed ::= '(' S? '#PCDATA' (S? '|' S? Name)* S? ')*' | '(' S? '#PCDATA' S? ')'`.
 ///
-/// A trailing `*` is also tolerated after the bare `(#PCDATA)` form, which some
-/// documents in the wild use.
+/// The first alternative with zero names is `(#PCDATA)*`, so a trailing `*`
+/// after the bare `(#PCDATA)` form is grammatical, not a leniency.
 fn parse_mixed(c: &mut Cursor<'_>) -> R {
     c.eat('('); // '('
     c.skip_s();

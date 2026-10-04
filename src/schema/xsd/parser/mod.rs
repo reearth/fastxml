@@ -206,7 +206,9 @@ pub fn parse_xsd_ast(content: &[u8]) -> Result<XsdSchema> {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
-    let tracking_reader = PositionTrackingReader::new(content);
+    let tracking_reader =
+        PositionTrackingReader::new(crate::parser::eol::EolNormalizer::new(content));
+    // End-of-line normalization, as for instance documents (XML 1.0 §2.11).
     let mut reader = Reader::from_reader(tracking_reader);
     reader.config_mut().trim_text(false);
     reader.config_mut().expand_empty_elements = true;

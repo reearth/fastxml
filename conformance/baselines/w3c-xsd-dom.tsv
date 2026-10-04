@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38298	fail=1104	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38306	fail=1096	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -42,7 +42,6 @@ instance-invalid	QName009_2092::msMeta/../msData/datatypes/QName009.xml	fail	exp
 instance-invalid	RegexTest_38::msMeta/../msData/regex/RegexTest_38.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_422::msMeta/../msData/regex/RegexTest_422.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_430::msMeta/../msData/regex/RegexTest_430.xml	fail	expected invalid but validator accepted it
-instance-invalid	RegexTest_63::msMeta/../msData/regex/RegexTest_63.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_69::msMeta/../msData/regex/RegexTest_69.xml	fail	expected invalid but validator accepted it
 instance-invalid	ad_name00101m1::sunMeta/../sunData/AttrDecl/AD_name/AD_name00101m/AD_name00101m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	ad_name00101m2::sunMeta/../sunData/AttrDecl/AD_name/AD_name00101m/AD_name00101m2_n.xml	fail	expected invalid but validator accepted it
@@ -219,8 +218,6 @@ instance-invalid	idG012::msMeta/../msData/identityConstraint/idG012.xml	fail	exp
 instance-invalid	idH005::msMeta/../msData/identityConstraint/idH005.xml	fail	expected invalid but validator accepted it
 instance-invalid	idK003::msMeta/../msData/identityConstraint/idK003.xml	fail	expected invalid but validator accepted it
 instance-invalid	idK012::msMeta/../msData/identityConstraint/idK012.xml	fail	expected invalid but validator accepted it
-instance-invalid	idL025::msMeta/../msData/identityConstraint/idL025.xml	fail	expected invalid but validator accepted it
-instance-invalid	idL075::msMeta/../msData/identityConstraint/idL075.xml	fail	expected invalid but validator accepted it
 instance-invalid	idZ010::msMeta/../msData/identityConstraint/idZ010.xml	fail	expected invalid but validator accepted it
 instance-invalid	idZ011::msMeta/../msData/identityConstraint/idZ011.xml	blocked	schema failed to compile
 instance-invalid	idZ011_a::msMeta/../msData/identityConstraint/idZ011_a.xml	fail	expected invalid but validator accepted it
@@ -460,10 +457,6 @@ instance-valid	groupL004v::msMeta/../msData/group/groupL004.xml	fail	expected va
 instance-valid	groupL009v::msMeta/../msData/group/groupL009.xml	fail	expected valid but validator reported errors
 instance-valid	idG022::msMeta/../msData/identityConstraint/idG022.xml	fail	expected valid but validator reported errors
 instance-valid	idG029::msMeta/../msData/identityConstraint/idG029.xml	fail	expected valid but validator reported errors
-instance-valid	idL048::msMeta/../msData/identityConstraint/idL048.xml	fail	expected valid but validator reported errors
-instance-valid	idL049::msMeta/../msData/identityConstraint/idL049.xml	fail	expected valid but validator reported errors
-instance-valid	idL088::msMeta/../msData/identityConstraint/idL088.xml	fail	expected valid but validator reported errors
-instance-valid	idL102::msMeta/../msData/identityConstraint/idL102.xml	fail	expected valid but validator reported errors
 instance-valid	idconstrdefs00201m::sunMeta/../sunData/ElemDecl/identityConstraintDefs/idConstrDefs00201m/idConstrDefs00201m1_p.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest002::sunMeta/../sunData/combined/identity/IdentityTestSuite/002/test.2.v.xml	fail	expected valid but validator reported errors
 instance-valid	identitytestsuitetest003::sunMeta/../sunData/combined/identity/IdentityTestSuite/003/test.1.v.xml	fail	expected valid but validator reported errors
@@ -598,7 +591,6 @@ instance-valid	schD7::msMeta/../msData/schema/schD7.xml	blocked	schema failed to
 instance-valid	schG8::msMeta/../msData/schema/schG8.xml	blocked	schema failed to compile
 instance-valid	stE050::msMeta/../msData/simpleType/stE050.xml	fail	expected valid but validator reported errors
 instance-valid	stE096::msMeta/../msData/simpleType/stE096.xml	fail	expected valid but validator reported errors
-instance-valid	stZ055::msMeta/../msData/simpleType/test107331_9.xml	fail	expected valid but validator reported errors
 instance-valid	stZ058::msMeta/../msData/simpleType/test102159_1.xml	blocked	schema failed to compile
 instance-valid	stZ062::msMeta/../msData/simpleType/test102159_5.xml	blocked	schema failed to compile
 instance-valid	stZ063::msMeta/../msData/simpleType/test102159_6.xml	blocked	schema failed to compile

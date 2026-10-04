@@ -82,15 +82,10 @@ fn resolve_node_prefix(node: &XmlNode, prefix: &str) -> Option<String> {
     None
 }
 
-/// Looks up an `xsi:*` attribute on a node. The DOM stores attributes under
-/// their local names, so the namespace is verified via the node's attribute
-/// namespace info.
+/// Looks up an `xsi:*` attribute on a node by namespace, whatever prefix it
+/// was written with.
 fn get_xsi_attribute(node: &XmlNode, local: &str) -> Option<String> {
-    let value = node.get_attribute(local)?;
-    match node.get_attribute_ns_info(local) {
-        Some((_, ns)) => (ns == XSI_NS).then_some(value),
-        None => None,
-    }
+    node.get_attribute_ns(local, XSI_NS)
 }
 
 /// Document-wide ID / IDREF tracking state.

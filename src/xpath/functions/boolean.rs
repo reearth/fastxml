@@ -84,11 +84,12 @@ pub fn fn_lang(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPa
         .to_string_value()
         .to_lowercase();
 
-    // Search for lang attribute in context node and ancestors
-    // (xml:lang is stored as "lang" since attributes use local names only)
+    // The language is given by the nearest xml:lang attribute on the context
+    // node or its ancestors; a `lang` attribute in another namespace (or in
+    // none) does not count.
     let mut node = Some(ctx.node.clone());
     while let Some(n) = node {
-        if let Some(lang_attr) = n.get_attribute("lang") {
+        if let Some(lang_attr) = n.get_attribute_ns("lang", crate::namespace::common::XML_NS) {
             let lang_lower = lang_attr.to_lowercase();
             // Check if lang matches or is a sublanguage
             let matches =

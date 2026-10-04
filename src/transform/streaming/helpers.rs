@@ -396,13 +396,11 @@ pub(crate) fn add_start_to_builder(
         } else if key == "xmlns" {
             ns_decls.push(Namespace::new("", value.as_ref()));
         } else {
-            // Store attributes with local names only (libxml compatible)
-            let (attr_prefix, local_name) = match key.split_once(':') {
-                Some((p, local)) => (Some(p), local),
-                None => (None, key),
-            };
-            attributes.push((local_name.to_string(), value.to_string()));
-            if let Some(p) = attr_prefix {
+            // Keep the name as written so the prefix survives and attributes
+            // sharing a local name stay distinct; attach the namespace when
+            // the prefix is registered.
+            attributes.push((key.to_string(), value.to_string()));
+            if let Some((p, local_name)) = key.split_once(':') {
                 if let Some(uri) = namespaces.get(p) {
                     attr_ns_info.push((local_name.to_string(), p.to_string(), uri.clone()));
                 }

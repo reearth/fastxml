@@ -685,7 +685,9 @@ demonstrations of both the modern and compatibility APIs.
 - DTD validation
 - XML Signature/Encryption
 - Catalog support
-- Full entity expansion
+- External entities (SYSTEM/PUBLIC) and parameter-entity expansion (internal
+  general entities are expanded, including markup in their replacement text; a
+  reference to an external entity is reported as an error)
 
 ## Conformance
 
