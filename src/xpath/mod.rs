@@ -47,7 +47,7 @@
 //! - `position()` - context position
 //! - `last()` - context size
 //! - `count(node-set)` - number of nodes
-//! - `id(object)` - select by ID
+//! - `id(object)` - select by ID (the attribute named `id`; no DTD IDs)
 //!
 //! ### String Functions
 //! - `string([object])` - convert to string
@@ -85,6 +85,8 @@
 //! - `axes` - Axis navigation implementations
 //! - `operators` - Comparison, arithmetic, and union operators
 //! - `context` - XML document context for evaluation
+//! - `query` - compile-once, evaluate-many [`Query`]
+//! - `unparse` (private) - renders an [`Expr`] back to an XPath string
 //!
 //! # Examples
 //!
@@ -108,7 +110,7 @@
 //! // Position functions
 //! let result = xpath::evaluate(&doc, "/root/*[position()=1]").unwrap();
 //!
-//! // String functions
+//! // Node-set functions
 //! let result = xpath::evaluate(&doc, "count(/root/*)").unwrap();
 //! ```
 

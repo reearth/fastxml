@@ -100,6 +100,9 @@ impl Query {
 }
 
 /// Renders the compiled expression back to an (equivalent) XPath string.
+///
+/// Only the expression is rendered: bindings added with
+/// [`namespace`](Query::namespace) are not part of the output.
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.expr.fmt(f)

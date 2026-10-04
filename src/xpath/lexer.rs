@@ -222,6 +222,14 @@ impl<'a> Lexer<'a> {
                     Ok(Token::Slash)
                 }
             }
+            // `.5` is a number (`Number ::= '.' Digits`), not `.` followed by `5`.
+            '.' if self.input[pos + 1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit()) =>
+            {
+                self.read_number()
+            }
             '.' => {
                 self.advance();
                 if self.peek_char() == Some('.') {
@@ -359,19 +367,17 @@ impl<'a> Lexer<'a> {
             .peek()
             .map(|(i, _)| *i)
             .unwrap_or(self.input.len());
-        let mut end = start;
 
         while let Some(&(pos, ch)) = self.chars.peek() {
-            if ch == quote {
-                end = pos;
-                self.advance();
-                break;
-            }
             self.advance();
+            if ch == quote {
+                return Ok(Token::String(self.input[start..pos].to_string()));
+            }
         }
 
-        let s = &self.input[start..end];
-        Ok(Token::String(s.to_string()))
+        // XPath 1.0 literals have no escapes, so a missing closing quote can
+        // never be recovered from.
+        Err(XPathSyntaxError::UnclosedString.into())
     }
 
     fn read_number(&mut self) -> Result<Token> {
@@ -388,18 +394,11 @@ impl<'a> Lexer<'a> {
                 end = pos + 1;
                 self.advance();
             } else if ch == '.' && !has_dot {
-                // Check if next char is a digit (to distinguish from .. and ./path)
-                let next_is_digit = {
-                    let mut chars = self.input[pos + 1..].chars();
-                    chars.next().is_some_and(|c| c.is_ascii_digit())
-                };
-                if next_is_digit {
-                    has_dot = true;
-                    end = pos + 1;
-                    self.advance();
-                } else {
-                    break;
-                }
+                // `Number ::= Digits ('.' Digits?)? | '.' Digits`: the
+                // fraction digits are optional, so `1.` is the number 1.
+                has_dot = true;
+                end = pos + 1;
+                self.advance();
             } else {
                 break;
             }

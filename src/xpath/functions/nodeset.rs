@@ -82,6 +82,11 @@ pub fn fn_namespace_uri(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> R
 }
 
 /// `id(object)` - selects elements by their ID.
+///
+/// XPath defines IDs through DTD attribute types, which fastxml does not
+/// read. Instead an element's ID is the value of its attribute named `id`
+/// (as returned by `XmlNode::get_attribute("id")`). libxml returns an empty
+/// node-set for the same document, since it has no DTD-declared IDs.
 pub fn fn_id(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
         return Err(XPathEvalError::WrongArgumentCount {

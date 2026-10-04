@@ -34,7 +34,9 @@ pub enum Axis {
 /// Node test in a step.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeTest {
-    /// Match any node `*`
+    /// `*`: any node of the axis's principal node type (elements, or
+    /// attributes on the `attribute` axis, or namespaces on the `namespace`
+    /// axis). Use [`NodeTest::Node`] for any node of any type.
     Any,
     /// Match nodes with this name
     Name(String),

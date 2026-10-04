@@ -1,6 +1,11 @@
 //! XPath axis navigation.
 //!
-//! This module implements all XPath 1.0 axes for navigating the XML document tree.
+//! This module navigates the XML document tree along the XPath 1.0 axes.
+//!
+//! The `attribute` and `namespace` axes are the exception: their nodes are not
+//! part of the tree, so [`select_axis`] returns an empty vec for them. The
+//! evaluator (`XPathEvaluator`) implements both axes itself by creating
+//! attribute and namespace pseudo-nodes.
 //!
 //! ## Forward Axes (document order)
 //! - `child` - direct children
@@ -8,8 +13,8 @@
 //! - `descendant-or-self` - self and all descendants
 //! - `following-sibling` - siblings after this node
 //! - `following` - all nodes after this node in document order
-//! - `attribute` - attributes of the node
-//! - `namespace` - namespace nodes
+//! - `attribute` - attributes of the node (evaluator only, see above)
+//! - `namespace` - namespace nodes (evaluator only, see above)
 //!
 //! ## Reverse Axes (reverse document order)
 //! - `parent` - direct parent
@@ -247,23 +252,20 @@ fn collect_descendants_reverse(
     }
 }
 
-/// Selects attribute nodes of the context node.
+/// Always returns an empty vec.
 ///
-/// Note: This returns pseudo-nodes for attributes. In this implementation,
-/// we return an empty vec since attribute access is handled separately.
+/// Attributes are not tree nodes. The evaluator implements the `attribute`
+/// axis itself, creating attribute pseudo-nodes in the document, which needs
+/// the node test and the document; this tree-only helper has neither.
 pub fn select_attribute(_node: &XmlNode) -> Vec<XmlNode> {
-    // Attribute nodes are handled specially in node test matching
-    // We could implement attribute pseudo-nodes here if needed
     Vec::new()
 }
 
-/// Selects namespace nodes in scope for the context node.
+/// Always returns an empty vec.
 ///
-/// Note: Namespace nodes are a special case in XPath. This implementation
-/// returns an empty vec as namespace handling is done through the resolver.
+/// Namespace nodes are not tree nodes. The evaluator implements the
+/// `namespace` axis itself from the in-scope namespace declarations.
 pub fn select_namespace(_node: &XmlNode) -> Vec<XmlNode> {
-    // Namespace nodes would need special handling
-    // Most XPath implementations don't fully implement this axis
     Vec::new()
 }
 
