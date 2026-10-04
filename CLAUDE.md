@@ -92,15 +92,18 @@ cargo run --release --example bench -- <xml-file> --mode streaming
 
 - **xsd/** - XSD schema parsing and compilation
   - **parser/** - SAX-style XSD parser with stack-based state machine
-  - **compiler.rs** - Compiles parsed XSD into CompiledSchema
+  - **compiler/** - Compiles parsed XSD into CompiledSchema
   - **builtin.rs** - Built-in XSD and GML types
   - **resolver/** - Import/include resolution (sync and async)
 - **validator/** - Validation implementations
-  - **streaming.rs** - Single-pass streaming validator (OnePassSchemaValidator)
+  - **facade.rs** - Unified `Validator` entry point and `Report`
+  - **streaming/** - Single-pass streaming validator (OnePassSchemaValidator)
   - **lazy.rs** - Lazy schema loading validator
-  - **dom.rs** - DOM-based validation
-- **fetcher/** - Schema fetching (file, HTTP sync/async)
-- **store.rs** - Schema storage abstraction (memory, temp files)
+  - **dom/** - DOM-based validation
+- **fetcher/** - Schema fetching (file, HTTP sync/async, in-memory and file caching)
+- **builder.rs** - `Schema` constructors
+- **resolve.rs** - Resolve and compile schemas from `xsi:schemaLocation`
+- **export.rs** - Export resolved schemas to a local directory (with an OASIS `catalog.xml`)
 
 ### Event Flow for Streaming Validation
 
@@ -133,15 +136,21 @@ XML Data → StreamingParser → [DocumentBuilder, OnePassSchemaValidator]
 
 ## Conformance Testing
 
-The `conformance/` workspace member provides W3C/OASIS standard compliance testing:
+The `conformance/` workspace member provides W3C standard compliance testing:
 
 ### Test Suites
 
 | Test Suite | Tests | Target |
 |-----------|-------|--------|
-| W3C XML Conformance | 2,000+ | XML Parsing (DOM & Streaming) |
-| W3C XML Schema | ~40,000 | XSD Validation (DOM & Streaming) |
-| OASIS XPath 1.0 | Hundreds | XPath Evaluation |
+| W3C XML Conformance | 2,585 | XML Parsing (DOM & Streaming) |
+| W3C XML Schema | 39,613 | XSD Validation (DOM & Streaming) |
+
+No external XPath conformance suite is run; `conformance/tests/xpath_basic.rs`
+holds self-contained XPath evaluator tests.
+
+Results are diffed against committed baselines in `conformance/baselines/*.tsv`;
+any change (regression, improvement, or test-count drift) fails the run. Regenerate after an intentional behaviour
+change with `FASTXML_UPDATE_BASELINE=1 cargo test -p fastxml-conformance`.
 
 ### Running Conformance Tests
 
@@ -157,7 +166,7 @@ cargo test -p fastxml-conformance w3c_xml_conformance_dom       # DOM parsing
 cargo test -p fastxml-conformance w3c_xml_conformance_streaming # Streaming parsing
 cargo test -p fastxml-conformance w3c_xsd_conformance_dom       # DOM validation
 cargo test -p fastxml-conformance w3c_xsd_conformance_streaming # Streaming validation
-cargo test -p fastxml-conformance oasis_xpath                   # XPath evaluation
+cargo test -p fastxml-conformance --test xpath_basic            # Basic XPath tests
 
 # Download test data manually
 cargo run -p fastxml-conformance --bin download
@@ -170,12 +179,17 @@ conformance/
 ├── src/
 │   ├── lib.rs              # Common utilities and macros
 │   ├── downloader.rs       # Test data download/extraction
+│   ├── catalog/            # Test catalog parsers
+│   ├── runner/             # Per-suite test runners
+│   ├── outcome.rs          # Per-test outcome (pass/fail/unsupported/blocked/panic)
+│   ├── baseline.rs         # Baseline ratchet against conformance/baselines/
 │   ├── reporter.rs         # Conformance report generation
-│   └── catalog/            # Test catalog parsers
+│   └── bin/                # download, report, and debugging tools
+├── baselines/              # Committed per-suite/engine outcome baselines (*.tsv)
 └── tests/
     ├── w3c_xml.rs          # W3C XML tests (DOM & Streaming)
     ├── w3c_xsd.rs          # W3C XSD tests (DomValidator & OnePassSchemaValidator)
-    └── oasis_xpath.rs      # OASIS XPath tests
+    └── xpath_basic.rs      # Self-contained XPath evaluator tests
 ```
 
 Test data is downloaded to `conformance/data/` (gitignored).

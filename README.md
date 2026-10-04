@@ -123,10 +123,10 @@ fastxml = "0.11"
 
 ```toml
 # Recommended: sync schema fetching
-fastxml = { version = "0.10", features = ["ureq"] }
+fastxml = { version = "0.11", features = ["ureq"] }
 
 # Async schema fetching
-fastxml = { version = "0.10", features = ["tokio"] }
+fastxml = { version = "0.11", features = ["tokio"] }
 ```
 
 ### Schema Fetchers
@@ -614,7 +614,8 @@ let result = doc.query("//item[@id='1']/text()")?;
 ```rust
 let xml = r#"
 <core:CityModel xmlns:core="http://www.opengis.net/citygml/2.0"
-                xmlns:bldg="http://www.opengis.net/citygml/building/2.0">
+                xmlns:bldg="http://www.opengis.net/citygml/building/2.0"
+                xmlns:gml="http://www.opengis.net/gml">
     <bldg:Building gml:id="bldg_001">
         <bldg:measuredHeight>25.5</bldg:measuredHeight>
     </bldg:Building>
@@ -684,7 +685,9 @@ demonstrations of both the modern and compatibility APIs.
 - XQuery, XSLT, XInclude
 - DTD validation
 - XML Signature/Encryption
-- Catalog support
+- Reading XML catalogs (OASIS catalogs are not consulted when resolving
+  schema locations; `fastxml::schema::export` only *writes* a `catalog.xml`
+  for use by other tools)
 - Full entity expansion
 
 ## Conformance
@@ -740,7 +743,7 @@ and re-parsing (see the roadmap).
 | **overall**                 | **97.2%** | **38,298** | **1,104** | **183** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
-(zero false rejections), while 79.7% of invalid schemas are rejected. The
+(zero false rejections), while 79.8% of invalid schemas are rejected. The
 rejection rules cover reference integrity (dangling QName references into
 fully-present namespaces), circular definitions, cos-all-limited,
 identity-constraint XPath grammar, attribute/placement/lexical
@@ -773,7 +776,7 @@ Known issues and planned improvements, roughly in priority order:
 
 **Schema (XSD) coverage**
 
-- Invalid-schema rejection (79.6%, up from 52.3%): implemented reference
+- Invalid-schema rejection (79.8%, up from 52.3%): implemented reference
   integrity, circular definitions, cos-all-limited, identity-constraint XPath
   grammar, attribute/placement/lexical rules, derivation controls, facet
   validity, and a certainty-gated rcase-* particle-restriction engine.
