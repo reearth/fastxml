@@ -96,7 +96,7 @@ mod edge_cases {
 
     #[test]
     fn test_transform_namespaced_attribute_local_name() {
-        // Test that namespaced attributes are accessible by local name (libxml compatible)
+        // Test that namespaced attributes are accessible by local name (when no other attribute shares it)
         let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
             <item gml:id="test123"/>
         </root>"#;
@@ -115,23 +115,22 @@ mod edge_cases {
     }
 
     #[test]
-    fn test_transform_namespaced_attribute_not_prefixed() {
-        // Verify that prefixed key does NOT work (libxml compatible)
+    fn test_transform_namespaced_attribute_by_qualified_name() {
+        // The qualified name as written also finds the attribute.
         let xml = r#"<root xmlns:gml="http://www.opengis.net/gml">
             <item gml:id="test123"/>
         </root>"#;
 
-        let mut prefixed_id = Some("should be None".to_string());
+        let mut prefixed_id = None;
         Transformer::from(xml)
             .namespace("gml", "http://www.opengis.net/gml")
             .on("//item", |node: &mut EditableNode| {
-                // Prefixed key should NOT work
                 prefixed_id = node.get_attribute("gml:id");
             })
             .for_each()
             .unwrap();
 
-        assert_eq!(prefixed_id, None);
+        assert_eq!(prefixed_id, Some("test123".to_string()));
     }
 }
 

@@ -243,6 +243,19 @@ pub struct DocumentBuilder {
     strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
 }
 
+/// An attribute split into its parts, with its prefix already resolved.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ParsedAttr<'a> {
+    /// Prefix as written (`None` when unprefixed)
+    pub prefix: Option<&'a str>,
+    /// Local name
+    pub local: &'a str,
+    /// Namespace URI the prefix resolved to
+    pub ns_uri: Option<&'a str>,
+    /// Attribute value (after reference expansion and normalization)
+    pub value: &'a str,
+}
+
 /// Converts a usize source position to the compact node representation.
 fn to_position(value: Option<usize>) -> Option<std::num::NonZeroU32> {
     value.and_then(|v| std::num::NonZeroU32::new(v.min(u32::MAX as usize) as u32))
@@ -274,6 +287,22 @@ impl DocumentBuilder {
     }
 
     /// Starts a new element.
+    ///
+    /// Each entry of `attributes` is `(name, value)`, where `name` is either
+    /// the qualified name as written (`"gml:id"`, `"xml:lang"`) or a bare
+    /// local name. `attribute_ns_info` entries are
+    /// `(local_name, prefix, namespace_uri)`:
+    ///
+    /// - a qualified `name` takes its namespace from the entry with the same
+    ///   local name and prefix (the `xml` prefix is always bound to the XML
+    ///   namespace); without one it keeps its prefix and has no namespace;
+    /// - a bare `name` takes the prefix and namespace of an entry with the
+    ///   same local name, unless that entry belongs to a qualified name that
+    ///   is also in `attributes`.
+    ///
+    /// Attributes that share a local name but differ in namespace are all
+    /// kept; an attribute repeated with the same name replaces the earlier
+    /// one.
     #[allow(clippy::too_many_arguments)]
     pub fn start_element(
         &mut self,
@@ -286,6 +315,58 @@ impl DocumentBuilder {
         line: Option<usize>,
         column: Option<usize>,
     ) -> NodeId {
+        let resolved: Vec<ParsedAttr<'_>> = attributes
+            .iter()
+            .map(|&(key, value)| match key.split_once(':') {
+                Some((p, local)) => ParsedAttr {
+                    prefix: Some(p),
+                    local,
+                    ns_uri: attribute_ns_info
+                        .iter()
+                        .find(|(l, pp, _)| *l == local && *pp == p)
+                        .map(|(_, _, u)| *u)
+                        .or((p == "xml").then_some(crate::namespace::common::XML_NS)),
+                    value,
+                },
+                None => {
+                    let legacy = attribute_ns_info.iter().find(|(l, pp, _)| {
+                        *l == key
+                            && !attributes
+                                .iter()
+                                .any(|(k, _)| k.split_once(':') == Some((pp, l)))
+                    });
+                    ParsedAttr {
+                        prefix: legacy.map(|(_, p, _)| *p),
+                        local: key,
+                        ns_uri: legacy.map(|(_, _, u)| *u),
+                        value,
+                    }
+                }
+            })
+            .collect();
+        self.start_element_resolved(
+            name,
+            prefix,
+            namespace_uri,
+            &resolved,
+            namespace_decls,
+            line,
+            column,
+        )
+    }
+
+    /// Starts a new element whose attributes are already split and resolved.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_element_resolved(
+        &mut self,
+        name: &str,
+        prefix: Option<&str>,
+        namespace_uri: Option<&str>,
+        attributes: &[ParsedAttr<'_>],
+        namespace_decls: Vec<Namespace>,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> NodeId {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -294,13 +375,12 @@ impl DocumentBuilder {
         let interned_ns = namespace_uri.map(|s| self.intern(s));
         let mut node = NodeData::element(interned_name, interned_prefix, interned_ns);
 
-        for (key, value) in attributes {
-            let ns = attribute_ns_info.iter().find(|(local, _, _)| *local == key);
+        for attr in attributes {
             node.set_attr(crate::node::types::Attr {
-                name: self.intern(key),
-                value: Box::from(value),
-                prefix: ns.map(|(_, p, _)| self.intern(p)),
-                ns_uri: ns.map(|(_, _, u)| self.intern(u)),
+                name: self.intern(attr.local),
+                value: Box::from(attr.value),
+                prefix: attr.prefix.map(|p| self.intern(p)),
+                ns_uri: attr.ns_uri.map(|u| self.intern(u)),
             });
         }
 

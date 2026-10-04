@@ -1,9 +1,8 @@
 //! The unified [`Parser`] entry point.
 //!
-//! `Parser` is the redesigned, consistent front door for parsing. It follows
-//! the crate-wide shape — `from(source)`, optional configuration, then a
-//! terminal — and folds the `parse` / `parse_with_options` / `parse_from_bufread`
-//! functions into one surface:
+//! `Parser` is the front door for parsing. It follows the crate-wide shape —
+//! `from(source)`, optional configuration, then a terminal — over the
+//! internal `parse` / `parse_with_options` / `parse_from_bufread` functions:
 //!
 //! ```ignore
 //! use fastxml::Parser;
@@ -13,10 +12,11 @@
 //! let doc = Parser::from(xml).options(opts).parse()?;   // with parser options
 //!
 //! for event in Parser::from(xml).events()? { /* … */ }  // buffered event list
+//! Parser::from_reader(file).for_each_event(|e| { /* … */ Ok(()) })?; // push-based
 //! ```
 //!
-//! For true push-based streaming (handlers invoked as events arrive without
-//! buffering), use [`StreamingParser`](crate::event::StreamingParser) directly.
+//! For push-based streaming (a callback invoked as each event is read,
+//! without buffering the event list), use [`Parser::for_each_event`].
 
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
@@ -38,8 +38,9 @@ enum Source<'a> {
 /// A consistent front door for parsing XML.
 ///
 /// `from(source)` → optional [`options`](Parser::options) → a terminal
-/// ([`parse`](Parser::parse) for a DOM, or [`events`](Parser::events) for a
-/// buffered event list).
+/// ([`parse`](Parser::parse) for a DOM, [`events`](Parser::events) for a
+/// buffered event list, or [`for_each_event`](Parser::for_each_event) to
+/// receive events as they are read).
 pub struct Parser<'a> {
     source: Source<'a>,
     options: ParserOptions,

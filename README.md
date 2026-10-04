@@ -713,7 +713,9 @@ demonstrations of both the modern and compatibility APIs.
 - Reading XML catalogs (OASIS catalogs are not consulted when resolving
   schema locations; `fastxml::schema::export` only *writes* a `catalog.xml`
   for use by other tools)
-- Full entity expansion
+- External entities (SYSTEM/PUBLIC) and parameter-entity expansion (internal
+  general entities are expanded, including markup in their replacement text; a
+  reference to an external entity is reported as an error)
 
 ## Conformance
 

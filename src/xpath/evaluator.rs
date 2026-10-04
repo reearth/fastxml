@@ -371,72 +371,53 @@ impl<'a> XPathEvaluator<'a> {
             return Ok(Vec::new());
         }
 
-        let attributes = context.get_attributes();
+        let attributes = context.attrs();
+        let node_for = |a: &crate::node::types::Attr| {
+            self.doc.create_attribute_node(
+                &a.name,
+                &a.value,
+                a.prefix.as_deref(),
+                a.ns_uri.as_deref(),
+            )
+        };
 
         match &step.node_test {
-            NodeTest::Any => {
-                // @* - return all attributes as pseudo-nodes
-                let mut result = Vec::new();
-                for (name, value) in attributes {
-                    let (prefix, ns_uri) =
-                        if let Some((p, u)) = context.get_attribute_ns_info(&name) {
-                            (Some(p), Some(u))
-                        } else {
-                            (None, None)
-                        };
-                    let attr_node = self.doc.create_attribute_node(
-                        &name,
-                        &value,
-                        prefix.as_deref(),
-                        ns_uri.as_deref(),
-                    );
-                    result.push(attr_node);
-                }
-                Ok(result)
-            }
+            // @* - every attribute
+            NodeTest::Any => Ok(attributes.iter().map(node_for).collect()),
             NodeTest::Name(name) => {
-                // @name - return specific attribute
-                if let Some(value) = attributes.get(name) {
-                    let (prefix, ns_uri) = if let Some((p, u)) = context.get_attribute_ns_info(name)
-                    {
-                        (Some(p), Some(u))
-                    } else {
-                        (None, None)
-                    };
-                    let attr_node = self.doc.create_attribute_node(
-                        name,
-                        value,
-                        prefix.as_deref(),
-                        ns_uri.as_deref(),
-                    );
-                    Ok(vec![attr_node])
-                } else {
-                    Ok(Vec::new())
-                }
+                // @name - XPath 1.0 selects the attribute `name` in no
+                // namespace. fastxml is lenient here and, like
+                // `XmlNode::get_attribute`, falls back to the first
+                // namespaced attribute with that local name when there is no
+                // unprefixed one, so `@id` keeps finding `gml:id`.
+                let found = attributes
+                    .iter()
+                    .find(|a| a.name.as_ref() == name.as_str() && a.prefix.is_none())
+                    .or_else(|| attributes.iter().find(|a| a.name.as_ref() == name.as_str()));
+                Ok(found.map(node_for).into_iter().collect())
             }
             NodeTest::QName { prefix, local } => {
-                // @prefix:name - return namespaced attribute
-                let qname = format!("{}:{}", prefix, local);
-                if let Some(value) = attributes.get(&qname) {
-                    let attr_node = self.doc.create_attribute_node(&qname, value, None, None);
-                    Ok(vec![attr_node])
-                } else if let Some(value) = attributes.get(local) {
-                    let (ns_prefix, ns_uri) =
-                        if let Some((p, u)) = context.get_attribute_ns_info(local) {
-                            (Some(p), Some(u))
-                        } else {
-                            (None, None)
-                        };
-                    let attr_node = self.doc.create_attribute_node(
-                        local,
-                        value,
-                        ns_prefix.as_deref(),
-                        ns_uri.as_deref(),
-                    );
-                    Ok(vec![attr_node])
+                // @prefix:name - match by namespace URI and local name; an
+                // unbound prefix is an error, as for element name tests.
+                let uri = if prefix == "xml" {
+                    crate::namespace::common::XML_NS.to_string()
                 } else {
-                    Ok(Vec::new())
-                }
+                    self.resolver
+                        .resolve_prefix(prefix)
+                        .ok_or_else(|| NamespaceError::UnknownPrefix {
+                            prefix: prefix.clone(),
+                        })?
+                        .to_string()
+                };
+                let wildcard = local == "*";
+                Ok(attributes
+                    .iter()
+                    .filter(|a| {
+                        a.ns_uri.as_deref() == Some(uri.as_str())
+                            && (wildcard || a.name.as_ref() == local.as_str())
+                    })
+                    .map(node_for)
+                    .collect())
             }
             _ => Ok(Vec::new()),
         }

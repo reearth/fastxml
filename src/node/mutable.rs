@@ -126,6 +126,15 @@ impl XmlNode {
     }
 
     /// Returns an attribute value by name.
+    ///
+    /// `name` may be a qualified name as written in the document
+    /// (`"gml:id"`, `"xml:lang"`), which matches exactly that prefix and
+    /// local name, or a bare local name (`"id"`). A bare local name returns
+    /// the unprefixed attribute of that name if the element has one;
+    /// otherwise it returns the first attribute in document order whose
+    /// local name matches, whatever its prefix (so `"id"` finds `gml:id`).
+    /// Use [`get_attribute_ns`](Self::get_attribute_ns) to select by
+    /// namespace when several attributes share a local name.
     pub fn get_attribute(&self, name: &str) -> Option<String> {
         let nodes = self.nodes.read();
         nodes
@@ -133,45 +142,53 @@ impl XmlNode {
             .and_then(|n| n.attr(name).map(str::to_string))
     }
 
-    /// Returns an attribute value by name and namespace.
+    /// Returns the value of the attribute with local name `name` in the
+    /// namespace `ns_uri`. An empty `ns_uri` selects an attribute in no
+    /// namespace.
     pub fn get_attribute_ns(&self, name: &str, ns_uri: &str) -> Option<String> {
-        // For now, we store attributes with their full qualified names
-        // This is a simplified implementation
         let nodes = self.nodes.read();
-        let node = nodes.get(self.id)?;
-
-        // Try exact match first
-        if let Some(value) = node.attr(name) {
-            return Some(value.to_string());
-        }
-
-        // Match by stored attribute namespace
-        node.attrs()
-            .iter()
-            .find(|a| a.name.as_ref() == name && a.ns_uri.as_deref() == Some(ns_uri))
-            .map(|a| a.value.to_string())
+        nodes
+            .get(self.id)?
+            .attr_ns(name, ns_uri)
+            .map(str::to_string)
     }
 
-    /// Returns all attributes as a map.
+    /// Returns all attributes as a map, in document order.
+    ///
+    /// Keys are local names, except that when several attributes on the
+    /// element share a local name, each prefixed one among them is keyed by
+    /// its qualified name (`<e a:x="1" x="2">` gives keys `a:x` and `x`), so
+    /// no attribute is dropped. Every key can be passed back to
+    /// [`get_attribute`](Self::get_attribute) and
+    /// [`get_attribute_ns_info`](Self::get_attribute_ns_info).
     pub fn get_attributes(&self) -> IndexMap<String, String> {
         let nodes = self.nodes.read();
         nodes
             .get(self.id)
             .map(|n| {
-                n.attrs()
-                    .iter()
-                    .map(|a| (a.name.to_string(), a.value.to_string()))
+                n.attr_entries()
+                    .map(|(key, a)| (key, a.value.to_string()))
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// Returns namespace info for a specific attribute by local name.
-    /// Returns (prefix, namespace_uri) if the attribute is namespaced.
-    pub fn get_attribute_ns_info(&self, local_name: &str) -> Option<(String, String)> {
+    /// Returns the attributes with full name information, in document order.
+    pub(crate) fn attrs(&self) -> Vec<crate::node::types::Attr> {
+        let nodes = self.nodes.read();
+        nodes
+            .get(self.id)
+            .map(|n| n.attrs().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Returns (prefix, namespace_uri) for a namespaced attribute, looked up
+    /// by name the same way as [`get_attribute`](Self::get_attribute).
+    /// Returns `None` when the attribute is absent or has no namespace.
+    pub fn get_attribute_ns_info(&self, name: &str) -> Option<(String, String)> {
         let nodes = self.nodes.read();
         nodes.get(self.id).and_then(|n| {
-            n.attr_ns_info(local_name)
+            n.attr_ns_info(name)
                 .map(|(p, u)| (p.to_string(), u.to_string()))
         })
     }
@@ -235,7 +252,7 @@ impl XmlNode {
             .unwrap_or_default()
     }
 
-    /// Returns the first child element (if any).
+    /// Returns the first child node of any type (if any).
     pub fn first_child(&self) -> Option<XmlNode> {
         let nodes = self.nodes.read();
         let node = nodes.get(self.id)?;
@@ -245,7 +262,7 @@ impl XmlNode {
         })
     }
 
-    /// Returns the last child element (if any).
+    /// Returns the last child node of any type (if any).
     pub fn last_child(&self) -> Option<XmlNode> {
         let nodes = self.nodes.read();
         let node = nodes.get(self.id)?;
@@ -272,19 +289,37 @@ impl XmlNode {
     }
 
     /// Sets an attribute value.
+    ///
+    /// If [`get_attribute(name)`](Self::get_attribute) finds an attribute,
+    /// its value is replaced and its prefix and namespace are kept (so
+    /// setting `"id"` on an element with `gml:id` updates `gml:id`).
+    /// Otherwise a new attribute is added; a qualified `name` keeps its
+    /// prefix, resolved against the namespace declarations in scope on this
+    /// element and its ancestors.
     pub fn set_attribute(&self, name: &str, value: &str) {
         let mut nodes = self.nodes.write();
+        if let Some(existing) = nodes.get(self.id).and_then(|n| n.find_attr(name)) {
+            let mut attr = existing.clone();
+            attr.value = Box::from(value);
+            if let Some(node) = nodes.get_mut(self.id) {
+                node.set_attr(attr);
+            }
+            return;
+        }
+        let (prefix, local) = crate::namespace::split_qname(name);
+        let ns_uri = prefix.and_then(|p| resolve_in_scope(&nodes, self.id, p));
         if let Some(node) = nodes.get_mut(self.id) {
             node.set_attr(crate::node::types::Attr {
-                name: std::sync::Arc::from(name),
+                name: std::sync::Arc::from(local),
                 value: Box::from(value),
-                prefix: None,
-                ns_uri: None,
+                prefix: prefix.map(std::sync::Arc::from),
+                ns_uri: ns_uri.map(|u| std::sync::Arc::from(u.as_str())),
             });
         }
     }
 
-    /// Removes an attribute by name.
+    /// Removes an attribute, looked up by name the same way as
+    /// [`get_attribute`](Self::get_attribute).
     ///
     /// Returns the previous value if the attribute existed.
     pub fn remove_attribute(&self, name: &str) -> Option<String> {
@@ -368,6 +403,22 @@ impl XmlNode {
     pub fn is_text(&self) -> bool {
         self.get_type() == NodeType::Text
     }
+}
+
+/// Resolves `prefix` against the namespace declarations on node `id` and its
+/// ancestors (`xml` is always bound).
+fn resolve_in_scope(nodes: &[NodeData], id: NodeId, prefix: &str) -> Option<String> {
+    if prefix == "xml" {
+        return Some(crate::namespace::common::XML_NS.to_string());
+    }
+    let mut current = Some(id);
+    while let Some(n) = current.and_then(|i| nodes.get(i)) {
+        if let Some(ns) = n.ns_decls().iter().find(|ns| ns.prefix() == prefix) {
+            return (!ns.uri().is_empty()).then(|| ns.uri().to_string());
+        }
+        current = n.parent();
+    }
+    None
 }
 
 impl std::fmt::Debug for XmlNode {

@@ -282,7 +282,7 @@ impl<W: Write> XmlSerializer<W> {
 
     fn write_element(&mut self, node: &XmlNode, depth: usize) -> Result<()> {
         let qname = node.qname();
-        let attributes = node.get_attributes();
+        let attributes = node.attrs();
         let namespace_decls = node.get_namespace_declarations();
         let children = node.get_child_nodes();
 
@@ -310,22 +310,13 @@ impl<W: Write> XmlSerializer<W> {
             }
         }
 
-        // Attributes
-        for (name, value) in &attributes {
-            let attr_qname = if let Some((prefix, _uri)) = node.get_attribute_ns_info(name) {
-                if prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}:{}", prefix, name)
-                }
-            } else {
-                name.clone()
-            };
+        // Attributes, each under the name it was written with
+        for attr in &attributes {
             write!(
                 self.writer,
                 " {}=\"{}\"",
-                attr_qname,
-                escape_attribute(value)
+                attr.qname(),
+                escape_attribute(&attr.value)
             )?;
         }
 
@@ -362,20 +353,31 @@ impl<W: Write> XmlSerializer<W> {
         Ok(())
     }
 
+    /// Writes character data. A CR is written as `&#13;`: a literal CR would
+    /// be turned into LF by the end-of-line handling of whatever parser
+    /// reads the output (XML 1.0 §2.11).
     fn write_escaped_text(&mut self, text: &str) -> Result<()> {
-        for ch in text.chars() {
-            match ch {
-                '&' => write!(self.writer, "&amp;")?,
-                '<' => write!(self.writer, "&lt;")?,
-                '>' => write!(self.writer, "&gt;")?,
-                _ => write!(self.writer, "{}", ch)?,
-            }
+        let mut rest = text;
+        while let Some(i) = rest.find(['&', '<', '>', '\r']) {
+            self.writer.write_all(&rest.as_bytes()[..i])?;
+            let escaped = match rest.as_bytes()[i] {
+                b'&' => "&amp;",
+                b'<' => "&lt;",
+                b'>' => "&gt;",
+                _ => "&#13;",
+            };
+            self.writer.write_all(escaped.as_bytes())?;
+            rest = &rest[i + 1..];
         }
+        self.writer.write_all(rest.as_bytes())?;
         Ok(())
     }
 }
 
-/// Escapes special characters for use in attribute values.
+/// Escapes special characters for use in attribute values. TAB, LF and CR
+/// are written as character references: a literal one would be turned into a
+/// space by the attribute-value normalization of whatever parser reads the
+/// output (XML 1.0 §3.3.3).
 fn escape_attribute(value: &str) -> String {
     let mut result = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -385,6 +387,9 @@ fn escape_attribute(value: &str) -> String {
             '>' => result.push_str("&gt;"),
             '"' => result.push_str("&quot;"),
             '\'' => result.push_str("&apos;"),
+            '\t' => result.push_str("&#9;"),
+            '\n' => result.push_str("&#10;"),
+            '\r' => result.push_str("&#13;"),
             _ => result.push(ch),
         }
     }

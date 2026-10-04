@@ -53,6 +53,10 @@ pub(crate) struct WellformedChecker {
     /// following text events carry the rest of the subset until its closing
     /// `]`; they must not be judged as prolog character data.
     dtd_open: bool,
+    /// While `dtd_open`: the declaration received so far.
+    dtd_pending: String,
+    /// The complete declaration, until taken by [`take_doctype`](Self::take_doctype).
+    completed_doctype: Option<String>,
     /// Whether any content (text, comment, PI, DOCTYPE, or element) has been
     /// seen. The XML declaration is only well-formed as the very first thing in
     /// the document.
@@ -92,6 +96,8 @@ impl Default for WellformedChecker {
             root_seen: false,
             doctype_seen: false,
             dtd_open: false,
+            dtd_pending: String::new(),
+            completed_doctype: None,
             document_started: false,
             ns_scopes: FxHashMap::default(),
             ns_undo: Vec::new(),
@@ -169,6 +175,12 @@ fn subset_open(raw: &str) -> Option<usize> {
 #[inline]
 fn is_xml_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
+/// Error for a `DOCTYPE` whose internal subset never closes (typically an
+/// unterminated quoted literal).
+fn unterminated_doctype() -> ParseError {
+    not_wf("the DOCTYPE internal subset is not terminated")
 }
 
 fn not_wf(message: impl Into<String>) -> ParseError {
@@ -414,6 +426,9 @@ impl WellformedChecker {
     /// attribute's `Name` and raw value, and the document-structure position.
     pub(crate) fn start(&mut self, e: &BytesStart<'_>) -> Result<()> {
         self.document_started = true;
+        if self.dtd_open {
+            return Err(unterminated_doctype().into());
+        }
         let qname = std::str::from_utf8(e.name().into_inner())?;
         check_name(qname, "element name")?;
 
@@ -570,6 +585,14 @@ impl WellformedChecker {
         Ok(())
     }
 
+    /// Number of currently open elements.
+    pub(crate) fn depth(&self) -> usize {
+        match self.state {
+            DocState::InRoot(depth) => depth,
+            DocState::Prolog | DocState::Epilog => 0,
+        }
+    }
+
     /// Checks an end tag's `Name` and closes an element structurally.
     ///
     /// With `check_end_names` enabled (the default for both engines) the
@@ -599,25 +622,38 @@ impl WellformedChecker {
         Ok(())
     }
 
-    /// Checks raw text (character data).
-    pub(crate) fn text(&mut self, raw: &str) -> Result<()> {
+    /// Checks raw text (character data) and returns the part of it that is
+    /// character data. That is all of `raw`, except while a truncated
+    /// `DOCTYPE` is being reassembled (see [`doctype`](Self::doctype)): then
+    /// the leading part that belongs to the declaration is consumed here and
+    /// only what follows the declaration is returned.
+    pub(crate) fn text<'r>(&mut self, raw: &'r str) -> Result<&'r str> {
         // White space in the prolog does not itself begin the document, but any
         // text preceding a declaration still means the declaration is not first;
         // marking it here keeps the declaration-position check correct.
         self.document_started = true;
         // When quick-xml truncated the DOCTYPE at a `>` inside a quoted literal,
         // the remaining internal subset (up to its closing `]`) arrives as text.
-        // Consume it as DTD rather than judging it as prolog character data.
+        // Append it to the declaration rather than judging it as prolog
+        // character data.
         if self.dtd_open {
             check_chars(raw, "text content")?;
-            if let Some(end) = internal_subset_end(raw) {
-                self.dtd_open = false;
-                // Anything after the `]` and the DOCTYPE's `>` is prolog text.
-                let tail = &raw[end + 1..];
-                let after = tail.strip_prefix('>').unwrap_or(tail);
-                return self.text(after);
-            }
-            return Ok(());
+            let base = self.dtd_pending.len();
+            self.dtd_pending.push_str(raw);
+            let open = subset_open(&self.dtd_pending).unwrap_or(0);
+            let Some(rel) = internal_subset_end(&self.dtd_pending[open + 1..]) else {
+                return Ok("");
+            };
+            let end = open + 1 + rel;
+            self.dtd_open = false;
+            let mut declaration = std::mem::take(&mut self.dtd_pending);
+            declaration.truncate(end + 1);
+            super::dtd::check_doctype(&declaration)?;
+            self.completed_doctype = Some(declaration);
+            // Anything after the `]` and the DOCTYPE's `>` is prolog text.
+            let tail = raw[end + 1 - base..].trim_start_matches(is_xml_space);
+            let after = tail.strip_prefix('>').unwrap_or(tail);
+            return self.text(after);
         }
         // Single pass: Char production, no literal `]]>`, and well-formed
         // character references.
@@ -630,7 +666,14 @@ impl WellformedChecker {
                 not_wf("character data is only allowed inside the document element").into(),
             );
         }
-        Ok(())
+        Ok(raw)
+    }
+
+    /// The complete raw `DOCTYPE` declaration body, once it has been seen
+    /// (possibly reassembled from a truncated declaration and the text after
+    /// it). Returned once.
+    pub(crate) fn take_doctype(&mut self) -> Option<String> {
+        self.completed_doctype.take()
     }
 
     /// Checks a CDATA section body.
@@ -723,14 +766,22 @@ impl WellformedChecker {
         match subset_open(raw) {
             Some(open) if internal_subset_end(&raw[open + 1..]).is_none() => {
                 self.dtd_open = true;
+                // quick-xml consumed the `>` it stopped at; put it back.
+                self.dtd_pending = format!("{raw}>");
             }
-            _ => super::dtd::check_doctype(raw)?,
+            _ => {
+                super::dtd::check_doctype(raw)?;
+                self.completed_doctype = Some(raw.to_string());
+            }
         }
         Ok(())
     }
 
     /// Called once at end of input.
     pub(crate) fn eof(&mut self) -> Result<()> {
+        if self.dtd_open {
+            return Err(unterminated_doctype().into());
+        }
         if !self.root_seen {
             return Err(not_wf("no document element found").into());
         }
