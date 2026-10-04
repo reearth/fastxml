@@ -272,6 +272,10 @@ impl PathTracker {
         if !steps.iter().any(|s| s.descendant_or_self) && depth != base + steps.len() {
             return false;
         }
+        if last == 0 {
+            // Single step: already matched; only its depth is constrained
+            return steps[0].descendant_or_self || depth - 1 == base;
+        }
 
         // reachable[i]: steps[..=k] can select path[i]
         let mut reachable: Vec<bool> = (0..depth)
