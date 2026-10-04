@@ -1,14 +1,16 @@
 //! Schema resolution utilities.
 //!
 //! This module provides high-level functions to resolve and compile schemas
-//! from XML documents that contain `xsi:schemaLocation` attributes.
+//! from XML documents that contain `xsi:schemaLocation` /
+//! `xsi:noNamespaceSchemaLocation` attributes.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::error::Result;
-use crate::schema::export::{ExportResult, export_schemas_from_xml};
+use crate::error::{Error, Result};
+use crate::schema::export::{ExportResult, SchemaSet, hint_locations};
 use crate::schema::fetcher::SchemaFetcher;
+use crate::schema::hints::SchemaHints;
 use crate::schema::types::CompiledSchema;
 use crate::schema::xsd::{create_builtin_schema, parse_xsd_multiple};
 
@@ -17,11 +19,14 @@ use crate::schema::xsd::{create_builtin_schema, parse_xsd_multiple};
 pub struct ResolvedSchema {
     /// The compiled schema ready for validation.
     pub compiled: Arc<CompiledSchema>,
-    /// Directory containing exported schema files (if schemas were exported).
+    /// Directory holding the exported schema files, when they were written
+    /// to disk and kept (see [`ResolveOptions`]).
     pub export_dir: Option<PathBuf>,
-    /// The entry schema filename in export_dir.
+    /// The entry schema's filename in the export (inside `export_dir` when
+    /// that is set).
     pub entry_filename: Option<String>,
-    /// Export result with URI to filename mappings.
+    /// URI to filename mappings of the resolved schema set; `None` when the
+    /// document named no schema.
     pub export_result: Option<ExportResult>,
 }
 
@@ -34,22 +39,38 @@ impl ResolvedSchema {
         }
     }
 
-    /// Returns true if this is a builtin schema (no external schemas were resolved).
+    /// Returns true if this is a builtin schema (the document named no
+    /// schema, so no external schemas were resolved).
     pub fn is_builtin(&self) -> bool {
-        self.export_dir.is_none()
+        self.export_result
+            .as_ref()
+            .is_none_or(|r| r.schema_count == 0)
     }
 }
 
 /// Options for schema resolution.
+///
+/// Where the exported schema files go:
+///
+/// | `export_dir` | `keep_export_dir` | files on disk |
+/// |---|---|---|
+/// | `Some(dir)` | (ignored) | written into `dir`, which must be new or empty; never deleted |
+/// | `None` | `true` | written into a fresh, uniquely named temporary directory that is kept (the caller deletes it) |
+/// | `None` | `false` (default) | none — the schemas are compiled in memory and `ResolvedSchema::export_dir` is `None` |
 #[derive(Debug, Clone, Default)]
 pub struct ResolveOptions {
-    /// Base directory for resolving relative schema paths.
-    /// If None, relative paths in the XML will be resolved from current directory.
+    /// Base directory for resolving relative schema locations named by the
+    /// document (typically the document's own directory). If None, relative
+    /// locations are resolved by the fetcher (against its base directory, or
+    /// else the current directory).
     pub base_dir: Option<PathBuf>,
-    /// Custom export directory. If None, a temp directory will be used.
+    /// Directory to export the schema files into. It is created if missing
+    /// and must otherwise be empty: resolution refuses a non-empty directory
+    /// rather than overwrite or delete anything in it.
     pub export_dir: Option<PathBuf>,
-    /// Whether to keep the export directory after resolution.
-    /// If false (default), the directory may be cleaned up.
+    /// With no `export_dir`, write the files into a new uniquely named
+    /// temporary directory and keep it. Without this (the default) no files
+    /// are written.
     pub keep_export_dir: bool,
 }
 
@@ -78,10 +99,21 @@ impl ResolveOptions {
 /// Resolves and compiles schemas from an XML document.
 ///
 /// This function:
-/// 1. Parses the XML to extract `xsi:schemaLocation` attributes
-/// 2. Fetches all referenced schemas (including imports/includes)
-/// 3. Exports schemas to a directory with rewritten paths
-/// 4. Compiles all schemas into a single `CompiledSchema`
+/// 1. Reads the root element's `xsi:schemaLocation` /
+///    `xsi:noNamespaceSchemaLocation` hints
+/// 2. Fetches all referenced schemas (including imports/includes/redefines)
+/// 3. Compiles them into a single `CompiledSchema`
+/// 4. Optionally exports them with rewritten paths (see [`ResolveOptions`])
+///
+/// A document without hints yields the built-in schema
+/// ([`ResolvedSchema::is_builtin`] is true).
+///
+/// # Errors
+///
+/// Returns an error when a hint is malformed, when any referenced schema
+/// cannot be fetched or parsed, when the schemas do not compile, or when
+/// `export_dir` is not empty. It never falls back to the built-in schema in
+/// those cases.
 ///
 /// # Arguments
 ///
@@ -111,18 +143,8 @@ pub fn resolve_schema_from_xml<F: SchemaFetcher>(
     fetcher: &F,
     options: &ResolveOptions,
 ) -> Result<ResolvedSchema> {
-    // Determine export directory
-    let export_dir = options.export_dir.clone().unwrap_or_else(|| {
-        std::env::temp_dir().join(format!("fastxml_schemas_{}", std::process::id()))
-    });
-
-    // Clean up previous export if exists
-    let _ = std::fs::remove_dir_all(&export_dir);
-
-    // Export schemas
-    let export_result = export_schemas_from_xml(xml_content, &export_dir, fetcher)?;
-
-    if export_result.schema_count == 0 {
+    let hints = SchemaHints::from_xml_bytes(xml_content)?;
+    if hints.is_empty() {
         return Ok(ResolvedSchema {
             compiled: Arc::new(create_builtin_schema()),
             export_dir: None,
@@ -131,40 +153,85 @@ pub fn resolve_schema_from_xml<F: SchemaFetcher>(
         });
     }
 
-    // Read and compile all exported schemas
-    let mut xsd_contents: Vec<(String, Vec<u8>)> = Vec::new();
-    for (uri, filename) in &export_result.uri_to_filename {
-        let path = export_dir.join(filename);
-        if let Ok(content) = std::fs::read(&path) {
-            xsd_contents.push((uri.clone(), content));
-        }
+    // Refuse a non-empty export directory before doing any work.
+    if let Some(dir) = &options.export_dir {
+        ensure_new_or_empty(dir)?;
     }
 
-    let xsd_refs: Vec<(&str, &[u8])> = xsd_contents
-        .iter()
-        .map(|(uri, content)| (uri.as_str(), content.as_slice()))
-        .collect();
+    let locations = hint_locations(&hints, |loc| {
+        resolve_against_base(loc, options.base_dir.as_deref())
+    })?;
+    let set = SchemaSet::collect(&locations, fetcher)?;
+    let sources = set.sources();
+    let compiled = parse_xsd_multiple(
+        &sources
+            .iter()
+            .map(|(uri, content)| (*uri, content.as_ref()))
+            .collect::<Vec<_>>(),
+    )?;
 
-    let compiled = match parse_xsd_multiple(&xsd_refs) {
-        Ok(schema) => Arc::new(schema),
-        Err(_) => {
-            // Fall back to builtin schema on parse error
-            Arc::new(create_builtin_schema())
+    let export_dir = match (&options.export_dir, options.keep_export_dir) {
+        (Some(dir), _) => {
+            set.write_to(dir)?;
+            Some(dir.clone())
         }
+        (None, true) => {
+            let dir = tempfile::Builder::new()
+                .prefix("fastxml_schemas_")
+                .tempdir()?;
+            set.write_to(dir.path())?;
+            Some(dir.keep())
+        }
+        (None, false) => None,
     };
 
     Ok(ResolvedSchema {
-        compiled,
-        export_dir: Some(export_dir),
-        entry_filename: export_result.entry_filename.clone(),
-        export_result: Some(export_result),
+        compiled: Arc::new(compiled),
+        export_dir,
+        entry_filename: set.entry_filename(),
+        export_result: Some(set.result()),
     })
+}
+
+/// Errors unless `dir` is missing or an empty directory.
+fn ensure_new_or_empty(dir: &Path) -> Result<()> {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => {
+            if entries.next().is_some() {
+                return Err(Error::InvalidOperation(format!(
+                    "export_dir {} is not empty; schemas are only exported into a new or \
+                     empty directory so that no existing file is overwritten or deleted",
+                    dir.display()
+                )));
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Joins a relative, non-URL `location` onto `base_dir` (made absolute).
+fn resolve_against_base(location: &str, base_dir: Option<&Path>) -> String {
+    let is_url = location.contains("://");
+    match base_dir {
+        Some(base) if !is_url && !Path::new(location).is_absolute() => {
+            let joined = base.join(location);
+            std::path::absolute(&joined)
+                .unwrap_or(joined)
+                .display()
+                .to_string()
+        }
+        _ => location.to_string(),
+    }
 }
 
 /// Resolves schemas from an XML file path.
 ///
 /// This is a convenience function that reads the file and uses its parent
-/// directory as the base for resolving relative schema paths.
+/// directory as the base for resolving relative schema locations. No files
+/// are exported; use [`resolve_schema_from_xml`] with [`ResolveOptions`] for
+/// that.
 ///
 /// # Example
 ///
@@ -182,11 +249,11 @@ pub fn resolve_schema_from_file<F: SchemaFetcher>(
     let path = xml_path.as_ref();
     let content = std::fs::read(path)?;
 
-    let options = if let Some(parent) = path.parent() {
-        ResolveOptions::with_base_dir(parent)
-    } else {
-        ResolveOptions::default()
-    };
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let options = ResolveOptions::with_base_dir(parent);
 
     resolve_schema_from_xml(&content, fetcher, &options)
 }

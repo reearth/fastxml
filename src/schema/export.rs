@@ -1,45 +1,66 @@
 //! Schema export utilities.
 //!
-//! This module provides functionality to resolve and export schemas
-//! to a local directory with rewritten import/include paths.
+//! This module fetches the schemas an instance document names (and
+//! everything they import, include or redefine) and writes them to a local
+//! directory with every `schemaLocation` rewritten to the exported file
+//! name, plus an OASIS `catalog.xml` mapping the original URIs to the files.
 //!
-//! This is useful for tools like libxml that need all schemas
-//! in a single directory with relative paths.
+//! This is useful for tools like libxml that need all schemas in a single
+//! directory with relative paths.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
-use crate::error::Result;
-use crate::schema::fetcher::{FetchResult, SchemaFetcher};
+use indexmap::IndexMap;
+
+use crate::error::{Error, Result};
+use crate::schema::error::SchemaError;
+use crate::schema::fetcher::SchemaFetcher;
+use crate::schema::hints::SchemaHints;
 
 /// Result of schema export operation.
 #[derive(Debug, Clone)]
 pub struct ExportResult {
-    /// Number of schemas exported.
+    /// Number of schema documents exported (one file each).
     pub schema_count: usize,
-    /// Map of original URIs to local filenames.
+    /// Map of original URIs to local filenames. A document reached under
+    /// more than one URI (e.g. before and after an HTTP redirect) has one
+    /// entry per URI, all naming the same file.
     pub uri_to_filename: HashMap<String, String>,
-    /// The entry schema filename (first schema).
+    /// The entry schema filename (the first schema named by the document).
     pub entry_filename: Option<String>,
 }
 
 /// Exports schemas from xsi:schemaLocation to a local directory.
 ///
 /// This function:
-/// 1. Parses the XML to extract xsi:schemaLocation
-/// 2. Fetches all referenced schemas (including imports/includes)
-/// 3. Rewrites import/include schemaLocation attributes to relative paths
-/// 4. Writes all schemas to the output directory
+/// 1. Reads the root element's `xsi:schemaLocation` and
+///    `xsi:noNamespaceSchemaLocation` hints
+/// 2. Fetches all referenced schemas (including imports/includes/redefines)
+/// 3. Rewrites every import/include/redefine `schemaLocation` to the local
+///    file name of the document it resolves to
+/// 4. Writes all schemas, byte for byte apart from those rewrites, plus a
+///    `catalog.xml` to the output directory
+///
+/// Files are written into `output_dir` (created if missing), replacing files
+/// with the same names; nothing else in the directory is touched. Each
+/// document gets a file name that is unique ignoring case, so the set is
+/// safe on case-insensitive filesystems. Names are assigned in discovery
+/// order, so the same inputs always produce the same files.
+///
+/// # Errors
+///
+/// Any referenced schema that cannot be fetched or parsed is an error (the
+/// exported set would otherwise silently point outside itself), as is a
+/// malformed hint attribute. A document without hints exports nothing and
+/// returns `schema_count == 0`.
 ///
 /// # Arguments
 ///
 /// * `xml_content` - The XML document content
 /// * `output_dir` - Directory to write schemas to
-/// * `fetcher` - Schema fetcher for downloading schemas
-///
-/// # Returns
-///
-/// Export result with schema count and filename mappings
+/// * `fetcher` - Schema fetcher for downloading schemas; relative hint
+///   locations are resolved by the fetcher
 ///
 /// # Example
 ///
@@ -57,86 +78,171 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
     output_dir: &Path,
     fetcher: &F,
 ) -> Result<ExportResult> {
-    // Stream only the root element to extract schema locations (no full DOM parse)
-    let locations = crate::parser::parse_schema_locations_from_reader(xml_content)?;
-
-    if locations.is_empty() {
+    let hints = SchemaHints::from_xml_bytes(xml_content)?;
+    if hints.is_empty() {
         return Ok(ExportResult {
             schema_count: 0,
             uri_to_filename: HashMap::new(),
             entry_filename: None,
         });
     }
+    let locations = hint_locations(&hints, |loc| loc.to_string())?;
+    let set = SchemaSet::collect(&locations, fetcher)?;
+    set.write_to(output_dir)?;
+    Ok(set.result())
+}
 
-    // Create output directory if it doesn't exist
-    std::fs::create_dir_all(output_dir)?;
+/// The hint locations, mapped through `resolve`; a malformed hint is an error.
+pub(crate) fn hint_locations(
+    hints: &SchemaHints,
+    resolve: impl Fn(&str) -> String,
+) -> Result<Vec<String>> {
+    if let Some(problem) = hints.problems.first() {
+        return Err(Error::InvalidOperation(format!(
+            "malformed schema-location hint: {problem}"
+        )));
+    }
+    Ok(hints.hints.iter().map(|h| resolve(&h.location)).collect())
+}
 
-    // Use HashMap to collect all schemas
-    let mut schemas: HashMap<String, Vec<u8>> = HashMap::new();
-    let mut entry_uri = None;
+/// One fetched schema document.
+struct Doc {
+    /// The URI the document was fetched as (after redirects); relative
+    /// locations inside it resolve against this.
+    uri: String,
+    content: Vec<u8>,
+    filename: String,
+}
 
-    // Fetch and resolve all schemas
-    for (_namespace, location) in &locations {
-        match fetcher.fetch(location) {
-            Ok(result) => {
-                // Track the first successfully fetched schema as the entry point
-                if entry_uri.is_none() {
-                    entry_uri = Some(result.final_url.clone());
+/// A closed set of schema documents: the hinted entries and everything they
+/// reference, in discovery order (entries first, then breadth-first).
+pub(crate) struct SchemaSet {
+    docs: Vec<Doc>,
+    /// Every URI a reference resolved to → index into `docs`.
+    by_uri: IndexMap<String, usize>,
+}
+
+impl SchemaSet {
+    /// Fetches the entry `locations` and, transitively, every document they
+    /// import, include or redefine. Any fetch or parse failure is an error.
+    pub(crate) fn collect<F: SchemaFetcher>(locations: &[String], fetcher: &F) -> Result<Self> {
+        let mut set = Self {
+            docs: Vec::new(),
+            by_uri: IndexMap::new(),
+        };
+        let mut queue = VecDeque::new();
+        for location in locations {
+            if let Some(idx) = set.fetch_new(location, fetcher)? {
+                queue.push_back(idx);
+            }
+        }
+        while let Some(idx) = queue.pop_front() {
+            let base = set.docs[idx].uri.clone();
+            for location in referenced_locations(&set.docs[idx].content, &base)? {
+                let resolved = resolve_uri(&base, &location)?;
+                if let Some(new_idx) = set.fetch_new(&resolved, fetcher)? {
+                    queue.push_back(new_idx);
                 }
-
-                schemas.insert(result.final_url.clone(), result.content.clone());
-
-                // Parse and resolve imports recursively
-                let _ = resolve_imports_recursive(
-                    &result.final_url,
-                    &result.content,
-                    fetcher,
-                    &mut schemas,
-                );
             }
-            Err(_) => {
-                // Skip schemas that can't be fetched
-                continue;
-            }
+        }
+        set.assign_filenames();
+        Ok(set)
+    }
+
+    /// Fetches `uri` unless it is already known; returns the index of a
+    /// newly added document.
+    fn fetch_new<F: SchemaFetcher>(&mut self, uri: &str, fetcher: &F) -> Result<Option<usize>> {
+        if self.by_uri.contains_key(uri) {
+            return Ok(None);
+        }
+        let fetched = fetcher.fetch(uri)?;
+        if let Some(&idx) = self.by_uri.get(&fetched.final_url) {
+            // Another URI for a document we already have (a redirect).
+            self.by_uri.insert(uri.to_string(), idx);
+            return Ok(None);
+        }
+        let idx = self.docs.len();
+        self.by_uri.insert(fetched.final_url.clone(), idx);
+        self.by_uri.insert(uri.to_string(), idx);
+        self.docs.push(Doc {
+            uri: fetched.final_url,
+            content: fetched.content,
+            filename: String::new(),
+        });
+        Ok(Some(idx))
+    }
+
+    fn assign_filenames(&mut self) {
+        let mut taken: HashSet<String> = HashSet::new();
+        for doc in &mut self.docs {
+            doc.filename = uri_to_safe_filename(&doc.uri, &taken);
+            taken.insert(doc.filename.to_lowercase());
         }
     }
 
-    // Build URI to filename mapping
-    let mut uri_to_filename: HashMap<String, String> = HashMap::new();
-    let mut existing_filenames: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    let uris: Vec<String> = schemas.keys().cloned().collect();
-
-    for uri in &uris {
-        let filename = uri_to_safe_filename(uri, &existing_filenames);
-        existing_filenames.insert(filename.clone());
-        uri_to_filename.insert(uri.clone(), filename);
+    /// `(uri, content as UTF-8)` pairs in discovery order, for compilation.
+    pub(crate) fn sources(&self) -> Vec<(&str, std::borrow::Cow<'_, [u8]>)> {
+        self.docs
+            .iter()
+            .map(|d| (d.uri.as_str(), crate::parser::encoding::to_utf8(&d.content)))
+            .collect()
     }
 
-    // Rewrite and export each schema
-    for uri in &uris {
-        if let Some(content) = schemas.get(uri) {
-            let filename = uri_to_filename.get(uri).unwrap();
-            let rewritten = rewrite_schema_locations(content, uri, &uri_to_filename)?;
-            let output_path = output_dir.join(filename);
-            std::fs::write(&output_path, rewritten)?;
+    /// Writes every document (with rewritten locations) and `catalog.xml`.
+    pub(crate) fn write_to(&self, output_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(output_dir)?;
+        for doc in &self.docs {
+            let rewritten = rewrite_schema_locations(&doc.content, |location| {
+                let resolved = resolve_uri(&doc.uri, location).ok()?;
+                let idx = *self.by_uri.get(&resolved)?;
+                Some(self.docs[idx].filename.clone())
+            });
+            std::fs::write(output_dir.join(&doc.filename), rewritten)?;
+        }
+        // Also write an OASIS XML catalog mapping the original URIs to the
+        // exported files, so catalog-aware tools (libxml2/xmllint via
+        // XML_CATALOG_FILES) can resolve the unmodified schema URLs offline —
+        // including URLs that are no longer fetchable by tools without
+        // redirect/TLS support.
+        write_catalog(output_dir, &self.uri_to_filename())
+    }
+
+    fn uri_to_filename(&self) -> HashMap<String, String> {
+        self.by_uri
+            .iter()
+            .map(|(uri, &idx)| (uri.clone(), self.docs[idx].filename.clone()))
+            .collect()
+    }
+
+    pub(crate) fn entry_filename(&self) -> Option<String> {
+        self.docs.first().map(|d| d.filename.clone())
+    }
+
+    pub(crate) fn result(&self) -> ExportResult {
+        ExportResult {
+            schema_count: self.docs.len(),
+            uri_to_filename: self.uri_to_filename(),
+            entry_filename: self.entry_filename(),
         }
     }
+}
 
-    let entry_filename = entry_uri.and_then(|uri| uri_to_filename.get(&uri).cloned());
-
-    // Also write an OASIS XML catalog mapping the original URIs to the
-    // exported files, so catalog-aware tools (libxml2/xmllint via
-    // XML_CATALOG_FILES) can resolve the unmodified schema URLs offline —
-    // including URLs that are no longer fetchable by tools without
-    // redirect/TLS support.
-    write_catalog(output_dir, &uri_to_filename)?;
-
-    Ok(ExportResult {
-        schema_count: uri_to_filename.len(),
-        uri_to_filename,
-        entry_filename,
-    })
+/// The import/include/redefine locations a schema document references.
+fn referenced_locations(content: &[u8], uri: &str) -> Result<Vec<String>> {
+    let content = crate::parser::encoding::to_utf8(content);
+    let schema = crate::schema::xsd::parse_xsd_ast(&content).map_err(|e| {
+        Error::from(SchemaError::InvalidSchema {
+            message: format!("{uri}: {e}"),
+        })
+    })?;
+    let mut locations: Vec<String> = schema
+        .imports
+        .iter()
+        .filter_map(|i| i.schema_location.clone())
+        .collect();
+    locations.extend(schema.includes.iter().map(|i| i.schema_location.clone()));
+    locations.extend(schema.redefines.iter().map(|r| r.schema_location.clone()));
+    Ok(locations)
 }
 
 /// Writes `catalog.xml` (OASIS XML Catalogs format) into the export
@@ -170,132 +276,69 @@ fn xml_escape_attr(s: &str) -> String {
         .replace('<', "&lt;")
 }
 
-/// Recursively resolves imports and includes from a schema.
-fn resolve_imports_recursive<F: SchemaFetcher>(
-    base_uri: &str,
-    content: &[u8],
-    fetcher: &F,
-    schemas: &mut HashMap<String, Vec<u8>>,
-) -> Result<()> {
-    // Parse schema to find imports/includes
-    let content_str = std::str::from_utf8(content).unwrap_or("");
-
-    // Extract import schemaLocation attributes
-    for location in extract_schema_locations(content_str) {
-        let resolved_uri = resolve_uri(base_uri, &location)?;
-
-        if !schemas.contains_key(&resolved_uri) {
-            match fetcher.fetch(&resolved_uri) {
-                Ok(FetchResult {
-                    content: fetched_content,
-                    final_url,
-                    ..
-                }) => {
-                    schemas.insert(final_url.clone(), fetched_content.clone());
-                    if final_url != resolved_uri {
-                        schemas.insert(resolved_uri, fetched_content.clone());
-                    }
-                    // Recurse
-                    resolve_imports_recursive(&final_url, &fetched_content, fetcher, schemas)?;
-                }
-                Err(_) => {
-                    // Skip schemas that can't be fetched
-                    continue;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Extracts schemaLocation values from import/include elements.
-fn extract_schema_locations(content: &str) -> Vec<String> {
-    let mut locations = Vec::new();
-
-    // Simple regex-like extraction for schemaLocation attributes
-    // Matches: schemaLocation="..." or schemaLocation='...'
-    let patterns = [r#"schemaLocation=""#, r#"schemaLocation='"#];
-
-    for pattern in patterns {
-        let quote = if pattern.ends_with('"') { '"' } else { '\'' };
-        let mut remaining = content;
-
-        while let Some(start) = remaining.find(pattern) {
-            let after_pattern = &remaining[start + pattern.len()..];
-            if let Some(end) = after_pattern.find(quote) {
-                let location = &after_pattern[..end];
-                // Skip xsi:schemaLocation (contains spaces for namespace-location pairs)
-                if !location.contains(' ') && !location.is_empty() {
-                    locations.push(location.to_string());
-                }
-                remaining = &after_pattern[end + 1..];
-            } else {
-                break;
-            }
-        }
-    }
-
-    locations
-}
-
-/// Rewrites schemaLocation attributes in a schema to use local filenames.
+/// Rewrites the value of every `schemaLocation` attribute for which
+/// `target` returns a replacement, leaving all other bytes untouched.
 ///
-/// `base_uri` is the URI of the schema being rewritten, used to resolve relative paths.
+/// Works on raw bytes, so any ASCII-compatible encoding (UTF-8,
+/// ISO-8859-*, Shift_JIS, …) round-trips exactly; a UTF-16 document is
+/// written unchanged. Only attributes whose name is exactly
+/// `schemaLocation` (not `xsi:schemaLocation`) are touched.
 fn rewrite_schema_locations(
     content: &[u8],
-    base_uri: &str,
-    uri_to_filename: &HashMap<String, String>,
-) -> Result<Vec<u8>> {
-    let content_str = std::str::from_utf8(content).unwrap_or("");
-    let mut result = content_str.to_string();
-
-    // First, rewrite absolute URIs directly
-    for (uri, filename) in uri_to_filename {
-        // Replace in schemaLocation="..."
-        let old_double = format!(r#"schemaLocation="{}""#, uri);
-        let new_double = format!(r#"schemaLocation="{}""#, filename);
-        result = result.replace(&old_double, &new_double);
-
-        // Replace in schemaLocation='...'
-        let old_single = format!(r#"schemaLocation='{}'"#, uri);
-        let new_single = format!(r#"schemaLocation='{}'"#, filename);
-        result = result.replace(&old_single, &new_single);
-    }
-
-    // Now handle relative paths by resolving them and finding the matching filename
-    // Extract all remaining schemaLocation values and try to resolve them
-    let locations = extract_schema_locations(&result);
-    for location in locations {
-        // Skip if it's already just a filename (already rewritten)
-        if !location.contains('/') && !location.contains('\\') {
+    mut target: impl FnMut(&str) -> Option<String>,
+) -> Vec<u8> {
+    const NAME: &[u8] = b"schemaLocation";
+    let mut out = Vec::with_capacity(content.len());
+    let mut copied = 0;
+    let mut i = 0;
+    while let Some(off) = memchr::memmem::find(&content[i..], NAME) {
+        let start = i + off;
+        i = start + NAME.len();
+        if start == 0 || !content[start - 1].is_ascii_whitespace() {
             continue;
         }
-
-        // Try to resolve this relative path against the base URI
-        if let Ok(resolved) = resolve_uri(base_uri, &location) {
-            // Look up in our mapping
-            if let Some(filename) = uri_to_filename.get(&resolved) {
-                // Replace this relative path with the filename
-                let old_double = format!(r#"schemaLocation="{}""#, location);
-                let new_double = format!(r#"schemaLocation="{}""#, filename);
-                result = result.replace(&old_double, &new_double);
-
-                let old_single = format!(r#"schemaLocation='{}'"#, location);
-                let new_single = format!(r#"schemaLocation='{}'"#, filename);
-                result = result.replace(&old_single, &new_single);
-            }
+        let Some((value_start, value_end)) = attribute_value_span(content, i) else {
+            continue;
+        };
+        i = value_end + 1;
+        let Ok(raw) = std::str::from_utf8(&content[value_start..value_end]) else {
+            continue;
+        };
+        let Ok(value) = quick_xml::escape::unescape(raw) else {
+            continue;
+        };
+        if let Some(filename) = target(value.trim()) {
+            out.extend_from_slice(&content[copied..value_start]);
+            out.extend_from_slice(filename.as_bytes());
+            copied = value_end;
         }
     }
-
-    Ok(result.into_bytes())
+    out.extend_from_slice(&content[copied..]);
+    out
 }
 
-/// Converts a URI to a safe filename, ensuring uniqueness.
-fn uri_to_safe_filename(
-    uri: &str,
-    existing_filenames: &std::collections::HashSet<String>,
-) -> String {
+/// For `content[pos..]` = `  =  "value"`, the byte span of `value`.
+fn attribute_value_span(content: &[u8], mut pos: usize) -> Option<(usize, usize)> {
+    let skip_ws = |mut p: usize| {
+        while p < content.len() && content[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        p
+    };
+    pos = skip_ws(pos);
+    if content.get(pos) != Some(&b'=') {
+        return None;
+    }
+    pos = skip_ws(pos + 1);
+    let quote = *content.get(pos).filter(|q| **q == b'"' || **q == b'\'')?;
+    let start = pos + 1;
+    let len = memchr::memchr(quote, &content[start..])?;
+    Some((start, start + len))
+}
+
+/// Converts a URI to a safe filename that is unique among `taken`
+/// (lower-cased names), so exports survive case-insensitive filesystems.
+fn uri_to_safe_filename(uri: &str, taken: &HashSet<String>) -> String {
     // Remove protocol
     let without_protocol = uri
         .strip_prefix("http://")
@@ -320,15 +363,21 @@ fn uri_to_safe_filename(
         format!("{}.xsd", base_filename)
     };
 
-    // Make filename unique if it already exists
-    if !existing_filenames.contains(&base_filename) {
+    if !taken.contains(&base_filename.to_lowercase()) {
         return base_filename;
     }
 
-    // Add hash suffix to make it unique
+    // Add hash suffix to make it unique (and a counter in the unlikely case
+    // the hashed name is taken too).
     let stem = base_filename.strip_suffix(".xsd").unwrap_or(&base_filename);
     let hash_suffix = format!("{:08x}", hash_uri(uri) as u32);
-    format!("{}_{}.xsd", stem, hash_suffix)
+    let mut candidate = format!("{}_{}.xsd", stem, hash_suffix);
+    let mut n = 1;
+    while taken.contains(&candidate.to_lowercase()) {
+        candidate = format!("{}_{}_{}.xsd", stem, hash_suffix, n);
+        n += 1;
+    }
+    candidate
 }
 
 /// Simple hash function for URIs.
@@ -409,7 +458,6 @@ mod tests {
 
     #[test]
     fn test_uri_to_safe_filename() {
-        use std::collections::HashSet;
         let empty: HashSet<String> = HashSet::new();
 
         assert_eq!(
@@ -428,7 +476,6 @@ mod tests {
 
     #[test]
     fn test_uri_to_safe_filename_uniqueness() {
-        use std::collections::HashSet;
         let mut existing: HashSet<String> = HashSet::new();
         existing.insert("types.xsd".to_string());
 
@@ -437,32 +484,23 @@ mod tests {
         assert!(filename.starts_with("types_"));
         assert!(filename.ends_with(".xsd"));
         assert_ne!(filename, "types.xsd");
+
+        // ... also when it differs only in case
+        let filename = uri_to_safe_filename("http://example.com/other/Types.xsd", &existing);
+        assert_ne!(filename.to_lowercase(), "types.xsd");
     }
 
     #[test]
-    fn test_extract_schema_locations() {
-        let content = r#"
+    fn test_referenced_locations() {
+        let content = br#"
             <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <!-- <xs:include schemaLocation="commented-out.xsd"/> -->
                 <xs:import namespace="http://example.com" schemaLocation="types.xsd"/>
                 <xs:include schemaLocation='common.xsd'/>
             </xs:schema>
         "#;
-        let locations = extract_schema_locations(content);
-        assert_eq!(locations.len(), 2);
-        assert!(locations.contains(&"types.xsd".to_string()));
-        assert!(locations.contains(&"common.xsd".to_string()));
-    }
-
-    #[test]
-    fn test_extract_schema_locations_skips_xsi() {
-        let content = r#"
-            <root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                  xsi:schemaLocation="http://example.com http://example.com/schema.xsd">
-            </root>
-        "#;
-        let locations = extract_schema_locations(content);
-        // Should skip xsi:schemaLocation (contains space)
-        assert!(locations.is_empty());
+        let locations = referenced_locations(content, "file:///x.xsd").unwrap();
+        assert_eq!(locations, vec!["types.xsd", "common.xsd"]);
     }
 
     #[test]
@@ -477,36 +515,57 @@ mod tests {
         assert_eq!(result, "http://example.com/schemas/types.xsd");
     }
 
+    fn rewrite_with(content: &[u8], base: &str, map: &[(&str, &str)]) -> String {
+        let map: HashMap<String, String> = map
+            .iter()
+            .map(|(u, f)| (u.to_string(), f.to_string()))
+            .collect();
+        let out = rewrite_schema_locations(content, |loc| {
+            map.get(&resolve_uri(base, loc).ok()?).cloned()
+        });
+        String::from_utf8(out).unwrap()
+    }
+
     #[test]
     fn test_rewrite_schema_locations() {
-        let content = br#"<xs:import schemaLocation="http://example.com/types.xsd"/>"#;
-        let mut mapping = HashMap::new();
-        mapping.insert(
-            "http://example.com/types.xsd".to_string(),
-            "types.xsd".to_string(),
+        let result = rewrite_with(
+            br#"<xs:import schemaLocation="http://example.com/types.xsd"/>"#,
+            "http://example.com/main.xsd",
+            &[("http://example.com/types.xsd", "types.xsd")],
         );
-
-        let result =
-            rewrite_schema_locations(content, "http://example.com/main.xsd", &mapping).unwrap();
-        let result_str = std::str::from_utf8(&result).unwrap();
-
-        assert!(result_str.contains(r#"schemaLocation="types.xsd""#));
+        assert_eq!(result, r#"<xs:import schemaLocation="types.xsd"/>"#);
     }
 
     #[test]
     fn test_rewrite_schema_locations_relative_path() {
-        let content = br#"<xs:import schemaLocation="../types/common.xsd"/>"#;
-        let mut mapping = HashMap::new();
-        mapping.insert(
-            "http://example.com/types/common.xsd".to_string(),
-            "common.xsd".to_string(),
+        let result = rewrite_with(
+            br#"<xs:import schemaLocation='../types/common.xsd'/>"#,
+            "http://example.com/schemas/main.xsd",
+            &[("http://example.com/types/common.xsd", "common.xsd")],
         );
+        assert_eq!(result, r#"<xs:import schemaLocation='common.xsd'/>"#);
+    }
 
-        let result =
-            rewrite_schema_locations(content, "http://example.com/schemas/main.xsd", &mapping)
-                .unwrap();
-        let result_str = std::str::from_utf8(&result).unwrap();
+    #[test]
+    fn test_rewrite_resolves_bare_names_too() {
+        // A bare name is not assumed to be rewritten already: it resolves
+        // against the document and is mapped to that target's file.
+        let result = rewrite_with(
+            br#"<xs:include schemaLocation = "types.xsd"/>"#,
+            "http://example.com/a/main.xsd",
+            &[("http://example.com/a/types.xsd", "types_1234.xsd")],
+        );
+        assert_eq!(result, r#"<xs:include schemaLocation = "types_1234.xsd"/>"#);
+    }
 
-        assert!(result_str.contains(r#"schemaLocation="common.xsd""#));
+    #[test]
+    fn test_rewrite_leaves_xsi_schema_location_alone() {
+        let content = br#"<x xsi:schemaLocation="urn:a http://example.com/types.xsd"/>"#;
+        let result = rewrite_with(
+            content,
+            "http://example.com/main.xsd",
+            &[("http://example.com/types.xsd", "types.xsd")],
+        );
+        assert_eq!(result.as_bytes(), content);
     }
 }
