@@ -189,3 +189,158 @@ fn display_renders_the_whole_expression() {
         assert_eq!(again.to_string(), rendered, "re-parse of {rendered:?}");
     }
 }
+
+// =============================================================================
+// Full expression grammar: comparisons, and/or, filter expressions, node types
+// =============================================================================
+
+fn boolean(d: &XmlDocument, xpath: &str) -> bool {
+    match evaluate(d, xpath) {
+        Ok(XPathResult::Boolean(b)) => b,
+        other => panic!("{xpath}: expected a boolean, got {other:?}"),
+    }
+}
+
+#[test]
+fn comparisons_and_logic_at_top_level() {
+    let d = doc(DOC);
+    for (xpath, expected) in [
+        ("1 = 1", true),
+        ("count(//a) = 3", true),
+        ("count(//a) != 3", false),
+        ("'a' = //nonexistent", false),
+        ("true() and false()", false),
+        ("true() or false()", true),
+        ("1 < 2 = true()", true),
+        ("-1 = 1 - 2", true),
+        ("1 = 1 and 2 = 2", true),
+        ("1 = 2 or 2 = 2 and 3 = 4", false),
+        ("not(1 = 2)", true),
+        ("//a = 2", true),
+        ("//a[1] = 1", true),
+        ("boolean(//a = '3')", true),
+        ("2 > 1 > 0", true),
+    ] {
+        assert_eq!(boolean(&d, xpath), expected, "{xpath}");
+        compare_with_libxml!(xpath: DOC, xpath, &d);
+    }
+}
+
+#[test]
+fn comparison_inside_function_arguments() {
+    let d = doc(DOC);
+    assert_eq!(number(&d, "count(//a[. = 1 or . = 3])"), 2.0);
+    assert_eq!(string(&d, "string(count(//a) = 3)"), "true");
+    assert_eq!(number(&d, "number(1 < 2) + 1"), 2.0);
+    compare_with_libxml!(xpath: DOC, "string(count(//a) = 3)", &d);
+}
+
+#[test]
+fn filter_expressions_take_predicates_and_paths() {
+    let d = doc(DOC);
+    assert_eq!(node_count(&d, "(//a)[1]"), 1);
+    assert_eq!(string(&d, "string((//a)[2])"), "2");
+    assert_eq!(string(&d, "string((//a)[last()])"), "3");
+    assert_eq!(string(&d, "string((//b | //a)[1])"), "1");
+    assert_eq!(number(&d, "count((//a)/text())"), 3.0);
+    assert_eq!(number(&d, "count((/root)//a)"), 3.0);
+    assert_eq!(number(&d, "count((//a)[1] | //b)"), 2.0);
+    assert_eq!(number(&d, "count((//a)[. > 1][1])"), 1.0);
+    for xpath in [
+        "(//a)[1]",
+        "(//a)[2]",
+        "(//a)/text()",
+        "string((//a)[last()])",
+        "string((//b | //a)[1])",
+        "count((/root)//a)",
+        "count((//a)[1] | //b)",
+    ] {
+        compare_with_libxml!(xpath: DOC, xpath, &d);
+    }
+}
+
+#[test]
+fn union_operands_must_be_node_sets() {
+    let d = doc(DOC);
+    let err = evaluate(&d, "1 | //a").unwrap_err().to_string();
+    assert!(err.contains("node-set"), "{err}");
+    assert!(evaluate(&d, "(1)[1]").is_err());
+    assert!(evaluate(&d, "'x'/a").is_err());
+}
+
+#[test]
+fn predicates_use_the_full_expression_grammar() {
+    let d = doc(DOC);
+    for (xpath, expected) in [
+        ("//a[(. = 1 or . = 2) and . != 2]", 1),
+        ("//a[(1 + 1) * 1 = position()]", 1),
+        ("//a[. * 2 = 4]", 1),
+        ("//a[1 and 2]", 3),
+        ("//a[not(1)]", 0),
+        ("//a[position() = 1 or position() = last()]", 2),
+        ("//a[(//b)]", 3),
+        ("//a[. = (//a)[3]]", 1),
+    ] {
+        assert_eq!(node_count(&d, xpath), expected, "{xpath}");
+        compare_with_libxml!(xpath: DOC, xpath, &d);
+    }
+}
+
+const NODE_TYPE_DOC: &str = r#"<root><!--c1--><?pi data?><?other?><a>1<!--c2--></a></root>"#;
+
+#[test]
+fn comment_and_processing_instruction_node_tests() {
+    let d = doc(NODE_TYPE_DOC);
+    for (xpath, expected) in [
+        ("count(//comment())", 2.0),
+        ("count(/root/comment())", 1.0),
+        ("count(//processing-instruction())", 2.0),
+        ("count(//processing-instruction('pi'))", 1.0),
+        ("count(//processing-instruction(\"other\"))", 1.0),
+        ("count(//processing-instruction('zz'))", 0.0),
+        ("count(/root/node())", 4.0),
+        ("count(/root/*)", 1.0),
+    ] {
+        assert_eq!(number(&d, xpath), expected, "{xpath}");
+        compare_with_libxml!(xpath: NODE_TYPE_DOC, xpath, &d);
+    }
+    assert_eq!(string(&d, "string(//a/comment())"), "c2");
+    assert_eq!(string(&d, "name(//processing-instruction())"), "pi");
+    // An element named `comment` is still reachable by name.
+    let d2 = doc("<root><comment>x</comment></root>");
+    assert_eq!(node_count(&d2, "/root/comment"), 1);
+    assert_eq!(number(&d2, "count(/root/comment())"), 0.0);
+}
+
+#[test]
+fn display_round_trips_the_new_forms() {
+    for (src, rendered) in [
+        ("count(//a) = 3", "count(//a) = 3"),
+        ("(//a)[1]", "(//a)[1]"),
+        ("(//a)/text()", "(//a)/text()"),
+        ("(//a)[1]//b", "(//a)[1]//b"),
+        ("//comment()", "//comment()"),
+        (
+            "//processing-instruction('pi')",
+            "//processing-instruction('pi')",
+        ),
+        ("1 = 1 and 2 = 2", "1 = 1 and 2 = 2"),
+        // `=` is left-associative, so only the right operand needs parentheses.
+        ("(1 = 1) = (2 = 2)", "1 = 1 = (2 = 2)"),
+        ("a or b and c", "a or b and c"),
+        ("(a or b) and c", "(a or b) and c"),
+        ("1 - (2 - 3)", "1 - (2 - 3)"),
+        ("-(1 + 2)", "-(1 + 2)"),
+        ("(//a | //b)[1]", "(//a | //b)[1]"),
+        ("$v[1]/x", "$v[1]/x"),
+        (
+            "//a[(. = 1 or . = 2) and . != 2]",
+            "//a[(.=1 or .=2) and .!=2]",
+        ),
+    ] {
+        let q = Query::compile(src).unwrap();
+        assert_eq!(q.to_string(), rendered, "display of {src:?}");
+        let again = Query::compile(rendered).unwrap();
+        assert_eq!(again.to_string(), rendered, "re-parse of {rendered:?}");
+    }
+}

@@ -1,4 +1,26 @@
 //! XPath expression parser implementation.
+//!
+//! A recursive-descent parser for the XPath 1.0 expression grammar (§3):
+//!
+//! ```text
+//! Expr           ::= OrExpr
+//! OrExpr         ::= AndExpr ('or' AndExpr)*
+//! AndExpr        ::= EqualityExpr ('and' EqualityExpr)*
+//! EqualityExpr   ::= RelationalExpr (('=' | '!=') RelationalExpr)*
+//! RelationalExpr ::= AdditiveExpr (('<' | '<=' | '>' | '>=') AdditiveExpr)*
+//! AdditiveExpr   ::= MultiplicativeExpr (('+' | '-') MultiplicativeExpr)*
+//! MultiplicativeExpr ::= UnaryExpr (('*' | 'div' | 'mod') UnaryExpr)*
+//! UnaryExpr      ::= UnionExpr | '-' UnaryExpr
+//! UnionExpr      ::= PathExpr ('|' PathExpr)*
+//! PathExpr       ::= LocationPath
+//!                  | FilterExpr (('/' | '//') RelativeLocationPath)?
+//! FilterExpr     ::= PrimaryExpr Predicate*
+//! PrimaryExpr    ::= VariableReference | '(' Expr ')' | Literal | Number
+//!                  | FunctionCall
+//! ```
+//!
+//! Predicates and function arguments use the same `Expr` grammar. The whole
+//! input must be one `Expr`; trailing tokens are a syntax error.
 
 use crate::error::Result;
 use crate::xpath::error::XPathSyntaxError;
@@ -23,13 +45,9 @@ impl Parser {
     /// Parses the expression. The whole input must be consumed: trailing
     /// tokens are a syntax error rather than being silently ignored.
     pub fn parse(&mut self) -> Result<Expr> {
-        let expr = self.parse_union_expr()?;
+        let expr = self.parse_expr()?;
         if !matches!(self.current(), Token::Eof) {
-            return Err(XPathSyntaxError::UnexpectedToken {
-                found: Some(self.current().clone()),
-                expected: "end of expression".to_string(),
-            }
-            .into());
+            return Err(self.unexpected("end of expression"));
         }
         Ok(expr)
     }
@@ -53,12 +71,16 @@ impl Parser {
             self.advance();
             Ok(())
         } else {
-            Err(XPathSyntaxError::UnexpectedToken {
-                found: Some(self.current().clone()),
-                expected: format!("{:?}", expected),
-            }
-            .into())
+            Err(self.unexpected(&format!("{:?}", expected)))
         }
+    }
+
+    fn unexpected(&self, expected: &str) -> crate::error::Error {
+        XPathSyntaxError::UnexpectedToken {
+            found: Some(self.current().clone()),
+            expected: expected.to_string(),
+        }
+        .into()
     }
 
     /// Extracts a variable name from the current token.
@@ -69,13 +91,7 @@ impl Parser {
             // Keywords can also be used as variable names
             token => match keyword_name(token) {
                 Some(name) => name.to_string(),
-                None => {
-                    return Err(XPathSyntaxError::UnexpectedToken {
-                        found: Some(self.current().clone()),
-                        expected: "variable name after $".to_string(),
-                    }
-                    .into());
-                }
+                None => return Err(self.unexpected("variable name after $")),
             },
         };
         self.advance();
@@ -110,48 +126,296 @@ impl Parser {
         }
     }
 
-    fn parse_union_expr(&mut self) -> Result<Expr> {
-        self.parse_additive_expr()
+    /// Whether the current token starts a `PrimaryExpr` (and so a
+    /// `FilterExpr`) rather than a location path.
+    fn at_primary_start(&self) -> bool {
+        let followed_by_paren = self.peek() == Some(&Token::LeftParen);
+        match self.current() {
+            Token::String(_) | Token::Number(_) | Token::Dollar | Token::LeftParen => true,
+            // A name followed by `(` is a function call, unless it is a node
+            // type (`comment(`, `processing-instruction(`), which is a step.
+            Token::Name(name) => followed_by_paren && !is_node_type_name(name),
+            // `text(` / `node(` are node types; operator names never call.
+            token => followed_by_paren && function_name(token).is_some(),
+        }
     }
 
-    fn parse_path_expr(&mut self) -> Result<PathExpr> {
-        let mut absolute = false;
-        let mut steps = Vec::new();
+    // =========================================================================
+    // Expressions
+    // =========================================================================
 
-        // Handle leading / or //
-        match self.current() {
-            Token::Slash => {
-                absolute = true;
+    /// `Expr ::= OrExpr`
+    fn parse_expr(&mut self) -> Result<Expr> {
+        self.parse_or_expr()
+    }
+
+    fn parse_or_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_and_expr()?;
+        while matches!(self.current(), Token::Or) {
+            self.advance();
+            let right = self.parse_and_expr()?;
+            left = Expr::Or(Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn parse_and_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_equality_expr()?;
+        while matches!(self.current(), Token::And) {
+            self.advance();
+            let right = self.parse_equality_expr()?;
+            left = Expr::And(Box::new(left), Box::new(right));
+        }
+        Ok(left)
+    }
+
+    fn parse_equality_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_relational_expr()?;
+        loop {
+            let op = match self.current() {
+                Token::Equals => ComparisonOp::Equal,
+                Token::NotEquals => ComparisonOp::NotEqual,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_relational_expr()?;
+            left = Expr::Comparison {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_relational_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_additive_expr()?;
+        loop {
+            let op = match self.current() {
+                Token::LessThan => ComparisonOp::LessThan,
+                Token::LessOrEqual => ComparisonOp::LessOrEqual,
+                Token::GreaterThan => ComparisonOp::GreaterThan,
+                Token::GreaterOrEqual => ComparisonOp::GreaterOrEqual,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_additive_expr()?;
+            left = Expr::Comparison {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_additive_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_multiplicative_expr()?;
+        loop {
+            match self.current() {
+                Token::Plus => {
+                    self.advance();
+                    let right = self.parse_multiplicative_expr()?;
+                    left = Expr::Add(Box::new(left), Box::new(right));
+                }
+                Token::Minus => {
+                    self.advance();
+                    let right = self.parse_multiplicative_expr()?;
+                    left = Expr::Subtract(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+        Ok(left)
+    }
+
+    fn parse_multiplicative_expr(&mut self) -> Result<Expr> {
+        let mut left = self.parse_unary_expr()?;
+        loop {
+            match self.current() {
+                // After a complete operand, `*` is the multiply operator
+                // (§3.7); as a name test it was already consumed by the path.
+                Token::Asterisk => {
+                    self.advance();
+                    let right = self.parse_unary_expr()?;
+                    left = Expr::Multiply(Box::new(left), Box::new(right));
+                }
+                Token::Div => {
+                    self.advance();
+                    let right = self.parse_unary_expr()?;
+                    left = Expr::Divide(Box::new(left), Box::new(right));
+                }
+                Token::Mod => {
+                    self.advance();
+                    let right = self.parse_unary_expr()?;
+                    left = Expr::Modulo(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+        Ok(left)
+    }
+
+    fn parse_unary_expr(&mut self) -> Result<Expr> {
+        if matches!(self.current(), Token::Minus) {
+            self.advance();
+            let inner = self.parse_unary_expr()?;
+            Ok(Expr::Negate(Box::new(inner)))
+        } else {
+            self.parse_union_expr()
+        }
+    }
+
+    fn parse_union_expr(&mut self) -> Result<Expr> {
+        let first = self.parse_path_expr()?;
+        if !matches!(self.current(), Token::Pipe) {
+            return Ok(first);
+        }
+        let mut operands = vec![first];
+        while matches!(self.current(), Token::Pipe) {
+            self.advance();
+            operands.push(self.parse_path_expr()?);
+        }
+        Ok(Expr::Union(operands))
+    }
+
+    /// `PathExpr ::= LocationPath | FilterExpr (('/' | '//') RelativeLocationPath)?`
+    fn parse_path_expr(&mut self) -> Result<Expr> {
+        if self.at_primary_start() {
+            let filter = self.parse_filter_expr()?;
+            if matches!(self.current(), Token::Slash | Token::DoubleSlash) {
+                let mut steps = Vec::new();
+                if matches!(self.current(), Token::DoubleSlash) {
+                    steps.push(Step::descendant_or_self_any());
+                }
                 self.advance();
+                self.parse_relative_steps(&mut steps)?;
+                return Ok(Expr::PathFrom {
+                    base: Box::new(filter),
+                    steps,
+                });
+            }
+            return Ok(filter);
+        }
+        if matches!(self.current(), Token::Slash | Token::DoubleSlash) || self.at_step_start() {
+            return Ok(Expr::Path(self.parse_location_path()?));
+        }
+        Err(self.unexpected("expression"))
+    }
+
+    /// `FilterExpr ::= PrimaryExpr Predicate*`. A primary expression without
+    /// predicates is returned as is.
+    fn parse_filter_expr(&mut self) -> Result<Expr> {
+        let primary = self.parse_primary_expr()?;
+        let predicates = self.parse_predicates()?;
+        if predicates.is_empty() {
+            Ok(primary)
+        } else {
+            Ok(Expr::Filter {
+                expr: Box::new(primary),
+                predicates,
+            })
+        }
+    }
+
+    fn parse_primary_expr(&mut self) -> Result<Expr> {
+        match self.current() {
+            Token::String(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Expr::String(s))
+            }
+            Token::Number(n) => {
+                let n = *n;
+                self.advance();
+                Ok(Expr::Number(n))
+            }
+            Token::Dollar => {
+                self.advance();
+                Ok(Expr::Variable(self.extract_variable_name()?))
+            }
+            Token::LeftParen => {
+                self.advance();
+                let inner = self.parse_expr()?;
+                self.expect(&Token::RightParen)?;
+                Ok(inner)
+            }
+            // Unknown (e.g. extension) function call
+            Token::Name(name) => {
+                let name = name.clone();
+                self.advance();
+                self.parse_function_args(name)
+            }
+            token => match function_name(token) {
+                Some(name) => {
+                    self.advance();
+                    self.parse_function_args(name.to_string())
+                }
+                None => Err(self.unexpected("primary expression")),
+            },
+        }
+    }
+
+    /// Parses `( [Expr (',' Expr)*] )` after a function name.
+    fn parse_function_args(&mut self, name: String) -> Result<Expr> {
+        self.expect(&Token::LeftParen)?;
+
+        let mut args = Vec::new();
+        if !matches!(self.current(), Token::RightParen) {
+            args.push(self.parse_expr()?);
+            while matches!(self.current(), Token::Comma) {
+                self.advance();
+                args.push(self.parse_expr()?);
+            }
+        }
+
+        self.expect(&Token::RightParen)?;
+
+        Ok(Expr::Function { name, args })
+    }
+
+    // =========================================================================
+    // Location paths
+    // =========================================================================
+
+    fn parse_location_path(&mut self) -> Result<PathExpr> {
+        let mut steps = Vec::new();
+        let absolute = match self.current() {
+            Token::Slash => {
+                self.advance();
+                // A bare `/` (the root node) has no steps.
+                if self.at_step_start() {
+                    self.parse_relative_steps(&mut steps)?;
+                }
+                true
             }
             Token::DoubleSlash => {
-                absolute = true;
                 self.advance();
-                // // is shorthand for /descendant-or-self::node()/
+                // `//` is shorthand for `/descendant-or-self::node()/`
+                steps.push(Step::descendant_or_self_any());
+                self.parse_relative_steps(&mut steps)?;
+                true
+            }
+            _ => {
+                self.parse_relative_steps(&mut steps)?;
+                false
+            }
+        };
+        Ok(PathExpr { absolute, steps })
+    }
+
+    /// `RelativeLocationPath ::= Step (('/' | '//') Step)*`, appended to `steps`.
+    fn parse_relative_steps(&mut self, steps: &mut Vec<Step>) -> Result<()> {
+        steps.push(self.parse_step()?);
+        while matches!(self.current(), Token::Slash | Token::DoubleSlash) {
+            if matches!(self.current(), Token::DoubleSlash) {
                 steps.push(Step::descendant_or_self_any());
             }
-            _ => {}
-        }
-
-        // Parse steps. A bare `/` has none; a leading `//` needs one.
-        let leading_double_slash = !steps.is_empty();
-        if leading_double_slash || self.at_step_start() {
+            self.advance();
+            // A step is mandatory after `/` or `//`.
             steps.push(self.parse_step()?);
-
-            while matches!(self.current(), Token::Slash | Token::DoubleSlash) {
-                if matches!(self.current(), Token::DoubleSlash) {
-                    self.advance();
-                    steps.push(Step::descendant_or_self_any());
-                } else {
-                    self.advance();
-                }
-
-                // A step is mandatory after an inner `/` or `//`.
-                steps.push(self.parse_step()?);
-            }
         }
-
-        Ok(PathExpr { absolute, steps })
+        Ok(())
     }
 
     fn parse_step(&mut self) -> Result<Step> {
@@ -227,10 +491,33 @@ impl Parser {
     }
 
     fn parse_node_test(&mut self) -> Result<NodeTest> {
+        let followed_by_paren = self.peek() == Some(&Token::LeftParen);
         match self.current() {
             Token::Asterisk => {
                 self.advance();
                 Ok(NodeTest::Any)
+            }
+            // Node types are recognised only when followed by `(`; otherwise
+            // `comment`, `text`, ... are element names (§3.7).
+            Token::Name(name) if followed_by_paren && name == "comment" => {
+                self.advance();
+                self.expect(&Token::LeftParen)?;
+                self.expect(&Token::RightParen)?;
+                Ok(NodeTest::Comment)
+            }
+            Token::Name(name) if followed_by_paren && name == "processing-instruction" => {
+                self.advance();
+                self.expect(&Token::LeftParen)?;
+                let target = match self.current() {
+                    Token::String(s) => {
+                        let s = s.clone();
+                        self.advance();
+                        Some(s)
+                    }
+                    _ => None,
+                };
+                self.expect(&Token::RightParen)?;
+                Ok(NodeTest::ProcessingInstruction(target))
             }
             Token::Name(name) => {
                 let name = name.clone();
@@ -244,15 +531,13 @@ impl Parser {
                     Ok(NodeTest::Name(name))
                 }
             }
-            // `text()` / `node()` are node type tests only when followed by
-            // `(`; otherwise `text` / `node` are element names (§3.7).
-            Token::TextFn if self.peek() == Some(&Token::LeftParen) => {
+            Token::TextFn if followed_by_paren => {
                 self.advance();
                 self.expect(&Token::LeftParen)?;
                 self.expect(&Token::RightParen)?;
                 Ok(NodeTest::Text)
             }
-            Token::NodeFn if self.peek() == Some(&Token::LeftParen) => {
+            Token::NodeFn if followed_by_paren => {
                 self.advance();
                 self.expect(&Token::LeftParen)?;
                 self.expect(&Token::RightParen)?;
@@ -266,346 +551,59 @@ impl Parser {
                     self.advance();
                     Ok(NodeTest::Name(name))
                 }
-                None => Err(XPathSyntaxError::UnexpectedToken {
-                    found: Some(self.current().clone()),
-                    expected: "node test".to_string(),
-                }
-                .into()),
+                None => Err(self.unexpected("node test")),
             },
         }
     }
 
     fn parse_predicates(&mut self) -> Result<Vec<Predicate>> {
         let mut predicates = Vec::new();
-
         while matches!(self.current(), Token::LeftBracket) {
             self.advance();
-            let pred = self.parse_predicate()?;
-            predicates.push(pred);
+            let expr = self.parse_expr()?;
             self.expect(&Token::RightBracket)?;
+            predicates.push(lower_predicate(expr));
         }
-
         Ok(predicates)
     }
+}
 
-    fn parse_predicate(&mut self) -> Result<Predicate> {
-        self.parse_or_expr()
-    }
-
-    fn parse_or_expr(&mut self) -> Result<Predicate> {
-        let mut left = self.parse_and_expr()?;
-
-        while matches!(self.current(), Token::Or) {
-            self.advance();
-            let right = self.parse_and_expr()?;
-            left = Predicate::Or(Box::new(left), Box::new(right));
+/// Lifts a parsed predicate expression into a [`Predicate`].
+///
+/// `[n]` abbreviates `[position() = n]`. Only a positive integer can equal a
+/// position, so only that becomes [`Predicate::Position`]; any other number
+/// (`[0]`, `[1.5]`) stays an expression and selects nothing.
+fn lower_predicate(expr: Expr) -> Predicate {
+    match expr {
+        Expr::Number(n) if n >= 1.0 && n.fract() == 0.0 && n <= u32::MAX as f64 => {
+            Predicate::Position(n as usize)
         }
-
-        Ok(left)
+        other => lower_condition(other),
     }
+}
 
-    fn parse_and_expr(&mut self) -> Result<Predicate> {
-        let mut left = self.parse_primary_predicate()?;
-
-        while matches!(self.current(), Token::And) {
-            self.advance();
-            let right = self.parse_primary_predicate()?;
-            left = Predicate::And(Box::new(left), Box::new(right));
+/// Lifts the boolean structure (`or` / `and` / comparison / `not()`) of an
+/// expression into a [`Predicate`]. Numbers here are booleans, not positions.
+fn lower_condition(expr: Expr) -> Predicate {
+    match expr {
+        Expr::Or(a, b) => {
+            Predicate::Or(Box::new(lower_condition(*a)), Box::new(lower_condition(*b)))
         }
-
-        Ok(left)
+        Expr::And(a, b) => {
+            Predicate::And(Box::new(lower_condition(*a)), Box::new(lower_condition(*b)))
+        }
+        Expr::Comparison { left, op, right } => Predicate::Comparison { left, op, right },
+        Expr::Function { name, mut args } if name == "not" && args.len() == 1 => {
+            Predicate::Not(Box::new(lower_condition(args.remove(0))))
+        }
+        other => Predicate::Expr(Box::new(other)),
     }
+}
 
-    fn parse_primary_predicate(&mut self) -> Result<Predicate> {
-        // Handle not() (without `(`, `not` is an element name)
-        if matches!(self.current(), Token::Not) && self.peek() == Some(&Token::LeftParen) {
-            self.advance();
-            self.expect(&Token::LeftParen)?;
-            let inner = self.parse_predicate()?;
-            self.expect(&Token::RightParen)?;
-            return Ok(Predicate::Not(Box::new(inner)));
-        }
-
-        // Handle parenthesized expression
-        if matches!(self.current(), Token::LeftParen) {
-            self.advance();
-            let inner = self.parse_predicate()?;
-            self.expect(&Token::RightParen)?;
-            return Ok(inner);
-        }
-
-        // Parse expression and check for comparison
-        let left = self.parse_predicate_additive_expr()?;
-
-        let op = match self.current() {
-            Token::Equals => Some(ComparisonOp::Equal),
-            Token::NotEquals => Some(ComparisonOp::NotEqual),
-            Token::LessThan => Some(ComparisonOp::LessThan),
-            Token::LessOrEqual => Some(ComparisonOp::LessOrEqual),
-            Token::GreaterThan => Some(ComparisonOp::GreaterThan),
-            Token::GreaterOrEqual => Some(ComparisonOp::GreaterOrEqual),
-            _ => None,
-        };
-
-        if let Some(op) = op {
-            self.advance();
-            let right = self.parse_predicate_additive_expr()?;
-            Ok(Predicate::Comparison {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            })
-        } else {
-            // `[n]` abbreviates `[position() = n]`. Only a positive integer
-            // can equal a position; any other number (`[0]`, `[1.5]`) stays an
-            // expression, which selects nothing instead of being truncated.
-            match &left {
-                Expr::Number(n) if *n >= 1.0 && n.fract() == 0.0 && *n <= u32::MAX as f64 => {
-                    Ok(Predicate::Position(*n as usize))
-                }
-                _ => Ok(Predicate::Expr(Box::new(left))),
-            }
-        }
-    }
-
-    /// Parses an additive expression inside predicates: expr ('+' | '-') expr
-    fn parse_predicate_additive_expr(&mut self) -> Result<Expr> {
-        let mut left = self.parse_predicate_multiplicative_expr()?;
-
-        loop {
-            match self.current() {
-                Token::Plus => {
-                    self.advance();
-                    let right = self.parse_predicate_multiplicative_expr()?;
-                    left = Expr::Add(Box::new(left), Box::new(right));
-                }
-                Token::Minus => {
-                    self.advance();
-                    let right = self.parse_predicate_multiplicative_expr()?;
-                    left = Expr::Subtract(Box::new(left), Box::new(right));
-                }
-                _ => break,
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parses a multiplicative expression inside predicates: expr ('*' | 'div' | 'mod') expr
-    fn parse_predicate_multiplicative_expr(&mut self) -> Result<Expr> {
-        let mut left = self.parse_expr_value()?;
-
-        loop {
-            match self.current() {
-                Token::Asterisk => {
-                    self.advance();
-                    let right = self.parse_expr_value()?;
-                    left = Expr::Multiply(Box::new(left), Box::new(right));
-                }
-                Token::Div => {
-                    self.advance();
-                    let right = self.parse_expr_value()?;
-                    left = Expr::Divide(Box::new(left), Box::new(right));
-                }
-                Token::Mod => {
-                    self.advance();
-                    let right = self.parse_expr_value()?;
-                    left = Expr::Modulo(Box::new(left), Box::new(right));
-                }
-                _ => break,
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parses an operand inside the predicate sub-grammar.
-    fn parse_expr_value(&mut self) -> Result<Expr> {
-        self.parse_unary_expr()
-    }
-
-    /// Parses an additive expression: expr ('+' | '-') expr
-    fn parse_additive_expr(&mut self) -> Result<Expr> {
-        let mut left = self.parse_multiplicative_expr()?;
-
-        loop {
-            match self.current() {
-                Token::Plus => {
-                    self.advance();
-                    let right = self.parse_multiplicative_expr()?;
-                    left = Expr::Add(Box::new(left), Box::new(right));
-                }
-                Token::Minus => {
-                    self.advance();
-                    let right = self.parse_multiplicative_expr()?;
-                    left = Expr::Subtract(Box::new(left), Box::new(right));
-                }
-                _ => break,
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parses a multiplicative expression: expr ('*' | 'div' | 'mod') expr
-    fn parse_multiplicative_expr(&mut self) -> Result<Expr> {
-        let mut left = self.parse_unary_expr()?;
-
-        loop {
-            match self.current() {
-                // After a complete operand, `*` is the multiply operator
-                // (§3.7); as a name test it was already consumed by the path.
-                Token::Asterisk => {
-                    self.advance();
-                    let right = self.parse_unary_expr()?;
-                    left = Expr::Multiply(Box::new(left), Box::new(right));
-                }
-                Token::Div => {
-                    self.advance();
-                    let right = self.parse_unary_expr()?;
-                    left = Expr::Divide(Box::new(left), Box::new(right));
-                }
-                Token::Mod => {
-                    self.advance();
-                    let right = self.parse_unary_expr()?;
-                    left = Expr::Modulo(Box::new(left), Box::new(right));
-                }
-                _ => break,
-            }
-        }
-
-        Ok(left)
-    }
-
-    /// Parses a unary expression: '-' expr | union
-    fn parse_unary_expr(&mut self) -> Result<Expr> {
-        if matches!(self.current(), Token::Minus) {
-            self.advance();
-            let inner = self.parse_unary_expr()?;
-            Ok(Expr::Negate(Box::new(inner)))
-        } else {
-            self.parse_path_union_expr()
-        }
-    }
-
-    /// Parses a union expression: path ('|' path)*
-    fn parse_path_union_expr(&mut self) -> Result<Expr> {
-        let first = self.parse_primary_expr()?;
-
-        // Check if there's a union operator
-        if !matches!(self.current(), Token::Pipe) {
-            return Ok(first);
-        }
-
-        // Extract the path from first expression
-        let first_path = match first {
-            Expr::Path(p) => p,
-            _ => {
-                // Union operator requires path expressions
-                return Err(XPathSyntaxError::UnexpectedToken {
-                    found: Some(self.current().clone()),
-                    expected: "path expression for union".to_string(),
-                }
-                .into());
-            }
-        };
-
-        let mut paths = vec![first_path];
-
-        while matches!(self.current(), Token::Pipe) {
-            self.advance();
-            let next = self.parse_primary_expr()?;
-            match next {
-                Expr::Path(p) => paths.push(p),
-                _ => {
-                    return Err(XPathSyntaxError::UnexpectedToken {
-                        found: Some(self.current().clone()),
-                        expected: "path expression for union".to_string(),
-                    }
-                    .into());
-                }
-            }
-        }
-
-        Ok(Expr::Union(paths))
-    }
-
-    /// Parses a primary expression (path, literal, function, or parenthesized)
-    fn parse_primary_expr(&mut self) -> Result<Expr> {
-        let followed_by_paren = self.peek() == Some(&Token::LeftParen);
-        match self.current() {
-            Token::String(s) => {
-                let s = s.clone();
-                self.advance();
-                Ok(Expr::String(s))
-            }
-            Token::Number(n) => {
-                let n = *n;
-                self.advance();
-                Ok(Expr::Number(n))
-            }
-            Token::Dollar => {
-                self.advance();
-                // Accept Name tokens and function name keywords as variable names
-                let var_name = self.extract_variable_name()?;
-                Ok(Expr::Variable(var_name))
-            }
-            Token::LeftParen => {
-                self.advance();
-                let inner = self.parse_additive_expr()?;
-                self.expect(&Token::RightParen)?;
-                Ok(inner)
-            }
-            // Unknown function call (name followed by '(')
-            Token::Name(name) if followed_by_paren => {
-                let name = name.clone();
-                self.advance(); // consume name
-                self.parse_function_args(name)
-            }
-            // Built-in function call. `text(` / `node(` are node type tests,
-            // which start a location path instead.
-            token if followed_by_paren && function_name(token).is_some() => {
-                self.parse_function_call()
-            }
-            Token::Slash | Token::DoubleSlash => Ok(Expr::Path(self.parse_path_expr()?)),
-            _ if self.at_step_start() => Ok(Expr::Path(self.parse_path_expr()?)),
-            _ => Err(XPathSyntaxError::UnexpectedToken {
-                found: Some(self.current().clone()),
-                expected: "primary expression".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    fn parse_function_call(&mut self) -> Result<Expr> {
-        let Some(name) = function_name(self.current()) else {
-            return Err(XPathSyntaxError::UnexpectedToken {
-                found: Some(self.current().clone()),
-                expected: "function".to_string(),
-            }
-            .into());
-        };
-        self.advance();
-        self.parse_function_args(name.to_string())
-    }
-
-    /// Parses `( [Expr (',' Expr)*] )` after a function name.
-    fn parse_function_args(&mut self, name: String) -> Result<Expr> {
-        self.expect(&Token::LeftParen)?;
-
-        let mut args = Vec::new();
-        if !matches!(self.current(), Token::RightParen) {
-            args.push(self.parse_union_expr()?);
-            while matches!(self.current(), Token::Comma) {
-                self.advance();
-                args.push(self.parse_union_expr()?);
-            }
-        }
-
-        self.expect(&Token::RightParen)?;
-
-        Ok(Expr::Function { name, args })
-    }
+/// Whether an unprefixed name is a `NodeType` that `Name` tokens can spell
+/// (`text` and `node` have their own tokens).
+fn is_node_type_name(name: &str) -> bool {
+    matches!(name, "comment" | "processing-instruction")
 }
 
 /// The function a keyword token names in a function call. Operator names and

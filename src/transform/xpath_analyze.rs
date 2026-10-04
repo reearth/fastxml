@@ -29,6 +29,9 @@ pub enum NotStreamableReason {
     IncompatibleUnion,
     /// Expression is not a path expression
     NotPathExpr,
+    /// Uses a node test the streaming matcher cannot evaluate
+    /// (`comment()`, `processing-instruction()`)
+    UnsupportedNodeTest,
 }
 
 impl std::fmt::Display for NotStreamableReason {
@@ -40,6 +43,9 @@ impl std::fmt::Display for NotStreamableReason {
             Self::ComplexPredicate => write!(f, "uses complex predicate (and/or/not)"),
             Self::IncompatibleUnion => write!(f, "uses union with incompatible paths"),
             Self::NotPathExpr => write!(f, "expression is not a path expression"),
+            Self::UnsupportedNodeTest => {
+                write!(f, "uses a comment() or processing-instruction() node test")
+            }
         }
     }
 }
@@ -109,10 +115,13 @@ impl StreamableXPath {
 pub fn analyze_xpath(expr: &Expr) -> XPathAnalysis {
     match expr {
         Expr::Path(path) => analyze_path(path),
-        Expr::Union(paths) => {
+        Expr::Union(operands) => {
             // Union is streamable if all paths are streamable and compatible
             let mut results: Vec<StreamableXPath> = Vec::new();
-            for path in paths {
+            for operand in operands {
+                let Expr::Path(path) = operand else {
+                    return XPathAnalysis::NotStreamable(NotStreamableReason::NotPathExpr);
+                };
                 match analyze_path(path) {
                     XPathAnalysis::Streamable(s) => results.push(s),
                     not_streamable => return not_streamable,
@@ -207,6 +216,9 @@ fn analyze_step(
         NodeTest::Name(n) => (Some(n.clone()), None),
         NodeTest::QName { prefix, local } => (Some(local.clone()), Some(prefix.clone())),
         NodeTest::Text | NodeTest::Node => (None, None),
+        NodeTest::Comment | NodeTest::ProcessingInstruction(_) => {
+            return Err(NotStreamableReason::UnsupportedNodeTest);
+        }
     };
 
     let mut attribute_predicates = Vec::new();
@@ -394,7 +406,16 @@ fn uses_last(expr: &Expr) -> bool {
         }
         Expr::Path(_) => false,
         Expr::String(_) | Expr::Number(_) | Expr::Variable(_) => false,
-        Expr::Union(paths) => paths.iter().any(|p| p.steps.iter().any(step_uses_last)),
+        Expr::Union(operands) => operands.iter().any(|e| match e {
+            Expr::Path(p) => p.steps.iter().any(step_uses_last),
+            other => uses_last(other),
+        }),
+        Expr::Comparison { left, right, .. } => uses_last(left) || uses_last(right),
+        Expr::And(l, r) | Expr::Or(l, r) => uses_last(l) || uses_last(r),
+        Expr::Filter { expr, predicates } => {
+            uses_last(expr) || predicates.iter().any(predicate_uses_last)
+        }
+        Expr::PathFrom { base, steps } => uses_last(base) || steps.iter().any(step_uses_last),
         Expr::Add(l, r)
         | Expr::Subtract(l, r)
         | Expr::Multiply(l, r)
@@ -479,6 +500,34 @@ mod tests {
     fn test_descendant_or_self() {
         let result = get_streamable("//item").unwrap();
         assert!(result.steps.iter().any(|s| s.descendant_or_self));
+    }
+
+    #[test]
+    fn test_non_path_expressions_are_not_streamable() {
+        for xpath in [
+            "(//a)[1]",
+            "(//a)/b",
+            "count(//a) = 1",
+            "//a and //b",
+            "//a | (//b)[1]",
+        ] {
+            assert!(
+                matches!(
+                    get_not_streamable_reason(xpath),
+                    Some(NotStreamableReason::NotPathExpr)
+                ),
+                "{xpath}"
+            );
+        }
+        for xpath in ["//comment()", "/root/processing-instruction('pi')"] {
+            assert!(
+                matches!(
+                    get_not_streamable_reason(xpath),
+                    Some(NotStreamableReason::UnsupportedNodeTest)
+                ),
+                "{xpath}"
+            );
+        }
     }
 
     #[test]
