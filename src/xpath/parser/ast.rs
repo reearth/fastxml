@@ -51,9 +51,21 @@ pub enum NodeTest {
     Text,
     /// Match any node `node()`
     Node,
+    /// Match comment nodes `comment()`
+    Comment,
+    /// Match processing instructions `processing-instruction()`, optionally
+    /// only those with the given target (`processing-instruction('target')`)
+    ProcessingInstruction(Option<String>),
 }
 
 /// A predicate expression.
+///
+/// The parser reads a predicate with the same grammar as any [`Expr`] and then
+/// lifts its top-level structure into this form: `or` / `and` / comparison /
+/// a one-argument `not()` become the matching variant, a positive integer
+/// literal becomes [`Predicate::Position`], and anything else is
+/// [`Predicate::Expr`]. Operands of `and` / `or` / `not()` are lifted the same
+/// way except that a number there is a boolean, never a position.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Predicate {
     /// Comparison: left op right
@@ -112,8 +124,39 @@ pub enum Expr {
         /// Function arguments
         args: Vec<Expr>,
     },
-    /// Union of paths (path1 | path2)
-    Union(Vec<PathExpr>),
+    /// Union (`a | b | ...`). Each operand must evaluate to a node-set.
+    Union(Vec<Expr>),
+    /// Comparison (`left op right`) with `=`, `!=`, `<`, `<=`, `>`, `>=`
+    Comparison {
+        /// Left operand
+        left: Box<Expr>,
+        /// Comparison operator
+        op: ComparisonOp,
+        /// Right operand
+        right: Box<Expr>,
+    },
+    /// Logical AND (`left and right`)
+    And(Box<Expr>, Box<Expr>),
+    /// Logical OR (`left or right`)
+    Or(Box<Expr>, Box<Expr>),
+    /// Filter expression: a primary expression followed by predicates,
+    /// e.g. `(//a)[1]` or `$nodes[@id]`. The predicates filter the node-set
+    /// in document order.
+    Filter {
+        /// The filtered expression (must evaluate to a node-set)
+        expr: Box<Expr>,
+        /// Predicates, applied in order
+        predicates: Vec<Predicate>,
+    },
+    /// A location path that continues from a filter expression,
+    /// e.g. `(//a)/text()` or `id('x')//b`.
+    PathFrom {
+        /// The starting expression (must evaluate to a node-set)
+        base: Box<Expr>,
+        /// The steps after the first `/` or `//`, with the same conventions as
+        /// [`PathExpr::steps`] (`//` is a `descendant-or-self::node()` step)
+        steps: Vec<Step>,
+    },
     /// Addition (left + right)
     Add(Box<Expr>, Box<Expr>),
     /// Subtraction (left - right)

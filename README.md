@@ -658,6 +658,8 @@ demonstrations of both the modern and compatibility APIs.
 | Namespaces | `//ns:element`, `namespace::*` |
 | Variables | `$var` |
 | Union | `//a | //b` |
+| Filter expressions | `(//a)[1]`, `(//a)/text()`, `$nodes[@id]` |
+| Node types | `text()`, `node()`, `comment()`, `processing-instruction('pi')` |
 
 ### XSD Schema
 
