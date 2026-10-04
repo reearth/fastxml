@@ -44,7 +44,11 @@ impl GeneratorConfig {
         }
     }
 
-    /// Creates a config for testing deep nesting.
+    /// Creates a config for testing nesting, with `depth` as the maximum depth.
+    ///
+    /// `depth` is an upper bound: the generator nests at most at every 5th of
+    /// the `depth * 2` elements, so the document is much shallower (e.g.
+    /// `deep_nesting(50)` reaches about 11 levels).
     pub fn deep_nesting(depth: usize) -> Self {
         Self {
             element_count: depth * 2,
@@ -67,9 +71,12 @@ impl GeneratorConfig {
     }
 
     /// Creates a config mimicking CityGML structure.
+    ///
+    /// Generates `building_count * 20` elements in total; every 4th one is a
+    /// `bldg:Building`, so the output holds about `building_count * 5` of them.
     pub fn citygml_style(building_count: usize) -> Self {
         Self {
-            element_count: building_count * 20, // Each building has ~20 elements
+            element_count: building_count * 20,
             max_depth: 8,
             content_size: 100,
             attribute_count: 3,
