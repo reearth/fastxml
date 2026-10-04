@@ -230,11 +230,6 @@ impl OnePassSchemaValidator {
         Ok((Vec::new(), super::ValidationCounters::default()))
     }
 
-    /// Returns collected validation errors.
-    pub fn errors(&self) -> &[StructuredError] {
-        &self.errors
-    }
-
     /// Takes ownership of collected errors.
     pub fn into_errors(self) -> Vec<StructuredError> {
         self.errors
@@ -291,6 +286,11 @@ impl OnePassSchemaValidator {
     /// Convenience wrapper: runs validation and returns only the errors.
     pub fn validate<R: BufRead>(self, reader: R) -> Result<Vec<StructuredError>> {
         Ok(self.validate_capturing(reader)?.0)
+    }
+
+    /// Returns collected validation errors.
+    pub fn errors(&self) -> &[StructuredError] {
+        &self.errors
     }
 
     /// Sets the maximum number of errors to collect (setter pattern).

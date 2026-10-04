@@ -1,7 +1,9 @@
 //! XSD Import/Include resolver.
 //!
-//! This module handles resolving xs:import and xs:include dependencies,
-//! fetching remote schemas, and caching them.
+//! This module handles resolving xs:import, xs:include and xs:redefine
+//! dependencies, fetching each referenced schema document through a
+//! [`SchemaFetcher`](crate::schema::fetcher::SchemaFetcher) (caching, if
+//! any, is the fetcher's job).
 //!
 //! # Architecture
 //!
@@ -9,18 +11,20 @@
 //!
 //! 1. Parse the entry schema
 //! 2. Queue its imports and includes
-//! 3. For each dependency, fetch (with caching), parse, and queue its dependencies
-//! 4. Return all schemas in dependency order (dependencies first)
+//! 3. For each dependency, fetch, parse, and queue its dependencies
+//!    (each URI is fetched once; mutual imports are allowed)
+//! 4. Return all schemas: `resolve_all` puts the entry last,
+//!    `take_all_schemas` returns them in discovery order (entry first)
 //!
 //! # Sync vs Async
 //!
 //! Two implementations are provided:
 //!
-//! - [`SchemaResolver`]: Synchronous resolver using `SchemaFetcher` and `SchemaStore`
-//! - [`AsyncSchemaResolver`]: Async resolver using `AsyncSchemaFetcher` and `AsyncSchemaStore`
+//! - [`SchemaResolver`]: Synchronous resolver using `SchemaFetcher`
+//! - [`AsyncSchemaResolver`]: Async resolver using `AsyncSchemaFetcher`
 //!   (requires `tokio` feature)
 //!
-//! Both implementations share common helper functions from the `common` module.
+//! Both resolve relative locations with the shared [`resolve_uri`].
 
 mod common;
 mod sync;

@@ -1,9 +1,7 @@
-//! The unified [`Validator`] entry point and its [`Report`] result.
+//! The [`Validator`] entry point and its [`Report`] result.
 //!
-//! `Validator` is the redesigned, consistent front door for schema validation.
-//! It follows the same shape as the rest of the crate — `from(source)`, a few
-//! builder setters, then `run()` — and folds the previously separate validator
-//! types and the family of `validate_*` free functions behind one surface:
+//! `Validator` follows the same shape as the rest of the crate —
+//! `from(source)`, a few builder setters, then `run()`:
 //!
 //! ```ignore
 //! use std::sync::Arc;
@@ -17,17 +15,18 @@
 //! // DOM validation (the input is just an `&XmlDocument`).
 //! let report = Validator::from(&doc).schema(Arc::clone(&schema)).run()?;
 //!
-//! // Resolve the schema from the document's `xsi:schemaLocation`.
+//! // Load the schema named by the document's xsi:schemaLocation /
+//! // xsi:noNamespaceSchemaLocation hints.
 //! let report = Validator::from_reader(file).run()?;            // default fetcher (needs `ureq`)
 //! let report = Validator::from(&doc).run_with(fetcher)?;       // custom fetcher
 //! ```
 //!
 //! - The **input** selects the engine: `&XmlDocument` validates the DOM
 //!   directly; `&str` / `&[u8]` / a reader validate via the streaming parser.
-//! - The **schema** is either explicit ([`schema`](Validator::schema)) or, when
-//!   omitted, resolved from `xsi:schemaLocation`.
-//! - [`mode`](Validator::mode) / [`max_errors`](Validator::max_errors) apply to
-//!   the explicit-schema path.
+//! - The **schema** is either explicit ([`schema`](Validator::schema)) or,
+//!   when omitted, loaded from the document's schema-location hints.
+//! - [`mode`](Validator::mode), [`max_errors`](Validator::max_errors) and
+//!   [`aggregate_errors`](Validator::aggregate_errors) apply to both.
 
 use std::io::BufRead;
 use std::sync::Arc;
@@ -38,8 +37,7 @@ use crate::schema::fetcher::SchemaFetcher;
 use crate::schema::types::CompiledSchema;
 
 use super::ValidationMode;
-use super::dom::DomSchemaValidator;
-use super::streaming::OnePassSchemaValidator;
+use super::api::EngineSettings;
 
 /// The input to validate.
 enum Source<'a> {
@@ -103,20 +101,28 @@ impl<'a> Validator<'a> {
 
     /// Validates against an explicit, already-compiled [`Schema`](crate::schema::Schema).
     ///
-    /// Without this, the schema is resolved from the document's
-    /// `xsi:schemaLocation` at [`run`](Self::run) time.
+    /// Without this, the schema is loaded from the document's
+    /// `xsi:schemaLocation` / `xsi:noNamespaceSchemaLocation` hints at
+    /// [`run`](Self::run) time.
     pub fn schema(mut self, schema: impl Into<Arc<CompiledSchema>>) -> Self {
         self.schema = Some(schema.into());
         self
     }
 
     /// Sets the validation mode (default: [`ValidationMode::Strict`]).
+    ///
+    /// Applies with an explicit schema and with a schema loaded from the
+    /// document's hints alike.
     pub fn mode(mut self, mode: ValidationMode) -> Self {
         self.mode = mode;
         self
     }
 
-    /// Caps the number of collected errors (validation stops early once reached).
+    /// Caps the number of collected errors: once `max` entries are recorded,
+    /// further validation errors are not recorded. `0` means unlimited (the
+    /// default). Applies with an explicit schema and with a schema loaded
+    /// from the document's hints alike; errors explaining why a hinted
+    /// schema could not be loaded are always reported.
     pub fn max_errors(mut self, max: usize) -> Self {
         self.max_errors = Some(max);
         self
@@ -127,7 +133,8 @@ impl<'a> Validator<'a> {
     /// occurrences. Keeps memory bounded on error-dense documents (a
     /// million identical violations become one entry), at the cost of
     /// per-occurrence locations: each entry keeps its first occurrence's
-    /// position.
+    /// position. Applies with an explicit schema and with a schema loaded
+    /// from the document's hints alike.
     pub fn aggregate_errors(mut self) -> Self {
         self.aggregate_errors = true;
         self
@@ -136,65 +143,57 @@ impl<'a> Validator<'a> {
     /// Runs validation and returns a [`Report`].
     ///
     /// With an explicit [`schema`](Self::schema), this never touches the
-    /// network. Otherwise the schema is resolved from `xsi:schemaLocation`
-    /// using the default fetcher, which requires the `ureq` feature — without
-    /// it, use [`run_with`](Self::run_with) and pass a fetcher.
+    /// network. Otherwise the schema is loaded from the root element's
+    /// `xsi:schemaLocation` (namespace/location pairs) and
+    /// `xsi:noNamespaceSchemaLocation` hints, recognised by the XML Schema
+    /// instance namespace whatever their prefix, using the default fetcher —
+    /// which requires the `ureq` feature; without it, use
+    /// [`run_with`](Self::run_with) and pass a fetcher.
+    ///
+    /// # When the hinted schema cannot be loaded
+    ///
+    /// If the root element has no hint, a hint is malformed, or any hinted
+    /// schema (or a document it imports, includes or redefines) cannot be
+    /// fetched, parsed or compiled, the report contains error-level
+    /// [`SchemaNotFound`](crate::error::ValidationErrorType::SchemaNotFound)
+    /// entries saying what failed, the document content is not validated,
+    /// and [`Report::is_valid`] is `false`. A relative hint location is
+    /// resolved by the fetcher (see
+    /// [`DefaultFetcher::with_base_dir`](crate::schema::DefaultFetcher::with_base_dir)).
+    /// Errors that stop parsing (malformed XML, I/O) are returned as `Err`.
     pub fn run(self) -> Result<Report> {
-        let Self {
-            source,
-            schema,
-            mode,
-            max_errors,
-            aggregate_errors,
-        } = self;
+        let (source, schema, settings) = self.into_parts();
         let (entries, counters) = match schema {
-            Some(schema) => {
-                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
-            }
-            None => (run_location_default(source)?, None),
+            Some(schema) => validate_with_schema(source, schema, settings)?,
+            None => (run_location_default(source, settings)?, None),
         };
         Ok(Report::with_counters(entries, counters))
     }
 
-    /// Runs validation, resolving any `xsi:schemaLocation` through `fetcher`.
+    fn into_parts(self) -> (Source<'a>, Option<Arc<CompiledSchema>>, EngineSettings) {
+        let settings = EngineSettings {
+            mode: self.mode,
+            max_errors: self.max_errors,
+            aggregate_errors: self.aggregate_errors,
+        };
+        (self.source, self.schema, settings)
+    }
+
+    /// Runs validation, loading the schema named by the document's hints
+    /// through `fetcher`. Same policy as [`run`](Self::run).
     ///
     /// When an explicit [`schema`](Self::schema) is set the fetcher is unused.
     pub fn run_with<F: SchemaFetcher + 'static>(self, fetcher: F) -> Result<Report> {
-        let Self {
-            source,
-            schema,
-            mode,
-            max_errors,
-            aggregate_errors,
-        } = self;
+        let (source, schema, settings) = self.into_parts();
         let (entries, counters) = match schema {
-            Some(schema) => {
-                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
-            }
-            None => {
-                let entries = match source {
-                    Source::Dom(doc) => {
-                        super::api::validate_with_schema_location_and_fetcher(doc, &fetcher)?
-                    }
-                    Source::Bytes(bytes) => {
-                        super::api::streaming_validate_with_schema_location_and_fetcher(
-                            bytes, fetcher,
-                        )?
-                    }
-                    Source::Reader(reader) => {
-                        super::api::streaming_validate_with_schema_location_and_fetcher(
-                            reader, fetcher,
-                        )?
-                    }
-                };
-                (entries, None)
-            }
+            Some(schema) => validate_with_schema(source, schema, settings)?,
+            None => (run_location_with(source, fetcher, settings)?, None),
         };
         Ok(Report::with_counters(entries, counters))
     }
 
-    /// Async version of [`run_with`](Self::run_with), resolving
-    /// `xsi:schemaLocation` through an async `fetcher`.
+    /// Async version of [`run_with`](Self::run_with), loading the schema
+    /// named by the document's hints through an async `fetcher`.
     ///
     /// Async resolution is currently supported for an explicit schema (any
     /// input) and for the DOM + `xsi:schemaLocation` case; async streaming
@@ -204,22 +203,13 @@ impl<'a> Validator<'a> {
         self,
         fetcher: &F,
     ) -> Result<Report> {
-        let Self {
-            source,
-            schema,
-            mode,
-            max_errors,
-            aggregate_errors,
-        } = self;
+        let (source, schema, settings) = self.into_parts();
         let (entries, counters) = match schema {
-            Some(schema) => {
-                validate_with_schema(source, schema, mode, max_errors, aggregate_errors)?
-            }
+            Some(schema) => validate_with_schema(source, schema, settings)?,
             None => {
                 let entries = match source {
                     Source::Dom(doc) => {
-                        super::api::validate_with_schema_location_with_async_fetcher(doc, fetcher)
-                            .await?
+                        super::api::validate_dom_autodetect_async(doc, fetcher, settings).await?
                     }
                     _ => {
                         return Err(crate::error::Error::InvalidOperation(
@@ -248,59 +238,55 @@ type ValidationOutcome = (Vec<StructuredError>, Option<super::ValidationCounters
 fn validate_with_schema(
     source: Source<'_>,
     schema: Arc<CompiledSchema>,
-    mode: ValidationMode,
-    max_errors: Option<usize>,
-    aggregate_errors: bool,
+    settings: EngineSettings,
 ) -> Result<ValidationOutcome> {
     match source {
-        Source::Dom(doc) => {
-            let mut validator = DomSchemaValidator::new(schema).with_mode(mode);
-            if let Some(max) = max_errors {
-                validator = validator.with_max_errors(max);
-            }
-            if aggregate_errors {
-                validator = validator.with_aggregate_errors();
-            }
-            Ok((validator.validate(doc)?, None))
-        }
-        Source::Bytes(bytes) => {
-            run_streaming_with_schema(bytes, schema, mode, max_errors, aggregate_errors)
-        }
-        Source::Reader(reader) => {
-            run_streaming_with_schema(reader, schema, mode, max_errors, aggregate_errors)
-        }
+        Source::Dom(doc) => Ok((settings.dom(schema).validate(doc)?, None)),
+        Source::Bytes(bytes) => run_streaming_with_schema(bytes, schema, settings),
+        Source::Reader(reader) => run_streaming_with_schema(reader, schema, settings),
     }
 }
 
 fn run_streaming_with_schema<R: BufRead>(
     reader: R,
     schema: Arc<CompiledSchema>,
-    mode: ValidationMode,
-    max_errors: Option<usize>,
-    aggregate_errors: bool,
+    settings: EngineSettings,
 ) -> Result<ValidationOutcome> {
-    let mut validator = OnePassSchemaValidator::new(schema).set_mode(mode);
-    if let Some(max) = max_errors {
-        validator = validator.with_max_errors(max);
-    }
-    if aggregate_errors {
-        validator = validator.with_aggregate_errors();
-    }
-    let (entries, counters) = validator.validate_capturing(reader)?;
+    let (entries, counters) = settings.streaming(schema).validate_capturing(reader)?;
     Ok((entries, Some(counters)))
 }
 
-#[cfg(feature = "ureq")]
-fn run_location_default(source: Source<'_>) -> Result<Vec<StructuredError>> {
+fn run_location_with<F: SchemaFetcher + 'static>(
+    source: Source<'_>,
+    fetcher: F,
+    settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
     match source {
-        Source::Dom(doc) => super::api::validate_with_schema_location(doc),
-        Source::Bytes(bytes) => super::api::streaming_validate_with_schema_location(bytes),
-        Source::Reader(reader) => super::api::streaming_validate_with_schema_location(reader),
+        Source::Dom(doc) => super::api::validate_dom_autodetect(doc, &fetcher, settings),
+        Source::Bytes(bytes) => super::api::validate_streaming_autodetect(bytes, fetcher, settings),
+        Source::Reader(reader) => {
+            super::api::validate_streaming_autodetect(reader, fetcher, settings)
+        }
     }
 }
 
+#[cfg(feature = "ureq")]
+fn run_location_default(
+    source: Source<'_>,
+    settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
+    run_location_with(
+        source,
+        crate::schema::fetcher::DefaultFetcher::new(),
+        settings,
+    )
+}
+
 #[cfg(not(feature = "ureq"))]
-fn run_location_default(_source: Source<'_>) -> Result<Vec<StructuredError>> {
+fn run_location_default(
+    _source: Source<'_>,
+    _settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
     Err(crate::error::Error::InvalidOperation(
         "resolving xsi:schemaLocation with the default fetcher requires the `ureq` feature; \
          enable it, call .schema(...) with an explicit schema, or use .run_with(fetcher)"
@@ -326,8 +312,8 @@ impl Report {
         Self { entries, counters }
     }
 
-    /// Anti-regression work counters, present only for streaming validation
-    /// against an explicit schema. See [`ValidationCounters`](super::ValidationCounters).
+    /// Work counters, present only for streaming validation against an
+    /// explicit schema. For benchmarking tools; not part of the stable API.
     #[doc(hidden)]
     pub fn counters(&self) -> Option<super::ValidationCounters> {
         self.counters
