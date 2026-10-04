@@ -4,12 +4,12 @@ mod helpers;
 mod multi;
 mod reader;
 mod single;
+mod tracker;
 
 use super::context::TransformContext;
 use super::editable::EditableNode;
 use super::xpath_analyze::StreamableXPath;
 
-pub use helpers::{ElementInfo, PathTracker};
 pub use multi::{
     process_for_each_multi, process_for_each_multi_with_context, process_streaming_multi,
     process_streaming_multi_with_context,
@@ -22,6 +22,7 @@ pub use single::{
     process_for_each, process_for_each_with_context, process_streaming,
     process_streaming_with_context,
 };
+pub use tracker::{ElementInfo, PathTracker};
 
 /// Handler pair for multi-xpath processing: (xpath, callback).
 pub type MultiHandler<'a> = (&'a StreamableXPath, &'a mut dyn FnMut(&mut EditableNode));

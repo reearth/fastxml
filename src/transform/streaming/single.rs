@@ -11,9 +11,10 @@ use super::super::editable::{EditableNode, EditableNodeBuilder};
 use super::super::error::{TransformError, TransformResult};
 use super::super::xpath_analyze::StreamableXPath;
 use super::helpers::{
-    PathTracker, add_empty_to_builder, add_end_to_builder, add_start_to_builder,
-    extract_element_info, serialize_editable, xml_parse_error_with_location,
+    add_empty_to_builder, add_end_to_builder, add_start_to_builder, extract_element_info,
+    serialize_editable, xml_parse_error_with_location,
 };
+use super::tracker::PathTracker;
 
 /// Processes XML with streaming transformation.
 pub fn process_streaming<W, F>(
@@ -30,7 +31,7 @@ where
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut prev_written: usize = 0;
     let mut transform_count: usize = 0;
@@ -41,7 +42,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -63,7 +64,7 @@ where
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -184,7 +185,7 @@ where
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut prev_written: usize = 0;
     let mut transform_count: usize = 0;
@@ -198,7 +199,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -223,7 +224,7 @@ where
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -345,7 +346,7 @@ where
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
@@ -355,7 +356,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -372,7 +373,7 @@ where
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -470,7 +471,7 @@ where
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
@@ -483,7 +484,7 @@ where
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -501,7 +502,7 @@ where
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
