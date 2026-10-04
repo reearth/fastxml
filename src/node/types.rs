@@ -74,16 +74,34 @@ pub(crate) struct NodeData {
 
 /// One attribute on an element.
 ///
-/// `name` is the local name — prefixed attributes are stored under their
-/// local name (libxml-compatible), with `prefix`/`ns_uri` set when the
-/// attribute is namespaced. Names are interned so repeated attribute names
-/// share one allocation.
+/// `name` is the local name; `prefix` is the prefix the attribute was written
+/// with and `ns_uri` the namespace it resolved to (both `None` for an
+/// unprefixed attribute). Attributes that share a local name but differ in
+/// namespace are separate entries. Names are interned so repeated attribute
+/// names share one allocation.
 #[derive(Debug, Clone)]
 pub(crate) struct Attr {
     pub name: Arc<str>,
     pub value: Box<str>,
     pub prefix: Option<Arc<str>>,
     pub ns_uri: Option<Arc<str>>,
+}
+
+impl Attr {
+    /// The name as written: `prefix:local`, or `local` when unprefixed.
+    pub fn qname(&self) -> String {
+        match self.prefix.as_deref() {
+            Some(p) if !p.is_empty() => format!("{p}:{}", self.name),
+            _ => self.name.to_string(),
+        }
+    }
+
+    /// Whether `other` names the same attribute (see [`NodeData::set_attr`]).
+    fn same_attribute(&self, other: &Attr) -> bool {
+        self.name == other.name
+            && self.ns_uri == other.ns_uri
+            && (self.ns_uri.is_some() || self.prefix == other.prefix)
+    }
 }
 
 /// Per-node data that only some nodes carry (attributes, namespace
@@ -108,39 +126,94 @@ impl NodeData {
             .unwrap_or(&[])
     }
 
-    /// Looks up an attribute value by name.
+    /// Finds an attribute by the name a caller wrote.
+    ///
+    /// `prefix:local` matches the attribute written with exactly that prefix
+    /// and local name. A bare `local` matches the unprefixed attribute of that
+    /// name if there is one, otherwise the first attribute (in source order)
+    /// whose local name is `local`, whatever its prefix.
+    pub fn find_attr(&self, name: &str) -> Option<&Attr> {
+        self.find_attr_index(name).map(|i| &self.attrs()[i])
+    }
+
+    /// Position of [`find_attr`](Self::find_attr)'s match in [`attrs`](Self::attrs).
+    fn find_attr_index(&self, name: &str) -> Option<usize> {
+        let attrs = self.attrs();
+        match name.split_once(':') {
+            Some((prefix, local)) => attrs
+                .iter()
+                .position(|a| a.name.as_ref() == local && a.prefix.as_deref() == Some(prefix)),
+            None => attrs
+                .iter()
+                .position(|a| a.name.as_ref() == name && a.prefix.is_none())
+                .or_else(|| attrs.iter().position(|a| a.name.as_ref() == name)),
+        }
+    }
+
+    /// Looks up an attribute value by name (see [`find_attr`](Self::find_attr)).
     pub fn attr(&self, name: &str) -> Option<&str> {
+        self.find_attr(name).map(|a| a.value.as_ref())
+    }
+
+    /// Looks up an attribute value by local name and namespace URI. An empty
+    /// `ns_uri` selects an attribute in no namespace.
+    pub fn attr_ns(&self, local: &str, ns_uri: &str) -> Option<&str> {
+        let want = (!ns_uri.is_empty()).then_some(ns_uri);
         self.attrs()
             .iter()
-            .find(|a| a.name.as_ref() == name)
+            .find(|a| a.name.as_ref() == local && a.ns_uri.as_deref() == want)
             .map(|a| a.value.as_ref())
     }
 
     /// Inserts or replaces an attribute, preserving the original position
-    /// on replace (IndexMap-compatible semantics).
+    /// on replace. Two attributes are the same attribute when their local
+    /// names match and they are in the same namespace (or, when neither has
+    /// a namespace, written with the same prefix).
     pub fn set_attr(&mut self, attr: Attr) {
         let attrs = &mut self.extra.get_or_insert_default().attributes;
-        match attrs.iter_mut().find(|a| a.name == attr.name) {
+        match attrs.iter_mut().find(|a| a.same_attribute(&attr)) {
             Some(existing) => *existing = attr,
             None => attrs.push(attr),
         }
     }
 
-    /// Removes an attribute by name, preserving the order of the rest.
-    /// Returns the removed value.
+    /// Removes an attribute by name (see [`find_attr`](Self::find_attr)),
+    /// preserving the order of the rest. Returns the removed value.
     pub fn remove_attr(&mut self, name: &str) -> Option<Box<str>> {
+        let pos = self.find_attr_index(name)?;
         let attrs = &mut self.extra.as_deref_mut()?.attributes;
-        let pos = attrs.iter().position(|a| a.name.as_ref() == name)?;
         Some(attrs.remove(pos).value)
     }
 
-    /// Namespace info for an attribute: (prefix, namespace_uri) if the
+    /// Namespace info for an attribute (looked up as in
+    /// [`find_attr`](Self::find_attr)): (prefix, namespace_uri) if the
     /// attribute exists and is namespaced.
-    pub fn attr_ns_info(&self, local_name: &str) -> Option<(&str, &str)> {
-        self.attrs()
-            .iter()
-            .find(|a| a.name.as_ref() == local_name)
+    pub fn attr_ns_info(&self, name: &str) -> Option<(&str, &str)> {
+        self.find_attr(name)
             .and_then(|a| Some((a.prefix.as_deref()?, a.ns_uri.as_deref()?)))
+    }
+
+    /// Every attribute in source order, keyed the way
+    /// [`XmlNode::get_attributes`](crate::XmlNode::get_attributes) presents
+    /// it: by local name, except that a prefixed attribute whose local name
+    /// is shared with another attribute on the element is keyed by its
+    /// `prefix:local` name. Each key looks its attribute back up through
+    /// [`find_attr`](Self::find_attr).
+    pub fn attr_entries(&self) -> impl Iterator<Item = (String, &Attr)> {
+        let attrs = self.attrs();
+        attrs.iter().enumerate().map(move |(i, a)| {
+            let shared = a.prefix.is_some()
+                && attrs
+                    .iter()
+                    .enumerate()
+                    .any(|(j, o)| j != i && o.name == a.name);
+            let key = if shared {
+                a.qname()
+            } else {
+                a.name.to_string()
+            };
+            (key, a)
+        })
     }
 
     /// Namespace declarations on this node (empty slice when none).

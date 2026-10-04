@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38294	fail=1108	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38295	fail=1107	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -42,7 +42,6 @@ instance-invalid	QName009_2092::msMeta/../msData/datatypes/QName009.xml	fail	exp
 instance-invalid	RegexTest_38::msMeta/../msData/regex/RegexTest_38.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_422::msMeta/../msData/regex/RegexTest_422.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_430::msMeta/../msData/regex/RegexTest_430.xml	fail	expected invalid but validator accepted it
-instance-invalid	RegexTest_63::msMeta/../msData/regex/RegexTest_63.xml	fail	expected invalid but validator accepted it
 instance-invalid	RegexTest_69::msMeta/../msData/regex/RegexTest_69.xml	fail	expected invalid but validator accepted it
 instance-invalid	ad_name00101m1::sunMeta/../sunData/AttrDecl/AD_name/AD_name00101m/AD_name00101m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	ad_name00101m2::sunMeta/../sunData/AttrDecl/AD_name/AD_name00101m/AD_name00101m2_n.xml	fail	expected invalid but validator accepted it

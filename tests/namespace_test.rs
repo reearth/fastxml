@@ -231,7 +231,7 @@ fn test_get_attributes_local_name_keys() {
     let root = doc.get_root_element().unwrap();
     let attrs = root.get_attributes();
 
-    // libxml compatible: attribute keys should be local names only
+    // Attribute keys are local names when no two attributes share one
     assert_eq!(attrs.get("id"), Some(&"test".to_string()));
     assert_eq!(attrs.get("name"), Some(&"foo".to_string()));
 

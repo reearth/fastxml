@@ -1,7 +1,10 @@
 //! SAX-like event streaming for XML processing.
 //!
-//! This module provides an event-based interface for processing XML
-//! that enables single-pass parsing with optional validation.
+//! [`XmlEvent`] is the event type delivered by the public streaming entry
+//! points, [`Parser::events`](crate::Parser::events) and
+//! [`Parser::for_each_event`](crate::Parser::for_each_event). The streaming
+//! engine behind them (also used by the single-pass validator) is internal
+//! to the crate.
 
 use std::any::Any;
 use std::io::BufRead;
@@ -13,6 +16,8 @@ use quick_xml::events::Event;
 
 use crate::error::Result;
 use crate::namespace::Namespace;
+use crate::parser::eol::EolNormalizer;
+use crate::parser::expand::{self, EntityExpander, Segment, TextExpansion};
 use crate::position::PositionTrackingReader;
 
 /// String interner for reducing memory allocations.
@@ -213,13 +218,12 @@ impl RawEvent<'_> {
     }
 }
 
-/// Trait for handling XML events.
+/// Receiver of borrowed events inside the streaming engine; several can be
+/// attached to one [`StreamingParser`] (e.g. a document builder and the
+/// single-pass validator sharing one parse).
 ///
-/// Implement this trait to process XML events during streaming parsing.
-/// Multiple handlers can be attached to a single parser.
-///
-/// Internal engine API; the public streaming entry point is
-/// [`Parser`](crate::Parser).
+/// Internal engine API, not implementable outside the crate; consumers use
+/// [`Parser::for_each_event`](crate::Parser::for_each_event).
 pub(crate) trait XmlEventHandler: Send + Any {
     /// Called for each XML event. The event borrows from the parser
     /// buffer and is only valid for the duration of the call.
@@ -245,16 +249,16 @@ pub(crate) trait XmlEventHandler: Send + Any {
 /// [`Parser`](crate::Parser) (`Parser::from(..).events()` /
 /// `.for_each_event(..)`).
 pub(crate) struct StreamingParser<R: BufRead> {
-    reader: Reader<PositionTrackingReader<R>>,
+    reader: Reader<PositionTrackingReader<EolNormalizer<R>>>,
     handlers: Vec<Box<dyn XmlEventHandler>>,
     /// General entities declared in the internal DTD subset
-    entities: std::collections::HashMap<String, String>,
+    expander: EntityExpander,
 }
 
 impl<R: BufRead> StreamingParser<R> {
     /// Creates a new streaming parser from a BufRead source.
     pub fn new(reader: R) -> Self {
-        let position_reader = PositionTrackingReader::new(reader);
+        let position_reader = PositionTrackingReader::new(EolNormalizer::new(reader));
         let mut xml_reader = Reader::from_reader(position_reader);
         xml_reader.config_mut().trim_text(false);
         xml_reader.config_mut().expand_empty_elements = true;
@@ -262,18 +266,8 @@ impl<R: BufRead> StreamingParser<R> {
         Self {
             reader: xml_reader,
             handlers: Vec::new(),
-            entities: std::collections::HashMap::new(),
+            expander: EntityExpander::new(),
         }
-    }
-
-    /// Returns the current line number (1-indexed).
-    fn current_line(&self) -> usize {
-        self.reader.get_ref().line()
-    }
-
-    /// Returns the current column number (1-indexed, in UTF-8 characters).
-    fn current_column(&self) -> usize {
-        self.reader.get_ref().column()
     }
 
     /// Adds an event handler.
@@ -292,92 +286,23 @@ impl<R: BufRead> StreamingParser<R> {
         F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
         let mut buffer = Vec::with_capacity(8 * 1024);
-        let mut checker = crate::parser::checks::WellformedChecker::new();
+        let Self {
+            reader, expander, ..
+        } = self;
+        let mut sink = StreamSink {
+            checker: crate::parser::checks::WellformedChecker::new(),
+            expander,
+            on_event: &mut on_event,
+        };
 
         loop {
-            let event_result = self.reader.read_event_into(&mut buffer);
-            let line = self.current_line();
-            let column = self.current_column();
+            let event_result = reader.read_event_into(&mut buffer);
+            let position = reader.get_ref();
+            let (line, column) = (position.line(), position.column());
 
             match event_result {
-                Ok(Event::Start(ref e)) => {
-                    checker.start(e)?;
-                    let (name, prefix, attributes, namespace_decls) =
-                        split_start_event(e, &self.entities)?;
-                    on_event(&RawEvent::StartElement {
-                        name,
-                        prefix,
-                        attributes: &attributes,
-                        namespace_decls: &namespace_decls,
-                        line: Some(line),
-                        column: Some(column),
-                    })?;
-                }
-                Ok(Event::Empty(ref e)) => {
-                    checker.start(e)?;
-                    let (name, prefix, attributes, namespace_decls) =
-                        split_start_event(e, &self.entities)?;
-                    on_event(&RawEvent::StartElement {
-                        name,
-                        prefix,
-                        attributes: &attributes,
-                        namespace_decls: &namespace_decls,
-                        line: Some(line),
-                        column: Some(column),
-                    })?;
-                    // An empty-element tag opens and immediately closes.
-                    checker.end(name)?;
-                    on_event(&RawEvent::EndElement { name, prefix })?;
-                }
-                Ok(Event::End(ref e)) => {
-                    let qname = e.name();
-                    let full_name = std::str::from_utf8(qname.as_ref())?;
-                    checker.end(full_name)?;
-                    let (prefix, name) = crate::namespace::split_qname(full_name);
-                    on_event(&RawEvent::EndElement { name, prefix })?;
-                }
-                Ok(Event::Text(ref e)) => {
-                    // Check the raw (pre-unescape) text so literal illegal
-                    // characters are caught while `&#…;` references (legal in
-                    // XML 1.1) pass through as plain ASCII.
-                    checker.text(std::str::from_utf8(e.as_ref())?)?;
-                    let text = e
-                        .unescape_with(|name| {
-                            self.entities
-                                .get(name)
-                                .map(String::as_str)
-                                .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
-                        })
-                        .map_err(|e| crate::parser::error::ParseError::TextDecodeError {
-                            message: e.to_string(),
-                        })?;
-                    if !text.is_empty() {
-                        on_event(&RawEvent::Text(&text))?;
-                    }
-                }
-                Ok(Event::CData(ref e)) => {
-                    let text = std::str::from_utf8(e.as_ref())?;
-                    checker.cdata(text)?;
-                    on_event(&RawEvent::CData(text))?;
-                }
-                Ok(Event::Comment(ref e)) => {
-                    let text = std::str::from_utf8(e.as_ref())?;
-                    checker.comment(text)?;
-                    on_event(&RawEvent::Comment(text))?;
-                }
-                Ok(Event::PI(ref e)) => {
-                    let content = std::str::from_utf8(e.as_ref())?;
-                    checker.pi(content)?;
-                    let mut parts = content.splitn(2, char::is_whitespace);
-                    let target = parts.next().unwrap_or("");
-                    let pi_content = parts.next().map(str::trim);
-                    on_event(&RawEvent::ProcessingInstruction {
-                        target,
-                        content: pi_content,
-                    })?;
-                }
                 Ok(Event::Decl(ref e)) => {
-                    checker.decl(std::str::from_utf8(e.as_ref())?)?;
+                    sink.checker.decl(std::str::from_utf8(e.as_ref())?)?;
                     let version = e
                         .version()
                         .ok()
@@ -390,7 +315,7 @@ impl<R: BufRead> StreamingParser<R> {
                         .standalone()
                         .and_then(|r| r.ok())
                         .map(|v| v.as_ref() == b"yes");
-                    on_event(&RawEvent::Declaration {
+                    (sink.on_event)(&RawEvent::Declaration {
                         version,
                         encoding,
                         standalone,
@@ -399,18 +324,19 @@ impl<R: BufRead> StreamingParser<R> {
                 Ok(Event::DocType(ref e)) => {
                     // Collect internal-subset general entity declarations
                     if let Ok(text) = std::str::from_utf8(e.as_ref()) {
-                        checker.doctype(text)?;
-                        self.entities = crate::parser::entities::parse_internal_entities(text);
+                        sink.checker.doctype(text)?;
+                        sink.expander.declare_from(&mut sink.checker);
                     }
                 }
                 Ok(Event::Eof) => {
-                    checker.eof()?;
-                    on_event(&RawEvent::Eof)?;
+                    sink.checker.eof()?;
+                    (sink.on_event)(&RawEvent::Eof)?;
                     break;
                 }
+                Ok(ref e) => sink.event(e, line, column)?,
                 Err(e) => {
                     return Err(crate::parser::error::ParseError::AtPosition {
-                        position: self.reader.get_ref().byte_offset() as u64,
+                        position: reader.get_ref().byte_offset() as u64,
                         message: e.to_string(),
                     }
                     .into());
@@ -460,12 +386,132 @@ impl<R: BufRead> StreamingParser<R> {
     }
 }
 
+/// Per-parse state of the streaming loop: well-formedness and entity
+/// bookkeeping plus the event callback, shared by the main loop and the
+/// content fragments of entities that contain markup.
+struct StreamSink<'s, F> {
+    checker: crate::parser::checks::WellformedChecker,
+    expander: &'s mut EntityExpander,
+    on_event: &'s mut F,
+}
+
+impl<F> StreamSink<'_, F>
+where
+    F: FnMut(&RawEvent<'_>) -> Result<()>,
+{
+    /// Handles one content event (anything but the XML declaration, the
+    /// DOCTYPE and end of input).
+    fn event(&mut self, event: &Event<'_>, line: usize, column: usize) -> Result<()> {
+        match event {
+            Event::Start(e) | Event::Empty(e) => {
+                self.checker.start(e)?;
+                let (name, prefix, attributes, namespace_decls) =
+                    split_start_event(e, self.expander)?;
+                (self.on_event)(&RawEvent::StartElement {
+                    name,
+                    prefix,
+                    attributes: &attributes,
+                    namespace_decls: &namespace_decls,
+                    line: Some(line),
+                    column: Some(column),
+                })?;
+                if matches!(event, Event::Empty(_)) {
+                    // An empty-element tag opens and immediately closes.
+                    self.checker
+                        .end(std::str::from_utf8(e.name().into_inner())?)?;
+                    (self.on_event)(&RawEvent::EndElement { name, prefix })?;
+                }
+            }
+            Event::End(e) => {
+                let qname = e.name();
+                let full_name = std::str::from_utf8(qname.as_ref())?;
+                self.checker.end(full_name)?;
+                let (prefix, name) = crate::namespace::split_qname(full_name);
+                (self.on_event)(&RawEvent::EndElement { name, prefix })?;
+            }
+            Event::Text(e) => {
+                // Check the raw (pre-expansion) text: literal characters must
+                // satisfy the Char production, and each character reference
+                // must name a legal XML 1.0 character.
+                let raw = std::str::from_utf8(e.as_ref())?;
+                let raw = self.checker.text(raw)?;
+                self.expander.declare_from(&mut self.checker);
+                match self.expander.expand_text(raw)? {
+                    TextExpansion::Text(text) => self.text(&text)?,
+                    TextExpansion::Segments(segments) => {
+                        for segment in segments {
+                            match segment {
+                                Segment::Text(text) => self.text(&text)?,
+                                Segment::Markup(name) => self.fragment(&name, line, column)?,
+                            }
+                        }
+                    }
+                }
+            }
+            Event::CData(e) => {
+                let text = std::str::from_utf8(e.as_ref())?;
+                self.checker.cdata(text)?;
+                (self.on_event)(&RawEvent::CData(text))?;
+            }
+            Event::Comment(e) => {
+                let text = std::str::from_utf8(e.as_ref())?;
+                self.checker.comment(text)?;
+                (self.on_event)(&RawEvent::Comment(text))?;
+            }
+            Event::PI(e) => {
+                let content = std::str::from_utf8(e.as_ref())?;
+                self.checker.pi(content)?;
+                let mut parts = content.splitn(2, char::is_whitespace);
+                let target = parts.next().unwrap_or("");
+                let pi_content = parts.next().map(str::trim);
+                (self.on_event)(&RawEvent::ProcessingInstruction {
+                    target,
+                    content: pi_content,
+                })?;
+            }
+            Event::Decl(_) | Event::DocType(_) | Event::Eof => {
+                return Err(crate::parser::error::ParseError::NotWellFormed {
+                    message: "a declaration is not allowed in entity replacement text".to_string(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    fn text(&mut self, text: &str) -> Result<()> {
+        if !text.is_empty() {
+            (self.on_event)(&RawEvent::Text(text))?;
+        }
+        Ok(())
+    }
+
+    /// Parses the replacement text of entity `name` as content in place of
+    /// its reference (XML 1.0 §4.4.2).
+    fn fragment(&mut self, name: &str, line: usize, column: usize) -> Result<()> {
+        let replacement = self.expander.enter(name)?;
+        let depth = self.checker.depth();
+        let mut reader = expand::fragment_reader(&replacement);
+        loop {
+            match reader.read_event() {
+                Ok(Event::Eof) => break,
+                Ok(ref e) => self.event(e, line, column)?,
+                Err(e) => return Err(expand::fragment_error(name, e).into()),
+            }
+        }
+        expand::check_balanced(name, depth, self.checker.depth())?;
+        self.expander.leave();
+        Ok(())
+    }
+}
+
 /// Splits a start tag into name parts, attributes, and namespace
 /// declarations, borrowing from the parser buffer wherever possible.
+/// Attribute values are expanded and normalized (XML 1.0 §3.3.3).
 #[allow(clippy::type_complexity)]
 fn split_start_event<'a>(
     e: &'a quick_xml::events::BytesStart<'a>,
-    entities: &'a std::collections::HashMap<String, String>,
+    expander: &mut EntityExpander,
 ) -> Result<(
     &'a str,
     Option<&'a str>,
@@ -484,16 +530,14 @@ fn split_start_event<'a>(
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.into_inner())?;
-        let value = attr
-            .unescape_value_with(|name| {
-                entities
-                    .get(name)
-                    .map(String::as_str)
-                    .or_else(|| quick_xml::escape::resolve_predefined_entity(name))
-            })
-            .map_err(|e| crate::parser::error::ParseError::AttributeDecodeError {
-                message: e.to_string(),
-            })?;
+        let value = match attr.value {
+            std::borrow::Cow::Borrowed(raw) => expander.expand_attr(std::str::from_utf8(raw)?)?,
+            std::borrow::Cow::Owned(raw) => std::borrow::Cow::Owned(
+                expander
+                    .expand_attr(std::str::from_utf8(&raw)?)?
+                    .into_owned(),
+            ),
+        };
 
         if key == "xmlns" {
             namespace_decls.push(Namespace::default_ns(value.as_ref()));

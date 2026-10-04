@@ -1,4 +1,4 @@
-#counts	total=2585	pass=1691	fail=147	unsupported=747	blocked=0	panic=0
+#counts	total=2585	pass=1716	fail=122	unsupported=747	blocked=0	panic=0
 error	ibm-invalid-P68-ibm68i01.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i02.xml	unsupported	optional-error-test
 error	ibm-invalid-P68-ibm68i03.xml	unsupported	optional-error-test
@@ -41,12 +41,12 @@ invalid	ibm-invalid-P89-ibm89n09.xml	unsupported	5th-edition
 invalid	ibm-invalid-P89-ibm89n10.xml	unsupported	5th-edition
 invalid	ibm-invalid-P89-ibm89n11.xml	unsupported	5th-edition
 invalid	ibm-invalid-P89-ibm89n12.xml	unsupported	5th-edition
-invalid	invalid-bo-1	fail	parse error: text decode error: at 1..4: unrecognized entity `bom`
-invalid	invalid-bo-2	fail	parse error: text decode error: at 1..4: unrecognized entity `bom`
-invalid	invalid-bo-3	fail	parse error: text decode error: at 1..5: unrecognized entity `bom8`
-invalid	invalid-bo-4	fail	parse error: text decode error: at 1..7: unrecognized entity `bombom`
-invalid	invalid-bo-5	fail	parse error: text decode error: at 1..7: unrecognized entity `bombom`
-invalid	invalid-bo-6	fail	parse error: text decode error: at 1..8: unrecognized entity `bombom8`
+invalid	invalid-bo-1	fail	parse error: text decode error: '&bom;' refers to an external entity, which fastxml does not load
+invalid	invalid-bo-2	fail	parse error: text decode error: '&bom;' refers to an external entity, which fastxml does not load
+invalid	invalid-bo-3	fail	parse error: text decode error: '&bom8;' refers to an external entity, which fastxml does not load
+invalid	invalid-bo-4	fail	parse error: text decode error: '&bombom;' refers to an external entity, which fastxml does not load
+invalid	invalid-bo-5	fail	parse error: text decode error: '&bombom;' refers to an external entity, which fastxml does not load
+invalid	invalid-bo-6	fail	parse error: text decode error: '&bombom8;' refers to an external entity, which fastxml does not load
 invalid	invalid-sa-140	unsupported	5th-edition
 invalid	invalid-sa-141	unsupported	5th-edition
 invalid	o-p04pass1	unsupported	namespace-processing-off not supported
@@ -62,7 +62,7 @@ invalid	rmt-046	unsupported	xml-1.1
 invalid	rmt-048	unsupported	xml-1.1
 invalid	rmt-052	unsupported	xml-1.1
 invalid	rmt-053	unsupported	xml-1.1
-invalid	rmt-e3e-13	fail	parse error: text decode error: at 1..5: unrecognized entity `ent2`
+invalid	rmt-e3e-13	fail	parse error: text decode error: unknown entity reference '&ent2;'
 invalid	utf16b	unsupported	utf-16 BOM
 invalid	utf16l	unsupported	utf-16 BOM
 invalid	x-rmt5-014	unsupported	5th-edition
@@ -238,21 +238,15 @@ not-wf	ibm-1-1-not-wf-P77-ibm77n18.xml	unsupported	xml-1.1
 not-wf	ibm-1-1-not-wf-P77-ibm77n19.xml	unsupported	xml-1.1
 not-wf	ibm-1-1-not-wf-P77-ibm77n20.xml	unsupported	xml-1.1
 not-wf	ibm-1-1-not-wf-P77-ibm77n21.xml	unsupported	xml-1.1
-not-wf	ibm-not-wf-P02-ibm02n30.xml	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 30
-not-wf	ibm-not-wf-P02-ibm02n31.xml	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 30
+not-wf	ibm-not-wf-P02-ibm02n30.xml	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 29
+not-wf	ibm-not-wf-P02-ibm02n31.xml	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 29
 not-wf	ibm-not-wf-P09-ibm09n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P09-ibm09n02.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P09-ibm09n03.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P28-ibm28n05.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P28-ibm28n06.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P29-ibm29n03.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P29-ibm29n04.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P29-ibm29n07.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P30-ibm30n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P31-ibm31n01.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P41-ibm41n11.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P41-ibm41n13.xml	fail	parser accepted not-well-formed input
-not-wf	ibm-not-wf-P41-ibm41n14.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P61-ibm61n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P62-ibm62n01.xml	fail	parser accepted not-well-formed input
 not-wf	ibm-not-wf-P62-ibm62n02.xml	fail	parser accepted not-well-formed input
@@ -300,25 +294,14 @@ not-wf	not-wf-not-sa-006	fail	parser accepted not-well-formed input
 not-wf	not-wf-not-sa-007	fail	parser accepted not-well-formed input
 not-wf	not-wf-not-sa-008	fail	parser accepted not-well-formed input
 not-wf	not-wf-not-sa-009	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-074	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-078	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-079	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-080	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-082	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-084	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-090	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-092	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-101	unsupported	encoding:  UTF-8
 not-wf	not-wf-sa-113	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-114	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-115	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-116	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-117	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-119	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-120	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-140	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-141	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-153	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-159	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-160	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-161	fail	parser accepted not-well-formed input
@@ -326,9 +309,7 @@ not-wf	not-wf-sa-162	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-168	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 0
 not-wf	not-wf-sa-169	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 0
 not-wf	not-wf-sa-170	fail	utf8 error: invalid utf-8 sequence of 1 bytes from index 0
-not-wf	not-wf-sa-179	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-180	fail	parser accepted not-well-formed input
-not-wf	not-wf-sa-182	fail	parser accepted not-well-formed input
 not-wf	not-wf-sa-186	fail	parser accepted not-well-formed input
 not-wf	o-p02fail1	unsupported	utf-16 BOM
 not-wf	o-p02fail10	unsupported	utf-16 BOM
@@ -363,11 +344,6 @@ not-wf	o-p02fail8	unsupported	utf-16 BOM
 not-wf	o-p02fail9	unsupported	utf-16 BOM
 not-wf	o-p09fail1	fail	parser accepted not-well-formed input
 not-wf	o-p09fail2	fail	parser accepted not-well-formed input
-not-wf	o-p09fail4	fail	parser accepted not-well-formed input
-not-wf	o-p09fail5	fail	parser accepted not-well-formed input
-not-wf	o-p11fail1	fail	parser accepted not-well-formed input
-not-wf	o-p11fail2	fail	parser accepted not-well-formed input
-not-wf	o-p12fail4	fail	parser accepted not-well-formed input
 not-wf	o-p30fail1	fail	parser accepted not-well-formed input
 not-wf	o-p31fail1	fail	parser accepted not-well-formed input
 not-wf	o-p40fail1	fail	parser accepted not-well-formed input
@@ -462,8 +438,8 @@ not-wf	x-ibm-1-0.5-not-wf-P05-ibm05n03.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P05-ibm05n04.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P05-ibm05n05.xml	unsupported	5th-edition
 not-wf	x-ibm-1-0.5-not-wf-P05-ibm05n06.xml	unsupported	5th-edition
-valid	ext01	fail	parse error: text decode error: at 2..6: unrecognized entity `root`
-valid	ext02	fail	parse error: text decode error: at 2..8: unrecognized entity `utf16b`
+valid	ext01	fail	parse error: text decode error: '&root;' refers to an external entity, which fastxml does not load
+valid	ext02	fail	parse error: text decode error: '&utf16b;' refers to an external entity, which fastxml does not load
 valid	ibm-1-1-valid-P02-ibm02v01.xml	unsupported	xml-1.1
 valid	ibm-1-1-valid-P02-ibm02v02.xml	unsupported	xml-1.1
 valid	ibm-1-1-valid-P02-ibm02v03.xml	unsupported	xml-1.1
@@ -517,10 +493,10 @@ valid	ibm-1-1-valid-P77-ibm77v27.xml	unsupported	xml-1.1
 valid	ibm-1-1-valid-P77-ibm77v28.xml	unsupported	xml-1.1
 valid	ibm-1-1-valid-P77-ibm77v29.xml	unsupported	xml-1.1
 valid	ibm-1-1-valid-P77-ibm77v30.xml	unsupported	xml-1.1
-valid	ibm-valid-P09-ibm09v03.xml	fail	parse error: text decode error: at 25..29: unrecognized entity `Name`
-valid	ibm-valid-P09-ibm09v05.xml	fail	parse error: text decode error: at 19..26: unrecognized entity `combine`
-valid	ibm-valid-P32-ibm32v02.xml	fail	parse error: text decode error: at 1..15: unrecognized entity `animal_content`
-valid	ibm-valid-P78-ibm78v01.xml	fail	parse error: text decode error: at 1..5: unrecognized entity `epe1`
+valid	ibm-valid-P09-ibm09v03.xml	fail	parse error: text decode error: unknown entity reference '&Name;'
+valid	ibm-valid-P09-ibm09v05.xml	fail	parse error: text decode error: unknown entity reference '&combine;'
+valid	ibm-valid-P32-ibm32v02.xml	fail	parse error: text decode error: unknown entity reference '&animal_content;'
+valid	ibm-valid-P78-ibm78v01.xml	fail	parse error: text decode error: '&epe1;' refers to an external entity, which fastxml does not load
 valid	ibm-valid-P85-ibm85n03.xml	unsupported	5th-edition
 valid	ibm-valid-P85-ibm85n04.xml	unsupported	5th-edition
 valid	ibm-valid-P85-ibm85n05.xml	unsupported	5th-edition
@@ -821,11 +797,11 @@ valid	ibm-valid-P88-ibm88n16.xml	unsupported	5th-edition
 valid	ibm-valid-P89-ibm89n03.xml	unsupported	5th-edition
 valid	ibm-valid-P89-ibm89n04.xml	unsupported	5th-edition
 valid	ibm-valid-P89-ibm89n05.xml	unsupported	5th-edition
-valid	not-sa03	fail	parse error: attribute value decode error: at 1..9: unrecognized entity `internal`
+valid	not-sa03	fail	parse error: attribute value decode error: unknown entity reference '&internal;'
 valid	o-p08pass1	unsupported	namespace-processing-off not supported
 valid	pr-xml-little	unsupported	utf-16 BOM
 valid	pr-xml-utf-16	unsupported	utf-16 BOM
-valid	pr-xml-utf-8	fail	parse error: parse error at position 5835: syntax error: unknown or missed symbol in markup
+valid	pr-xml-utf-8	fail	parse error: parse error at position 5705: syntax error: unknown or missed symbol in markup
 valid	rmt-006	unsupported	xml-1.1
 valid	rmt-007	unsupported	xml-1.1
 valid	rmt-010	unsupported	xml-1.1
@@ -851,36 +827,35 @@ valid	rmt-049	unsupported	xml-1.1
 valid	rmt-050	unsupported	xml-1.1
 valid	rmt-051	unsupported	xml-1.1
 valid	rmt-054	unsupported	xml-1.1
-valid	rmt-e2e-18	fail	parse error: text decode error: at 1..4: unrecognized entity `ent`
-valid	rmt-e2e-19	fail	parse error: text decode error: at 1..4: unrecognized entity `ent`
+valid	rmt-e2e-18	fail	parse error: text decode error: unknown entity reference '&ent;'
+valid	rmt-e2e-19	fail	parse error: text decode error: unknown entity reference '&ent;'
 valid	rmt-e2e-50	unsupported	xml-1.1
 valid	rmt-ns11-001	unsupported	xml-1.1
 valid	rmt-ns11-002	unsupported	xml-1.1
 valid	rmt-ns11-003	unsupported	xml-1.1
 valid	rmt-ns11-004	unsupported	xml-1.1
 valid	rmt-ns11-006	unsupported	xml-1.1
-valid	v-pe00	fail	parse error: text decode error: at 1..5: unrecognized entity `book`
-valid	v-pe02	fail	parse error: text decode error: at 21..27: unrecognized entity `tricky`
-valid	valid-ext-sa-001	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-002	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-003	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-004	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-005	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-006	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-007	fail	parse error: text decode error: at 2..3: unrecognized entity `e`
-valid	valid-ext-sa-008	fail	parse error: text decode error: at 2..3: unrecognized entity `e`
-valid	valid-ext-sa-009	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-011	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-ext-sa-013	fail	parse error: text decode error: at 1..2: unrecognized entity `x`
-valid	valid-ext-sa-014	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
-valid	valid-not-sa-031	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
+valid	v-pe00	fail	parse error: text decode error: unknown entity reference '&book;'
+valid	v-pe02	fail	parse error: text decode error: unknown entity reference '&tricky;'
+valid	valid-ext-sa-001	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-002	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-003	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-004	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-005	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-006	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-007	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-008	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-009	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-011	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-012	fail	parse error: text decode error: '&e3;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-013	fail	parse error: text decode error: '&x;' refers to an external entity, which fastxml does not load
+valid	valid-ext-sa-014	fail	parse error: text decode error: '&e;' refers to an external entity, which fastxml does not load
+valid	valid-not-sa-031	fail	parse error: text decode error: unknown entity reference '&e;'
 valid	valid-sa-012	unsupported	namespace-processing-off not supported
-valid	valid-sa-024	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
 valid	valid-sa-049	unsupported	utf-16 BOM
 valid	valid-sa-050	unsupported	utf-16 BOM
 valid	valid-sa-051	unsupported	utf-16 BOM
-valid	valid-sa-087	fail	parse error: parse error at position 107: syntax error: DOCTYPE not closed: `>` not found before end of input
-valid	valid-sa-088	fail	parse error: text decode error: at 1..2: unrecognized entity `e`
+valid	valid-sa-087	fail	parse error: parse error at position 101: syntax error: DOCTYPE not closed: `>` not found before end of input
 valid	weekly-little	unsupported	utf-16 BOM
 valid	weekly-utf-16	unsupported	utf-16 BOM
 valid	x-ibm-1-0.5-valid-P04-ibm04av01.xml	unsupported	5th-edition

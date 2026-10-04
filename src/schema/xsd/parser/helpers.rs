@@ -87,15 +87,22 @@ pub(super) fn split_start_event<'a>(
 
     let mut namespace_decls = Vec::new();
     let mut attributes = Vec::new();
+    // Schema documents get the same attribute-value normalization as
+    // instance documents (XML 1.0 §3.3.3), so values such as `fixed` and
+    // `pattern` compare equal to the instance values they constrain.
+    let mut expander = crate::parser::expand::EntityExpander::new();
 
     for attr_result in e.attributes() {
         let attr = attr_result?;
         let key = std::str::from_utf8(attr.key.into_inner())?;
-        let value = attr.unescape_value().map_err(|e| {
-            crate::parser::error::ParseError::AttributeDecodeError {
-                message: e.to_string(),
-            }
-        })?;
+        let value = match attr.value {
+            std::borrow::Cow::Borrowed(raw) => expander.expand_attr(std::str::from_utf8(raw)?)?,
+            std::borrow::Cow::Owned(raw) => std::borrow::Cow::Owned(
+                expander
+                    .expand_attr(std::str::from_utf8(&raw)?)?
+                    .into_owned(),
+            ),
+        };
 
         if key == "xmlns" {
             namespace_decls.push(crate::namespace::Namespace::default_ns(value.as_ref()));

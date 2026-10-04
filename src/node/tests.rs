@@ -610,7 +610,7 @@ fn test_xml_ro_node_hash() {
 fn test_xml_node_get_attribute_ns() {
     let doc = crate::parse(r#"<root xmlns:ns="http://example.com" ns:attr="value"/>"#).unwrap();
     let root = crate::compat::get_root_node(&doc).unwrap();
-    // Attributes are stored with local names only (libxml compatible)
+    // A lone prefixed attribute is also found by its local name
     assert_eq!(root.get_attribute("attr"), Some("value".to_string()));
 }
 
@@ -622,7 +622,7 @@ fn test_xml_ro_node_get_attribute_ns() {
     // get_attribute_ns searches by namespace URI
     let result = ro_node.get_attribute_ns("attr", "http://example.com");
     assert_eq!(result, Some("value".to_string()));
-    // Attributes are keyed by local name only (libxml compatible)
+    // A lone prefixed attribute is keyed by its local name
     let attrs = ro_node.get_attributes();
     assert!(attrs.contains_key("attr"));
 }
