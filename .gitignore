@@ -29,3 +29,6 @@ examples/cache
 
 # Conformance test data (downloaded by fastxml-conformance)
 conformance/data/
+
+# Local scratch (audit notes, probes)
+/tmp/
