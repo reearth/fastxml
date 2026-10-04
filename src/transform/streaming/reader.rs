@@ -11,9 +11,10 @@ use super::super::editable::{EditableNode, EditableNodeBuilder};
 use super::super::error::{TransformError, TransformResult};
 use super::super::xpath_analyze::StreamableXPath;
 use super::helpers::{
-    PathTracker, add_empty_to_builder, add_end_to_builder, add_start_to_builder,
-    extract_element_info, serialize_editable, xml_parse_error_at_offset,
+    add_empty_to_builder, add_end_to_builder, add_start_to_builder, extract_element_info,
+    serialize_editable, xml_parse_error_at_offset,
 };
+use super::tracker::PathTracker;
 use super::{HandlerState, MultiHandler, MultiTransformHandler, TransformHandlerState};
 
 /// Processes XML from a reader with streaming iteration (no transformation output).
@@ -34,7 +35,7 @@ where
     let mut xml_reader = Reader::from_reader(reader);
     xml_reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
@@ -44,7 +45,7 @@ where
 
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -59,7 +60,7 @@ where
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -165,7 +166,7 @@ where
 
     let mut xml_writer = XmlWriter::new(writer);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
     let mut subtree_builder: Option<EditableNodeBuilder> = None;
     let mut transform_count: usize = 0;
     let mut buf = Vec::new();
@@ -175,7 +176,7 @@ where
 
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let element_info = extract_element_info(e, before_pos, namespaces)?;
+                let element_info = extract_element_info(e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -196,7 +197,7 @@ where
             }
 
             Ok(Event::Empty(ref e)) => {
-                let element_info = extract_element_info(e, before_pos, namespaces)?;
+                let element_info = extract_element_info(e, before_pos)?;
 
                 tracker.push_element(element_info);
 
@@ -331,7 +332,7 @@ where
     let mut xml_reader = Reader::from_reader(reader);
     xml_reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
 
@@ -349,7 +350,7 @@ where
 
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 for i in 0..states.len() {
@@ -365,7 +366,7 @@ where
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 for i in 0..states.len() {
@@ -475,7 +476,7 @@ where
 
     let mut xml_writer = XmlWriter::new(writer);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut transform_count: usize = 0;
     let mut buf = Vec::new();
 
@@ -496,7 +497,7 @@ where
 
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let element_info = extract_element_info(e, before_pos, namespaces)?;
+                let element_info = extract_element_info(e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
@@ -526,7 +527,7 @@ where
             }
 
             Ok(Event::Empty(ref e)) => {
-                let element_info = extract_element_info(e, before_pos, namespaces)?;
+                let element_info = extract_element_info(e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
