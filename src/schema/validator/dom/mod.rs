@@ -1,8 +1,8 @@
 //! DOM-based schema validator.
 //!
-//! This module provides direct DOM tree validation without re-generating XML events.
-//! This approach is faster than the streaming validator for pre-parsed documents
-//! as it avoids the overhead of event reconstruction.
+//! Validates an already-parsed [`XmlDocument`] by walking its tree, so the
+//! whole document is available (identity constraints are evaluated with the
+//! crate's XPath engine after the walk).
 
 mod content;
 mod identity;
@@ -23,21 +23,6 @@ use crate::schema::types::{
 use super::ValidationMode;
 use super::streaming::ValidationOptions;
 
-/// DOM-based schema validator.
-///
-/// Validates XML documents by directly traversing the DOM tree,
-/// avoiding the overhead of event reconstruction.
-///
-/// # Example
-///
-/// ```ignore
-/// use fastxml::{parse, schema::validator::DomSchemaValidator};
-///
-/// let doc = parse(xml_bytes)?;
-/// let errors = DomSchemaValidator::new(schema)
-///     .with_max_errors(100)
-///     .validate(&doc)?;
-/// ```
 /// Validation context an element provides to its children: the allowed
 /// child-name constraints plus the actual local element declarations.
 #[derive(Default)]
@@ -118,6 +103,10 @@ pub(crate) struct DocIdState {
         (crate::node::NodeId, String),
         crate::schema::xsd::primitive::PrimitiveKind,
     >,
+    /// Element nodes whose type has no simple value (element-only or mixed
+    /// content), which an identity-constraint field must not select.
+    /// Recorded only once some identity constraint is in play.
+    pub(crate) no_simple_value: std::collections::HashSet<crate::node::NodeId>,
 }
 
 impl DocIdState {
@@ -143,9 +132,16 @@ impl DocIdState {
     }
 }
 
+/// DOM-based schema validator: validates a parsed [`XmlDocument`] by
+/// walking its tree. Reached through [`Validator`](super::Validator) when the
+/// input is a `&XmlDocument`.
 #[doc(hidden)]
 pub struct DomSchemaValidator {
     pub(crate) schema: Arc<CompiledSchema>,
+    /// Global-element resolution and the undeclared-element policy.
+    pub(crate) resolver: super::decls::ElementResolver,
+    /// Run-time flattening of types outside the compile-time cache.
+    pub(crate) runtime_types: std::cell::RefCell<super::decls::RuntimeTypeCache>,
     pub(crate) mode: ValidationMode,
     pub(crate) options: ValidationOptions,
     pub(crate) max_errors: usize,
@@ -162,6 +158,8 @@ impl DomSchemaValidator {
     /// Creates a new DOM validator.
     pub fn new(schema: Arc<CompiledSchema>) -> Self {
         Self {
+            resolver: super::decls::ElementResolver::new(&schema),
+            runtime_types: Default::default(),
             schema,
             mode: ValidationMode::Strict,
             options: ValidationOptions::default(),
@@ -178,13 +176,14 @@ impl DomSchemaValidator {
         self
     }
 
-    /// Sets the maximum number of errors to collect.
     /// Collapses identical errors into one entry with a count (builder).
     pub fn with_aggregate_errors(mut self) -> Self {
         self.options.aggregate_errors = true;
         self
     }
 
+    /// Sets the maximum number of errors to collect; 0 (the default) means
+    /// unlimited.
     pub fn with_max_errors(mut self, max: usize) -> Self {
         self.max_errors = max;
         self
@@ -235,8 +234,11 @@ impl DomSchemaValidator {
             &self.schema,
             doc,
             &ids.constraint_tasks,
-            &ids.node_kinds,
-            &ids.attr_kinds,
+            &identity::FieldKinds {
+                node_kinds: &ids.node_kinds,
+                attr_kinds: &ids.attr_kinds,
+                no_simple_value: &ids.no_simple_value,
+            },
         ) {
             let error = StructuredError::new(message, ValidationErrorType::IdentityConstraint)
                 .with_level(ErrorLevel::Error);
@@ -318,29 +320,38 @@ impl DomSchemaValidator {
         let node_ns = node.get_namespace_uri();
 
         // Look up the element declaration. A local declaration in the
-        // parent's type that carries type information wins over a global
-        // element with the same name — the same element name can be
-        // declared with different types in different content models (e.g.
-        // gml:exterior in Solid vs Polygon, or gen:value as xs:string vs
-        // the measure 'value' with required @uom). Bare references (no
-        // type info) fall back to the global declaration they point to.
-        // Local declarations are searched from the end so a derived type's
-        // redeclaration shadows the base type's.
+        // parent's type wins over a global element with the same name — the
+        // same element name can be declared with different types in
+        // different content models (e.g. gml:exterior in Solid vs Polygon,
+        // or gen:value as xs:string vs the measure 'value' with required
+        // @uom). A reference (`ref=`) falls back to the global declaration
+        // it points to. Local declarations are searched from the end so a
+        // derived type's redeclaration shadows the base type's.
         let inline_def =
             parent_ctx.and_then(|ctx| ctx.elements.iter().rev().find(|e| e.name == *name));
         let elem_def = match inline_def {
-            Some(e) if e.type_ref.is_some() || e.inline_type.is_some() => Some(e),
+            Some(e) if e.ref_ns.is_none() => Some(e),
             _ => self
                 .lookup_element(&name, prefix.as_deref(), node_ns.as_deref())
                 .or(inline_def),
         };
-        let schema_has_elements = !self.schema.elements_ns.is_empty();
 
         // Check if element is allowed by parent's type definition
         let is_allowed_by_parent = parent_ctx
             .and_then(|ctx| ctx.allowed.as_ref())
             .map(|fc| fc.constraints.contains_key(&name))
             .unwrap_or(false);
+
+        // An undeclared element whose xsi:type names a schema type is
+        // validated against that type.
+        let xsi_declaration;
+        let elem_def = match elem_def {
+            None if !is_allowed_by_parent => {
+                xsi_declaration = self.xsi_type_declaration(node, &name);
+                xsi_declaration.as_ref()
+            }
+            found => found,
+        };
 
         // A skip wildcard admits this element without any validation, even
         // when a matching declaration exists.
@@ -363,8 +374,8 @@ impl DomSchemaValidator {
             let mut elem_substituted;
             let mut elem = elem;
             if let Some(xsi_type) = get_xsi_attribute(node, "type") {
-                let declared = elem.type_ref.as_deref();
-                // C4: the xsi:type QName is interpreted against the
+                let declared = super::xsi_type::DeclaredType::of(elem);
+                // The xsi:type QName is interpreted against the
                 // namespace declarations in scope at this node.
                 let resolve_prefix = |p: &str| resolve_node_prefix(node, p);
                 match super::xsi_type::resolve_xsi_type(
@@ -380,8 +391,10 @@ impl DomSchemaValidator {
                         // DECLARED type and must not survive the swap, or the
                         // ns-first children lookup would keep validating
                         // against the declared type's content model.
-                        elem_substituted.type_ns = self.schema.resolve_type_ref_to_ns(&substituted);
-                        elem_substituted.type_ref = Some(substituted);
+                        elem_substituted.type_ns = substituted
+                            .ns
+                            .or_else(|| self.schema.resolve_type_ref_to_ns(&substituted.key));
+                        elem_substituted.type_ref = Some(substituted.key);
                         elem_substituted.inline_type = None;
                         elem = &elem_substituted;
                     }
@@ -444,6 +457,11 @@ impl DomSchemaValidator {
                 }
             }
 
+            // Only a nillable declaration can be nilled; on any other the
+            // xsi:nil attribute is an error (above) and the content is
+            // validated as usual.
+            let nilled = nilled && elem.nillable;
+
             // Queue identity constraints declared on this element for
             // post-traversal evaluation.
             for constraint in &elem.constraints {
@@ -451,6 +469,15 @@ impl DomSchemaValidator {
                     node: node.clone(),
                     constraint: constraint.clone(),
                 });
+            }
+            if !ids.constraint_tasks.is_empty() {
+                let type_def = match elem.type_ref {
+                    Some(ref type_ref) => self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref),
+                    None => elem.inline_type.as_ref(),
+                };
+                if type_def.is_some_and(|td| !super::attributes::type_has_simple_value(td)) {
+                    ids.no_simple_value.insert(node.id());
+                }
             }
 
             // Count child elements
@@ -472,11 +499,12 @@ impl DomSchemaValidator {
                     self.validate_sequence_order(node, fc, errors);
                 }
 
-                // Validate wildcard occurrence bounds. Without a full
-                // content-model automaton this is only decidable when the
-                // wildcard is the sole particle (no declared siblings).
-                if fc.automaton.is_none()
-                    && let Some(ref w) = fc.wildcard
+                // Validate wildcard occurrence bounds when the wildcard is
+                // the sole particle (no declared siblings). The automaton
+                // does not report wildcard-admitted children it cannot
+                // place, so this applies with or without one (as in the
+                // streaming engine).
+                if let Some(ref w) = fc.wildcard
                     && fc.constraints.is_empty()
                 {
                     let matched = node
@@ -526,8 +554,8 @@ impl DomSchemaValidator {
             // the declaration matching this node's occurrence index instead
             // of the by-name (derived-first) resolution.
             match self.positional_value_constraint(node, elem, parent_ctx) {
-                Some(vc_elem) => self.validate_text_content(node, &vc_elem, ids, errors),
-                None => self.validate_text_content(node, elem, ids, errors),
+                Some(vc_elem) => self.validate_text_content(node, &vc_elem, nilled, ids, errors),
+                None => self.validate_text_content(node, elem, nilled, ids, errors),
             }
 
             // Validate attributes against the type's attribute declarations
@@ -543,7 +571,7 @@ impl DomSchemaValidator {
             // Element is allowed by the parent type but has no resolvable
             // declaration - nothing further to validate.
             ParentContext::default()
-        } else if self.mode == ValidationMode::Strict && schema_has_elements {
+        } else if self.mode == ValidationMode::Strict && self.resolver.reports_undeclared {
             // An undeclared element admitted by a lax wildcard is fine; its
             // subtree keeps lax processing.
             if let Some(w) = parent_ctx.and_then(|ctx| ctx.wildcard.as_ref()) {
@@ -579,6 +607,25 @@ impl DomSchemaValidator {
         }
     }
 
+    /// A declaration for an undeclared element that carries an `xsi:type`
+    /// naming a schema type: the element is validated against that type.
+    fn xsi_type_declaration(&self, node: &XmlNode, name: &str) -> Option<ElementDef> {
+        let xsi_type = get_xsi_attribute(node, "type")?;
+        let resolved = super::xsi_type::resolve_xsi_type(
+            &self.schema,
+            super::xsi_type::DeclaredType::AnyType,
+            &xsi_type,
+            |p| resolve_node_prefix(node, p),
+        )
+        .ok()?;
+        let mut decl = ElementDef::new(name);
+        decl.type_ns = resolved
+            .ns
+            .or_else(|| self.schema.resolve_type_ref_to_ns(&resolved.key));
+        decl.type_ref = Some(resolved.key);
+        Some(decl)
+    }
+
     /// Validates an element's attributes against the attribute declarations
     /// of its complex type.
     fn validate_node_attributes(
@@ -589,13 +636,25 @@ impl DomSchemaValidator {
         errors: &mut Vec<StructuredError>,
     ) {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            // C4: ns-first (compile-time resolved), string fallback.
+            // ns-first (compile-time resolved), string fallback.
             self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
         } else {
             elem.inline_type.as_ref()
         };
-        let Some(TypeDef::Complex(complex)) = type_def else {
-            return;
+        // A simple type admits no attributes at all; an unresolved or absent
+        // type (xs:anyType) admits any.
+        let collected = match type_def {
+            Some(TypeDef::Complex(complex)) => {
+                // DOM validation collects the attribute picture per element
+                // (no per-type cache); the streaming validator memoizes it.
+                super::attributes::CollectedAttrs::collect(&self.schema, complex)
+            }
+            Some(TypeDef::Simple(_)) => super::attributes::CollectedAttrs::none(),
+            None => return,
+        };
+        let complex = match type_def {
+            Some(TypeDef::Complex(complex)) => Some(complex),
+            _ => None,
         };
 
         // The DOM stores attribute names without prefixes; exclude xsi:*
@@ -623,16 +682,13 @@ impl DomSchemaValidator {
         // (e.g. `@id`) can be canonicalized at constraint-evaluation time.
         for (name, _, _) in &filtered {
             let local = name.rsplit(':').next().unwrap_or(name);
-            if let Some(kind) =
+            if let Some(kind) = complex.and_then(|complex| {
                 super::attributes::attribute_primitive_kind(&self.schema, complex, local)
-            {
+            }) {
                 ids.attr_kinds.insert((node.id(), local.to_string()), kind);
             }
         }
 
-        // DOM validation collects the attribute picture per element (no
-        // per-type cache); the streaming validator memoizes it (C7).
-        let collected = super::attributes::CollectedAttrs::collect(&self.schema, complex);
         let result = super::attributes::validate_element_attributes(
             &self.schema,
             &collected,
@@ -705,15 +761,14 @@ impl DomSchemaValidator {
     /// locally declared children can be resolved during recursion.
     fn element_child_declarations(&self, elem: &ElementDef) -> Vec<ElementDef> {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            // C4: ns-first (compile-time resolved), string fallback.
+            // ns-first (compile-time resolved), string fallback.
             self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
         } else {
             elem.inline_type.as_ref()
         };
         match type_def {
             Some(TypeDef::Complex(complex)) => {
-                let mut visited = std::collections::HashSet::new();
-                self.collect_elements_with_inheritance(complex, &mut visited)
+                super::decls::collect_elements(&self.schema, complex)
             }
             _ => Vec::new(),
         }

@@ -1,5 +1,5 @@
 //! Lean, allocation-free lexical scanners for the numeric value-check fast
-//! path (PR-B).
+//! path.
 //!
 //! Streaming validation of large CityGML documents is dominated by numeric
 //! value checking: a single `gml:posList` / `gml:coordinates` text node is one

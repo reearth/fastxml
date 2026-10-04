@@ -326,8 +326,8 @@ impl Report {
         Self { entries, counters }
     }
 
-    /// Anti-regression work counters, present only for streaming validation
-    /// against an explicit schema. See [`ValidationCounters`](super::ValidationCounters).
+    /// Work counters, present only for streaming validation against an
+    /// explicit schema. See [`ValidationCounters`](super::ValidationCounters).
     #[doc(hidden)]
     pub fn counters(&self) -> Option<super::ValidationCounters> {
         self.counters

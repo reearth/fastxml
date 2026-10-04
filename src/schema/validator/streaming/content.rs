@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::error::{ErrorLevel, ValidationErrorType};
-use crate::schema::types::{ComplexType, NsName, TypeDef};
+use crate::schema::types::{NsName, TypeDef};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
 use super::super::ValidationMode;
@@ -23,30 +23,32 @@ impl OnePassSchemaValidator {
         // Anti-regression guardrail: count every element unconditionally,
         // before any lookup or early return.
         self.counters.elements_validated += 1;
-        // C1: the interned qualified name is built once at the tag boundary and
+        // The interned qualified name is built once at the tag boundary and
         // threaded here, so neither the lookup nor the error paths re-`format!`
         // it. `qualified_name` equals `name` when there is no prefix.
         let qname: &str = qualified_name.as_ref();
 
-        // C3: hold a local clone of the schema Arc so the looked-up ElementDef
+        // Hold a local clone of the schema Arc so the looked-up ElementDef
         // is decoupled from `self` and stays borrowable across the &mut self
         // calls below. This lets identity constraints be passed as a slice
         // instead of cloning the constraint Vec on every element.
         let schema = Arc::clone(&self.schema);
-        // Optimization: Try local name lookup first (most common case)
-        // Also try namespace URI lookup if prefix lookup fails (handles prefix mismatch)
-        let elem_def = self.lookup_element_optimized(&schema, name, prefix, qname, namespace);
+        // The global declaration of this element's expanded name, if any.
+        let elem_def = self
+            .resolver
+            .lookup(&schema, name, prefix, qname, namespace);
         // Value constraints and nillability come from the governing element
         // declaration. For a child matched inline in the parent's content
         // model, the local declaration governs; these are merged in below.
         let mut elem_nillable = elem_def.map(|e| e.nillable).unwrap_or(false);
-        let elem_abstract = elem_def.map(|e| e.is_abstract).unwrap_or(false);
         let mut elem_default = elem_def.and_then(|e| e.default.clone());
         let mut elem_fixed = elem_def.and_then(|e| e.fixed.clone());
 
-        let elem_known = elem_def.is_some();
-        let elem_constraints: &[crate::schema::types::CompiledConstraint] =
-            elem_def.map(|e| e.constraints.as_slice()).unwrap_or(&[]);
+        let mut elem_known = elem_def.is_some();
+        // The local declaration this child matched in its parent's content
+        // model, when that declaration is not a `ref=` to a global: it then
+        // governs instead of any same-named global declaration.
+        let mut local_decl: Option<Arc<super::lookup::InlineResolved>> = None;
         let nilled = attributes
             .iter()
             .any(|&(n, v)| n == "xsi:nil" && v.trim() == "true");
@@ -93,8 +95,6 @@ impl OnePassSchemaValidator {
             return;
         }
 
-        let schema_has_elements = !self.schema.elements_ns.is_empty();
-
         // Priority: inline element definition > global element definition
         // This is important when the same element name exists both as a global element
         // and as an inline element in the parent's content model with different types.
@@ -115,6 +115,14 @@ impl OnePassSchemaValidator {
             // the global one) so a `ref=` to a global element with a fixed
             // value is not lost.
             if info.found {
+                elem_known = true;
+                if !info.is_ref {
+                    // A local declaration (not a reference) governs alone.
+                    elem_nillable = false;
+                    elem_default = None;
+                    elem_fixed = None;
+                    local_decl = Some(Arc::clone(&info));
+                }
                 if let Some(positional) = info.positional.as_ref() {
                     // Same name declared at multiple positions with differing
                     // value constraints: pick by occurrence index. The parent
@@ -190,7 +198,6 @@ impl OnePassSchemaValidator {
                 ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
-                ctx.nillable = elem_nillable;
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
@@ -218,7 +225,6 @@ impl OnePassSchemaValidator {
                 ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
                 ctx.inline_type = anon_type;
-                ctx.nillable = elem_nillable;
             }
         } else if wildcard_mode == Some(crate::schema::types::ProcessContents::Lax) {
             // Undeclared element admitted by a lax wildcard; its subtree
@@ -228,9 +234,17 @@ impl OnePassSchemaValidator {
                 ctx.schema_validated = true;
                 ctx.wildcard_mode = Some(crate::schema::types::ProcessContents::Lax);
             }
+        } else if self.resolves_xsi_type(&schema, attributes) {
+            // Undeclared, but its xsi:type names a schema type: the element is
+            // validated against that type (applied below) and still occupies
+            // a slot in the parent's content model.
+            self.step_parent_automaton(qname, name, namespace, true);
+            if let Some(ctx) = self.state.current_element_mut() {
+                ctx.schema_validated = true;
+            }
         } else {
             // Element not found in schema
-            if self.mode == ValidationMode::Strict && schema_has_elements {
+            if self.mode == ValidationMode::Strict && self.resolver.reports_undeclared {
                 let error = self
                     .make_error(
                         ValidationErrorType::UnknownElement,
@@ -249,36 +263,42 @@ impl OnePassSchemaValidator {
             .find(|&&(n, _)| n == "xsi:type")
             .map(|&(_, v)| v)
         {
-            let declared = self
+            let (declared, has_inline) = self
                 .state
                 .current_element()
-                .and_then(|ctx| ctx.type_ref.clone());
-            // C4: the xsi:type QName is interpreted against the instance
+                .map(|ctx| (ctx.type_ref.clone(), ctx.inline_type.is_some()))
+                .unwrap_or((None, false));
+            // The xsi:type QName is interpreted against the instance
             // document's in-scope namespace declarations.
             match super::super::xsi_type::resolve_xsi_type(
                 &schema,
-                declared.as_deref(),
+                super::super::xsi_type::DeclaredType::from_parts(declared.as_deref(), has_inline),
                 xsi_type,
                 |p| self.state.resolve_prefix(p).map(str::to_string),
             ) {
                 Ok(substituted) => {
-                    let flattened = match self.schema.get_type(&substituted) {
-                        Some(TypeDef::Complex(complex)) => {
-                            Some(Arc::new(self.compute_flattened_children(complex)))
-                        }
-                        _ => None,
+                    // The substituted type's own children picture, automaton
+                    // included (the compile-time cache by expanded name, else
+                    // the string key's cache entry or a run-time flattening).
+                    let flattened = match substituted
+                        .ns
+                        .as_ref()
+                        .and_then(|ns| self.schema.ns_type_children_cache.get(ns))
+                    {
+                        Some(cached) => Some(Arc::clone(cached)),
+                        None => self.resolve_children_for_type_ref(&substituted.key),
                     };
-                    let substituted_sym = self.symbols.intern(&substituted).0;
-                    let substituted: Arc<str> = Arc::from(substituted);
+                    let substituted_sym =
+                        self.type_identity_sym(substituted.ns.as_ref(), Some(&substituted.key));
+                    let type_ref: Arc<str> = Arc::from(substituted.key);
                     if let Some(ctx) = self.state.current_element_mut() {
-                        ctx.type_ref = Some(substituted);
-                        ctx.type_sym = Some(substituted_sym);
-                        // The substituted type is resolved through the string
-                        // key (`resolve_xsi_type` returns a bare/qualified key),
-                        // so clear any resolved `type_ns` from the declared type
-                        // — leaving it set would misdirect the ns-first
-                        // resolution to the declared (pre-substitution) type.
-                        ctx.type_ns = None;
+                        ctx.type_ref = Some(type_ref);
+                        ctx.type_sym = substituted_sym;
+                        // The substituted type replaces the declared one, so
+                        // its own expanded name (or none, falling back to the
+                        // string key) replaces the declared `type_ns`.
+                        ctx.type_ns = substituted.ns;
+                        ctx.inline_type = None;
                         if flattened.is_some() {
                             ctx.flattened_children = flattened;
                         }
@@ -297,8 +317,9 @@ impl OnePassSchemaValidator {
             }
         }
 
-        // An abstract element may not appear in the instance directly.
-        if elem_abstract {
+        // An abstract element may not appear in the instance directly (only
+        // global declarations can be abstract).
+        if local_decl.is_none() && elem_def.is_some_and(|e| e.is_abstract) {
             let error = self
                 .make_error(
                     ValidationErrorType::InvalidContent,
@@ -327,17 +348,46 @@ impl OnePassSchemaValidator {
             self.add_error(error);
         }
         if let Some(ctx) = self.state.current_element_mut() {
-            ctx.nilled = nilled;
+            // Only a nillable declaration can be nilled; on any other the
+            // xsi:nil attribute is an error (above) and the content is
+            // validated as usual.
+            ctx.nilled = nilled && elem_nillable;
             ctx.default_value = elem_default;
             ctx.fixed_value = elem_fixed;
         }
 
         // Identity constraints: open scopes declared on this element, and
         // match this element against the selectors of enclosing scopes.
+        let elem_constraints: &[crate::schema::types::CompiledConstraint] = match &local_decl {
+            Some(local) => &local.constraints,
+            None => elem_def.map(|e| e.constraints.as_slice()).unwrap_or(&[]),
+        };
         self.identity_element_start(elem_constraints, attributes);
 
         // Validate attributes
         self.validate_attributes(name, attributes);
+    }
+
+    /// Whether the element carries an `xsi:type` naming a type of the
+    /// schema, so an otherwise undeclared element can be validated against
+    /// that type.
+    fn resolves_xsi_type(
+        &self,
+        schema: &crate::schema::types::CompiledSchema,
+        attributes: &[(&str, &str)],
+    ) -> bool {
+        attributes
+            .iter()
+            .find(|&&(n, _)| n == "xsi:type")
+            .is_some_and(|&(_, v)| {
+                super::super::xsi_type::resolve_xsi_type(
+                    schema,
+                    super::super::xsi_type::DeclaredType::AnyType,
+                    v,
+                    |p| self.state.resolve_prefix(p).map(str::to_string),
+                )
+                .is_ok()
+            })
     }
 
     /// The namespace-safe cache-key symbol for an element's resolved type.
@@ -372,323 +422,14 @@ impl OnePassSchemaValidator {
             .unwrap_or(0)
     }
 
-    /// Handles identity-constraint bookkeeping at element start.
-    /// The complex type governing the current (most recently started)
-    /// element, when one is resolvable from its declared or inline type.
-    /// Used to resolve attribute value-space kinds for identity constraints.
-    fn current_element_complex_type(&self) -> Option<&ComplexType> {
-        let ctx = self.state.current_element()?;
-        let type_def = match ctx.type_ref.as_deref() {
-            // C4: ns-first (compile-time resolved), string fallback.
-            Some(tr) => self.schema.type_by_ref(ctx.type_ns.as_ref(), tr),
-            None => ctx.inline_type.as_ref(),
-        };
-        match type_def {
-            Some(TypeDef::Complex(c)) => Some(c),
-            _ => None,
-        }
-    }
-
-    fn identity_element_start(
-        &mut self,
-        elem_constraints: &[crate::schema::types::CompiledConstraint],
-        attributes: &[(&str, &str)],
-    ) {
-        // C8 (lazy): with no identity scopes open and no constraints declared
-        // on this element, there is nothing to match and nothing to open —
-        // skip building the per-element attr_kinds / local_names vectors.
-        if self.identity_scopes.is_empty() && elem_constraints.is_empty() {
-            return;
-        }
-
-        let depth = self.state.element_stack.len();
-
-        // Resolve the value-space kind of each present attribute once, so the
-        // identity-constraint field values captured below can be canonicalized
-        // (e.g. the xs:integer attributes "1" and "01" denote the same key).
-        let attr_kinds: Vec<Option<PrimitiveKind>> = {
-            let complex = self.current_element_complex_type();
-            attributes
-                .iter()
-                .map(|&(name, _)| {
-                    let local = name.rsplit(':').next().unwrap_or(name);
-                    complex.and_then(|c| {
-                        super::super::attributes::attribute_primitive_kind(&self.schema, c, local)
-                    })
-                })
-                .collect()
-        };
-
-        // Path of local names for elements on the stack (depth 1..=depth).
-        let local_names: Vec<&str> = self
-            .state
-            .element_stack
-            .iter()
-            .map(|ctx| ctx.name.rsplit(':').next().unwrap_or(ctx.name.as_ref()))
-            .collect();
-
-        for scope in &mut self.identity_scopes {
-            // Selector match: relative path from just below the scope.
-            if depth > scope.depth {
-                let rel = &local_names[scope.depth..depth];
-                if super::identity::selector_matches(&scope.selector, rel) {
-                    let mut fields = vec![super::identity::FieldState::Unset; scope.fields.len()];
-                    // Attribute fields on the selected node resolve now.
-                    for (i, field) in scope.fields.iter().enumerate() {
-                        if field.steps.is_empty()
-                            && let Some(ref attr) = field.attr
-                        {
-                            let mut matched: Option<(usize, &str)> = None;
-                            let mut multiple = false;
-                            for (ai, &(n, v)) in attributes.iter().enumerate() {
-                                if super::identity::attr_matches(n, attr) {
-                                    if matched.is_some() {
-                                        multiple = true;
-                                    } else {
-                                        matched = Some((ai, v));
-                                    }
-                                }
-                            }
-                            if multiple {
-                                fields[i] = super::identity::FieldState::Multiple;
-                            } else if let Some((ai, v)) = matched {
-                                let canon = crate::schema::xsd::value_compare::identity_key(
-                                    attr_kinds[ai],
-                                    v,
-                                );
-                                fields[i] = super::identity::FieldState::Set(canon);
-                            }
-                        }
-                    }
-                    scope
-                        .selected
-                        .push(super::identity::SelectedState { depth, fields });
-                }
-            }
-
-            // Attribute fields on elements below a selected node.
-            for selected in &mut scope.selected {
-                if depth > selected.depth {
-                    let rel = &local_names[selected.depth..depth];
-                    for (i, field) in scope.fields.iter().enumerate() {
-                        if let Some(ref attr) = field.attr
-                            && super::identity::field_steps_match(field, rel)
-                        {
-                            let mut matched: Option<(usize, &str)> = None;
-                            let mut multiple_here = false;
-                            for (ai, &(n, v)) in attributes.iter().enumerate() {
-                                if super::identity::attr_matches(n, attr) {
-                                    if matched.is_some() {
-                                        multiple_here = true;
-                                    } else {
-                                        matched = Some((ai, v));
-                                    }
-                                }
-                            }
-                            if multiple_here {
-                                selected.fields[i] = super::identity::FieldState::Multiple;
-                            } else if let Some((ai, v)) = matched {
-                                let canon = crate::schema::xsd::value_compare::identity_key(
-                                    attr_kinds[ai],
-                                    v,
-                                );
-                                selected.fields[i] = match selected.fields[i] {
-                                    super::identity::FieldState::Unset => {
-                                        super::identity::FieldState::Set(canon)
-                                    }
-                                    _ => super::identity::FieldState::Multiple,
-                                };
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Open new scopes for constraints declared on this element.
-        for constraint in elem_constraints {
-            if let Some(scope) = super::identity::ScopeState::new(constraint, depth) {
-                self.identity_scopes.push(scope);
-            }
-        }
-    }
-
-    /// Handles identity-constraint bookkeeping at element end. `ended_depth`
-    /// is the stack depth the element had; `ctx` is its popped context.
-    fn identity_element_end(&mut self, ended_depth: usize, ctx: &ElementContext) {
-        use crate::schema::types::CompiledConstraintType;
-        use crate::schema::xsd::constraints::{ConstraintType, IdentityConstraint, KeyValue};
-
-        // Canonicalize the ending element's text in its value space so a `.`
-        // or descendant-text field key compares correctly (e.g. xs:integer
-        // "01" and "1" denote the same key).
-        let text_kind: Option<PrimitiveKind> = if let Some(tr) = ctx.type_ref.as_deref() {
-            // C4: ns-first (compile-time resolved), string fallback.
-            self.schema
-                .type_by_ref(ctx.type_ns.as_ref(), tr)
-                .and_then(|td| {
-                    super::super::attributes::element_text_primitive_kind(&self.schema, td)
-                })
-        } else if let Some(ref it) = ctx.inline_type {
-            super::super::attributes::element_text_primitive_kind(&self.schema, it)
-        } else {
-            None
-        };
-        let text =
-            crate::schema::xsd::value_compare::identity_key(text_kind, ctx.text_content.trim());
-        let ended_local = ctx
-            .name
-            .rsplit(':')
-            .next()
-            .unwrap_or(ctx.name.as_ref())
-            .to_string();
-
-        // Local names of the still-open ancestors (depth 1..ended_depth).
-        let local_names: Vec<String> = self
-            .state
-            .element_stack
-            .iter()
-            .map(|c| {
-                c.name
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or(c.name.as_ref())
-                    .to_string()
-            })
-            .collect();
-
-        let mut errors: Vec<String> = Vec::new();
-
-        for scope in &mut self.identity_scopes {
-            // Element-text fields below a selected node.
-            for selected in &mut scope.selected {
-                if ended_depth > selected.depth {
-                    let mut rel: Vec<&str> = local_names[selected.depth..ended_depth - 1]
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect();
-                    rel.push(&ended_local);
-                    for (i, field) in scope.fields.iter().enumerate() {
-                        if field.attr.is_none()
-                            && !field.steps.is_empty()
-                            && super::identity::field_steps_match(field, &rel)
-                        {
-                            selected.fields[i] = match selected.fields[i] {
-                                super::identity::FieldState::Unset => {
-                                    super::identity::FieldState::Set(text.clone())
-                                }
-                                _ => super::identity::FieldState::Multiple,
-                            };
-                        }
-                    }
-                }
-            }
-
-            // Finalize selected nodes that end here.
-            let mut finished = Vec::new();
-            scope.selected.retain(|selected| {
-                if selected.depth == ended_depth {
-                    finished.push(selected.fields.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-
-            for mut fields in finished {
-                // A `.` field takes the selected node's own text content.
-                for (i, field) in scope.fields.iter().enumerate() {
-                    if field.attr.is_none() && field.steps.is_empty() {
-                        fields[i] = super::identity::FieldState::Set(text.clone());
-                    }
-                }
-                if fields
-                    .iter()
-                    .any(|f| matches!(f, super::identity::FieldState::Multiple))
-                {
-                    errors.push(format!(
-                        "{} '{}': a field matches more than one node",
-                        match scope.constraint.constraint_type {
-                            CompiledConstraintType::Key => "key",
-                            CompiledConstraintType::Unique => "unique",
-                            CompiledConstraintType::KeyRef => "keyref",
-                        },
-                        scope.constraint.name
-                    ));
-                    continue;
-                }
-                let values: Vec<String> = fields
-                    .into_iter()
-                    .map(|f| match f {
-                        super::identity::FieldState::Set(v) => v,
-                        _ => String::new(), // unset = null (empty per KeyValue)
-                    })
-                    .collect();
-                let value = KeyValue::new(values);
-                let ic = IdentityConstraint {
-                    name: scope.constraint.name.clone(),
-                    constraint_type: match scope.constraint.constraint_type {
-                        CompiledConstraintType::Unique => ConstraintType::Unique,
-                        CompiledConstraintType::Key => ConstraintType::Key,
-                        CompiledConstraintType::KeyRef => ConstraintType::KeyRef,
-                    },
-                    selector: scope.constraint.selector_xpath.clone(),
-                    fields: scope.constraint.field_xpaths.clone(),
-                    refer: scope.constraint.refer.clone(),
-                };
-                if scope.is_keyref() {
-                    self.constraint_validator.add_keyref_value(&ic, value);
-                } else if value.has_null() {
-                    // A key requires every field present; a unique tuple with a
-                    // null/absent field simply does not participate in the
-                    // uniqueness check (and is not recorded for keyrefs).
-                    if scope.constraint.constraint_type == CompiledConstraintType::Key {
-                        if let Some(idx) = value.values.iter().position(|v| v.is_empty()) {
-                            errors.push(format!(
-                                "null value in key field {} of constraint '{}'",
-                                idx, scope.constraint.name
-                            ));
-                        }
-                    }
-                } else {
-                    // Uniqueness is per scoping-element instance: check against
-                    // this scope's own `seen` set, not the shared name-keyed
-                    // table (that table exists only for cross-scope keyref
-                    // resolution, into which the value is unioned).
-                    if !scope.seen.insert(value.clone()) {
-                        errors.push(format!(
-                            "duplicate value {:?} in constraint '{}'",
-                            value.values, scope.constraint.name
-                        ));
-                    }
-                    self.constraint_validator.record_key_value(&ic, value);
-                }
-            }
-        }
-
-        // Close scopes whose scoping element ends here.
-        self.identity_scopes
-            .retain(|scope| scope.depth != ended_depth);
-
-        for message in errors {
-            let error = self
-                .make_error(ValidationErrorType::IdentityConstraint, message)
-                .with_level(ErrorLevel::Error);
-            self.add_error(error);
-        }
-    }
-
     /// Returns the (memoized when named) collected attribute picture of the
-    /// current element's complex type, or `None` when it has no complex type.
+    /// current element's type, or `None` when it has no type (xs:anyType,
+    /// undeclared, or unresolvable), i.e. no attribute constraints.
     ///
-    /// Resolution mirrors the previous inline logic: explicit `type_ref`
-    /// first, then an inline (anonymous) type on the context, then the
-    /// element's inline type from the parent content model. Named types are
-    /// cached by type name (C7); anonymous types build fresh.
-    fn collected_element_attrs(
-        &mut self,
-        element_name: &Arc<str>,
-    ) -> Option<Arc<super::super::attributes::CollectedAttrs>> {
+    /// Resolution: the named type (`type_ref`) first, then the anonymous type
+    /// captured on the context. A simple type admits no attributes. Named
+    /// types are cached by type identity; anonymous types build fresh.
+    fn collected_element_attrs(&mut self) -> Option<Arc<super::super::attributes::CollectedAttrs>> {
         use super::super::attributes::CollectedAttrs;
 
         // Named type via the context's resolved type identity. The cache keys
@@ -706,10 +447,10 @@ impl OnePassSchemaValidator {
                 return Some(Arc::clone(cached));
             }
             let schema = Arc::clone(&self.schema);
-            let TypeDef::Complex(complex) = schema.type_by_ref(type_ns.as_ref(), &type_ref)? else {
-                return None;
-            };
-            let built = Arc::new(CollectedAttrs::collect(&schema, complex));
+            let built = Arc::new(match schema.type_by_ref(type_ns.as_ref(), &type_ref)? {
+                TypeDef::Complex(complex) => CollectedAttrs::collect(&schema, complex),
+                TypeDef::Simple(_) => CollectedAttrs::none(),
+            });
             if let Some(sym) = type_sym {
                 self.attr_cache.insert(sym, Arc::clone(&built));
             }
@@ -717,18 +458,12 @@ impl OnePassSchemaValidator {
         }
 
         // Inline (anonymous) type captured on the context at element start.
-        if let Some(ctx) = self.state.current_element()
-            && let Some(TypeDef::Complex(complex)) = ctx.inline_type.as_ref()
-        {
-            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
+        match self.state.current_element()?.inline_type.as_ref()? {
+            TypeDef::Complex(complex) => {
+                Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)))
+            }
+            TypeDef::Simple(_) => Some(Arc::new(CollectedAttrs::none())),
         }
-
-        // Fallback: the element's inline type from the parent content model.
-        let inline_owned = self.get_element_inline_type(element_name);
-        if let Some(TypeDef::Complex(complex)) = inline_owned.as_ref() {
-            return Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)));
-        }
-        None
     }
 
     /// Validates attributes on an element against the attribute
@@ -738,10 +473,10 @@ impl OnePassSchemaValidator {
         element_name: &Arc<str>,
         attributes: &[(&str, &str)],
     ) {
-        // C7: resolve the (memoized) collected attribute picture of the
+        // resolve the (memoized) collected attribute picture of the
         // element's complex type. Returns None when the element has no complex
         // type, i.e. no attributes to validate.
-        let Some(collected) = self.collected_element_attrs(element_name) else {
+        let Some(collected) = self.collected_element_attrs() else {
             return;
         };
 
@@ -861,7 +596,7 @@ impl OnePassSchemaValidator {
         // (None for complex or untyped content → lexical comparison), matching
         // the DOM engine.
         let kind = if let Some(tr) = ctx.type_ref.as_deref() {
-            // C4: ns-first (compile-time resolved), string fallback.
+            // ns-first (compile-time resolved), string fallback.
             match self.schema.type_by_ref(ctx.type_ns.as_ref(), tr) {
                 Some(TypeDef::Simple(s)) => PrimitiveKind::resolve(&self.schema, s),
                 _ => None,
@@ -912,8 +647,8 @@ impl OnePassSchemaValidator {
             {
                 // Only children whose namespace matched the wildcard's
                 // namespace set participate in the occurrence bound; the
-                // count is maintained at element start (DOM parity —
-                // non-matching children previously slipped through).
+                // count is maintained at element start (as in the DOM
+                // engine).
                 let matched: u32 = ctx.wildcard_matched;
                 if matched < w.min_occurs {
                     let error = self

@@ -339,3 +339,31 @@ fn test_dom_validator_collect_text_content() {
 
     assert_eq!(text, "Hello World");
 }
+
+/// A schema whose `seq` element has an anonymous `sequence(a, c)` content
+/// model with no particle tree, so no content-model automaton is built and
+/// the count-based sequence-order check runs.
+fn sequence_without_automaton() -> CompiledSchema {
+    let mut complex = ComplexType::new("");
+    complex.content = ContentModel::Sequence(vec![ElementDef::new("a"), ElementDef::new("c")]);
+    let mut seq = ElementDef::new("seq");
+    seq.inline_type = Some(TypeDef::Complex(complex));
+    let mut schema = CompiledSchema::new();
+    schema
+        .elements_ns
+        .insert(crate::schema::types::NsName::new("", "seq"), seq);
+    schema
+}
+
+#[test]
+fn test_dom_sequence_order_error_names_the_preceding_element() {
+    let doc = create_test_doc("<seq><c/><a/></seq>");
+    let validator = DomSchemaValidator::new(Arc::new(sequence_without_automaton()));
+    let errors = validator.validate(&doc).unwrap();
+    assert!(
+        errors.iter().any(|e| e.message.as_ref()
+            == "element 'a' in 'seq' appears out of sequence order (it must come before 'c')"),
+        "{:?}",
+        errors
+    );
+}
