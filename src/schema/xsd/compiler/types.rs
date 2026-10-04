@@ -263,6 +263,10 @@ impl XsdCompiler {
                     if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
                         compiled.item_type = inner.item_type;
                         compiled.item_ns = inner.item_ns;
+                        compiled.item_inline = inner.item_inline;
+                        compiled.member_types = inner.member_types;
+                        compiled.member_ns = inner.member_ns;
+                        compiled.inline_members = inner.inline_members;
                         if compiled.base_type.is_none() {
                             compiled.base_type = inner.base_type;
                             compiled.base_ns = inner.base_ns;
@@ -281,29 +285,35 @@ impl XsdCompiler {
                     compiled.base_type = Some(format!("list({})", resolved));
                 } else if let Some(inline) = &list.inline_type {
                     if let Ok(TypeDef::Simple(inner)) = self.compile_simple_type(inline) {
-                        let item = inner.base_type.unwrap_or_default();
-                        compiled.item_ns = inner.base_ns;
+                        let item = inner.base_type.clone().unwrap_or_default();
+                        compiled.item_ns = inner.base_ns.clone();
                         compiled.item_type = Some(item.clone());
                         compiled.base_type = Some(format!("list({})", item));
+                        compiled.item_inline = Some(Box::new(inner));
                     }
                 }
             }
             XsdSimpleTypeContent::Union(union) => {
                 // Union types - combine member types
-                if !union.member_types.is_empty() {
-                    let members: Vec<String> = union
-                        .member_types
-                        .iter()
-                        .map(|q| self.resolve_qname(q))
-                        .collect();
-                    compiled.member_ns = union
-                        .member_types
-                        .iter()
-                        .map(|q| self.resolve_qname_ns(q))
-                        .collect();
-                    compiled.member_types = members.clone();
+                let members: Vec<String> = union
+                    .member_types
+                    .iter()
+                    .map(|q| self.resolve_qname(q))
+                    .collect();
+                compiled.member_ns = union
+                    .member_types
+                    .iter()
+                    .map(|q| self.resolve_qname_ns(q))
+                    .collect();
+                for inline in &union.inline_types {
+                    if let TypeDef::Simple(member) = self.compile_simple_type(inline)? {
+                        compiled.inline_members.push(member);
+                    }
+                }
+                if !members.is_empty() || !compiled.inline_members.is_empty() {
                     compiled.base_type = Some(format!("union({})", members.join(", ")));
                 }
+                compiled.member_types = members;
             }
         }
 
@@ -441,9 +451,14 @@ impl XsdCompiler {
             compiled_wc
         });
 
-        // Compile attributes
+        // Compile attributes. `use="prohibited"` removes a base attribute
+        // only in a restriction; elsewhere it is kept as a plain optional
+        // declaration (the XSD 1.0 test suite's expectation).
+        let restricts = compiled.derivation == Some(DerivationMethod::Restriction);
         for attr in &ct.attributes {
-            compiled.attributes.push(self.compile_attribute(attr)?);
+            let mut compiled_attr = self.compile_attribute(attr)?;
+            compiled_attr.prohibited &= restricts;
+            compiled.attributes.push(compiled_attr);
         }
 
         // Attributes declared inside simpleContent / complexContent
@@ -461,7 +476,9 @@ impl XsdCompiler {
         };
         if let Some(attrs) = derivation_attrs {
             for attr in attrs {
-                compiled.attributes.push(self.compile_attribute(attr)?);
+                let mut compiled_attr = self.compile_attribute(attr)?;
+                compiled_attr.prohibited &= restricts;
+                compiled.attributes.push(compiled_attr);
             }
         }
 
@@ -525,17 +542,17 @@ impl XsdCompiler {
         }
         let ns = self.current_target_ns.clone().unwrap_or_default();
         let key = crate::schema::types::NsName::new(ns, ag_ref.local.clone());
-        let group = match self.attribute_groups.get(&key) {
-            Some(g) => g.clone(),
+        let (key, group) = match self.attribute_groups.get(&key) {
+            Some(g) => (key, g.clone()),
             None => {
                 // Fall back to any namespace with the same local name.
                 match self
                     .attribute_groups
                     .iter()
                     .find(|(k, _)| *k.local_name == *ag_ref.local)
-                    .map(|(_, g)| g.clone())
+                    .map(|(k, g)| (k.clone(), g.clone()))
                 {
-                    Some(g) => g,
+                    Some(found) => found,
                     None => {
                         // Unresolvable reference (e.g. xs:redefine, which is
                         // not supported): the attribute model is incomplete,
@@ -555,9 +572,27 @@ impl XsdCompiler {
                 }
             }
         };
-        for attr in &group.attributes {
-            out.push(self.compile_attribute(attr)?);
-        }
+        // The group's attributes take the namespace context of the document
+        // that defines the group, not of the one referencing it.
+        let saved = (
+            self.current_target_ns.clone(),
+            self.current_attribute_qualified,
+        );
+        self.current_target_ns = Some(key.namespace_uri.to_string()).filter(|ns| !ns.is_empty());
+        self.current_attribute_qualified = self
+            .attribute_group_qualified
+            .get(&key)
+            .copied()
+            .unwrap_or(saved.1);
+        // A prohibited attribute use is not part of a group's attribute uses.
+        let compiled: Result<Vec<AttributeDef>> = group
+            .attributes
+            .iter()
+            .filter(|attr| attr.use_ != AttributeUse::Prohibited)
+            .map(|attr| self.compile_attribute(attr))
+            .collect();
+        (self.current_target_ns, self.current_attribute_qualified) = saved;
+        out.extend(compiled?);
         if wildcard.is_none() {
             *wildcard = group
                 .any_attribute
@@ -623,13 +658,29 @@ impl XsdCompiler {
         if let Some(ref_qname) = &attr.ref_ {
             let mut compiled = AttributeDef::new(ref_qname.local.clone());
             compiled.ref_ns = self.resolve_qname_ns(ref_qname);
+            compiled.namespace = compiled
+                .ref_ns
+                .as_ref()
+                .map(|ns| ns.namespace_uri.to_string());
             compiled.required = attr.use_ == AttributeUse::Required;
+            compiled.prohibited = attr.use_ == AttributeUse::Prohibited;
             compiled.is_ref = true;
             return Ok(compiled);
         }
 
         let name = attr.name.clone().unwrap_or_default();
         let mut compiled = AttributeDef::new(&name);
+        // A local attribute is in the target namespace only when qualified.
+        let qualified = match attr.form {
+            Some(form) => form == crate::schema::xsd::types::FormDefault::Qualified,
+            None => self.current_attribute_qualified,
+        };
+        compiled.namespace = Some(if qualified {
+            self.current_target_ns.clone().unwrap_or_default()
+        } else {
+            String::new()
+        });
+        compiled.prohibited = attr.use_ == AttributeUse::Prohibited;
 
         if let Some(type_ref) = &attr.type_ref {
             compiled.type_ref = Some(self.resolve_qname(type_ref));

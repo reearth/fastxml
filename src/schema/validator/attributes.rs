@@ -22,8 +22,10 @@ pub(crate) struct CollectedAttrs {
 impl CollectedAttrs {
     pub(crate) fn collect(schema: &CompiledSchema, complex: &ComplexType) -> Self {
         Self {
+            // A prohibited use removes the (shadowed) base declaration.
             defs: collect_attributes(schema, complex)
                 .into_iter()
+                .filter(|a| !a.prohibited)
                 .cloned()
                 .collect(),
             wildcard: collect_attr_wildcard(schema, complex).cloned(),
@@ -44,7 +46,7 @@ impl CollectedAttrs {
 
 /// Collects the attribute declarations of a complex type, walking the
 /// derivation base chain. A declaration in a derived type shadows a base
-/// declaration with the same name.
+/// declaration with the same expanded name.
 pub(crate) fn collect_attributes<'a>(
     schema: &'a CompiledSchema,
     complex: &'a ComplexType,
@@ -53,7 +55,10 @@ pub(crate) fn collect_attributes<'a>(
     let mut current = complex;
     for _ in 0..16 {
         for attr in &current.attributes {
-            if !out.iter().any(|a| a.name == attr.name) {
+            if !out
+                .iter()
+                .any(|a| a.name == attr.name && a.namespace == attr.namespace)
+            {
                 out.push(attr);
             }
         }
@@ -213,6 +218,40 @@ pub(crate) fn validate_attribute_value(
     None
 }
 
+/// Whether the declaration `def` governs an instance attribute with this
+/// (possibly prefixed) name and namespace URI (`None` = no namespace). A
+/// declaration that records its namespace matches by expanded name; one that
+/// does not (built by hand) matches by local name.
+///
+/// `chameleon_ns` is the schema's target namespace: a reference to a global
+/// attribute of no namespace also matches an attribute in that namespace,
+/// because a schema document without a target namespace that is included
+/// into another (a chameleon include) declares its components in the
+/// includer's namespace.
+fn declares(def: &AttributeDef, name: &str, ns: Option<&str>, chameleon_ns: Option<&str>) -> bool {
+    let local = name.rsplit(':').next().unwrap_or(name);
+    let ns = ns.unwrap_or("");
+    (def.name == local || def.name == name)
+        && def.namespace.as_deref().is_none_or(|def_ns| {
+            def_ns == ns
+                || (def.is_ref && def_ns.is_empty() && chameleon_ns == Some(ns))
+                // The DOM records no namespace for `xml:`-prefixed
+                // attributes (the prefix is bound implicitly), so an
+                // attribute without one may be the declared `xml:` one.
+                || (def_ns == XML_NS && ns.is_empty())
+        })
+}
+
+/// The namespace of an instance attribute: the `xml` prefix is bound to the
+/// XML namespace without a declaration.
+fn attribute_namespace<'a>(name: &str, ns: Option<&'a str>) -> Option<&'a str> {
+    if name.starts_with("xml:") {
+        Some(XML_NS)
+    } else {
+        ns
+    }
+}
+
 /// True for attributes that are not subject to schema validation
 /// (namespace declarations and `xsi:*` control attributes).
 pub(crate) fn is_exempt_attribute(name: &str) -> bool {
@@ -231,8 +270,9 @@ pub(crate) struct AttrValidation {
     pub idrefs: Vec<String>,
 }
 
-/// The XML namespace: `xml:lang`, `xml:space`, `xml:base`, `xml:id` are
-/// always allowed without declaration.
+/// The XML namespace (`xml:lang`, `xml:space`, …). Like any other
+/// namespace's attributes, these must be declared (e.g. by importing the
+/// XML namespace schema) or admitted by an attribute wildcard.
 const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Validates an element's attributes against the attribute declarations of
@@ -257,12 +297,14 @@ pub(crate) fn validate_element_attributes<'a>(
         return out;
     }
 
+    let chameleon_ns = schema.target_namespace.as_deref();
     for (name, ns, value) in attributes.clone() {
-        if is_exempt_attribute(name) || ns == Some(XML_NS) {
+        let ns = attribute_namespace(name, ns);
+        if is_exempt_attribute(name) {
             continue;
         }
         let local = name.rsplit(':').next().unwrap_or(name);
-        if let Some(def) = defs.iter().find(|d| d.name == local || d.name == name) {
+        if let Some(def) = defs.iter().find(|d| declares(d, name, ns, chameleon_ns)) {
             if let Some(msg) = validate_attribute_value(schema, def, value, cache) {
                 out.errors.push(msg);
             }
@@ -313,7 +355,7 @@ pub(crate) fn validate_element_attributes<'a>(
         if def.required
             && !attributes
                 .clone()
-                .any(|(n, _, _)| n.rsplit(':').next().unwrap_or(n) == def.name || n == def.name)
+                .any(|(n, ns, _)| declares(def, n, attribute_namespace(n, ns), chameleon_ns))
         {
             out.errors
                 .push(format!("required attribute '{}' is missing", def.name));

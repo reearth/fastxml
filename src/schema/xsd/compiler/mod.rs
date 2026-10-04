@@ -42,6 +42,12 @@ pub struct XsdCompiler {
     pub(crate) attribute_groups: HashMap<NsName, XsdAttributeGroup>,
     /// blockDefault of the schema currently being compiled
     pub(crate) current_block_default: Option<DerivationControl>,
+    /// Whether local attributes of the schema currently being compiled are
+    /// qualified by default (`attributeFormDefault="qualified"`).
+    pub(crate) current_attribute_qualified: bool,
+    /// `attributeFormDefault="qualified"` of the document defining each
+    /// attribute group, so its attributes compile in that document's context.
+    pub(crate) attribute_group_qualified: HashMap<NsName, bool>,
     /// Group names currently being expanded, used to break cyclic group refs.
     pub(crate) group_expansion: HashSet<NsName>,
     /// Current target namespace
@@ -65,6 +71,8 @@ impl XsdCompiler {
             groups: HashMap::new(),
             attribute_groups: HashMap::new(),
             current_block_default: None,
+            current_attribute_qualified: false,
+            attribute_group_qualified: HashMap::new(),
             group_expansion: HashSet::new(),
             current_target_ns: None,
             current_target_prefix: None,
@@ -236,9 +244,13 @@ impl XsdCompiler {
                 self.groups.insert(key, particle.clone());
             }
         }
+        let qualified =
+            schema.attribute_form_default == crate::schema::xsd::types::FormDefault::Qualified;
         for ag in &schema.attribute_groups {
             if let Some(name) = &ag.name {
                 let key = NsName::new(ns.clone(), name.clone());
+                self.attribute_group_qualified
+                    .insert(key.clone(), qualified);
                 self.attribute_groups.insert(key, ag.clone());
             }
         }
@@ -248,6 +260,8 @@ impl XsdCompiler {
     fn compile_schema(&mut self, schema: XsdSchema, result: &mut CompiledSchema) -> Result<()> {
         self.current_target_ns = schema.target_namespace.clone();
         self.current_block_default = schema.block_default.clone();
+        self.current_attribute_qualified =
+            schema.attribute_form_default == crate::schema::xsd::types::FormDefault::Qualified;
         // Snapshot the owning document's own bindings (not accumulated) so
         // QName references can be resolved per-document (mirrors the reference
         // checker), independent of the last-wins accumulated prefix table.
@@ -324,7 +338,9 @@ impl XsdCompiler {
         // Compile top-level attributes
         for attr in schema.attributes {
             if let Some(name) = &attr.name {
-                let compiled = self.compile_attribute(&attr)?;
+                let mut compiled = self.compile_attribute(&attr)?;
+                // Global attributes are always in the target namespace.
+                compiled.namespace = Some(self.current_target_ns.clone().unwrap_or_default());
                 let ns_name = NsName::new(
                     self.current_target_ns.clone().unwrap_or_default(),
                     name.to_string(),

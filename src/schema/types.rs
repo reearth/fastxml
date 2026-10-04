@@ -598,12 +598,18 @@ pub struct SimpleType {
     pub item_type: Option<String>,
     /// Namespace-resolved form of [`item_type`](Self::item_type).
     pub item_ns: Option<NsName>,
+    /// Anonymous item type of a list (`<xs:list><xs:simpleType>…`); its
+    /// facets apply to every item. `item_type` then names its base.
+    pub item_inline: Option<Box<SimpleType>>,
     /// Member types for union types (`<xs:union memberTypes="..."/>`)
     pub member_types: Vec<String>,
     /// Namespace-resolved form of each entry in
     /// [`member_types`](Self::member_types) (index-aligned; `None` where the
     /// member reference could not be resolved).
     pub member_ns: Vec<Option<NsName>>,
+    /// Anonymous member types of a union (`<xs:union><xs:simpleType>…`),
+    /// in declaration order after the `member_types`.
+    pub inline_members: Vec<SimpleType>,
     /// Whitespace normalization declared by a whiteSpace facet
     pub white_space: Option<WhiteSpace>,
     /// Explicit timezone requirement (XSD 1.1 explicitTimezone facet)
@@ -652,8 +658,10 @@ impl SimpleType {
             fraction_digits: None,
             item_type: None,
             item_ns: None,
+            item_inline: None,
             member_types: Vec::new(),
             member_ns: Vec::new(),
+            inline_members: Vec::new(),
             white_space: None,
             explicit_timezone: None,
         }
@@ -930,6 +938,16 @@ pub struct AttributeDef {
     pub fixed: Option<String>,
     /// Whether this is a reference to a globally declared attribute
     pub is_ref: bool,
+    /// The namespace URI an instance attribute must have to match this
+    /// declaration (`Some("")` for no namespace). Compiled schemas always
+    /// set it: a local declaration is in no namespace unless it is
+    /// qualified (`form` / `attributeFormDefault`), a reference is in the
+    /// referenced attribute's namespace. `None` (declarations built by
+    /// hand) matches by local name alone.
+    pub namespace: Option<String>,
+    /// `use="prohibited"`: in a restriction, removes the base type's
+    /// attribute of the same name instead of declaring one.
+    pub prohibited: bool,
 }
 
 impl AttributeDef {
@@ -945,6 +963,8 @@ impl AttributeDef {
             default: None,
             fixed: None,
             is_ref: false,
+            namespace: None,
+            prohibited: false,
         }
     }
 
@@ -1071,143 +1091,4 @@ pub mod builtin {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_element_with_local_name() {
-        let mut schema = CompiledSchema::new();
-        schema.elements_ns.insert(
-            crate::schema::types::NsName::new("", "ReliefFeature"),
-            ElementDef::new("ReliefFeature"),
-        );
-
-        // Local name lookup should work
-        assert!(schema.get_element("ReliefFeature").is_some());
-    }
-
-    #[test]
-    fn test_get_element_with_qualified_name() {
-        let mut schema = CompiledSchema::new();
-        schema.elements_ns.insert(
-            crate::schema::types::NsName::new("", "ReliefFeature"),
-            ElementDef::new("ReliefFeature"),
-        );
-
-        // Qualified name lookup should fall back to local name
-        assert!(
-            schema.get_element("dem:ReliefFeature").is_some(),
-            "Should find 'ReliefFeature' when looking up 'dem:ReliefFeature'"
-        );
-    }
-
-    #[test]
-    fn test_get_type_with_local_name() {
-        let mut schema = CompiledSchema::new();
-        schema.types_ns.insert(
-            crate::schema::types::NsName::new("", "AbstractCityObjectType"),
-            TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
-        );
-
-        // Local name lookup should work
-        assert!(schema.get_type("AbstractCityObjectType").is_some());
-    }
-
-    #[test]
-    fn test_get_type_with_qualified_name() {
-        let mut schema = CompiledSchema::new();
-        schema.types_ns.insert(
-            crate::schema::types::NsName::new("", "AbstractCityObjectType"),
-            TypeDef::Complex(ComplexType::new("AbstractCityObjectType")),
-        );
-
-        // Qualified name lookup should fall back to local name
-        assert!(
-            schema.get_type("core:AbstractCityObjectType").is_some(),
-            "Should find 'AbstractCityObjectType' when looking up 'core:AbstractCityObjectType'"
-        );
-    }
-
-    #[test]
-    fn test_get_type_not_found() {
-        let schema = CompiledSchema::new();
-        assert!(schema.get_type("NonExistentType").is_none());
-        assert!(schema.get_type("prefix:NonExistentType").is_none());
-    }
-
-    #[test]
-    fn test_get_element_not_found() {
-        let schema = CompiledSchema::new();
-        assert!(schema.get_element("NonExistentElement").is_none());
-        assert!(schema.get_element("prefix:NonExistentElement").is_none());
-    }
-
-    // === Namespace-qualified accessor semantics (C3) ===
-
-    /// Two globals sharing a local name in different namespaces must not
-    /// collide on the namespace-keyed map (the wildG031 class).
-    #[test]
-    fn ns_maps_resolve_same_local_in_different_namespaces() {
-        const NS_A: &str = "http://example.com/a";
-        const NS_B: &str = "http://example.com/b";
-        let mut schema = CompiledSchema::new();
-        let mut a = ElementDef::new("value");
-        a.type_ref = Some("a:AType".into());
-        let mut b = ElementDef::new("value");
-        b.type_ref = Some("b:BType".into());
-        schema.elements_ns.insert(NsName::new(NS_A, "value"), a);
-        schema.elements_ns.insert(NsName::new(NS_B, "value"), b);
-
-        // Each namespace resolves to its OWN declaration, not the other's.
-        assert_eq!(
-            schema
-                .element_ns(NS_A, "value")
-                .unwrap()
-                .type_ref
-                .as_deref(),
-            Some("a:AType")
-        );
-        assert_eq!(
-            schema
-                .element_ns(NS_B, "value")
-                .unwrap()
-                .type_ref
-                .as_deref(),
-            Some("b:BType")
-        );
-    }
-
-    /// A cleanly-resolved namespace that misses (with no chameleon `""`
-    /// entry) must stay a miss — `element_ns` must NOT scan other namespaces
-    /// (amendment #1: the any-ns scan can only hide "not declared" errors).
-    #[test]
-    fn ns_element_lookup_does_not_leak_across_namespaces() {
-        const NS_A: &str = "http://example.com/a";
-        const NS_C: &str = "http://example.com/c";
-        let mut schema = CompiledSchema::new();
-        schema
-            .elements_ns
-            .insert(NsName::new(NS_A, "value"), ElementDef::new("value"));
-
-        // Wrong namespace -> strict miss (no cross-namespace leak).
-        assert!(schema.element_ns(NS_C, "value").is_none());
-        // The leniency scan (only for unresolvable instance namespaces) DOES
-        // find it by local name.
-        assert!(schema.element_ns_any("value").is_some());
-    }
-
-    /// Chameleon-include fallback: a component registered under the
-    /// no-namespace `""` is reachable from a qualified lookup.
-    #[test]
-    fn ns_type_lookup_chameleon_fallback() {
-        const NS_A: &str = "http://example.com/a";
-        let mut schema = CompiledSchema::new();
-        schema.types_ns.insert(
-            NsName::new("", "ChameleonType"),
-            TypeDef::Complex(ComplexType::new("ChameleonType")),
-        );
-        assert!(schema.type_ns(NS_A, "ChameleonType").is_some());
-        assert!(schema.type_ns("", "ChameleonType").is_some());
-        assert!(schema.type_ns(NS_A, "Missing").is_none());
-    }
-}
+mod tests;
