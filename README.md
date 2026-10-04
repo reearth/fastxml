@@ -545,7 +545,7 @@ for error in report.errors() {
 
 ### Auto-detect Schema
 
-Omit `.schema(..)` and the schema is resolved from the document's `xsi:schemaLocation`, using the default fetcher (requires the `ureq` feature):
+Omit `.schema(..)` and the schema is resolved from the root element's `xsi:schemaLocation` / `xsi:noNamespaceSchemaLocation` (any prefix bound to the XML Schema instance namespace), using the default fetcher (requires the `ureq` feature):
 
 ```rust
 use fastxml::{Parser, schema::Validator};
@@ -563,6 +563,8 @@ let report = Validator::from_reader(reader).run()?;
 ```
 
 To supply a custom fetcher, use `.run_with(fetcher)` instead of `.run()`.
+
+If the document names no schema, or a named schema (or anything it imports or includes) cannot be fetched, parsed or compiled, the report carries an error-level `SchemaNotFound` entry explaining what failed, the content is not validated, and `is_valid()` is `false`. Relative locations are resolved by the fetcher (e.g. `DefaultFetcher::with_base_dir(dir)`).
 
 ### Async Validation
 

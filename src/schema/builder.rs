@@ -1,7 +1,7 @@
 //! Ergonomic constructors for [`Schema`].
 //!
 //! `Schema` is an alias for [`CompiledSchema`]. These constructors are the
-//! redesigned entry points for building a compiled schema; they wrap the
+//! entry points for building a compiled schema; they wrap the
 //! lower-level `parse_xsd*` / `create_builtin_schema` functions in
 //! [`crate::schema::xsd`] behind a single consistent surface.
 //!
@@ -30,7 +30,7 @@ use crate::schema::xsd::parse_xsd_with_imports_multiple_async;
 
 /// A compiled XSD schema, ready for validation.
 ///
-/// `Schema` is an alias for [`CompiledSchema`]; the redesigned API uses this
+/// `Schema` is an alias for [`CompiledSchema`]; the API uses this
 /// shorter name together with the constructors [`Schema::from_xsd`],
 /// [`Schema::builtin`], and [`Schema::builder`].
 pub type Schema = CompiledSchema;

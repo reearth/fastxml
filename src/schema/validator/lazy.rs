@@ -1,138 +1,96 @@
-//! Lazy schema validators that initialize from xsi:schemaLocation.
+//! Streaming validator that loads its schema from the root element's hints.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::error::{ErrorLevel, Result, StructuredError, ValidationErrorType};
+use crate::error::{Result, StructuredError};
 use crate::event::{RawEvent, XmlEventHandler};
 use crate::schema::fetcher::SchemaFetcher;
+use crate::schema::hints::SchemaHints;
 
+use super::api::{EngineSettings, load_hinted_schema, no_hints_error};
 use super::streaming::OnePassSchemaValidator;
 
-/// Internal validator with shared error collection for streaming validation functions.
-pub(crate) struct LazySchemaValidatorWithSharedErrors<F: SchemaFetcher> {
-    fetcher: F,
-    validator: Option<OnePassSchemaValidator>,
-    initialized: bool,
-    shared_errors: Arc<Mutex<Vec<StructuredError>>>,
+enum Stage {
+    /// No start tag seen yet.
+    AwaitingRoot,
+    /// The hinted schema loaded; every event goes to the inner validator.
+    Validating(Box<OnePassSchemaValidator>),
+    /// The hinted schema could not be loaded; the reasons are in
+    /// `diagnostics` and the content is not validated.
+    SchemaUnavailable,
 }
 
-impl<F: SchemaFetcher> LazySchemaValidatorWithSharedErrors<F> {
-    pub fn new(fetcher: F, shared_errors: Arc<Mutex<Vec<StructuredError>>>) -> Self {
+/// Wraps [`OnePassSchemaValidator`]: on the root start tag it reads the
+/// schema-location hints, loads the schema (see [`super::api`] for the
+/// policy), then forwards every event — and `finish` — to the inner
+/// validator. Its entries are the load diagnostics followed by the inner
+/// validator's errors, each produced exactly once.
+pub(crate) struct AutodetectStreamingValidator<F: SchemaFetcher> {
+    fetcher: F,
+    settings: EngineSettings,
+    stage: Stage,
+    diagnostics: Vec<StructuredError>,
+}
+
+impl<F: SchemaFetcher> AutodetectStreamingValidator<F> {
+    pub fn new(fetcher: F, settings: EngineSettings) -> Self {
         Self {
             fetcher,
-            validator: None,
-            initialized: false,
-            shared_errors,
+            settings,
+            stage: Stage::AwaitingRoot,
+            diagnostics: Vec::new(),
         }
     }
 
-    fn initialize_from_attributes(&mut self, attributes: &[(&str, std::borrow::Cow<'_, str>)]) {
-        if self.initialized {
-            return;
+    /// All collected entries: schema-load diagnostics, then validation errors.
+    pub fn into_entries(self) -> Vec<StructuredError> {
+        let mut entries = self.diagnostics;
+        if let Stage::Validating(v) = self.stage {
+            entries.extend(v.into_errors());
         }
-        self.initialized = true;
-
-        // Look for xsi:schemaLocation
-        let schema_location = attributes
-            .iter()
-            .find(|(k, _)| *k == "xsi:schemaLocation" || *k == "schemaLocation")
-            .map(|(_, v)| v.as_ref());
-
-        let schema = if let Some(loc_value) = schema_location {
-            // Parse schemaLocation value (namespace/URL pairs)
-            let parts: Vec<&str> = loc_value.split_whitespace().collect();
-            let mut resolver = crate::schema::xsd::SchemaResolver::new(&self.fetcher);
-            let mut loaded_any = false;
-
-            // Fetch and resolve all schemaLocation entries with a single resolver
-            for chunk in parts.chunks(2) {
-                if chunk.len() == 2 {
-                    let location = chunk[1];
-                    match self.fetcher.fetch(location) {
-                        Ok(result) => {
-                            match resolver.resolve_entry(&result.content, &result.final_url) {
-                                Ok(()) => {
-                                    loaded_any = true;
-                                }
-                                Err(e) => {
-                                    self.shared_errors.lock().unwrap().push(
-                                        StructuredError::new(
-                                            format!(
-                                                "Warning: Failed to parse schema {}: {}",
-                                                location, e
-                                            ),
-                                            ValidationErrorType::SchemaNotFound,
-                                        )
-                                        .with_level(ErrorLevel::Warning),
-                                    );
-                                }
-                            }
-                        }
-                        Err(_e) => {
-                            // Skip schemas that can't be fetched (may be local paths)
-                        }
-                    }
-                }
-            }
-
-            if !loaded_any {
-                self.shared_errors.lock().unwrap().push(
-                    StructuredError::new(
-                        "No schemas could be loaded from xsi:schemaLocation",
-                        ValidationErrorType::SchemaNotFound,
-                    )
-                    .with_level(ErrorLevel::Warning),
-                );
-                crate::schema::xsd::create_builtin_schema()
-            } else {
-                let schemas = resolver.take_all_schemas();
-                match crate::schema::xsd::compile_schemas(schemas) {
-                    Ok(mut compiled) => {
-                        crate::schema::xsd::register_builtin_types(&mut compiled);
-                        compiled
-                    }
-                    Err(e) => {
-                        self.shared_errors.lock().unwrap().push(
-                            StructuredError::new(
-                                format!("Warning: Failed to compile schemas: {}", e),
-                                ValidationErrorType::SchemaNotFound,
-                            )
-                            .with_level(ErrorLevel::Warning),
-                        );
-                        crate::schema::xsd::create_builtin_schema()
-                    }
-                }
-            }
-        } else {
-            crate::schema::xsd::create_builtin_schema()
-        };
-
-        self.validator = Some(OnePassSchemaValidator::new(Arc::new(schema)));
+        entries
     }
 }
 
-impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidatorWithSharedErrors<F> {
+impl<F: SchemaFetcher + 'static> XmlEventHandler for AutodetectStreamingValidator<F> {
     fn handle(&mut self, event: &RawEvent<'_>) -> Result<()> {
-        // Initialize on first StartElement
-        if let RawEvent::StartElement { attributes, .. } = event {
-            if !self.initialized {
-                self.initialize_from_attributes(attributes);
-            }
-        }
-
-        // Delegate to inner validator
-        if let Some(v) = &mut self.validator {
-            v.handle(event)?;
-            // Collect validation errors to shared collection
-            for err in v.errors() {
-                let mut errors = self.shared_errors.lock().unwrap();
-                if !errors.iter().any(|e| e.message == err.message) {
-                    errors.push(err.clone());
+        if let (
+            Stage::AwaitingRoot,
+            RawEvent::StartElement {
+                attributes,
+                namespace_decls,
+                ..
+            },
+        ) = (&self.stage, event)
+        {
+            let hints = SchemaHints::from_start_tag(attributes, namespace_decls);
+            self.stage = match load_hinted_schema(&hints, &self.fetcher) {
+                Ok(schema) => {
+                    Stage::Validating(Box::new(self.settings.streaming(Arc::new(schema))))
                 }
-            }
+                Err(errors) => {
+                    self.diagnostics.extend(errors);
+                    Stage::SchemaUnavailable
+                }
+            };
         }
 
+        if let Stage::Validating(v) = &mut self.stage {
+            v.handle(event)?;
+        }
         Ok(())
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        match &mut self.stage {
+            Stage::Validating(v) => v.finish(),
+            Stage::AwaitingRoot => {
+                // No root element, hence no hints.
+                self.diagnostics.push(no_hints_error());
+                Ok(())
+            }
+            Stage::SchemaUnavailable => Ok(()),
+        }
     }
 
     fn as_any(self: Box<Self>) -> Box<dyn std::any::Any> {
@@ -143,26 +101,42 @@ impl<F: SchemaFetcher + 'static> XmlEventHandler for LazySchemaValidatorWithShar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ValidationErrorType;
+    use crate::schema::ValidationMode;
     use crate::schema::fetcher::NoopFetcher;
 
     #[test]
-    fn test_lazy_validator_with_shared_errors() {
-        let fetcher = NoopFetcher;
-        let shared_errors = Arc::new(Mutex::new(Vec::new()));
-        let mut validator =
-            LazySchemaValidatorWithSharedErrors::new(fetcher, Arc::clone(&shared_errors));
+    fn root_without_hints_yields_one_schema_error() {
+        let mut validator = AutodetectStreamingValidator::new(
+            NoopFetcher,
+            EngineSettings {
+                mode: ValidationMode::Strict,
+                max_errors: None,
+                aggregate_errors: false,
+            },
+        );
 
-        // Handle element without schemaLocation
-        let _ = validator.handle(&RawEvent::StartElement {
-            name: "root",
-            prefix: None,
-            attributes: &[],
-            namespace_decls: &[],
-            line: None,
-            column: Some(1),
-        });
+        validator
+            .handle(&RawEvent::StartElement {
+                name: "root",
+                prefix: None,
+                attributes: &[],
+                namespace_decls: &[],
+                line: None,
+                column: Some(1),
+            })
+            .unwrap();
+        validator
+            .handle(&RawEvent::EndElement {
+                name: "root",
+                prefix: None,
+            })
+            .unwrap();
+        validator.finish().unwrap();
 
-        let errors = shared_errors.lock().unwrap();
-        assert!(errors.is_empty());
+        let entries = validator.into_entries();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert!(entries[0].is_error());
+        assert_eq!(entries[0].error_type, ValidationErrorType::SchemaNotFound);
     }
 }
