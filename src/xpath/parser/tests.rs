@@ -110,3 +110,84 @@ fn test_text_node() {
         panic!("expected Path");
     }
 }
+
+#[test]
+fn test_top_level_comparison_and_logic() {
+    let expr = parse_xpath("count(//a) = 3 and true()").unwrap();
+    let Expr::And(left, right) = expr else {
+        panic!("expected And, got {expr:?}");
+    };
+    assert!(matches!(
+        *left,
+        Expr::Comparison {
+            op: ComparisonOp::Equal,
+            ..
+        }
+    ));
+    assert!(matches!(*right, Expr::Function { ref name, .. } if name == "true"));
+}
+
+#[test]
+fn test_filter_and_path_from() {
+    let expr = parse_xpath("(//a)[1]/b").unwrap();
+    let Expr::PathFrom { base, steps } = expr else {
+        panic!("expected PathFrom, got {expr:?}");
+    };
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].node_test, NodeTest::Name("b".into()));
+    let Expr::Filter { expr, predicates } = *base else {
+        panic!("expected Filter");
+    };
+    assert!(matches!(*expr, Expr::Path(_)));
+    assert_eq!(predicates, vec![Predicate::Position(1)]);
+}
+
+#[test]
+fn test_parenthesized_path_without_predicates_is_the_path() {
+    assert_eq!(parse_xpath("(//a)").unwrap(), parse_xpath("//a").unwrap());
+}
+
+#[test]
+fn test_predicate_lowering() {
+    let step_predicate = |xpath: &str| {
+        let Expr::Path(path) = parse_xpath(xpath).unwrap() else {
+            panic!("expected Path");
+        };
+        path.steps.last().unwrap().predicates[0].clone()
+    };
+    // Only a whole-predicate positive integer is a position.
+    assert_eq!(step_predicate("a[2]"), Predicate::Position(2));
+    assert_eq!(
+        step_predicate("a[1.5]"),
+        Predicate::Expr(Box::new(Expr::Number(1.5)))
+    );
+    assert_eq!(
+        step_predicate("a[1 and 2]"),
+        Predicate::And(
+            Box::new(Predicate::Expr(Box::new(Expr::Number(1.0)))),
+            Box::new(Predicate::Expr(Box::new(Expr::Number(2.0)))),
+        )
+    );
+    assert!(matches!(step_predicate("a[not(@x)]"), Predicate::Not(_)));
+}
+
+#[test]
+fn test_comment_and_processing_instruction_node_tests() {
+    let last_test = |xpath: &str| {
+        let Expr::Path(path) = parse_xpath(xpath).unwrap() else {
+            panic!("expected Path");
+        };
+        path.steps.last().unwrap().node_test.clone()
+    };
+    assert_eq!(last_test("//comment()"), NodeTest::Comment);
+    assert_eq!(
+        last_test("processing-instruction()"),
+        NodeTest::ProcessingInstruction(None)
+    );
+    assert_eq!(
+        last_test("processing-instruction('x')"),
+        NodeTest::ProcessingInstruction(Some("x".into()))
+    );
+    // Without `(` these are element names.
+    assert_eq!(last_test("/comment"), NodeTest::Name("comment".into()));
+}

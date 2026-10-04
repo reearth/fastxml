@@ -1,7 +1,8 @@
 //! XPath expression support.
 //!
-//! This module provides XPath 1.0 expression parsing and evaluation
-//! with support for a comprehensive subset of the specification.
+//! This module provides XPath 1.0 expression parsing and evaluation. The
+//! parser implements the full XPath 1.0 expression grammar; the whole input
+//! must be one expression (trailing tokens are a syntax error).
 //!
 //! # Supported Features
 //!
@@ -21,21 +22,26 @@
 //! - `namespace::`
 //!
 //! ## Node Tests
-//! - `*` (any element)
+//! - `*` (any element; any attribute / namespace on those axes)
 //! - `name` (element by name)
 //! - `prefix:name` (element by qualified name)
 //! - `text()` (text nodes)
+//! - `comment()` (comment nodes)
+//! - `processing-instruction()` / `processing-instruction('target')`
 //! - `node()` (any node)
 //!
-//! ## Predicates
-//! - `[expr]` (filter expression)
-//! - `[position]` (positional predicate)
-//! - Comparison operators: `=`, `!=`, `<`, `<=`, `>`, `>=`
-//! - Logical operators: `and`, `or`, `not()`
+//! Keywords such as `div`, `and`, `text` or `count` are element names wherever
+//! XPath 1.0 §3.7 says they are names (e.g. `//div`, `/root/text`).
+//!
+//! ## Predicates and filter expressions
+//! - `[expr]` on a step or on any primary expression: `(//a)[1]`, `$v[@id]`
+//! - `[n]` (positional predicate, same as `[position() = n]`)
+//! - A path can continue from a filter expression: `(//a)/text()`
 //!
 //! ## Operators
-//! - Arithmetic: `+`, `-`, `*`, `div`, `mod`
+//! - Logical: `or`, `and` (and the function `not()`)
 //! - Comparison: `=`, `!=`, `<`, `<=`, `>`, `>=`
+//! - Arithmetic: `+`, `-`, `*`, `div`, `mod`, unary `-`
 //! - Union: `|`
 //!
 //! ## Functions

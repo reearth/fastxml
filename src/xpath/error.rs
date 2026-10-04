@@ -125,6 +125,12 @@ pub enum XPathEvalError {
     },
     /// Undefined variable reference
     UndefinedVariable(String),
+    /// An operand that must be a node-set (of `|`, a filter predicate, or a
+    /// path step after a filter expression) evaluated to another type
+    NodeSetRequired {
+        /// The operation that needed a node-set (e.g. "union (|)")
+        operation: String,
+    },
 }
 
 impl std::fmt::Display for XPathEvalError {
@@ -149,6 +155,9 @@ impl std::fmt::Display for XPathEvalError {
             }
             XPathEvalError::UndefinedVariable(name) => {
                 write!(f, "undefined variable: ${}", name)
+            }
+            XPathEvalError::NodeSetRequired { operation } => {
+                write!(f, "{} requires a node-set operand", operation)
             }
         }
     }

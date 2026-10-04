@@ -25,6 +25,39 @@ impl fmt::Display for PathExpr {
     }
 }
 
+// Precedence levels of the XPath 1.0 grammar, loosest first.
+const OR: u8 = 1;
+const AND: u8 = 2;
+const EQUALITY: u8 = 3;
+const RELATIONAL: u8 = 4;
+const ADDITIVE: u8 = 5;
+const MULTIPLICATIVE: u8 = 6;
+const UNARY: u8 = 7;
+const UNION: u8 = 8;
+const PATH: u8 = 9;
+const PRIMARY: u8 = 10;
+
+fn precedence(expr: &Expr) -> u8 {
+    match expr {
+        Expr::Or(..) => OR,
+        Expr::And(..) => AND,
+        Expr::Comparison { op, .. } => comparison_precedence(*op),
+        Expr::Add(..) | Expr::Subtract(..) => ADDITIVE,
+        Expr::Multiply(..) | Expr::Divide(..) | Expr::Modulo(..) => MULTIPLICATIVE,
+        Expr::Negate(..) => UNARY,
+        Expr::Union(..) => UNION,
+        Expr::Path(..) | Expr::Filter { .. } | Expr::PathFrom { .. } => PATH,
+        Expr::String(..) | Expr::Number(..) | Expr::Variable(..) | Expr::Function { .. } => PRIMARY,
+    }
+}
+
+fn comparison_precedence(op: ComparisonOp) -> u8 {
+    match op {
+        ComparisonOp::Equal | ComparisonOp::NotEqual => EQUALITY,
+        _ => RELATIONAL,
+    }
+}
+
 fn render_expr(expr: &Expr) -> String {
     match expr {
         Expr::Path(path) => render_path(path),
@@ -35,33 +68,72 @@ fn render_expr(expr: &Expr) -> String {
             let args = args.iter().map(render_expr).collect::<Vec<_>>().join(", ");
             format!("{name}({args})")
         }
-        Expr::Union(paths) => paths
+        Expr::Union(operands) => operands
             .iter()
-            .map(render_path)
+            .enumerate()
+            .map(|(i, e)| operand(e, UNION, i == 0))
             .collect::<Vec<_>>()
             .join(" | "),
-        Expr::Add(l, r) => format!("{} + {}", arith_operand(l), arith_operand(r)),
-        Expr::Subtract(l, r) => format!("{} - {}", arith_operand(l), arith_operand(r)),
-        Expr::Multiply(l, r) => format!("{} * {}", arith_operand(l), arith_operand(r)),
-        Expr::Divide(l, r) => format!("{} div {}", arith_operand(l), arith_operand(r)),
-        Expr::Modulo(l, r) => format!("{} mod {}", arith_operand(l), arith_operand(r)),
-        Expr::Negate(e) => format!("-{}", arith_operand(e)),
+        Expr::Or(l, r) => binary(l, "or", r, OR),
+        Expr::And(l, r) => binary(l, "and", r, AND),
+        Expr::Comparison { left, op, right } => {
+            binary(left, comparison_op(*op), right, comparison_precedence(*op))
+        }
+        Expr::Add(l, r) => binary(l, "+", r, ADDITIVE),
+        Expr::Subtract(l, r) => binary(l, "-", r, ADDITIVE),
+        Expr::Multiply(l, r) => binary(l, "*", r, MULTIPLICATIVE),
+        Expr::Divide(l, r) => binary(l, "div", r, MULTIPLICATIVE),
+        Expr::Modulo(l, r) => binary(l, "mod", r, MULTIPLICATIVE),
+        Expr::Negate(e) => format!("-{}", operand(e, UNARY, false)),
+        Expr::Filter { expr, predicates } => {
+            let mut out = filter_base(expr);
+            for predicate in predicates {
+                out.push('[');
+                out.push_str(&render_predicate(predicate));
+                out.push(']');
+            }
+            out
+        }
+        Expr::PathFrom { base, steps } => {
+            // The steps render like an absolute path: `/b` or `//b`.
+            let rest = render_path(&PathExpr {
+                absolute: true,
+                steps: steps.clone(),
+            });
+            format!("{}{}", filter_base(base), rest)
+        }
     }
 }
 
-/// Parenthesizes a binary/unary arithmetic operand to preserve precedence.
+/// Renders a left-associative binary operation at precedence `level`.
+fn binary(left: &Expr, op: &str, right: &Expr, level: u8) -> String {
+    format!(
+        "{} {op} {}",
+        operand(left, level, true),
+        operand(right, level + 1, false)
+    )
+}
+
+/// Renders an operand, parenthesized when it binds looser than `min_level`.
 ///
-/// This is conservative (it may add parentheses a hand-written expression would
-/// omit) but always yields an equivalent expression.
-fn arith_operand(expr: &Expr) -> String {
-    match expr {
-        Expr::Add(..)
-        | Expr::Subtract(..)
-        | Expr::Multiply(..)
-        | Expr::Divide(..)
-        | Expr::Modulo(..)
-        | Expr::Negate(..) => format!("({})", render_expr(expr)),
-        _ => render_expr(expr),
+/// A bare root path `/` on the left is parenthesized as well: in `/ * 2` or
+/// `/ div 2` the parser must read `*` / `div` as a name test (§3.7).
+fn operand(expr: &Expr, min_level: u8, is_left: bool) -> String {
+    let bare_root = matches!(expr, Expr::Path(p) if p.absolute && p.steps.is_empty());
+    if precedence(expr) < min_level || (is_left && bare_root) {
+        format!("({})", render_expr(expr))
+    } else {
+        render_expr(expr)
+    }
+}
+
+/// Renders the start of a filter expression or of a path continuing from one:
+/// a primary expression or a filter as is, anything else in parentheses.
+fn filter_base(expr: &Expr) -> String {
+    if precedence(expr) == PRIMARY || matches!(expr, Expr::Filter { .. }) {
+        render_expr(expr)
+    } else {
+        format!("({})", render_expr(expr))
     }
 }
 
@@ -106,6 +178,14 @@ fn render_path(path: &PathExpr) -> String {
 }
 
 fn render_step(step: &Step) -> String {
+    // `.` and `..` abbreviate exactly these predicate-less steps.
+    if step.node_test == NodeTest::Node && step.predicates.is_empty() {
+        match step.axis {
+            Axis::SelfNode => return ".".to_string(),
+            Axis::Parent => return "..".to_string(),
+            _ => {}
+        }
+    }
     let mut out = String::new();
     match step.axis {
         Axis::Child => {}
@@ -149,17 +229,23 @@ fn render_node_test(test: &NodeTest) -> String {
         NodeTest::QName { prefix, local } => format!("{prefix}:{local}"),
         NodeTest::Text => "text()".to_string(),
         NodeTest::Node => "node()".to_string(),
+        NodeTest::Comment => "comment()".to_string(),
+        NodeTest::ProcessingInstruction(None) => "processing-instruction()".to_string(),
+        NodeTest::ProcessingInstruction(Some(target)) => {
+            format!("processing-instruction({})", fmt_string_literal(target))
+        }
     }
 }
 
 fn render_predicate(predicate: &Predicate) -> String {
     match predicate {
         Predicate::Comparison { left, op, right } => {
+            let level = comparison_precedence(*op);
             format!(
                 "{}{}{}",
-                render_expr(left),
+                operand(left, level, true),
                 comparison_op(*op),
-                render_expr(right)
+                operand(right, level + 1, false)
             )
         }
         Predicate::And(a, b) => format!("{} and {}", wrap_predicate(a), wrap_predicate(b)),
@@ -261,6 +347,26 @@ mod tests {
             "/root/text",
             "self::node()",
             "../x",
+            "count(//a) = 3",
+            "1 < 2 = true()",
+            "a or b and c",
+            "(a or b) and c",
+            "(1 = 1) = (2 = 2)",
+            "(//a)[1]",
+            "(//a)[1][@x]",
+            "(//a)/text()",
+            "(//a | //b)[last()]//c",
+            "$v[1]/x",
+            "id('x')/b",
+            "//comment()",
+            "//processing-instruction()",
+            "//processing-instruction('pi')",
+            "(/) * 2",
+            "/ | //a",
+            "//a[(. = 1 or . = 2) and . != 2]",
+            "//a[(@x | @y) = 'v']",
+            "-(-1)",
+            "--1",
         ] {
             assert_roundtrips(xpath);
         }
