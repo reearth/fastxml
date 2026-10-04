@@ -19,17 +19,19 @@ use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
 ///
 /// # Example
 ///
+/// Reached through the public [`Transformer::from_reader`](super::Transformer::from_reader):
+///
 /// ```ignore
 /// use std::io::{BufReader, Cursor};
-/// use fastxml::transform::StreamTransformerReader;
+/// use fastxml::transform::Transformer;
 ///
 /// let xml = r#"<root><item>A</item><other>B</other></root>"#;
 /// let reader = BufReader::new(Cursor::new(xml));
 ///
 /// let mut output = Vec::new();
-/// let count = StreamTransformerReader::new(reader)
+/// let count = Transformer::from_reader(reader)
 ///     .on("//item", |node| node.set_attribute("processed", "true"))
-///     .run_to_writer(&mut output)?;
+///     .write_to(&mut output)?;
 ///
 /// let result = String::from_utf8(output).unwrap();
 /// assert!(result.contains(r#"processed="true""#));
