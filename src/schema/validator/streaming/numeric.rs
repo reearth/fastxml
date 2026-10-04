@@ -98,12 +98,22 @@ pub(crate) enum NumericPlan {
 /// enumeration or explicit-timezone facet, and the fixed `whiteSpace=collapse`
 /// handling (so tokenizing directly on whitespace is semantically exact).
 pub(crate) fn classify(constraints: &FacetConstraints) -> Option<NumericPlan> {
-    if !is_unconstrained(constraints) {
+    if !is_unconstrained(constraints) || !constraints.member_constraints.is_empty() {
         return None;
     }
     if constraints.is_list {
         // A pure list carries no scalar value space of its own.
         if constraints.value_kind.is_some() {
+            return None;
+        }
+        // Items must be checked by their lexical form alone: an item type
+        // with facets (or itself a list/union) needs the canonical path.
+        if let Some(item) = constraints.item_constraints.as_deref()
+            && (!is_unconstrained(item)
+                || item.is_list
+                || item.item_constraints.is_some()
+                || !item.member_constraints.is_empty())
+        {
             return None;
         }
         let class = NumClass::from_kind(constraints.item_kind?)?;
@@ -519,5 +529,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A list whose item type carries facets (or is itself a union) must not
+    /// take the lexical-only fast path, or item facets would go unchecked.
+    #[test]
+    fn classify_defers_lists_with_constrained_items() {
+        use std::sync::Arc;
+        let double = FacetConstraints {
+            value_kind: Some(PrimitiveKind::Double),
+            whitespace: WhitespaceHandling::Collapse,
+            ..FacetConstraints::new()
+        };
+        let list_of = |item: FacetConstraints| FacetConstraints {
+            is_list: true,
+            item_kind: Some(PrimitiveKind::Double),
+            item_constraints: Some(Arc::new(item)),
+            whitespace: WhitespaceHandling::Collapse,
+            ..FacetConstraints::new()
+        };
+
+        assert_eq!(
+            classify(&list_of(double.clone())),
+            Some(NumericPlan::List(NumClass::Double))
+        );
+        let capped = FacetConstraints {
+            max_inclusive: Some("10".to_string()),
+            ..double.clone()
+        };
+        assert_eq!(classify(&list_of(capped)), None);
+        let union_item = FacetConstraints {
+            member_constraints: vec![Arc::new(double.clone())],
+            ..double
+        };
+        assert_eq!(classify(&list_of(union_item)), None);
     }
 }
