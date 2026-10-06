@@ -179,32 +179,30 @@ impl XsdCompiler {
         Ok(elements)
     }
 
-    /// Resolves a group-ref QName to the referenced group's particle.
-    ///
-    /// The reference is resolved by namespace URI: an explicit prefix is mapped
-    /// through the accumulated namespace bindings, otherwise the current target
-    /// namespace is used. Returns a clone of the group's particle, if found.
-    fn resolve_group_particle(&self, name: &QName) -> Option<XsdParticle> {
+    /// The `(namespace, local)` key a group-ref QName refers to: an explicit
+    /// prefix is resolved against the declarations in scope where it was
+    /// written, falling back to the accumulated namespace bindings; an
+    /// unprefixed name uses the current target namespace.
+    fn group_ref_key(&self, name: &QName) -> NsName {
         let ns_uri = match &name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
+            Some(_) => name.bound_namespace(&self.namespace_bindings),
+            None => self.current_target_ns.as_deref(),
         }
         .unwrap_or_default();
-        self.groups
-            .get(&NsName::new(ns_uri, name.local.clone()))
-            .cloned()
+        NsName::new(ns_uri, name.local.clone())
+    }
+
+    /// Resolves a group-ref QName to the referenced group's particle.
+    /// Returns a clone of the group's particle, if found.
+    fn resolve_group_particle(&self, name: &QName) -> Option<XsdParticle> {
+        self.groups.get(&self.group_ref_key(name)).cloned()
     }
 
     /// Expands a `<xs:group ref>` into its member element definitions,
     /// propagating the reference site's own occurrence bounds and guarding
     /// against cyclic group references.
     fn expand_group_ref_to_elements(&mut self, group_ref: &XsdGroupRef) -> Result<Vec<ElementDef>> {
-        let ns_uri = match &group_ref.name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
-        }
-        .unwrap_or_default();
-        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+        let key = self.group_ref_key(&group_ref.name);
 
         let Some(particle) = self.groups.get(&key).cloned() else {
             tracing::debug!("Unresolved group reference: {}", group_ref.name);
@@ -296,6 +294,7 @@ impl XsdCompiler {
                 selector_xpath: ic.selector.clone(),
                 field_xpaths: ic.fields.clone(),
                 refer: ic.refer.as_ref().map(|q| q.local.clone()),
+                namespaces: ic.namespaces.clone(),
             });
         }
 
@@ -408,12 +407,7 @@ impl XsdCompiler {
     /// Resolves a group reference into its particle tree, applying the
     /// reference site's occurrence bounds to the group compositor.
     fn compile_group_ref_tree(&mut self, group_ref: &XsdGroupRef) -> Result<Option<Particle>> {
-        let ns_uri = match &group_ref.name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
-        }
-        .unwrap_or_default();
-        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+        let key = self.group_ref_key(&group_ref.name);
 
         let Some(particle) = self.groups.get(&key).cloned() else {
             return Ok(None);

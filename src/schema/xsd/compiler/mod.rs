@@ -376,9 +376,10 @@ impl XsdCompiler {
     /// (`references.rs::resolve_ns`):
     ///
     /// - the `xml` prefix maps to the XML namespace;
-    /// - a declared prefix resolves against the owning document's bindings
+    /// - a declared prefix resolves against the declarations in scope where
+    ///   the QName was written, else the owning document's root bindings
     ///   (returns `None` for an undeclared prefix);
-    /// - an unprefixed name takes the document's default namespace when one is
+    /// - an unprefixed name takes the default namespace in scope when one is
     ///   bound, otherwise the owning document's target namespace (the same
     ///   leniency [`resolve_qname`](Self::resolve_qname) applies when it
     ///   requalifies an unprefixed reference), falling back to the
@@ -392,18 +393,11 @@ impl XsdCompiler {
         let local = qname.local.trim();
         let ns: std::sync::Arc<str> = match qname.prefix.as_deref().map(str::trim) {
             Some("xml") => crate::namespace::common::XML_NS.into(),
-            Some(p) => self.current_doc_bindings.get(p)?.as_str().into(),
-            None => {
-                let default_ns = self
-                    .current_doc_bindings
-                    .get("")
-                    .map(String::as_str)
-                    .filter(|d| !d.is_empty());
-                match default_ns {
-                    Some(d) => d.into(),
-                    None => self.current_target_ns.as_deref().unwrap_or("").into(),
-                }
-            }
+            Some(_) => qname.bound_namespace(&self.current_doc_bindings)?.into(),
+            None => match qname.bound_namespace(&self.current_doc_bindings) {
+                Some(d) => d.into(),
+                None => self.current_target_ns.as_deref().unwrap_or("").into(),
+            },
         };
         Some(NsName::new(ns, local))
     }

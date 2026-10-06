@@ -39,7 +39,15 @@ pub struct XsdSchema {
     pub attribute_groups: Vec<XsdAttributeGroup>,
     /// Model group definitions
     pub groups: Vec<XsdGroup>,
-    /// Namespace bindings (prefix -> URI)
+    /// Namespace bindings declared on the root `xs:schema` element (prefix
+    /// -> URI; the empty prefix is the default namespace). These are in scope
+    /// throughout the document.
+    ///
+    /// Declarations on nested elements are scoped to that element and are
+    /// not recorded here (declarations inside `xs:annotation` content are
+    /// ignored entirely). QName-valued attributes are resolved against the
+    /// declarations in scope where they appear, captured on
+    /// [`QName::namespace`](super::QName::namespace).
     pub namespace_bindings: HashMap<String, String>,
 }
 

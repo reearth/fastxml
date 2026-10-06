@@ -22,12 +22,13 @@ fn resolve_def_key(
     let local = qname.local.trim().to_string();
     let ns = match qname.prefix.as_deref().map(str::trim) {
         Some("xml") => return None,
-        Some(p) => schema.namespace_bindings.get(p)?.clone(),
-        None => schema
-            .namespace_bindings
-            .get("")
-            .cloned()
-            .unwrap_or_default(),
+        Some(_) => qname
+            .bound_namespace(&schema.namespace_bindings)?
+            .to_string(),
+        None => qname
+            .bound_namespace(&schema.namespace_bindings)
+            .unwrap_or_default()
+            .to_string(),
     };
     let key = (ns, local.clone());
     if known.contains(&key) {

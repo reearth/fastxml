@@ -523,7 +523,17 @@ impl XsdCompiler {
         if !visited.insert(ag_ref.local.clone()) {
             return Ok(());
         }
-        let ns = self.current_target_ns.clone().unwrap_or_default();
+        // A prefixed reference names its namespace (resolved against the
+        // declarations in scope where it was written); an unprefixed one is
+        // looked up in the current target namespace.
+        let ns = match &ag_ref.prefix {
+            Some(_) => ag_ref
+                .bound_namespace(&self.current_doc_bindings)
+                .map(str::to_string),
+            None => None,
+        }
+        .or_else(|| self.current_target_ns.clone())
+        .unwrap_or_default();
         let key = crate::schema::types::NsName::new(ns, ag_ref.local.clone());
         let group = match self.attribute_groups.get(&key) {
             Some(g) => g.clone(),

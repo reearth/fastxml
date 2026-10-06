@@ -28,6 +28,23 @@ fn parse_derivation_control(value: &str) -> DerivationControl {
     DerivationControl::List(types)
 }
 
+/// Adds `scope`'s non-default bindings to `out` (prefix -> URI), replacing a
+/// prefix already present.
+fn merge_bindings<'a>(
+    out: &mut Vec<(String, String)>,
+    scope: impl Iterator<Item = (&'a String, &'a String)>,
+) {
+    for (prefix, uri) in scope {
+        if prefix.is_empty() {
+            continue;
+        }
+        match out.iter_mut().find(|(p, _)| p == prefix) {
+            Some(entry) => entry.1 = uri.clone(),
+            None => out.push((prefix.clone(), uri.clone())),
+        }
+    }
+}
+
 impl XsdParser {
     /// Handles a start element event.
     pub(super) fn handle_start(
@@ -70,18 +87,41 @@ impl XsdParser {
             }
         }
 
-        // Store all namespace bindings
-        for ns in namespace_decls {
-            self.schema
-                .namespace_bindings
-                .insert(ns.prefix().to_string(), ns.uri().to_string());
-        }
-
-        // Skip annotation content
+        // Skip annotation content. Its namespace declarations (e.g. an
+        // `<xs:schema xmlns:xs=...>` example inside `xs:documentation`) take
+        // no part in resolution; push the parent's scope to stay balanced
+        // with `handle_end`.
         if self.skip_depth > 0 {
+            if let Some(scope) = self.ns_scope_stack.last().cloned() {
+                self.ns_scope_stack.push(scope);
+            }
             self.skip_depth += 1;
             return Ok(());
         }
+
+        // Namespace declarations are in scope on this element and its
+        // descendants: QName-valued attributes resolve against the innermost
+        // binding. Only the root element's declarations are recorded as the
+        // document-level `namespace_bindings`.
+        let is_root = self.ns_scope_stack.is_empty();
+        let scope = match self.ns_scope_stack.last() {
+            Some(parent) if namespace_decls.is_empty() => std::sync::Arc::clone(parent),
+            parent => {
+                let mut scope = parent.map(|p| (**p).clone()).unwrap_or_default();
+                for ns in namespace_decls {
+                    scope.insert(ns.prefix().to_string(), ns.uri().to_string());
+                }
+                std::sync::Arc::new(scope)
+            }
+        };
+        if is_root {
+            for ns in namespace_decls {
+                self.schema
+                    .namespace_bindings
+                    .insert(ns.prefix().to_string(), ns.uri().to_string());
+            }
+        }
+        self.ns_scope_stack.push(scope);
 
         if !self.is_xsd_element(name, prefix) {
             // Not an XSD element, skip
@@ -241,13 +281,13 @@ impl XsdParser {
 
     pub(super) fn handle_element(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut elem = if let Some(ref_attr) = attrs.get("ref") {
-            XsdElement::ref_(QName::parse(ref_attr))
+            XsdElement::ref_(self.qname(ref_attr))
         } else {
             XsdElement::new(attrs.get("name").cloned().unwrap_or_default())
         };
 
         if let Some(type_attr) = attrs.get("type") {
-            elem.type_ref = Some(QName::parse(type_attr));
+            elem.type_ref = Some(self.qname(type_attr));
         }
 
         // Parse and validate minOccurs/maxOccurs
@@ -258,7 +298,7 @@ impl XsdParser {
             elem.is_abstract = true;
         }
         if let Some(sg) = attrs.get("substitutionGroup") {
-            elem.substitution_group = Some(QName::parse(sg));
+            elem.substitution_group = Some(self.qname(sg));
         }
         if attrs.get("nillable").is_some_and(|v| v == "true") {
             elem.nillable = true;
@@ -370,13 +410,13 @@ impl XsdParser {
 
     pub(super) fn handle_attribute(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut attr = if let Some(ref_attr) = attrs.get("ref") {
-            XsdAttribute::ref_(QName::parse(ref_attr))
+            XsdAttribute::ref_(self.qname(ref_attr))
         } else {
             XsdAttribute::new(attrs.get("name").cloned().unwrap_or_default())
         };
 
         if let Some(type_attr) = attrs.get("type") {
-            attr.type_ref = Some(QName::parse(type_attr));
+            attr.type_ref = Some(self.qname(type_attr));
         }
         if let Some(use_attr) = attrs.get("use") {
             attr.use_ = match use_attr.as_str() {
@@ -404,7 +444,7 @@ impl XsdParser {
 
     pub(super) fn handle_attribute_group(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let ag = if let Some(ref_attr) = attrs.get("ref") {
-            XsdAttributeGroup::ref_(QName::parse(ref_attr))
+            XsdAttributeGroup::ref_(self.qname(ref_attr))
         } else {
             XsdAttributeGroup::new(attrs.get("name").cloned().unwrap_or_default())
         };
@@ -414,7 +454,7 @@ impl XsdParser {
 
     pub(super) fn handle_group(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let mut grp = if let Some(ref_attr) = attrs.get("ref") {
-            XsdGroup::ref_(QName::parse(ref_attr))
+            XsdGroup::ref_(self.qname(ref_attr))
         } else {
             XsdGroup::new(attrs.get("name").cloned().unwrap_or_default())
         };
@@ -428,7 +468,7 @@ impl XsdParser {
     }
 
     pub(super) fn handle_restriction(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
-        let base = attrs.get("base").map(|s| QName::parse(s));
+        let base = attrs.get("base").map(|s| self.qname(s));
 
         // Determine context from stack
         let parent_is_simple_content = self
@@ -478,7 +518,7 @@ impl XsdParser {
     pub(super) fn handle_extension(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let base = attrs
             .get("base")
-            .map(|s| QName::parse(s))
+            .map(|s| self.qname(s))
             .unwrap_or_else(|| QName::new(""));
 
         // Determine context from stack
@@ -569,7 +609,7 @@ impl XsdParser {
         let name = attrs.get("name").cloned().unwrap_or_default();
         let refer = attrs
             .get("refer")
-            .map(|s| QName::parse(s))
+            .map(|s| self.qname(s))
             .unwrap_or_else(|| QName::new(""));
         let constraint = XsdIdentityConstraint::keyref(name, "", refer);
         self.stack.push(StackFrame::KeyRef(constraint));
@@ -584,7 +624,7 @@ impl XsdParser {
         kind: crate::schema::xsd::identity_xpath::IdentityXPathKind,
     ) -> Result<()> {
         crate::schema::xsd::identity_xpath::validate_identity_xpath(xpath, kind, |prefix| {
-            self.schema.namespace_bindings.contains_key(prefix)
+            self.in_scope_namespace(prefix).is_some()
         })
         .map_err(|message| {
             crate::schema::error::SchemaError::InvalidSchema {
@@ -601,11 +641,14 @@ impl XsdParser {
             crate::schema::xsd::identity_xpath::IdentityXPathKind::Selector,
         )?;
 
-        // Set the selector on the parent constraint
+        // Set the selector on the parent constraint, with the bindings its
+        // XPath resolves against.
+        let scope = self.ns_scope_stack.last().cloned().unwrap_or_default();
         for frame in self.stack.iter_mut().rev() {
             match frame {
                 StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
                     c.selector = xpath;
+                    merge_bindings(&mut c.namespaces, scope.iter());
                     break;
                 }
                 _ => continue,
@@ -621,11 +664,14 @@ impl XsdParser {
             crate::schema::xsd::identity_xpath::IdentityXPathKind::Field,
         )?;
 
-        // Add the field to the parent constraint
+        // Add the field to the parent constraint, with the bindings its
+        // XPath resolves against.
+        let scope = self.ns_scope_stack.last().cloned().unwrap_or_default();
         for frame in self.stack.iter_mut().rev() {
             match frame {
                 StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
                     c.fields.push(xpath);
+                    merge_bindings(&mut c.namespaces, scope.iter());
                     break;
                 }
                 _ => continue,
@@ -636,7 +682,7 @@ impl XsdParser {
 
     pub(super) fn handle_list(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let list = XsdSimpleList {
-            item_type: attrs.get("itemType").map(|s| QName::parse(s)),
+            item_type: attrs.get("itemType").map(|s| self.qname(s)),
             inline_type: None,
         };
         self.stack.push(StackFrame::SimpleList(list));
@@ -646,7 +692,7 @@ impl XsdParser {
     pub(super) fn handle_union(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let member_types = attrs
             .get("memberTypes")
-            .map(|s| s.split_whitespace().map(QName::parse).collect())
+            .map(|s| s.split_whitespace().map(|s| self.qname(s)).collect())
             .unwrap_or_default();
         let union = XsdSimpleUnion {
             member_types,
@@ -771,6 +817,7 @@ impl XsdParser {
         // Pop this element's default-namespace scope (pushed in handle_start)
         // and use it to judge whether this is an XSD element.
         let ending_default_ns = self.default_ns_stack.pop().flatten();
+        self.ns_scope_stack.pop();
 
         // Handle annotation skipping
         if self.skip_depth > 0 {

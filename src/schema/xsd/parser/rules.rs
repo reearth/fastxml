@@ -45,11 +45,7 @@ impl XsdParser {
                 Some((p, l)) => (Some(p), l),
                 None => (None, qname),
             };
-            let ns = match prefix {
-                Some(p) => self.schema.namespace_bindings.get(p).cloned(),
-                None => self.schema.namespace_bindings.get("").cloned(),
-            };
-            ns.as_deref() == Some(XSD_NAMESPACE)
+            self.in_scope_namespace(prefix.unwrap_or("")) == Some(XSD_NAMESPACE)
                 && crate::schema::xsd::builtin::is_builtin_xsd_type_local(local)
         };
 
@@ -57,13 +53,7 @@ impl XsdParser {
             let Some((prefix, local)) = raw_name.split_once(':') else {
                 continue;
             };
-            if self
-                .schema
-                .namespace_bindings
-                .get(prefix)
-                .map(String::as_str)
-                != Some(VC_NS)
-            {
+            if self.in_scope_namespace(prefix) != Some(VC_NS) {
                 continue;
             }
             let prune = match local {
