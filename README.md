@@ -762,8 +762,8 @@ and re-parsing (see the roadmap).
 | valid schemas accepted      | 100.0% | 11,139 | 0   | 0   |
 | invalid schemas rejected    | 79.8%  | 2,675  | 677 | 0   |
 | valid instances             | 99.4%  | 13,845 | 86  | 132 |
-| invalid instances rejected  | 96.9%  | 10,639 | 341 | 51  |
-| **overall**                 | **97.2%** | **38,298** | **1,104** | **183** |
+| invalid instances rejected  | 96.9%  | 10,641 | 339 | 51  |
+| **overall**                 | **97.2%** | **38,300** | **1,102** | **183** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
 (zero false rejections), while 79.8% of invalid schemas are rejected. The
