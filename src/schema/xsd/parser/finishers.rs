@@ -14,6 +14,7 @@ impl XsdParser {
                 StackFrame::Schema => {
                     self.schema.elements.push(elem);
                 }
+                StackFrame::Override(over) => over.elements.push(elem),
                 StackFrame::Sequence(seq) => {
                     seq.particles.push(XsdParticleItem::Element(elem));
                 }
@@ -72,6 +73,11 @@ impl XsdParser {
                         redefine.complex_types.push(ct);
                     }
                 }
+                StackFrame::Override(over) => {
+                    if let XsdTypeDef::Complex(ct) = type_def {
+                        over.complex_types.push(ct);
+                    }
+                }
                 _ => {}
             }
         } else {
@@ -90,6 +96,9 @@ impl XsdParser {
                 }
                 StackFrame::Redefine(redefine) => {
                     redefine.simple_types.push(st.clone());
+                }
+                StackFrame::Override(over) => {
+                    over.simple_types.push(st.clone());
                 }
                 StackFrame::Element(elem) => {
                     elem.inline_type = Some(Box::new(type_def));
@@ -219,6 +228,7 @@ impl XsdParser {
                 StackFrame::Schema => {
                     self.schema.attributes.push(attr);
                 }
+                StackFrame::Override(over) => over.attributes.push(attr),
                 StackFrame::ComplexType(ct) => {
                     ct.attributes.push(attr);
                 }
@@ -279,6 +289,7 @@ impl XsdParser {
                 match parent {
                     StackFrame::Schema => self.schema.attribute_groups.push(ag),
                     StackFrame::Redefine(redefine) => redefine.attribute_groups.push(ag),
+                    StackFrame::Override(over) => over.attribute_groups.push(ag),
                     _ => {}
                 }
             } else {
@@ -327,6 +338,7 @@ impl XsdParser {
                 match parent {
                     StackFrame::Schema => self.schema.groups.push(grp),
                     StackFrame::Redefine(redefine) => redefine.groups.push(grp),
+                    StackFrame::Override(over) => over.groups.push(grp),
                     _ => {}
                 }
             } else {

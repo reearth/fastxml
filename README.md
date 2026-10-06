@@ -678,7 +678,8 @@ demonstrations of both the modern and compatibility APIs.
 | Substitution groups | ✅ |
 | Content-model automaton (choice totals, sequence-as-unit occurrence, UPA detection) | ✅ |
 | XSD 1.1 datatypes (dateTimeStamp, dayTimeDuration, yearMonthDuration, explicitTimezone) | ✅ |
-| Other XSD 1.1 features (assertions, conditional type assignment, openContent, override) | ❌ |
+| Other XSD 1.1 features (assertions, conditional type assignment, openContent) | ❌ |
+| xs:override (XSD 1.1) | ❌ (recorded in the AST; compiling a schema that uses it is an error) |
 
 ### Not Supported
 

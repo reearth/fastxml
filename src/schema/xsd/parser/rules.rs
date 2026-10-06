@@ -192,7 +192,8 @@ impl XsdParser {
         }
 
         if let Some(parent) = self.child_state_stack.last_mut() {
-            let parent_allows_repeat = parent.name == "schema" || parent.name == "redefine";
+            let parent_allows_repeat =
+                matches!(parent.name.as_str(), "schema" | "redefine" | "override");
             if local == "annotation" {
                 if !parent_allows_repeat {
                     if parent.annotations >= 1 {
@@ -518,7 +519,7 @@ impl XsdParser {
         let parent_is_top = self
             .child_state_stack
             .last()
-            .is_some_and(|p| p.name == "schema" || p.name == "redefine");
+            .is_some_and(|p| matches!(p.name.as_str(), "schema" | "redefine" | "override"));
 
         // Named group / attributeGroup definitions are top-level only; uses
         // elsewhere must be references (src-attribute_group / src-model_group).

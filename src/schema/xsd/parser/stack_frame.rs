@@ -61,4 +61,6 @@ pub(crate) enum StackFrame {
     KeyRef(XsdIdentityConstraint),
     /// Parsing xs:redefine
     Redefine(XsdRedefine),
+    /// Parsing xs:override (XSD 1.1; recorded, not applied)
+    Override(XsdOverride),
 }

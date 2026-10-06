@@ -198,6 +198,9 @@ impl XsdParser {
             "redefine" => {
                 self.handle_redefine(&attr_map)?;
             }
+            "override" => {
+                self.handle_override(&attr_map)?;
+            }
             "unique" => {
                 self.handle_unique(&attr_map)?;
             }
@@ -590,6 +593,13 @@ impl XsdParser {
         Ok(())
     }
 
+    pub(super) fn handle_override(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
+        let schema_location = attrs.get("schemaLocation").cloned().unwrap_or_default();
+        self.stack
+            .push(StackFrame::Override(XsdOverride::new(schema_location)));
+        Ok(())
+    }
+
     pub(super) fn handle_unique(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let name = attrs.get("name").cloned().unwrap_or_default();
         // Selector will be set when we encounter the selector element
@@ -976,6 +986,9 @@ impl XsdParser {
             }
             StackFrame::Redefine(redefine) => {
                 self.finish_redefine(redefine)?;
+            }
+            StackFrame::Override(over) => {
+                self.schema.overrides.push(over);
             }
         }
 

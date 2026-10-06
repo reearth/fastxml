@@ -79,6 +79,18 @@ impl XsdCompiler {
     /// compiled and their types/elements are merged. If the same type/element is
     /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
+        // xs:override (XSD 1.1) replaces components of another document;
+        // compiling without applying it would silently produce the wrong
+        // component set, so it is rejected.
+        if let Some(over) = schemas.iter().flat_map(|s| &s.overrides).next() {
+            return Err(crate::schema::error::SchemaError::InvalidSchema {
+                message: format!(
+                    "xs:override (schemaLocation '{}') is an XSD 1.1 feature and is not supported",
+                    over.schema_location
+                ),
+            }
+            .into());
+        }
         let mut schemas = schemas;
         let single_document = schemas.len() == 1;
         // Namespace strictness must be computed while import/include/redefine
