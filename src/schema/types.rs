@@ -404,6 +404,28 @@ impl CompiledSchema {
         self.type_by_ref(ns, base)
     }
 
+    /// Resolves the simple type governing the text value of a complex type
+    /// with `simpleContent`, following the base chain through other
+    /// simpleContent complex types (a restriction of a simpleContent type,
+    /// such as `gml:LengthType` of `gml:MeasureType`, inherits its value
+    /// type). Returns `None` when the type does not have simple content or
+    /// the chain cannot be resolved to a simple type.
+    pub fn simple_content_value_type<'a>(&'a self, c: &'a ComplexType) -> Option<&'a SimpleType> {
+        let mut current = c;
+        // Derivation chains are acyclic in a valid schema; the bound guards
+        // against a cyclic one.
+        for _ in 0..32 {
+            if !matches!(current.content, ContentModel::SimpleContent { .. }) {
+                return None;
+            }
+            match self.complex_base_def(current)? {
+                TypeDef::Simple(simple) => return Some(simple),
+                TypeDef::Complex(base) => current = base,
+            }
+        }
+        None
+    }
+
     /// Resolves a simple type's base-type definition (ns-first, string
     /// fallback). The synthetic `list(...)`/`union(...)` markers carry no
     /// `base_ns` and miss the string lookup too, returning `None` as before.

@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38294	fail=1108	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38296	fail=1106	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -134,8 +134,6 @@ instance-invalid	attZ014b::msMeta/../msData/attribute/attZ014b.xml	fail	expected
 instance-invalid	attgD024::msMeta/../msData/attributeGroup/attgD024.xml	fail	expected invalid but validator accepted it
 instance-invalid	attgZ001::msMeta/../msData/attributeGroup/attgZ001.xml	fail	expected invalid but validator accepted it
 instance-invalid	au_valconstr00101m1::sunMeta/../sunData/AttrUse/AU_valConstr/AU_valConstr00101m/AU_valConstr00101m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	basetd00101m1::sunMeta/../sunData/CType/baseTD/baseTD00101m/baseTD00101m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	basetd00101m2::sunMeta/../sunData/CType/baseTD/baseTD00101m/baseTD00101m2_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	complex011::saxonMeta/../saxonData/Complex/complex011.n1.xml	fail	expected invalid but validator accepted it
 instance-invalid	complex011::saxonMeta/../saxonData/Complex/complex011.n2.xml	fail	expected invalid but validator accepted it
 instance-invalid	complex013::saxonMeta/../saxonData/Complex/complex013.n1.xml	fail	expected invalid but validator accepted it

@@ -107,8 +107,9 @@ impl DomSchemaValidator {
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
                 if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
-                    // C4: ns-first base hop (string fallback inside).
-                    if let Some(TypeDef::Simple(simple)) = self.schema.complex_base_def(&complex) {
+                    // C4: ns-first base hops (string fallback inside),
+                    // through simpleContent restrictions.
+                    if let Some(simple) = self.schema.simple_content_value_type(&complex) {
                         let simple = simple.clone();
                         self.validate_simple_type_facets(
                             node,
