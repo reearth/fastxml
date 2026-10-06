@@ -598,6 +598,28 @@ for error in report.errors() {
 }
 ```
 
+### Content-Model Query
+
+A producer that writes XML can ask a compiled schema where each child element
+goes in its parent's content model, so children are emitted in the order the
+schema declares, including ADE elements that arrive through substitution groups
+(e.g. PLATEAU i-UR properties at CityGML's `_GenericApplicationPropertyOf…`
+hooks). Matching is namespace-exact.
+
+```rust
+use fastxml::schema::Schema;
+
+let schema = Schema::builder().add("building.xsd", xsd_bytes).resolve()?;
+let bldg = "http://www.opengis.net/citygml/building/2.0";
+let uro = "https://www.geospatial.jp/iur/uro/3.2";
+
+// By type name, or by global element name (`element_content_automaton`).
+let model = schema.type_content_automaton(bldg, "BuildingType").unwrap();
+let height = model.position_of(Some(bldg), "measuredHeight"); // Some(index)
+let ade = model.position_of(Some(uro), "buildingIDAttribute"); // the ADE hook's index
+assert!(height < ade);
+```
+
 ## XPath
 
 ### Basic Usage

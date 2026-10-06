@@ -316,16 +316,14 @@ impl XsdCompiler {
             namespace: match &any.namespace {
                 NamespaceConstraint::Any => WildcardNamespace::Any,
                 NamespaceConstraint::Other => WildcardNamespace::Other,
-                NamespaceConstraint::TargetNamespace => WildcardNamespace::List(vec![
-                    self.current_target_ns.clone().unwrap_or_default(),
-                ]),
+                NamespaceConstraint::TargetNamespace => {
+                    WildcardNamespace::List(vec![self.particle_doc.0.clone().unwrap_or_default()])
+                }
                 NamespaceConstraint::Local => WildcardNamespace::List(vec![String::new()]),
                 NamespaceConstraint::List(uris) => WildcardNamespace::List(
                     uris.iter()
                         .map(|u| match u.as_str() {
-                            "##targetNamespace" => {
-                                self.current_target_ns.clone().unwrap_or_default()
-                            }
+                            "##targetNamespace" => self.particle_doc.0.clone().unwrap_or_default(),
                             "##local" => String::new(),
                             other => other.to_string(),
                         })
@@ -345,7 +343,9 @@ impl XsdCompiler {
                 Occurs::Count(n) => Some(n),
                 Occurs::Unbounded => None,
             },
-            target_namespace: self.current_target_ns.clone(),
+            // The declaring document's target namespace (`##other` is
+            // judged against it), also inside a group expanded elsewhere.
+            target_namespace: self.particle_doc.0.clone(),
         }
     }
 

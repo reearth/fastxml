@@ -526,6 +526,13 @@ pub struct ElementDef {
     pub fixed: Option<String>,
     /// Identity constraints (unique, key, keyref)
     pub constraints: Vec<CompiledConstraint>,
+    /// The namespace URI an instance element matching this declaration has
+    /// (`Some("")` for no namespace). Compiled schemas always set it: a
+    /// global declaration is in the target namespace, a local one too when
+    /// it is qualified (`form` / `elementFormDefault`) and in no namespace
+    /// otherwise, a reference is in the referenced element's namespace.
+    /// `None` on definitions built by hand.
+    pub namespace: Option<String>,
 }
 
 impl ElementDef {
@@ -546,6 +553,7 @@ impl ElementDef {
             default: None,
             fixed: None,
             constraints: Vec::new(),
+            namespace: None,
         }
     }
 

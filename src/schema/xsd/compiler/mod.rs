@@ -7,7 +7,7 @@ mod cache;
 mod cycles;
 mod facet_checks;
 mod validity;
-pub(crate) use cache::inherited_wildcard;
+pub(crate) use cache::{build_complex_automaton, inherited_wildcard, substitution_index};
 mod particles;
 mod redefine;
 mod references;
@@ -53,6 +53,13 @@ pub struct XsdCompiler {
     /// documents, so QName references can be resolved against the owning
     /// document exactly as the reference checker does.
     pub(crate) current_doc_bindings: HashMap<String, String>,
+    /// Target namespace and `elementFormDefault` of the schema document that
+    /// declared the particles being compiled: the current document, or the
+    /// defining document while a named model group from another document is
+    /// expanded. Decides local element namespaces and wildcard targets.
+    pub(crate) particle_doc: (Option<String>, FormDefault),
+    /// `elementFormDefault` of the document defining each named model group.
+    pub(crate) group_forms: HashMap<NsName, FormDefault>,
 }
 
 impl XsdCompiler {
@@ -69,6 +76,8 @@ impl XsdCompiler {
             current_target_ns: None,
             current_target_prefix: None,
             current_doc_bindings: HashMap::new(),
+            particle_doc: (None, FormDefault::Unqualified),
+            group_forms: HashMap::new(),
         }
     }
 
@@ -245,7 +254,8 @@ impl XsdCompiler {
         for grp in &schema.groups {
             if let (Some(name), Some(particle)) = (&grp.name, &grp.particle) {
                 let key = NsName::new(ns.clone(), name.clone());
-                self.groups.insert(key, particle.clone());
+                self.groups.insert(key.clone(), particle.clone());
+                self.group_forms.insert(key, schema.element_form_default);
             }
         }
         for ag in &schema.attribute_groups {
@@ -264,6 +274,7 @@ impl XsdCompiler {
         // QName references can be resolved per-document (mirrors the reference
         // checker), independent of the last-wins accumulated prefix table.
         self.current_doc_bindings = schema.namespace_bindings.clone();
+        self.particle_doc = (schema.target_namespace.clone(), schema.element_form_default);
 
         // Find the prefix for THIS schema's target namespace.
         // First try the schema's OWN bindings (deterministic for each schema),
@@ -325,7 +336,8 @@ impl XsdCompiler {
         // Compile elements: global top-level elements are always qualified
         // in the target namespace regardless of elementFormDefault.
         for element in schema.elements {
-            let compiled = self.compile_element(&element)?;
+            let mut compiled = self.compile_element(&element)?;
+            compiled.namespace = Some(self.current_target_ns.clone().unwrap_or_default());
             let ns_name = NsName::new(
                 self.current_target_ns.clone().unwrap_or_default(),
                 element.name.clone(),
