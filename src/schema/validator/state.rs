@@ -38,8 +38,8 @@ pub(crate) struct ElementContext {
     /// validator only; the DOM path leaves it at 0). Kept so per-element
     /// resolution can be memoized by integer symbol rather than by string.
     pub name_sym: u32,
-    /// Element namespace URI (for future use)
-    #[allow(dead_code)]
+    /// Element namespace URI, resolved from the in-scope declarations
+    /// (`None` for no namespace). Used by streaming identity constraints.
     pub namespace: Option<Arc<str>>,
     /// Child element occurrence counts - SmallVec for inline storage (most elements have <8 children)
     pub child_counts: SmallVec<[(Arc<str>, u32); 8]>,
