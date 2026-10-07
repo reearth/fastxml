@@ -224,3 +224,171 @@ fn identity_xpath_prefix_declared_on_nested_element() {
         "streaming must report the duplicate key"
     );
 }
+
+/// Compiles `docs` (name, content) and returns whether `xml` is valid in
+/// both engines (which must agree).
+fn valid_in_both(docs: &[(&str, &str)], xml: &str) -> bool {
+    let mut builder = Schema::builder();
+    for (name, content) in docs {
+        builder = builder.add(*name, content.as_bytes().to_vec());
+    }
+    let schema = Arc::new(builder.resolve().expect("compile"));
+    let doc = fastxml::Parser::from(xml).parse().expect("parse");
+    let dom = fastxml::schema::Validator::from(&doc)
+        .schema(Arc::clone(&schema))
+        .run()
+        .expect("validate");
+    let streaming = fastxml::schema::Validator::from(xml)
+        .schema(schema)
+        .run()
+        .expect("validate");
+    assert_eq!(
+        dom.is_valid(),
+        streaming.is_valid(),
+        "engines disagree on {xml}: DOM {:?} / streaming {:?}",
+        dom.errors(),
+        streaming.errors()
+    );
+    dom.is_valid()
+}
+
+#[test]
+fn unprefixed_group_ref_uses_the_default_namespace_in_scope() {
+    let b = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:b" elementFormDefault="qualified">
+  <xs:group name="G"><xs:sequence><xs:element name="fromB" type="xs:int"/></xs:sequence></xs:group>
+</xs:schema>"#;
+    // urn:a's default namespace is urn:b, so `ref="G"` means urn:b's G.
+    let a = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="urn:b" targetNamespace="urn:a" elementFormDefault="qualified">
+  <xs:import namespace="urn:b" schemaLocation="b.xsd"/>
+  <xs:element name="root"><xs:complexType><xs:sequence><xs:group ref="G"/></xs:sequence></xs:complexType></xs:element>
+</xs:schema>"#;
+    let docs = [("a.xsd", a), ("b.xsd", b)];
+    assert!(valid_in_both(
+        &docs,
+        r#"<a:root xmlns:a="urn:a" xmlns:b="urn:b"><b:fromB>1</b:fromB></a:root>"#
+    ));
+    assert!(!valid_in_both(
+        &docs,
+        r#"<a:root xmlns:a="urn:a" xmlns:b="urn:b"><b:fromB>x</b:fromB></a:root>"#
+    ));
+}
+
+#[test]
+fn same_local_attribute_groups_from_two_namespaces_both_apply() {
+    let a = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:a">
+  <xs:attributeGroup name="AG"><xs:attribute name="x" type="xs:int"/></xs:attributeGroup>
+</xs:schema>"#;
+    let b = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:b">
+  <xs:attributeGroup name="AG"><xs:attribute name="y" type="xs:int"/></xs:attributeGroup>
+</xs:schema>"#;
+    let m = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:a="urn:a" xmlns:b="urn:b" targetNamespace="urn:m">
+  <xs:import namespace="urn:a" schemaLocation="a.xsd"/>
+  <xs:import namespace="urn:b" schemaLocation="b.xsd"/>
+  <xs:element name="e">
+    <xs:complexType>
+      <xs:attributeGroup ref="a:AG"/>
+      <xs:attributeGroup ref="b:AG"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>"#;
+    let docs = [("m.xsd", m), ("a.xsd", a), ("b.xsd", b)];
+    assert!(valid_in_both(
+        &docs,
+        r#"<m:e xmlns:m="urn:m" x="1" y="2"/>"#
+    ));
+    assert!(!valid_in_both(
+        &docs,
+        r#"<m:e xmlns:m="urn:m" x="1" y="no"/>"#
+    ));
+}
+
+#[test]
+fn imported_group_resolves_unprefixed_refs_in_its_own_document() {
+    // urn:b's group refers to its own `e` and `T` without a prefix or a
+    // default namespace; urn:a has a same-named, differently-typed `T`.
+    let b = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:b="urn:b" targetNamespace="urn:b" elementFormDefault="qualified">
+  <xs:simpleType name="T"><xs:restriction base="xs:int"/></xs:simpleType>
+  <xs:element name="e" type="xs:int"/>
+  <xs:group name="G">
+    <xs:sequence>
+      <xs:element ref="b:e"/>
+      <xs:element name="v" type="b:T"/>
+    </xs:sequence>
+  </xs:group>
+</xs:schema>"#;
+    // The same group, written with unprefixed references.
+    let b_unprefixed = b
+        .replace(r#"ref="b:e""#, r#"ref="e""#)
+        .replace(r#"type="b:T""#, r#"type="T""#);
+    let a = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:b="urn:b" targetNamespace="urn:a" elementFormDefault="qualified">
+  <xs:import namespace="urn:b" schemaLocation="b.xsd"/>
+  <xs:simpleType name="T"><xs:restriction base="xs:boolean"/></xs:simpleType>
+  <xs:element name="e" type="xs:boolean"/>
+  <xs:element name="root"><xs:complexType><xs:sequence><xs:group ref="b:G"/></xs:sequence></xs:complexType></xs:element>
+</xs:schema>"#;
+    for b in [b.to_string(), b_unprefixed] {
+        let docs = [("a.xsd", a), ("b.xsd", b.as_str())];
+        let ok = r#"<a:root xmlns:a="urn:a" xmlns:b="urn:b"><b:e>1</b:e><b:v>2</b:v></a:root>"#;
+        let bad = r#"<a:root xmlns:a="urn:a" xmlns:b="urn:b"><b:e>1</b:e><b:v>true</b:v></a:root>"#;
+        assert!(valid_in_both(&docs, ok), "{b}");
+        assert!(!valid_in_both(&docs, bad), "{b}");
+    }
+}
+
+#[test]
+fn imported_attribute_group_resolves_nested_refs_in_its_own_document() {
+    // urn:b's G refers to its own H without a prefix; urn:a also has an H.
+    let b = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:b">
+  <xs:attributeGroup name="H"><xs:attribute name="z" type="xs:int"/></xs:attributeGroup>
+  <xs:attributeGroup name="G"><xs:attributeGroup ref="H"/></xs:attributeGroup>
+</xs:schema>"#;
+    let a = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:b="urn:b" targetNamespace="urn:a">
+  <xs:import namespace="urn:b" schemaLocation="b.xsd"/>
+  <xs:attributeGroup name="H"><xs:attribute name="w" type="xs:int"/></xs:attributeGroup>
+  <xs:element name="root"><xs:complexType><xs:attributeGroup ref="b:G"/></xs:complexType></xs:element>
+</xs:schema>"#;
+    let docs = [("a.xsd", a), ("b.xsd", b)];
+    assert!(valid_in_both(&docs, r#"<a:root xmlns:a="urn:a" z="1"/>"#));
+    assert!(!valid_in_both(&docs, r#"<a:root xmlns:a="urn:a" w="1"/>"#));
+}
+
+#[test]
+fn selector_and_field_keep_their_own_prefix_bindings() {
+    // The field redeclares `p` to a different namespace than the selector's.
+    let xsd = format!(
+        r#"<xs:schema xmlns:xs="{XS}" targetNamespace="urn:t" elementFormDefault="qualified">
+  <xs:import namespace="urn:c" schemaLocation="c.xsd"/>
+  <xs:element name="root" xmlns:p="urn:t" xmlns:c="urn:c">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="item" maxOccurs="unbounded">
+          <xs:complexType><xs:sequence><xs:element ref="c:code"/></xs:sequence></xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+    <xs:key name="k">
+      <xs:selector xpath="p:item"/>
+      <xs:field xpath="p:code" xmlns:p="urn:c"/>
+    </xs:key>
+  </xs:element>
+</xs:schema>"#
+    );
+    let c = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:c">
+  <xs:element name="code" type="xs:string"/>
+</xs:schema>"#;
+    let schema = Arc::new(
+        Schema::builder()
+            .add("t.xsd", xsd.as_bytes().to_vec())
+            .add("c.xsd", c.as_bytes().to_vec())
+            .resolve()
+            .expect("compile"),
+    );
+    // Default namespaces only, so only the schema's bindings resolve `p`.
+    let xml = r#"<root xmlns="urn:t"><item><code xmlns="urn:c">a</code></item><item><code xmlns="urn:c">a</code></item></root>"#;
+    let doc = fastxml::Parser::from(xml).parse().expect("parse");
+    let dom = fastxml::schema::Validator::from(&doc)
+        .schema(schema)
+        .run()
+        .expect("validate");
+    assert!(!dom.is_valid(), "DOM must report the duplicate key");
+}

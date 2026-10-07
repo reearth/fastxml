@@ -1025,11 +1025,15 @@ pub struct CompiledConstraint {
     pub field_xpaths: Vec<String>,
     /// For keyref: the key being referenced
     pub refer: Option<String>,
-    /// Namespace bindings (prefix -> URI) in scope on the selector and
-    /// field elements in the schema document. They take precedence over the
-    /// schema-wide prefix table when the XPaths are evaluated; empty on
-    /// constraints built by hand.
-    pub namespaces: Vec<(String, String)>,
+    /// Namespace bindings (prefix -> URI) in scope on the selector element
+    /// in the schema document. They take precedence over the schema-wide
+    /// prefix table when the selector is evaluated; empty on constraints
+    /// built by hand.
+    pub selector_namespaces: Vec<(String, String)>,
+    /// Namespace bindings in scope on each field element, index-aligned
+    /// with [`field_xpaths`](Self::field_xpaths) (missing entries mean
+    /// none).
+    pub field_namespaces: Vec<Vec<(String, String)>>,
 }
 
 impl CompiledConstraint {
@@ -1041,7 +1045,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: None,
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -1053,7 +1058,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: None,
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -1069,7 +1075,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: Some(refer.into()),
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 

@@ -418,9 +418,12 @@ impl XsdCompiler {
         let ns: std::sync::Arc<str> = match qname.prefix.as_deref().map(str::trim) {
             Some("xml") => crate::namespace::common::XML_NS.into(),
             Some(_) => qname.bound_namespace(&self.current_doc_bindings)?.into(),
+            // With no default namespace, the defining document's target
+            // namespace: the current document, or the document a named group
+            // or attribute group being expanded comes from.
             None => match qname.bound_namespace(&self.current_doc_bindings) {
                 Some(d) => d.into(),
-                None => self.current_target_ns.as_deref().unwrap_or("").into(),
+                None => self.particle_doc.0.as_deref().unwrap_or("").into(),
             },
         };
         Some(NsName::new(ns, local))

@@ -181,17 +181,22 @@ impl XsdCompiler {
 
     /// The `(namespace, local)` key a group-ref QName refers to: an explicit
     /// prefix is resolved against the declarations in scope where it was
-    /// written, falling back to the accumulated namespace bindings; an
-    /// unprefixed name uses the target namespace of the document whose
-    /// particles are being compiled (the defining document inside a group
-    /// expanded from another document).
+    /// written, falling back to the accumulated namespace bindings. An
+    /// unprefixed name takes the default namespace in scope when a group
+    /// exists there, otherwise (leniently) the target namespace of the
+    /// document whose particles are being compiled: the defining document
+    /// inside a group expanded from another document.
     fn group_ref_key(&self, name: &QName) -> NsName {
+        let local = name.local.as_str();
         let ns_uri = match &name.prefix {
             Some(_) => name.bound_namespace(&self.namespace_bindings),
-            None => self.particle_doc.0.as_deref(),
+            None => name
+                .bound_namespace(&self.namespace_bindings)
+                .filter(|ns| self.groups.contains_key(&NsName::new(*ns, local)))
+                .or(self.particle_doc.0.as_deref()),
         }
         .unwrap_or_default();
-        NsName::new(ns_uri, name.local.clone())
+        NsName::new(ns_uri, local)
     }
 
     /// Runs `f` with the particle-document context of the document that
@@ -325,7 +330,8 @@ impl XsdCompiler {
                 selector_xpath: ic.selector.clone(),
                 field_xpaths: ic.fields.clone(),
                 refer: ic.refer.as_ref().map(|q| q.local.clone()),
-                namespaces: ic.namespaces.clone(),
+                selector_namespaces: ic.selector_namespaces.clone(),
+                field_namespaces: ic.field_namespaces.clone(),
             });
         }
 

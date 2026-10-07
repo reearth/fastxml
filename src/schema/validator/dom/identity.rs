@@ -43,7 +43,7 @@ pub(crate) fn validate_identity_constraints(
 
         for selected in select_nodes(
             schema,
-            &task.constraint.namespaces,
+            &task.constraint.selector_namespaces,
             doc,
             &task.node,
             &task.constraint.selector_xpath,
@@ -52,10 +52,14 @@ pub(crate) fn validate_identity_constraints(
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| {
+                .enumerate()
+                .map(|(i, f)| {
                     field_value(
                         schema,
-                        &task.constraint.namespaces,
+                        task.constraint
+                            .field_namespaces
+                            .get(i)
+                            .map_or(&[][..], Vec::as_slice),
                         doc,
                         &selected,
                         f,
@@ -125,7 +129,7 @@ pub(crate) fn validate_identity_constraints(
 
         for selected in select_nodes(
             schema,
-            &task.constraint.namespaces,
+            &task.constraint.selector_namespaces,
             doc,
             &task.node,
             &task.constraint.selector_xpath,
@@ -134,10 +138,14 @@ pub(crate) fn validate_identity_constraints(
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| {
+                .enumerate()
+                .map(|(i, f)| {
                     field_value(
                         schema,
-                        &task.constraint.namespaces,
+                        task.constraint
+                            .field_namespaces
+                            .get(i)
+                            .map_or(&[][..], Vec::as_slice),
                         doc,
                         &selected,
                         f,

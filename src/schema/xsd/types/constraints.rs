@@ -26,9 +26,12 @@ pub struct XsdIdentityConstraint {
     pub fields: Vec<String>,
     /// For keyref: the key being referenced
     pub refer: Option<QName>,
-    /// Namespace declarations in scope on the selector and field elements
-    /// (prefix -> URI), against which their XPath prefixes resolve.
-    pub namespaces: Vec<(String, String)>,
+    /// Namespace declarations (prefix -> URI) in scope on the selector
+    /// element, against which the selector's XPath prefixes resolve.
+    pub selector_namespaces: Vec<(String, String)>,
+    /// Namespace declarations in scope on each field element, index-aligned
+    /// with [`fields`](Self::fields).
+    pub field_namespaces: Vec<Vec<(String, String)>>,
 }
 
 impl XsdIdentityConstraint {
@@ -40,7 +43,8 @@ impl XsdIdentityConstraint {
             selector: selector.into(),
             fields: Vec::new(),
             refer: None,
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -52,7 +56,8 @@ impl XsdIdentityConstraint {
             selector: selector.into(),
             fields: Vec::new(),
             refer: None,
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -64,7 +69,8 @@ impl XsdIdentityConstraint {
             selector: selector.into(),
             fields: Vec::new(),
             refer: Some(refer),
-            namespaces: Vec::new(),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 

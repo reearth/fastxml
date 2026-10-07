@@ -28,21 +28,16 @@ fn parse_derivation_control(value: &str) -> DerivationControl {
     DerivationControl::List(types)
 }
 
-/// Adds `scope`'s non-default bindings to `out` (prefix -> URI), replacing a
-/// prefix already present.
-fn merge_bindings<'a>(
-    out: &mut Vec<(String, String)>,
-    scope: impl Iterator<Item = (&'a String, &'a String)>,
-) {
-    for (prefix, uri) in scope {
-        if prefix.is_empty() {
-            continue;
-        }
-        match out.iter_mut().find(|(p, _)| p == prefix) {
-            Some(entry) => entry.1 = uri.clone(),
-            None => out.push((prefix.clone(), uri.clone())),
-        }
-    }
+/// The prefixed bindings (prefix -> URI) of an in-scope declaration map,
+/// sorted by prefix. XPath name tests never use the default namespace.
+fn prefixed_bindings(scope: &HashMap<String, String>) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = scope
+        .iter()
+        .filter(|(prefix, _)| !prefix.is_empty())
+        .map(|(prefix, uri)| (prefix.clone(), uri.clone()))
+        .collect();
+    out.sort();
+    out
 }
 
 impl XsdParser {
@@ -658,7 +653,7 @@ impl XsdParser {
             match frame {
                 StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
                     c.selector = xpath;
-                    merge_bindings(&mut c.namespaces, scope.iter());
+                    c.selector_namespaces = prefixed_bindings(&scope);
                     break;
                 }
                 _ => continue,
@@ -681,7 +676,7 @@ impl XsdParser {
             match frame {
                 StackFrame::Unique(c) | StackFrame::Key(c) | StackFrame::KeyRef(c) => {
                     c.fields.push(xpath);
-                    merge_bindings(&mut c.namespaces, scope.iter());
+                    c.field_namespaces.push(prefixed_bindings(&scope));
                     break;
                 }
                 _ => continue,
