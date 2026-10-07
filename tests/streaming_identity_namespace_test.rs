@@ -140,3 +140,41 @@ fn unprefixed_steps_still_match_by_local_name() {
     let s = schema(&unique("item", "@id"));
     check(&s, REAL_DUP, false);
 }
+
+#[test]
+fn child_axis_with_whitespace_is_namespace_aware() {
+    // The identity-XPath grammar allows whitespace around `child::`.
+    for selector in ["child ::t:item", "child:: t:item", "child :: t:item"] {
+        let s = schema(&unique(selector, "@id"));
+        check(&s, FOREIGN_DUP, true);
+        check(&s, REAL_DUP, false);
+    }
+}
+
+#[test]
+fn rebound_instance_prefix_is_matched_by_namespace() {
+    // The second item spells its prefix `t` but binds it to urn:o: it is not
+    // the schema's t:item, in either engine.
+    let s = schema(&unique("t:item", "@id"));
+    check(
+        &s,
+        r#"<t:root xmlns:t="urn:t"><t:item id="a"/><t:item xmlns:t="urn:o" id="a"/></t:root>"#,
+        true,
+    );
+}
+
+#[test]
+fn xml_prefix_is_bound_without_a_declaration() {
+    // `xml` always means the XML namespace, in the schema and the instance.
+    let s = schema(&unique("xml:item", "@id"));
+    check(
+        &s,
+        r#"<t:root xmlns:t="urn:t" xmlns:o="urn:o"><xml:item id="a"/><o:item id="a"/></t:root>"#,
+        true,
+    );
+    check(
+        &s,
+        r#"<t:root xmlns:t="urn:t"><xml:item id="a"/><xml:item id="a"/></t:root>"#,
+        false,
+    );
+}

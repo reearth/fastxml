@@ -78,6 +78,7 @@ pub(crate) fn parse_selector(
     xpath: &str,
     resolve: &dyn Fn(&str) -> Option<String>,
 ) -> Option<Vec<SelectorPath>> {
+    let xpath = crate::schema::xsd::identity_xpath::strip_whitespace(xpath);
     let mut paths = Vec::new();
     for alt in xpath.split('|') {
         let alt = alt.trim();
@@ -111,7 +112,8 @@ pub(crate) fn parse_field(
     xpath: &str,
     resolve: &dyn Fn(&str) -> Option<String>,
 ) -> Option<FieldPath> {
-    let xpath = xpath.trim();
+    let xpath = crate::schema::xsd::identity_xpath::strip_whitespace(xpath);
+    let xpath = xpath.as_str();
     if xpath == "." {
         return Some(FieldPath {
             steps: Vec::new(),
@@ -180,8 +182,12 @@ pub(crate) fn attr_matches(attr_name: &str, pattern: &str) -> bool {
     pattern == "*" || attr_name.rsplit(':').next().unwrap_or(attr_name) == pattern
 }
 
-/// The URI `prefix` is bound to in `scoped` (prefix -> URI pairs).
+/// The URI `prefix` is bound to in `scoped` (prefix -> URI pairs). `xml` is
+/// always bound to the XML namespace.
 fn scoped_prefix(scoped: &[(String, String)], prefix: &str) -> Option<String> {
+    if prefix == "xml" {
+        return Some(crate::namespace::common::XML_NS.to_string());
+    }
     scoped
         .iter()
         .find(|(p, _)| p == prefix)
