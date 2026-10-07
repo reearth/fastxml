@@ -412,9 +412,11 @@ impl CompiledSchema {
     /// the chain cannot be resolved to a simple type.
     pub fn simple_content_value_type<'a>(&'a self, c: &'a ComplexType) -> Option<&'a SimpleType> {
         let mut current = c;
-        // Derivation chains are acyclic in a valid schema; the bound guards
-        // against a cyclic one.
-        for _ in 0..32 {
+        // Chains have no depth limit, but an acyclic one visits each type at
+        // most once, so a walk longer than the type count means a cycle
+        // (which compilation normally rejects). The `+ 1` covers an
+        // anonymous starting type.
+        for _ in 0..=self.types_ns.len() {
             if !matches!(current.content, ContentModel::SimpleContent { .. }) {
                 return None;
             }

@@ -94,3 +94,31 @@ fn inline_restriction_checks_inherited_value_type() {
         false,
     );
 }
+
+#[test]
+fn long_restriction_chain_checks_inherited_value_type() {
+    // Derivation chains have no depth limit in XSD. The base carries no
+    // attributes, so only the value type is inherited down the chain.
+    let mut types = String::from(
+        r#"<xs:complexType name="Plain"><xs:simpleContent><xs:extension base="xs:double"/></xs:simpleContent></xs:complexType>"#,
+    );
+    let mut base = "t:Plain".to_string();
+    for i in 0..40 {
+        types.push_str(&format!(
+            r#"<xs:complexType name="R{i}"><xs:simpleContent><xs:restriction base="{base}"/></xs:simpleContent></xs:complexType>"#
+        ));
+        base = format!("t:R{i}");
+    }
+    let xsd = XSD.replace(
+        r#"<xs:element name="measure""#,
+        &format!(r#"{types}<xs:element name="deep" type="{base}"/><xs:element name="measure""#),
+    );
+    let check_deep = |text: &str| {
+        let xml = format!(r#"<t:deep xmlns:t="urn:t">{text}</t:deep>"#);
+        let (dom, streaming) = common::validate_all(&xml, &xsd);
+        assert_eq!(dom.is_valid(), streaming.is_valid(), "{xml}");
+        dom.is_valid()
+    };
+    assert!(check_deep("1.5"));
+    assert!(!check_deep("tall"));
+}

@@ -57,8 +57,10 @@ impl CompiledSchema {
             })
         };
         let mut elem = element(namespace_uri, local_name)?;
-        // Bounded walk up the substitution chain for an untyped element.
-        for _ in 0..16 {
+        // Walk up the substitution chain of an untyped element. Chains have
+        // no depth limit, but an acyclic one visits each global element at
+        // most once, so a longer walk means a cycle.
+        for _ in 0..self.elements_ns.len() {
             if let Some(type_ns) = &elem.type_ns {
                 return self.type_content_automaton(&type_ns.namespace_uri, &type_ns.local_name);
             }

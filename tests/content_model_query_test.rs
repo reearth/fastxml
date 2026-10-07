@@ -320,3 +320,26 @@ fn chameleon_components_are_queried_in_no_namespace() {
     let model = schema.type_content_automaton("", "CT").expect("CT");
     assert_eq!(model.position_of(None, "a"), Some(0));
 }
+
+#[test]
+fn long_substitution_chain_inherits_the_head_type() {
+    // A chain of untyped substitution members has no depth limit in XSD.
+    let mut decls = String::from(
+        r#"<xs:complexType name="HeadType"><xs:sequence><xs:element name="c" type="xs:string"/></xs:sequence></xs:complexType>
+  <xs:element name="E0" type="t:HeadType"/>"#,
+    );
+    for i in 1..=24 {
+        decls.push_str(&format!(
+            r#"<xs:element name="E{i}" substitutionGroup="t:E{}"/>"#,
+            i - 1
+        ));
+    }
+    let xsd = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:t="urn:t" targetNamespace="urn:t" elementFormDefault="qualified">{decls}</xs:schema>"#
+    );
+    let schema = Schema::from_xsd(xsd.as_bytes()).expect("compile");
+    let model = schema
+        .element_content_automaton("urn:t", "E24")
+        .expect("E24 takes HeadType through the chain");
+    assert_eq!(model.position_of(Some("urn:t"), "c"), Some(0));
+}
