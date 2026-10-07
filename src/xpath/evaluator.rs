@@ -524,23 +524,26 @@ impl<'a> XPathEvaluator<'a> {
                 // the prefix's namespace.
                 let wildcard = local == "*";
 
-                // Match by prefix and local name
-                if node_prefix == *prefix && (wildcard || node_name == *local) {
-                    return Ok(true);
-                }
+                let local_matches = wildcard || node_name == *local;
+                let lexical_match = node_prefix == *prefix && local_matches;
 
-                // Try namespace resolution
-                let expected_uri = self.resolver.resolve_prefix(prefix).ok_or_else(|| {
-                    NamespaceError::UnknownPrefix {
+                // A registered prefix denotes a namespace: compare URIs, so
+                // the same prefix spelling bound to another namespace in the
+                // document does not match. The spelling only decides when
+                // the node's namespace is unknown.
+                let Some(expected_uri) = self.resolver.resolve_prefix(prefix) else {
+                    if lexical_match {
+                        return Ok(true);
+                    }
+                    return Err(NamespaceError::UnknownPrefix {
                         prefix: prefix.clone(),
                     }
-                })?;
-
-                if let Some(node_uri) = node.get_namespace_uri() {
-                    return Ok(node_uri == expected_uri && (wildcard || node_name == *local));
+                    .into());
+                };
+                match node.get_namespace_uri() {
+                    Some(node_uri) => Ok(node_uri == expected_uri && local_matches),
+                    None => Ok(lexical_match),
                 }
-
-                Ok(false)
             }
         }
     }
