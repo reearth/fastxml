@@ -74,6 +74,14 @@ pub(crate) fn validate_identity_xpath(
 /// Whether `c` can start an NCName. Non-ASCII characters are letters as far
 /// as this tokenizer is concerned; `PrimitiveKind::Ncname` does the precise
 /// per-character validation afterwards.
+/// Removes the whitespace the selector/field grammar permits between tokens
+/// (`child :: a`, `a | b`, `. //.`). The grammar has no string literals and
+/// no token whose meaning depends on whitespace, so the result denotes the
+/// same expression in the compact form both engines evaluate.
+pub(crate) fn strip_whitespace(xpath: &str) -> String {
+    xpath.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 fn is_name_start(c: char) -> bool {
     c.is_alphabetic() || c == '_' || !c.is_ascii()
 }

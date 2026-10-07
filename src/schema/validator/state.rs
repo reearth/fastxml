@@ -313,6 +313,10 @@ impl ValidationState {
             Some(p) if !p.is_empty() => p,
             _ => "",
         };
+        // `xml` is bound without a declaration.
+        if key == "xml" {
+            return Some(Arc::from(crate::namespace::common::XML_NS));
+        }
         if let Some((_, cached)) = self.ns_resolution_cache.iter().find(|(p, _)| p == key) {
             return cached.clone();
         }
