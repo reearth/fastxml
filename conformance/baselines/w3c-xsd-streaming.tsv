@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38296	fail=1106	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38295	fail=1107	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -458,6 +458,7 @@ instance-valid	groupJ021v::msMeta/../msData/group/groupJ021.xml	fail	expected va
 instance-valid	groupL001v::msMeta/../msData/group/groupL001.xml	fail	expected valid but validator reported errors
 instance-valid	groupL004v::msMeta/../msData/group/groupL004.xml	fail	expected valid but validator reported errors
 instance-valid	groupL009v::msMeta/../msData/group/groupL009.xml	fail	expected valid but validator reported errors
+instance-valid	idG022::msMeta/../msData/identityConstraint/idG022.xml	fail	expected valid but validator reported errors
 instance-valid	idG029::msMeta/../msData/identityConstraint/idG029.xml	fail	expected valid but validator reported errors
 instance-valid	idL102::msMeta/../msData/identityConstraint/idL102.xml	fail	expected valid but validator reported errors
 instance-valid	idconstrdefs00201m::sunMeta/../sunData/ElemDecl/identityConstraintDefs/idConstrDefs00201m/idConstrDefs00201m1_p.xml	fail	expected valid but validator reported errors
