@@ -179,32 +179,54 @@ impl XsdCompiler {
         Ok(elements)
     }
 
-    /// Resolves a group-ref QName to the referenced group's particle.
-    ///
-    /// The reference is resolved by namespace URI: an explicit prefix is mapped
-    /// through the accumulated namespace bindings, otherwise the current target
-    /// namespace is used. Returns a clone of the group's particle, if found.
-    fn resolve_group_particle(&self, name: &QName) -> Option<XsdParticle> {
+    /// The `(namespace, local)` key a group-ref QName refers to: an explicit
+    /// prefix is resolved against the declarations in scope where it was
+    /// written, falling back to the accumulated namespace bindings. An
+    /// unprefixed name takes the default namespace in scope when a group
+    /// exists there, otherwise (leniently) the target namespace of the
+    /// document whose particles are being compiled: the defining document
+    /// inside a group expanded from another document.
+    fn group_ref_key(&self, name: &QName) -> NsName {
+        let local = name.local.as_str();
         let ns_uri = match &name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
+            Some(_) => name.bound_namespace(&self.namespace_bindings),
+            None => name
+                .bound_namespace(&self.namespace_bindings)
+                .filter(|ns| self.groups.contains_key(&NsName::new(*ns, local)))
+                .or(self.particle_doc.0.as_deref()),
         }
         .unwrap_or_default();
-        self.groups
-            .get(&NsName::new(ns_uri, name.local.clone()))
-            .cloned()
+        NsName::new(ns_uri, local)
+    }
+
+    /// Runs `f` with the particle-document context of the document that
+    /// defines the group `key`, so its local elements and wildcards take
+    /// that document's target namespace and `elementFormDefault` even when
+    /// the group is referenced from another document.
+    fn in_group_doc<T>(&mut self, key: &NsName, f: impl FnOnce(&mut Self) -> T) -> T {
+        let form = self
+            .group_forms
+            .get(key)
+            .copied()
+            .unwrap_or(self.particle_doc.1);
+        let ns = Some(key.namespace_uri.to_string()).filter(|ns| !ns.is_empty());
+        let saved = std::mem::replace(&mut self.particle_doc, (ns, form));
+        let out = f(self);
+        self.particle_doc = saved;
+        out
+    }
+
+    /// Resolves a group-ref QName to the referenced group's particle.
+    /// Returns a clone of the group's particle, if found.
+    fn resolve_group_particle(&self, name: &QName) -> Option<XsdParticle> {
+        self.groups.get(&self.group_ref_key(name)).cloned()
     }
 
     /// Expands a `<xs:group ref>` into its member element definitions,
     /// propagating the reference site's own occurrence bounds and guarding
     /// against cyclic group references.
     fn expand_group_ref_to_elements(&mut self, group_ref: &XsdGroupRef) -> Result<Vec<ElementDef>> {
-        let ns_uri = match &group_ref.name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
-        }
-        .unwrap_or_default();
-        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+        let key = self.group_ref_key(&group_ref.name);
 
         let Some(particle) = self.groups.get(&key).cloned() else {
             tracing::debug!("Unresolved group reference: {}", group_ref.name);
@@ -215,7 +237,7 @@ impl XsdCompiler {
         if !self.group_expansion.insert(key.clone()) {
             return Ok(Vec::new());
         }
-        let result = self.compile_particle_to_elements(&particle);
+        let result = self.in_group_doc(&key, |c| c.compile_particle_to_elements(&particle));
         self.group_expansion.remove(&key);
         let mut elements = result?;
 
@@ -251,12 +273,24 @@ impl XsdCompiler {
         if let Some(ref_qname) = &elem.ref_ {
             let mut compiled = ElementDef::new(ref_qname.local.clone());
             compiled.ref_ns = self.resolve_qname_ns(ref_qname);
+            compiled.namespace = compiled
+                .ref_ns
+                .as_ref()
+                .map(|r| r.namespace_uri.to_string());
             compiled.min_occurs = elem.min_occurs.to_option().unwrap_or(1);
             compiled.max_occurs = elem.max_occurs.to_option();
             return Ok(compiled);
         }
 
         let mut compiled = ElementDef::new(&elem.name);
+        // A local declaration is in the declaring document's target
+        // namespace when qualified, in no namespace otherwise (global
+        // declarations are re-qualified by the caller).
+        let (doc_ns, form_default) = &self.particle_doc;
+        compiled.namespace = Some(match elem.form.unwrap_or(*form_default) {
+            FormDefault::Qualified => doc_ns.clone().unwrap_or_default(),
+            FormDefault::Unqualified => String::new(),
+        });
 
         // Set type reference
         if let Some(type_ref) = &elem.type_ref {
@@ -296,6 +330,8 @@ impl XsdCompiler {
                 selector_xpath: ic.selector.clone(),
                 field_xpaths: ic.fields.clone(),
                 refer: ic.refer.as_ref().map(|q| q.local.clone()),
+                selector_namespaces: ic.selector_namespaces.clone(),
+                field_namespaces: ic.field_namespaces.clone(),
             });
         }
 
@@ -408,12 +444,7 @@ impl XsdCompiler {
     /// Resolves a group reference into its particle tree, applying the
     /// reference site's occurrence bounds to the group compositor.
     fn compile_group_ref_tree(&mut self, group_ref: &XsdGroupRef) -> Result<Option<Particle>> {
-        let ns_uri = match &group_ref.name.prefix {
-            Some(prefix) => self.namespace_bindings.get(prefix).cloned(),
-            None => self.current_target_ns.clone(),
-        }
-        .unwrap_or_default();
-        let key = NsName::new(ns_uri, group_ref.name.local.clone());
+        let key = self.group_ref_key(&group_ref.name);
 
         let Some(particle) = self.groups.get(&key).cloned() else {
             return Ok(None);
@@ -422,7 +453,7 @@ impl XsdCompiler {
         if !self.group_expansion.insert(key.clone()) {
             return Ok(None);
         }
-        let result = self.compile_particle_tree(&particle);
+        let result = self.in_group_doc(&key, |c| c.compile_particle_tree(&particle));
         self.group_expansion.remove(&key);
         let Some(inner) = result? else {
             return Ok(None);

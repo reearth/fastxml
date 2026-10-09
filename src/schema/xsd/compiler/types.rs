@@ -316,16 +316,14 @@ impl XsdCompiler {
             namespace: match &any.namespace {
                 NamespaceConstraint::Any => WildcardNamespace::Any,
                 NamespaceConstraint::Other => WildcardNamespace::Other,
-                NamespaceConstraint::TargetNamespace => WildcardNamespace::List(vec![
-                    self.current_target_ns.clone().unwrap_or_default(),
-                ]),
+                NamespaceConstraint::TargetNamespace => {
+                    WildcardNamespace::List(vec![self.particle_doc.0.clone().unwrap_or_default()])
+                }
                 NamespaceConstraint::Local => WildcardNamespace::List(vec![String::new()]),
                 NamespaceConstraint::List(uris) => WildcardNamespace::List(
                     uris.iter()
                         .map(|u| match u.as_str() {
-                            "##targetNamespace" => {
-                                self.current_target_ns.clone().unwrap_or_default()
-                            }
+                            "##targetNamespace" => self.particle_doc.0.clone().unwrap_or_default(),
                             "##local" => String::new(),
                             other => other.to_string(),
                         })
@@ -345,7 +343,9 @@ impl XsdCompiler {
                 Occurs::Count(n) => Some(n),
                 Occurs::Unbounded => None,
             },
-            target_namespace: self.current_target_ns.clone(),
+            // The declaring document's target namespace (`##other` is
+            // judged against it), also inside a group expanded elsewhere.
+            target_namespace: self.particle_doc.0.clone(),
         }
     }
 
@@ -520,54 +520,79 @@ impl XsdCompiler {
         wildcard: &mut Option<WildcardConstraint>,
         visited: &mut std::collections::HashSet<String>,
     ) -> Result<()> {
-        if !visited.insert(ag_ref.local.clone()) {
+        let Some((key, group)) = self.resolve_attribute_group(ag_ref) else {
+            // Unresolvable reference (e.g. xs:redefine, which is not
+            // supported): the attribute model is incomplete, so admit
+            // unknown attributes leniently instead of reporting false "not
+            // allowed" errors.
+            if wildcard.is_none() {
+                *wildcard = Some(WildcardConstraint {
+                    namespace: WildcardNamespace::Any,
+                    process_contents: ProcessContents::Lax,
+                    min_occurs: 0,
+                    max_occurs: None,
+                    target_namespace: None,
+                });
+            }
+            return Ok(());
+        };
+        // Cycle guard on the expanded name: `a:G` and `b:G` are different
+        // groups.
+        if !visited.insert(format!("{{{}}}{}", key.namespace_uri, key.local_name)) {
             return Ok(());
         }
-        let ns = self.current_target_ns.clone().unwrap_or_default();
-        let key = crate::schema::types::NsName::new(ns, ag_ref.local.clone());
-        let group = match self.attribute_groups.get(&key) {
-            Some(g) => g.clone(),
-            None => {
-                // Fall back to any namespace with the same local name.
-                match self
-                    .attribute_groups
-                    .iter()
-                    .find(|(k, _)| *k.local_name == *ag_ref.local)
-                    .map(|(_, g)| g.clone())
-                {
-                    Some(g) => g,
-                    None => {
-                        // Unresolvable reference (e.g. xs:redefine, which is
-                        // not supported): the attribute model is incomplete,
-                        // so admit unknown attributes leniently instead of
-                        // reporting false "not allowed" errors.
-                        if wildcard.is_none() {
-                            *wildcard = Some(WildcardConstraint {
-                                namespace: WildcardNamespace::Any,
-                                process_contents: ProcessContents::Lax,
-                                min_occurs: 0,
-                                max_occurs: None,
-                                target_namespace: None,
-                            });
-                        }
-                        return Ok(());
-                    }
-                }
+        // Members and nested references resolve in the defining document's
+        // context, also when the group is used from another document.
+        let doc_ns = Some(key.namespace_uri.to_string()).filter(|ns| !ns.is_empty());
+        let saved = std::mem::replace(&mut self.particle_doc.0, doc_ns);
+        let result = (|| -> Result<()> {
+            for attr in &group.attributes {
+                out.push(self.compile_attribute(attr)?);
             }
-        };
-        for attr in &group.attributes {
-            out.push(self.compile_attribute(attr)?);
+            if wildcard.is_none() {
+                *wildcard = group
+                    .any_attribute
+                    .as_ref()
+                    .map(|a| self.compile_wildcard(a));
+            }
+            for nested in &group.attribute_groups {
+                self.expand_attribute_group(nested, out, wildcard, visited)?;
+            }
+            Ok(())
+        })();
+        self.particle_doc.0 = saved;
+        result
+    }
+
+    /// Resolves an attribute-group reference to its key and definition. A
+    /// prefixed reference names its namespace (resolved against the
+    /// declarations in scope where it was written). An unprefixed one takes
+    /// the default namespace in scope when a group exists there, otherwise
+    /// the target namespace of the document being compiled. As a lenient
+    /// fallback, any namespace with the same local name is accepted.
+    fn resolve_attribute_group(
+        &self,
+        ag_ref: &QName,
+    ) -> Option<(crate::schema::types::NsName, XsdAttributeGroup)> {
+        use crate::schema::types::NsName;
+        let local = ag_ref.local.trim();
+        let candidate = match &ag_ref.prefix {
+            Some(_) => ag_ref
+                .bound_namespace(&self.current_doc_bindings)
+                .map(|ns| NsName::new(ns, local)),
+            None => ag_ref
+                .bound_namespace(&self.current_doc_bindings)
+                .map(|ns| NsName::new(ns, local))
+                .filter(|key| self.attribute_groups.contains_key(key)),
         }
-        if wildcard.is_none() {
-            *wildcard = group
-                .any_attribute
-                .as_ref()
-                .map(|a| self.compile_wildcard(a));
+        .unwrap_or_else(|| NsName::new(self.particle_doc.0.as_deref().unwrap_or(""), local));
+        if let Some(group) = self.attribute_groups.get(&candidate) {
+            return Some((candidate, group.clone()));
         }
-        for nested in &group.attribute_groups {
-            self.expand_attribute_group(nested, out, wildcard, visited)?;
-        }
-        Ok(())
+        self.attribute_groups
+            .iter()
+            .find(|(k, _)| &*k.local_name == local)
+            .map(|(k, g)| (k.clone(), g.clone()))
     }
 
     /// Compiles complex type content.
