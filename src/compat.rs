@@ -44,7 +44,8 @@ pub fn create_context(document: &XmlDocument) -> Result<XmlContext> {
     xpath::create_context(document)
 }
 
-/// Creates a thread-safe XPath context for a document.
+/// Creates an XPath context whose namespace bindings can be registered through
+/// a shared reference (see [`XmlSafeContext`]).
 pub fn create_safe_context(document: &XmlDocument) -> Result<XmlSafeContext> {
     xpath::create_safe_context(document)
 }

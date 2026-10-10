@@ -141,9 +141,9 @@ impl XPathValue {
             XPathValue::NodeSet(nodes) => nodes
                 .first()
                 .and_then(|n| n.get_content())
-                .and_then(|s| parse_xpath_number(&s))
+                .map(|s| string_to_number(&s))
                 .unwrap_or(f64::NAN),
-            XPathValue::String(s) => parse_xpath_number(s).unwrap_or(f64::NAN),
+            XPathValue::String(s) => string_to_number(s),
             XPathValue::Boolean(b) => {
                 if *b {
                     1.0
@@ -165,16 +165,30 @@ impl XPathValue {
     }
 }
 
-/// Parses a string as an XPath number.
+/// Converts a string to a number per XPath 1.0 §4.4 (`number()`).
 ///
-/// According to XPath 1.0, leading and trailing whitespace is stripped,
-/// and the remaining string is parsed as a floating-point number.
-fn parse_xpath_number(s: &str) -> Option<f64> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Some(f64::NAN);
+/// After stripping XPath whitespace (space, tab, CR, LF), the string must be
+/// an optional `-` followed by a `Number` (`Digits ('.' Digits?)? | '.' Digits`).
+/// Anything else (`+5`, `1e3`, `inf`, `Infinity`, the empty string) is NaN.
+///
+/// This is the single string-to-number conversion used by the evaluator,
+/// operators and functions.
+pub(crate) fn string_to_number(s: &str) -> f64 {
+    let trimmed = s.trim_matches(|c| matches!(c, ' ' | '\t' | '\r' | '\n'));
+    let unsigned = trimmed.strip_prefix('-').unwrap_or(trimmed);
+    let (int_part, frac_part) = match unsigned.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (unsigned, None),
+    };
+    let all_digits = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
+    let valid = all_digits(int_part)
+        && frac_part.is_none_or(all_digits)
+        && (!int_part.is_empty() || frac_part.is_some_and(|f| !f.is_empty()));
+    if !valid {
+        return f64::NAN;
     }
-    trimmed.parse::<f64>().ok()
+    // The checked form is a subset of what Rust's float parser accepts.
+    trimmed.parse().unwrap_or(f64::NAN)
 }
 
 /// Context information for XPath evaluation.
@@ -319,11 +333,33 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_xpath_number() {
-        assert_eq!(parse_xpath_number("42"), Some(42.0));
-        assert_eq!(parse_xpath_number("  2.75  "), Some(2.75));
-        assert_eq!(parse_xpath_number("-1.5"), Some(-1.5));
-        assert!(parse_xpath_number("").unwrap().is_nan());
-        assert!(parse_xpath_number("abc").is_none());
+    fn test_string_to_number() {
+        assert_eq!(string_to_number("42"), 42.0);
+        assert_eq!(string_to_number("  2.75  "), 2.75);
+        assert_eq!(string_to_number("-1.5"), -1.5);
+        assert_eq!(string_to_number(".5"), 0.5);
+        assert_eq!(string_to_number("5."), 5.0);
+        assert_eq!(string_to_number("\t\r\n7 "), 7.0);
+        for not_a_number in [
+            "",
+            " ",
+            "abc",
+            "+5",
+            "1e3",
+            "inf",
+            "Infinity",
+            "-infinity",
+            "NaN",
+            "-",
+            ".",
+            "1.2.3",
+            "- 1",
+            "\u{3000}1",
+        ] {
+            assert!(
+                string_to_number(not_a_number).is_nan(),
+                "{not_a_number:?} should be NaN"
+            );
+        }
     }
 }

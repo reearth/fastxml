@@ -12,7 +12,7 @@ use super::axes;
 use super::functions;
 use super::operators::{self, ArithmeticOp};
 use super::parser::{Axis, Expr, NodeTest, PathExpr, Predicate, Step, parse_xpath};
-use super::types::{EvaluationContext, XPathValue};
+use super::types::{EvaluationContext, XPathValue, string_to_number};
 
 /// Result of XPath evaluation.
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ impl XPathResult {
                 .unwrap_or_default(),
             XPathResult::String(s) => s.clone(),
             XPathResult::Boolean(b) => b.to_string(),
-            XPathResult::Number(n) => format_xpath_number(*n),
+            XPathResult::Number(n) => XPathValue::Number(*n).to_string_value(),
         }
     }
 
@@ -65,9 +65,9 @@ impl XPathResult {
             XPathResult::Nodes(nodes) => nodes
                 .first()
                 .and_then(|n| n.get_content())
-                .and_then(|s| s.trim().parse().ok())
+                .map(|s| string_to_number(&s))
                 .unwrap_or(f64::NAN),
-            XPathResult::String(s) => s.trim().parse().unwrap_or(f64::NAN),
+            XPathResult::String(s) => string_to_number(s),
             XPathResult::Boolean(b) => {
                 if *b {
                     1.0
@@ -85,24 +85,6 @@ impl XPathResult {
             XPathResult::Nodes(nodes) => nodes.iter().filter_map(|n| n.get_content()).collect(),
             XPathResult::String(s) => vec![s.clone()],
             _ => Vec::new(),
-        }
-    }
-}
-
-/// Formats a number according to XPath rules.
-fn format_xpath_number(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".to_string()
-    } else if n.is_infinite() {
-        if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
-    } else if n == 0.0 {
-        "0".to_string()
-    } else {
-        let s = n.to_string();
-        if s.contains('.') && !s.contains('e') && !s.contains('E') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s
         }
     }
 }
@@ -595,7 +577,7 @@ impl<'a> XPathEvaluator<'a> {
                 let result = self.eval_expr(expr, ctx)?;
                 // Numeric predicates: compare with position
                 if let XPathResult::Number(n) = result {
-                    Ok(ctx.position() == n as usize)
+                    Ok(ctx.position() as f64 == n)
                 } else {
                     Ok(result.to_boolean())
                 }
@@ -858,11 +840,22 @@ mod tests {
     fn test_arithmetic_operations() {
         let doc = parse(r#"<root/>"#).unwrap();
 
-        // Note: Arithmetic expressions in predicates or as standalone might need
-        // parentheses due to parsing limitations
-        let _result = evaluate(&doc, "1 + 2").unwrap_or(XPathResult::Number(f64::NAN));
-        // This test may fail if parsing isn't set up for standalone arithmetic
-        // In that case, we'd need to use it in a predicate context
+        for (xpath, expected) in [
+            ("1 + 2", 3.0),
+            ("5 - 2 - 1", 2.0),
+            ("2 * 3 + 1", 7.0),
+            ("1 + 2 * 3", 7.0),
+            ("7 div 2", 3.5),
+            ("7 mod 3", 1.0),
+            ("-2 * 3", -6.0),
+            ("(1 + 2) * 3", 9.0),
+        ] {
+            assert_eq!(
+                evaluate(&doc, xpath).unwrap().to_number(),
+                expected,
+                "{xpath}"
+            );
+        }
     }
 
     #[test]
