@@ -38,7 +38,8 @@ pub(crate) struct ElementContext {
     /// validator only; the DOM path leaves it at 0). Kept so per-element
     /// resolution can be memoized by integer symbol rather than by string.
     pub name_sym: u32,
-    /// Element namespace URI (for future use)
+    /// Element namespace URI (read only by tests; the validator receives the
+    /// resolved namespace as an argument)
     #[allow(dead_code)]
     pub namespace: Option<Arc<str>>,
     /// Child element occurrence counts - SmallVec for inline storage (most elements have <8 children)
@@ -71,11 +72,9 @@ pub(crate) struct ElementContext {
     pub sequence_index: usize,
     /// Content-model automaton cursor (when the type has an automaton).
     pub automaton_state: crate::schema::xsd::content_automaton::AutomatonState,
-    /// Whether the element's declaration is `nillable="true"`. When true and the
-    /// element is empty, primitive lexical/value-space checks are skipped so an
-    /// `xsi:nil` element (e.g. an empty `xs:int`) is not rejected as invalid.
-    pub nillable: bool,
-    /// Whether the instance element carries `xsi:nil="true"`.
+    /// Whether the element is nilled: its declaration is nillable and the
+    /// instance carries `xsi:nil="true"`. A nilled element must be empty and
+    /// its (absent) value is not checked against the type.
     pub nilled: bool,
     /// Default value from the element declaration (applies when empty).
     pub default_value: Option<String>,
@@ -111,7 +110,6 @@ impl ElementContext {
             flattened_children: None,
             sequence_index: 0,
             automaton_state: Default::default(),
-            nillable: false,
             nilled: false,
             default_value: None,
             fixed_value: None,

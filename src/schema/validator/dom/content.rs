@@ -25,11 +25,14 @@ impl DomSchemaValidator {
         text
     }
 
-    /// Validates text content against the element's type.
+    /// Validates text content against the element's type. `nilled` is true
+    /// for a nillable element carrying `xsi:nil="true"`, whose (empty)
+    /// content is exempt from the type's value checks.
     pub(crate) fn validate_text_content(
         &self,
         node: &XmlNode,
         elem: &ElementDef,
+        nilled: bool,
         ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
@@ -39,8 +42,8 @@ impl DomSchemaValidator {
         // content — `fixed` if present, else `default` — and that value must
         // itself satisfy the type (so a fixed/default that violates a narrowing
         // `xsi:type` is rejected). A genuinely empty element (no constraint)
-        // validates as the empty string, which nillable/xsi:nil handling in
-        // `validate_simple_type_facets` lets through.
+        // validates as the empty string; only a nilled element skips that
+        // check (`validate_simple_type_facets`).
         let effective_content: &str = if text_content.is_empty() {
             elem.fixed
                 .as_deref()
@@ -52,7 +55,7 @@ impl DomSchemaValidator {
 
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
-            // C4: ns-first (compile-time resolved), string fallback.
+            // ns-first (compile-time resolved), string fallback.
             self.schema
                 .type_by_ref(elem.type_ns.as_ref(), type_ref)
                 .cloned()
@@ -99,7 +102,7 @@ impl DomSchemaValidator {
                     node,
                     &simple,
                     effective_content,
-                    elem.nillable,
+                    nilled,
                     ids,
                     errors,
                 );
@@ -107,14 +110,14 @@ impl DomSchemaValidator {
             Some(TypeDef::Complex(complex)) => {
                 // Check for SimpleContent with base type
                 if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
-                    // C4: ns-first base hop (string fallback inside).
+                    // ns-first base hop (string fallback inside).
                     if let Some(TypeDef::Simple(simple)) = self.schema.complex_base_def(&complex) {
                         let simple = simple.clone();
                         self.validate_simple_type_facets(
                             node,
                             &simple,
                             effective_content,
-                            elem.nillable,
+                            nilled,
                             ids,
                             errors,
                         );
@@ -157,13 +160,14 @@ impl DomSchemaValidator {
         node: &XmlNode,
         simple: &SimpleType,
         text_content: &str,
-        nillable: bool,
+        nilled: bool,
         ids: &mut super::DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
-        // Skip everything for an empty, nillable element: `xsi:nil="true"`
-        // legitimately leaves the content empty.
-        if text_content.is_empty() && nillable {
+        // A nilled element has no value to check (its emptiness is enforced
+        // separately). A nillable element *without* `xsi:nil="true"` is
+        // validated like any other.
+        if nilled {
             return;
         }
 

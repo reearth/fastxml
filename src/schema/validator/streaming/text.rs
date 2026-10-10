@@ -16,11 +16,11 @@ use super::super::state::ElementContext;
 use super::OnePassSchemaValidator;
 use super::numeric::{self, NumClass, NumericPlan};
 
-/// Memoized text-validation plan for a declared type (S5).
+/// Memoized text-validation plan for a declared type.
 #[derive(Clone)]
 pub(crate) enum TextOp {
-    /// The declared type could not be resolved: fall through to the inline /
-    /// element-declaration fallbacks (mirrors the original control flow).
+    /// The declared type could not be resolved: fall through to the element's
+    /// anonymous type, if any.
     NotFound,
     /// The type is resolved and imposes no text check here (mixed complex
     /// content, or simple content whose base is not a simple type).
@@ -30,7 +30,7 @@ pub(crate) enum TextOp {
     /// Simple or simple-content type: validate against these facet
     /// constraints (and the built-in primitive kind they carry).
     Simple(Arc<FacetConstraints>),
-    /// Value-check fast path (PR-B) for an *unconstrained* numeric scalar: a
+    /// Value-check fast path for an *unconstrained* numeric scalar: a
     /// single value of a numeric primitive with no facets beyond
     /// `whiteSpace=collapse`. A lean lexical scan replaces the
     /// `FacetValidator` + regex path; on any rejection we defer to the
@@ -42,7 +42,7 @@ pub(crate) enum TextOp {
         /// Canonical constraints for the fallback slow path.
         constraints: Arc<FacetConstraints>,
     },
-    /// Value-check fast path (PR-B) for an *unconstrained* numeric list: e.g.
+    /// Value-check fast path for an *unconstrained* numeric list: e.g.
     /// `gml:posList` / `gml:coordinates` (a list of `double`). One pass over
     /// the raw bytes tokenizing on whitespace, scanning each item; deferring
     /// to the slow path on any rejection.
@@ -70,23 +70,14 @@ impl OnePassSchemaValidator {
                 return;
             }
             // The type_ref did not resolve to a type: fall through to the
-            // inline / element-declaration fallbacks, exactly as before.
+            // anonymous-type check below.
         }
 
-        // Elements admitted by a wildcard have no declared type to check.
-        if ctx.wildcard_mode.is_some() && ctx.type_ref.is_none() && ctx.inline_type.is_none() {
-            return;
-        }
-
-        // Inline (anonymous) type captured at element start.
+        // Inline (anonymous) type captured at element start. An element
+        // with neither a named nor an anonymous type (xs:anyType, undeclared,
+        // or admitted by a wildcard) has no text constraint.
         if let Some(inline_type) = ctx.inline_type.as_ref() {
             self.validate_text_against_type_def(ctx, inline_type);
-            return;
-        }
-
-        // If no type_ref, try to get the inline type from the element declaration.
-        if let Some(inline_type) = self.get_element_inline_type(ctx.name.as_ref()) {
-            self.validate_text_against_type_def(ctx, &inline_type);
         }
     }
 
@@ -111,7 +102,7 @@ impl OnePassSchemaValidator {
     /// preferring the compile-time resolved `(namespace, local)` identity over
     /// the namespace-blind `type_ref` string (which stays a fallback).
     fn compute_text_op(&mut self, type_ns: Option<&NsName>, type_ref: &str) -> TextOp {
-        // C2: borrow the type via a cheap schema-Arc clone, so the borrow
+        // borrow the type via a cheap schema-Arc clone, so the borrow
         // lives independently of `self` across the &mut self facet lookup.
         let schema = Arc::clone(&self.schema);
         match schema.type_by_ref(type_ns, type_ref) {
@@ -120,13 +111,13 @@ impl OnePassSchemaValidator {
             }
             Some(TypeDef::Complex(complex)) => {
                 if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
-                    // C4: ns-first base hop (string fallback inside
+                    // ns-first base hop (string fallback inside
                     // complex_base_def).
                     match schema.complex_base_def(complex) {
                         Some(TypeDef::Simple(simple)) => {
                             Self::classify_simple(self.create_facet_constraints(simple))
                         }
-                        // Base is not a simple type: original did nothing.
+                        // Base is not a simple type: nothing to check.
                         _ => TextOp::Allow,
                     }
                 } else if !complex.mixed {
@@ -183,8 +174,7 @@ impl OnePassSchemaValidator {
         // Rare element-level cases carry semantics the byte-level scan does not
         // model; hand them to the canonical path unchanged.
         if ctx.fixed_value.is_some()
-            || (ctx.text_content.is_empty()
-                && (ctx.nillable || ctx.default_value.is_some() || ctx.fixed_value.is_some()))
+            || (ctx.text_content.is_empty() && (ctx.nilled || ctx.default_value.is_some()))
         {
             self.validate_text_against_facets(ctx, constraints);
             return;
@@ -217,7 +207,7 @@ impl OnePassSchemaValidator {
             TypeDef::Complex(complex) => {
                 // For complex types with simple content, validate the base type.
                 if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
-                    // C2: borrow the base simple type via a cheap schema-Arc
+                    // borrow the base simple type via a cheap schema-Arc
                     // clone instead of cloning the TypeDef.
                     let schema = Arc::clone(&self.schema);
                     if let Some(TypeDef::Simple(simple)) = schema.complex_base_def(complex) {
@@ -261,25 +251,20 @@ impl OnePassSchemaValidator {
         // constraint as its schema-normalized content — `fixed` if present,
         // else `default` — and that value must itself satisfy the type (so a
         // `fixed`/`default` that violates a narrowing `xsi:type` is rejected).
-        // A nilled element, or a plain nillable element with no value
-        // constraint, contributes no value and is skipped. The fixed-value
-        // *match* check is hoisted to `validate_fixed_value` at element end so
-        // it also covers untyped (anyType) and mixed content — mirroring DOM.
+        // A nilled element contributes no value and is skipped; a nillable
+        // element without `xsi:nil="true"` is checked like any other, so a
+        // genuinely empty value is the empty string (which primitives like
+        // xs:integer reject). The fixed-value *match* check is hoisted to
+        // `validate_fixed_value` at element end so it also covers untyped
+        // (anyType) and mixed content — mirroring DOM.
         let effective_text: &str = if ctx.text_content.is_empty() {
             if ctx.nilled {
                 return;
             }
-            if let Some(fixed) = ctx.fixed_value.as_deref() {
-                fixed
-            } else if let Some(default) = ctx.default_value.as_deref() {
-                default
-            } else if ctx.nillable {
-                return;
-            } else {
-                // Genuinely empty, non-nillable: primitives like xs:integer
-                // must still reject the empty string.
-                ""
-            }
+            ctx.fixed_value
+                .as_deref()
+                .or(ctx.default_value.as_deref())
+                .unwrap_or_default()
         } else {
             &ctx.text_content
         };

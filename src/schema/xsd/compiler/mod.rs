@@ -7,7 +7,7 @@ mod cache;
 mod cycles;
 mod facet_checks;
 mod validity;
-pub(crate) use cache::inherited_wildcard;
+pub(crate) use cache::{collect_elements_with_inheritance, flatten_type_children};
 mod particles;
 mod redefine;
 mod references;

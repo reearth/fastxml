@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use crate::schema::types::{
-    CompiledSchema, ComplexType, ContentModel, ContentModelType, ElementDef, FlattenedChildren,
-    NsName, SimpleType, TypeDef,
+    ComplexType, ElementDef, FlattenedChildren, NsName, SimpleType, TypeDef,
 };
 use crate::schema::xsd::facets::FacetConstraints;
 
@@ -27,6 +26,11 @@ pub(crate) struct InlineResolved {
     /// Whether a matching local element declaration was found at all (the
     /// value constraints below are meaningful only when this is true).
     pub found: bool,
+    /// Whether the matched local declaration is a `ref=` to a global
+    /// element (whose own declaration then governs).
+    pub is_ref: bool,
+    /// The local declaration's identity constraints.
+    pub constraints: Vec<crate::schema::types::CompiledConstraint>,
     /// The local declaration's `default` value constraint, if any.
     pub default: Option<String>,
     /// The local declaration's `fixed` value constraint, if any.
@@ -49,73 +53,6 @@ pub(crate) struct ValueConstraint {
 }
 
 impl OnePassSchemaValidator {
-    /// Optimized element lookup: tries qname first (when prefix present), then local name,
-    /// then namespace URI.
-    pub(crate) fn lookup_element_optimized<'s>(
-        &self,
-        schema: &'s CompiledSchema,
-        name: &Arc<str>,
-        prefix: Option<&str>,
-        qname: &str,
-        namespace_uri: Option<&str>,
-    ) -> Option<&'s ElementDef> {
-        // C3: `schema` is a locally-held clone of `self.schema`'s Arc, so the
-        // returned &ElementDef is decoupled from `self` and can be held across
-        // &mut self calls — letting the caller pass element constraints as a
-        // slice instead of cloning them per element.
-        //
-        // C4: collision-free namespace-qualified lookup FIRST. The instance
-        // element's namespace was resolved from its in-scope declarations
-        // (state.resolve_element_namespace), so `(namespace, local)` is the
-        // authoritative identity — prefix spelling differences and bare-key
-        // collisions between same-local-name globals in different namespaces
-        // (wildG031 class) cannot mislead it. `None` means the element is in
-        // no namespace, so probe the "" key. The legacy string paths below
-        // remain as fallback for schemas whose components were registered
-        // under shapes the ns map does not cover.
-        match namespace_uri {
-            Some(ns) => {
-                if let Some(elem) = schema.element_ns(ns, name.as_ref()) {
-                    return Some(elem);
-                }
-            }
-            None => {
-                if let Some(elem) = schema.element_ns("", name.as_ref()) {
-                    return Some(elem);
-                }
-            }
-        }
-
-        // If prefix exists, try qname FIRST to ensure correct namespace resolution.
-        // This is critical when multiple namespaces define elements with the same local name
-        // (e.g., bldg:WallSurface vs tun:WallSurface vs brid:WallSurface).
-        // C1: `qname` is the interned qualified name threaded from the tag
-        // boundary, so no `format!` is needed here.
-        if let Some(p) = prefix {
-            if !p.is_empty() {
-                if let Some(elem) = schema.get_element(qname) {
-                    return Some(elem);
-                }
-            }
-        }
-
-        // Try local name (for elements without prefix or as fallback)
-        if let Some(elem) = schema.get_element(name.as_ref()) {
-            return Some(elem);
-        }
-
-        // If namespace URI exists, try lookup by namespace URI + local name
-        // This handles the case where XML uses different prefix than schema
-        // (e.g., XML uses tr:Road but schema has tran:Road)
-        if let Some(ns) = namespace_uri {
-            if let Some(elem) = schema.get_element_by_ns(ns, name.as_ref()) {
-                return Some(elem);
-            }
-        }
-
-        None
-    }
-
     /// Gets the pre-computed flattened children for an element from the schema cache.
     ///
     /// This uses the namespace-aware `ns_type_children_cache` as the primary lookup,
@@ -125,7 +62,7 @@ impl OnePassSchemaValidator {
         &mut self,
         elem: &ElementDef,
     ) -> Option<Arc<FlattenedChildren>> {
-        // C4: the compile-time resolved (namespace, local) of the type
+        // the compile-time resolved (namespace, local) of the type
         // reference probes the owning-namespace-keyed cache directly — one
         // hash lookup, no allocation, immune to prefix-table poisoning.
         if let Some(ref type_ns) = elem.type_ns
@@ -139,21 +76,19 @@ impl OnePassSchemaValidator {
             return self.resolve_children_for_type_ref(type_ref);
         }
 
-        // Fall back to computing from inline type if present
-        if let Some(ref inline_type) = elem.inline_type {
-            if let TypeDef::Complex(complex) = inline_type {
-                return Some(Arc::new(self.compute_flattened_children(complex)));
-            }
+        // Anonymous type
+        if let Some(TypeDef::Complex(complex)) = &elem.inline_type {
+            return Some(self.runtime_children(complex));
         }
 
         None
     }
 
     /// Resolves (and memoizes) the [`FlattenedChildren`] for a named type
-    /// reference. Replays the previous per-element resolution verbatim — the
-    /// namespace-aware `ns_type_children_cache` first, then a runtime compute
-    /// — but caches the result so the `NsName` allocation and the cache probe
-    /// happen once per distinct type instead of once per element.
+    /// reference: the namespace-aware `ns_type_children_cache` first, then a
+    /// run-time flattening. Caching the result means the `NsName` allocation
+    /// and the cache probe happen once per distinct type instead of once per
+    /// element.
     pub(crate) fn resolve_children_for_type_ref(
         &mut self,
         type_ref: &str,
@@ -178,93 +113,25 @@ impl OnePassSchemaValidator {
     }
 
     /// The uncached resolution used by [`Self::resolve_children_for_type_ref`].
-    fn compute_children_for_type_ref(&self, type_ref: &str) -> Option<Arc<FlattenedChildren>> {
+    fn compute_children_for_type_ref(&mut self, type_ref: &str) -> Option<Arc<FlattenedChildren>> {
         // Namespace-aware cache lookup first.
         if let Some(ns_name) = self.schema.resolve_type_ref_to_ns(type_ref) {
             if let Some(cached) = self.schema.ns_type_children_cache.get(&ns_name) {
                 return Some(Arc::clone(cached));
             }
         }
-        // Fallback: compute at runtime.
-        if let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_ref) {
-            return Some(Arc::new(self.compute_flattened_children(complex)));
+        // Fallback: flatten at run time.
+        let schema = Arc::clone(&self.schema);
+        if let Some(TypeDef::Complex(complex)) = schema.get_type(type_ref) {
+            return Some(self.runtime_children(complex));
         }
         None
     }
 
-    /// Computes flattened children for inline types (fallback when not in cache).
-    pub(crate) fn compute_flattened_children(&self, complex: &ComplexType) -> FlattenedChildren {
-        let content_model_type = match &complex.content {
-            ContentModel::Sequence(_) => ContentModelType::Sequence,
-            ContentModel::Choice(_) => ContentModelType::Choice,
-            ContentModel::All(_) => ContentModelType::All,
-            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
-            ContentModel::Empty => ContentModelType::Empty,
-            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
-            ContentModel::Any { .. } => ContentModelType::Sequence,
-        };
-
-        let mut flattened = FlattenedChildren::with_content_model(content_model_type);
-
-        // Collect elements from content model
-        let mut visited = std::collections::HashSet::new();
-        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
-
-        // Collect ordered elements into a temporary Vec, then convert to Arc<[String]>
-        let mut ordered: Vec<String> = Vec::with_capacity(elements.len());
-        for elem in &elements {
-            flattened
-                .constraints
-                .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
-            // Store element order for sequence validation
-            ordered.push(elem.name.clone());
-        }
-        flattened.ordered_elements = Arc::from(ordered);
-        flattened.wildcard =
-            crate::schema::xsd::compiler::inherited_wildcard(complex, &self.schema);
-
-        flattened
-    }
-
-    /// Collects all child elements from a complex type, including inherited elements.
-    /// (Used only as fallback for inline types not in cache)
-    pub(crate) fn collect_elements_with_inheritance(
-        &self,
-        complex: &ComplexType,
-        visited: &mut std::collections::HashSet<String>,
-    ) -> Vec<ElementDef> {
-        let mut elements = Vec::new();
-
-        match &complex.content {
-            ContentModel::Sequence(elems)
-            | ContentModel::Choice(elems)
-            | ContentModel::All(elems) => {
-                elements.extend(elems.iter().cloned());
-            }
-            ContentModel::ComplexExtension {
-                base_type,
-                elements: ext_elements,
-            } => {
-                if !visited.contains(base_type.as_str()) {
-                    visited.insert(base_type.clone());
-                    // ns-first base hop (compile-time resolved `base_ns`),
-                    // string fallback inside `complex_base_def`: a no-namespace
-                    // base whose local name collides with a type in another
-                    // (imported) namespace must not be resolved by local name.
-                    if let Some(TypeDef::Complex(base_complex)) =
-                        self.schema.complex_base_def(complex)
-                    {
-                        let base_elements =
-                            self.collect_elements_with_inheritance(base_complex, visited);
-                        elements.extend(base_elements);
-                    }
-                }
-                elements.extend(ext_elements.iter().cloned());
-            }
-            _ => {}
-        }
-
-        elements
+    /// Flattened children (with content-model automaton) of a type outside
+    /// the compile-time cache, memoized per type.
+    pub(crate) fn runtime_children(&mut self, complex: &ComplexType) -> Arc<FlattenedChildren> {
+        self.runtime_types.children(&self.schema, complex)
     }
 
     /// Returns (memoized) FacetConstraints for a SimpleType definition.
@@ -301,8 +168,7 @@ impl OnePassSchemaValidator {
         let Some(TypeDef::Complex(complex)) = self.schema.get_type(type_name) else {
             return None;
         };
-        let mut visited = std::collections::HashSet::new();
-        let collected = Arc::new(self.collect_elements_with_inheritance(complex, &mut visited));
+        let collected = Arc::new(super::super::decls::collect_elements(&self.schema, complex));
         self.elements_cache
             .insert(type_name.to_string(), Arc::clone(&collected));
         Some(collected)
@@ -313,7 +179,7 @@ impl OnePassSchemaValidator {
     /// free), memoized in [`elements_cache_ns`]. Falls back to the
     /// namespace-blind string path when no `type_ns` is available, or when the
     /// ns-qualified lookup misses (leniency: an unresolvable reference stays
-    /// resolvable through the legacy string map, exactly as before).
+    /// resolvable through the legacy string map).
     ///
     /// [`elements_cache_ns`]: OnePassSchemaValidator::elements_cache_ns
     pub(crate) fn collect_elements_cached_ns(
@@ -325,16 +191,11 @@ impl OnePassSchemaValidator {
             if let Some(cached) = self.elements_cache_ns.get(ns) {
                 return Some(Arc::clone(cached));
             }
-            // C2/C3: borrow the type via a schema-Arc clone so `complex` is
-            // decoupled from `self` across the &self collect and the &mut self
-            // cache insert below.
-            let schema = Arc::clone(&self.schema);
             if let Some(TypeDef::Complex(complex)) =
-                schema.type_ns(&ns.namespace_uri, &ns.local_name)
+                self.schema.type_ns(&ns.namespace_uri, &ns.local_name)
             {
-                let mut visited = std::collections::HashSet::new();
                 let collected =
-                    Arc::new(self.collect_elements_with_inheritance(complex, &mut visited));
+                    Arc::new(super::super::decls::collect_elements(&self.schema, complex));
                 self.elements_cache_ns
                     .insert(ns.clone(), Arc::clone(&collected));
                 return Some(collected);
@@ -419,41 +280,14 @@ impl OnePassSchemaValidator {
             self.inline_cache.insert(key, Arc::clone(&resolved));
             return resolved;
         }
-        let type_def = {
-            // Fallback: try to look up parent element from schema
-            let parent_name = &parent_ctx.name;
-            let parent_elem = self.schema.get_element(parent_name.as_ref());
-            if let Some(elem) = parent_elem {
-                if let Some(ref type_ref) = elem.type_ref {
-                    self.schema.get_type(type_ref)
-                } else {
-                    elem.inline_type.as_ref()
-                }
-            } else {
-                // Try without prefix
-                let local_name = parent_name
-                    .split(':')
-                    .next_back()
-                    .unwrap_or(parent_name.as_ref());
-                if let Some(elem) = self.schema.get_element(local_name) {
-                    if let Some(ref type_ref) = elem.type_ref {
-                        self.schema.get_type(type_ref)
-                    } else {
-                        elem.inline_type.as_ref()
-                    }
-                } else {
-                    None
-                }
-            }
-        };
-
-        let Some(TypeDef::Complex(complex)) = type_def else {
+        // The parent has an anonymous type (no named-type identity): resolve
+        // the child against that type's own content model — never against a
+        // same-named global element, which may be a different declaration.
+        let Some(TypeDef::Complex(complex)) = parent_ctx.inline_type.clone() else {
             return Arc::new(InlineResolved::default());
         };
-
-        // Collect all elements including inherited ones
-        let mut visited = std::collections::HashSet::new();
-        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
+        let schema = Arc::clone(&self.schema);
+        let elements = self.runtime_types.elements(&schema, &complex);
         Arc::new(self.inline_info_from_elements(name, &elements))
     }
 
@@ -472,7 +306,7 @@ impl OnePassSchemaValidator {
 
                 // Get flattened children for this inline element: the
                 // compile-time resolved type_ns probes the owning-namespace
-                // cache first (C4), then the legacy memoized string path.
+                // cache first, then the legacy memoized string path.
                 let flattened_children = if let Some(cached) = elem
                     .type_ns
                     .as_ref()
@@ -482,7 +316,7 @@ impl OnePassSchemaValidator {
                 } else if let Some(ref tr) = type_ref {
                     self.resolve_children_for_type_ref(tr)
                 } else if let Some(TypeDef::Complex(child_complex)) = elem.inline_type.as_ref() {
-                    Some(Arc::new(self.compute_flattened_children(child_complex)))
+                    Some(self.runtime_children(child_complex))
                 } else {
                     None
                 };
@@ -526,6 +360,8 @@ impl OnePassSchemaValidator {
                     flattened: flattened_children,
                     inline_type,
                     found: true,
+                    is_ref: elem.ref_ns.is_some(),
+                    constraints: elem.constraints.clone(),
                     default,
                     fixed,
                     nillable,
@@ -535,54 +371,5 @@ impl OnePassSchemaValidator {
         }
 
         InlineResolved::default()
-    }
-
-    /// Gets inline type definition for an element (either global or from parent's content model).
-    ///
-    /// This searches through inherited elements as well when the parent type uses ComplexExtension.
-    pub(crate) fn get_element_inline_type(&mut self, name: &str) -> Option<TypeDef> {
-        // First try global element
-        if let Some(elem) = self.schema.get_element(name) {
-            if let Some(ref inline) = elem.inline_type {
-                return Some(inline.clone());
-            }
-        }
-
-        // Try to find inline type from parent's content model
-        if self.state.element_stack.len() < 2 {
-            return None;
-        }
-
-        let parent_idx = self.state.element_stack.len() - 2;
-        let parent_name = self.state.element_stack.get(parent_idx)?.name.clone();
-
-        let parent_elem = self.schema.get_element(parent_name.as_ref())?;
-        // Fast path: memoized inherited-element list by parent type name.
-        if let Some(type_ref) = parent_elem.type_ref.clone() {
-            let elements = self.collect_elements_cached(&type_ref)?;
-            return elements
-                .iter()
-                .rev()
-                .find(|e| e.name == name)
-                .and_then(|e| e.inline_type.clone());
-        }
-        let type_def = parent_elem.inline_type.as_ref()?;
-
-        let TypeDef::Complex(complex) = type_def else {
-            return None;
-        };
-
-        // Collect all elements including inherited ones
-        let mut visited = std::collections::HashSet::new();
-        let elements = self.collect_elements_with_inheritance(complex, &mut visited);
-
-        // Search from the end to prioritize derived type's elements over base type's
-        for elem in elements.iter().rev() {
-            if elem.name == name {
-                return elem.inline_type.clone();
-            }
-        }
-
-        None
     }
 }

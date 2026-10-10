@@ -1,7 +1,7 @@
 //! Shared attribute validation logic for the DOM and streaming validators.
 
 use crate::schema::types::{
-    AttributeDef, CompiledSchema, ComplexType, ContentModel, SimpleType, TypeDef,
+    AttributeDef, CompiledSchema, ComplexType, ContentModel, NsNameRef, SimpleType, TypeDef,
 };
 use crate::schema::xsd::facets::{FacetCache, FacetConstraints, FacetValidator};
 use crate::schema::xsd::primitive::PrimitiveKind;
@@ -10,7 +10,7 @@ use crate::schema::xsd::primitive::PrimitiveKind;
 /// chain: the (shadow-resolved) declarations, the effective attribute
 /// wildcard, and whether the type is `xs:anyType`.
 ///
-/// C7: building this walks the base chain 4-6 levels deep and allocates a
+/// building this walks the base chain 4-6 levels deep and allocates a
 /// Vec, far too expensive to repeat per element. The streaming validator
 /// memoizes it per named type; anonymous types build it fresh.
 pub(crate) struct CollectedAttrs {
@@ -30,6 +30,16 @@ impl CollectedAttrs {
             is_any_type: complex.name == "anyType",
         }
     }
+
+    /// The attribute picture of a simple type: no declarations and no
+    /// wildcard, so every attribute other than the exempt ones is rejected.
+    pub(crate) fn none() -> Self {
+        Self {
+            defs: Vec::new(),
+            wildcard: None,
+            is_any_type: false,
+        }
+    }
 }
 
 /// Collects the attribute declarations of a complex type, walking the
@@ -47,7 +57,7 @@ pub(crate) fn collect_attributes<'a>(
                 out.push(attr);
             }
         }
-        // C4: ns-first base hop (compile-time resolved base_ns), string
+        // ns-first base hop (compile-time resolved base_ns), string
         // fallback inside complex_base_def.
         match schema.complex_base_def(current) {
             Some(TypeDef::Complex(c)) => current = c,
@@ -82,7 +92,7 @@ fn resolve_ref<'a>(schema: &'a CompiledSchema, attr: &'a AttributeDef) -> &'a At
     if !attr.is_ref {
         return attr;
     }
-    // C4: the resolved reference namespace probes the collision-free map
+    // the resolved reference namespace probes the collision-free map
     // first; an any-namespace local-name scan remains as fallback.
     if let Some(rn) = &attr.ref_ns
         && let Some(global) = schema.attribute_ns(&rn.namespace_uri, &rn.local_name)
@@ -148,6 +158,19 @@ pub(crate) fn element_text_primitive_kind(
                 return PrimitiveKind::resolve(schema, simple);
             }
             None
+        }
+    }
+}
+
+/// Whether an element of this type has a simple value an identity-constraint
+/// field can select: a simple type, a complex type with simple content, or
+/// `xs:anyType` (left unchecked). Element-only and mixed complex types do not.
+pub(crate) fn type_has_simple_value(type_def: &TypeDef) -> bool {
+    match type_def {
+        TypeDef::Simple(_) => true,
+        TypeDef::Complex(complex) => {
+            complex.name == "anyType"
+                || matches!(&complex.content, ContentModel::SimpleContent { .. })
         }
     }
 }
@@ -253,15 +276,12 @@ pub(crate) fn validate_element_attributes<'a>(
                 crate::schema::types::ProcessContents::Skip => {}
                 crate::schema::types::ProcessContents::Lax
                 | crate::schema::types::ProcessContents::Strict => {
-                    // C5: the wildcard-matched attribute's own namespace is
-                    // in scope here — resolve against it first, then fall
-                    // back to an any-namespace local scan (legacy leniency).
-                    let global = schema.attribute_ns(ns.unwrap_or(""), local).or_else(|| {
-                        schema
-                            .attributes_ns
-                            .iter()
-                            .find(|(k, _)| *k.local_name == *local)
-                            .map(|(_, a)| a)
+                    // The wildcard-matched attribute is governed by the global
+                    // declaration of its own expanded name; a global with the
+                    // same local name in another namespace is unrelated.
+                    let global = schema.attributes_ns.get(&NsNameRef {
+                        namespace_uri: ns.unwrap_or(""),
+                        local_name: local,
                     });
                     match global {
                         Some(def) => {
@@ -312,8 +332,9 @@ fn collect_id_values(
     cache: &mut FacetCache,
 ) {
     let Some(simple) = attribute_simple_type(schema, attr) else {
-        // No resolvable type, but xml:id-style direct refs are rare; also
-        // cover the common case of `type="xs:ID"` on the def itself.
+        // The type did not resolve to a definition (e.g. a built-in named
+        // only by its reference string): fall back to recognizing
+        // `type="xs:ID"` / `xs:IDREF` / `xs:IDREFS` by name.
         let kind = attr
             .type_ref
             .as_deref()

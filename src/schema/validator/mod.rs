@@ -17,6 +17,7 @@
 mod api;
 mod attributes;
 mod context;
+mod decls;
 mod dom;
 mod facade;
 mod lazy;
@@ -33,18 +34,22 @@ mod xsi_type;
 pub use self::mode::ValidationMode;
 pub use facade::{Report, Validator};
 
-/// Work counters incremented unconditionally by the streaming validator.
+/// Work counters reported by the streaming validator (see
+/// [`Report::counters`]): how many elements were validated and how many
+/// element text contents were checked against their type.
 ///
-/// These exist as an anti-regression guardrail: an "optimization" that
-/// silently skips work would change these counts. Every performance
-/// comparison must show identical counter values before and after.
+/// The counts depend only on the document and the schema, not on how fast
+/// paths or caches resolve each element, so two runs over the same input
+/// report the same values. The benchmark harness compares them across runs
+/// to detect validation work being skipped.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValidationCounters {
-    /// Elements passed to `validate_element` (incremented unconditionally at
-    /// the top, before any lookup or early return).
+    /// Number of start tags validated (every element, declared or not).
     pub elements_validated: u64,
-    /// Text nodes passed to `validate_text_content_against_type`.
+    /// Number of elements whose text content was checked against their type
+    /// at the end tag (every element outside subtrees admitted by a
+    /// `processContents="skip"` wildcard).
     pub text_nodes_checked: u64,
 }
 
