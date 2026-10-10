@@ -1,22 +1,15 @@
-//! XML schema validators.
+//! XML schema validation.
 //!
 //! The public entry point is [`Validator`], which selects the engine from the
 //! input type: a DOM tree validator for `&XmlDocument`, and a one-pass streaming
-//! validator for `&str` / `&[u8]` / a reader. The engines themselves live in the
-//! private submodules below.
-//!
-//! # Module Structure
-//!
-//! - `dom` - DOM-based validator for pre-parsed documents
-//! - `streaming` - One-pass streaming validator (recommended for large files)
-//! - `state` - Validation state management during streaming
-//! - `context` - Schema validation context wrapper
-//! - `lazy` - Lazy validators that initialize from xsi:schemaLocation
-//! - `api` - Public API functions
+//! validator for `&str` / `&[u8]` / a reader. The schema is either given
+//! explicitly or loaded from the document's `xsi:schemaLocation` /
+//! `xsi:noNamespaceSchemaLocation` hints; see [`Validator::run`] for what
+//! happens when that schema cannot be loaded. Results come back as a
+//! [`Report`].
 
 mod api;
 mod attributes;
-mod context;
 mod dom;
 mod facade;
 mod lazy;
@@ -24,27 +17,25 @@ mod state;
 mod streaming;
 mod xsi_type;
 
-// The public validation surface is the `Validator` front door and its `Report`,
-// plus `ValidationMode`. The engine types (DomSchemaValidator,
-// OnePassSchemaValidator, LazySchemaValidator, XmlSchemaValidationContext) and
-// the `validate_*` / `get_schema_*` / `create_xml_schema_validation_context*`
-// free functions live in the private `dom` / `streaming` / `lazy` / `api`
-// submodules and are reached internally via `super::`.
+// Internal layout (maintainer note): `dom` and `streaming` are the two
+// engines, `state` holds streaming per-element state, `api` + `lazy`
+// implement schema auto-detection from the document's hints, and `facade`
+// is the public `Validator` / `Report` surface.
 pub use self::mode::ValidationMode;
 pub use facade::{Report, Validator};
 
-/// Work counters incremented unconditionally by the streaming validator.
+/// Counts of work done by the streaming validator during one run.
 ///
-/// These exist as an anti-regression guardrail: an "optimization" that
-/// silently skips work would change these counts. Every performance
-/// comparison must show identical counter values before and after.
+/// Exposed for benchmarking tools; not part of the stable API.
+// Maintainer note: these exist as an anti-regression guardrail — an
+// "optimization" that silently skips work changes the counts, so every
+// performance comparison must show identical values before and after.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ValidationCounters {
-    /// Elements passed to `validate_element` (incremented unconditionally at
-    /// the top, before any lookup or early return).
+    /// Number of elements validated.
     pub elements_validated: u64,
-    /// Text nodes passed to `validate_text_content_against_type`.
+    /// Number of text nodes checked against a simple type.
     pub text_nodes_checked: u64,
 }
 
