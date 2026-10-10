@@ -86,6 +86,7 @@ impl XmlNode {
             NodeType::Text
             | NodeType::CData
             | NodeType::Comment
+            | NodeType::ProcessingInstruction
             | NodeType::Attribute
             | NodeType::Namespace => node.content.clone(),
             NodeType::Element => {
@@ -299,22 +300,29 @@ impl XmlNode {
     ///
     /// For element nodes, this replaces all children with a single text node.
     /// For text/cdata/comment nodes, this sets the content directly.
+    /// An empty `content` leaves an element with no children.
     pub fn set_content(&self, content: &str) {
         let mut nodes = self.nodes.write();
-        if let Some(node) = nodes.get_mut(self.id) {
-            match node.node_type {
-                NodeType::Text | NodeType::CData | NodeType::Comment => {
-                    node.content = Some(content.to_string());
-                }
-                NodeType::Element => {
-                    // Remove existing children
-                    node.children.clear();
-                    // Note: We don't actually remove the child nodes from the storage
-                    // for simplicity. They become orphaned but that's OK for this use case.
-                    node.content = Some(content.to_string());
-                }
-                _ => {}
+        let new_id = nodes.len();
+        let Some(node) = nodes.get_mut(self.id) else {
+            return;
+        };
+        match node.node_type {
+            NodeType::Text | NodeType::CData | NodeType::Comment => {
+                node.content = Some(content.to_string());
             }
+            NodeType::Element => {
+                // The old children stay in the node storage, detached.
+                node.children.clear();
+                if content.is_empty() {
+                    return;
+                }
+                node.push_child(new_id);
+                let mut text = NodeData::text(content.to_string());
+                text.set_parent(Some(self.id));
+                nodes.push(text);
+            }
+            _ => {}
         }
     }
 

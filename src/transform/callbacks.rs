@@ -7,7 +7,6 @@ use crate::xpath::XPathSource;
 
 use super::FallbackMode;
 use super::builder::HandlerCallback;
-use super::context::TransformContext;
 use super::error::{TransformError, TransformResult};
 use super::fallback;
 use super::streaming;
@@ -53,8 +52,6 @@ pub(crate) fn stream_transform_with_callback<'a, W: Write>(
             }
             FallbackMode::Enabled => {
                 // Fall back to two-pass - requires string representation
-                // Note: WithContext callbacks are not supported in fallback mode
-                // because the fallback processor uses libxml which doesn't track context
                 let xpath_str = xpath_source.as_string().ok_or_else(|| {
                     TransformError::InvalidXPath(
                         "XPath AST without string representation cannot use fallback processor. \
@@ -67,16 +64,12 @@ pub(crate) fn stream_transform_with_callback<'a, W: Write>(
                     HandlerCallback::Simple(mut f) => {
                         fallback::process_fallback(input, xpath_str, |node| f(node), writer)
                     }
-                    HandlerCallback::WithContext(mut f) => {
-                        // Fallback mode doesn't support context, create an empty context
-                        let empty_ctx = TransformContext::new(vec![], 0, 0);
-                        fallback::process_fallback(
-                            input,
-                            xpath_str,
-                            |node| f(node, &empty_ctx),
-                            writer,
-                        )
-                    }
+                    HandlerCallback::WithContext(mut f) => fallback::process_fallback_with_context(
+                        input,
+                        xpath_str,
+                        |node, ctx| f(node, ctx),
+                        writer,
+                    ),
                 }
             }
         },
@@ -134,9 +127,9 @@ pub(crate) fn stream_for_each_with_callback<'a>(
                         fallback::process_for_each(input, xpath_str, |node| f(node))
                     }
                     HandlerCallback::WithContext(mut f) => {
-                        // Fallback mode doesn't support context, create an empty context
-                        let empty_ctx = TransformContext::new(vec![], 0, 0);
-                        fallback::process_for_each(input, xpath_str, |node| f(node, &empty_ctx))
+                        fallback::process_for_each_with_context(input, xpath_str, |node, ctx| {
+                            f(node, ctx)
+                        })
                     }
                 }
             }

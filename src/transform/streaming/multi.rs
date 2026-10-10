@@ -9,9 +9,10 @@ use quick_xml::events::Event;
 use super::super::editable::EditableNodeBuilder;
 use super::super::error::{TransformError, TransformResult};
 use super::helpers::{
-    PathTracker, add_empty_to_builder, add_end_to_builder, add_start_to_builder,
-    extract_element_info, serialize_editable, xml_parse_error_with_location,
+    add_empty_to_builder, add_end_to_builder, add_pi_to_builder, add_start_to_builder,
+    extract_element_info, serialize_editable, split_bom, xml_parse_error_with_location,
 };
+use super::tracker::PathTracker;
 use super::{
     HandlerState, MultiHandler, MultiHandlerWithContext, MultiTransformHandler,
     MultiTransformHandlerWithContext, TransformHandlerState,
@@ -30,7 +31,7 @@ pub fn process_for_each_multi<'a>(
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
 
@@ -49,7 +50,7 @@ pub fn process_for_each_multi<'a>(
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 // Check each handler
@@ -68,7 +69,7 @@ pub fn process_for_each_multi<'a>(
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 // Check each handler
@@ -141,6 +142,14 @@ pub fn process_for_each_multi<'a>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                for i in 0..states.len() {
+                    if let Some(ref mut builder) = states[i].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
@@ -174,7 +183,7 @@ pub fn process_for_each_multi_with_context<'a>(
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut match_count: usize = 0;
     let mut buf = Vec::new();
 
@@ -193,7 +202,7 @@ pub fn process_for_each_multi_with_context<'a>(
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 // Check each handler
@@ -213,7 +222,7 @@ pub fn process_for_each_multi_with_context<'a>(
             }
 
             Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 // Check each handler
@@ -291,6 +300,14 @@ pub fn process_for_each_multi_with_context<'a>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                for i in 0..states.len() {
+                    if let Some(ref mut builder) = states[i].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 break;
             }
@@ -331,10 +348,13 @@ pub fn process_streaming_multi<'a, W: Write>(
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut transform_count: usize = 0;
     let mut buf = Vec::new();
     let mut prev_written: usize = 0;
@@ -358,7 +378,7 @@ pub fn process_streaming_multi<'a, W: Write>(
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
@@ -389,7 +409,7 @@ pub fn process_streaming_multi<'a, W: Write>(
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
@@ -484,6 +504,14 @@ pub fn process_streaming_multi<'a, W: Write>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -491,7 +519,8 @@ pub fn process_streaming_multi<'a, W: Write>(
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {
@@ -525,10 +554,13 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
-    let mut tracker = PathTracker::new();
+    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
     let mut transform_count: usize = 0;
     let mut buf = Vec::new();
     let mut prev_written: usize = 0;
@@ -552,7 +584,7 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
@@ -586,7 +618,7 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos, namespaces)?;
+                let element_info = extract_element_info(&e, before_pos)?;
                 tracker.push_element(element_info);
 
                 if let Some(idx) = active_handler {
@@ -687,6 +719,14 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
                 }
             }
 
+            Ok(Event::PI(e)) => {
+                if let Some(idx) = active_handler {
+                    if let Some(ref mut builder) = states[idx].builder {
+                        add_pi_to_builder(builder, &e)?;
+                    }
+                }
+            }
+
             Ok(Event::Eof) => {
                 // Write remaining (zero-copy)
                 writer.write_all(&input.as_bytes()[prev_written..])?;
@@ -694,7 +734,8 @@ pub fn process_streaming_multi_with_context<'a, W: Write>(
             }
 
             Ok(_) => {
-                // PI, Decl, DocType - pass through (handled by writing remaining)
+                // Decl, DocType, and PIs outside a match - pass through
+                // (copied verbatim with the surrounding input)
             }
 
             Err(e) => {

@@ -391,6 +391,8 @@ Transformer::from(xml)
     .to_string()?;
 ```
 
+Prefixed name tests are matched by namespace URI too: element prefixes are resolved from the document's own `xmlns` declarations, so with `.namespace("gml", "http://www.opengis.net/gml")`, `//gml:feature` also matches `<g:feature>` when `g` is bound to that URI.
+
 #### Parent Context Access
 
 Access ancestor elements' information during streaming transformation:

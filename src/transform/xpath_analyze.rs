@@ -23,9 +23,12 @@ pub enum NotStreamableReason {
     UsesBackwardAxis(Axis),
     /// Uses count() on siblings or other context-dependent count
     UsesContextDependentCount,
-    /// Uses complex predicate that requires full tree evaluation
+    /// Uses a predicate, axis or node test that the single-pass matcher cannot
+    /// evaluate exactly (e.g. `and`/`or`/`not()`, numeric or relational
+    /// comparisons, a position after another predicate, `following-sibling::`,
+    /// `self::`, `text()`)
     ComplexPredicate,
-    /// Uses union with incompatible paths
+    /// Uses a union (`|`); unions are never streamed
     IncompatibleUnion,
     /// Expression is not a path expression
     NotPathExpr,
@@ -37,8 +40,11 @@ impl std::fmt::Display for NotStreamableReason {
             Self::UsesLast => write!(f, "uses last() function which requires knowing total count"),
             Self::UsesBackwardAxis(axis) => write!(f, "uses backward axis {:?}", axis),
             Self::UsesContextDependentCount => write!(f, "uses context-dependent count"),
-            Self::ComplexPredicate => write!(f, "uses complex predicate (and/or/not)"),
-            Self::IncompatibleUnion => write!(f, "uses union with incompatible paths"),
+            Self::ComplexPredicate => write!(
+                f,
+                "uses a predicate, axis or node test that cannot be evaluated in a single streaming pass"
+            ),
+            Self::IncompatibleUnion => write!(f, "uses a union, which is not streamable"),
             Self::NotPathExpr => write!(f, "expression is not a path expression"),
         }
     }
@@ -110,15 +116,14 @@ pub fn analyze_xpath(expr: &Expr) -> XPathAnalysis {
     match expr {
         Expr::Path(path) => analyze_path(path),
         Expr::Union(paths) => {
-            // Union is streamable if all paths are streamable and compatible
-            let mut results: Vec<StreamableXPath> = Vec::new();
+            // Report a non-streamable branch first; otherwise the union itself
+            // is not streamable (its branches would have to be merged in
+            // document order).
             for path in paths {
-                match analyze_path(path) {
-                    XPathAnalysis::Streamable(s) => results.push(s),
-                    not_streamable => return not_streamable,
+                if let not_streamable @ XPathAnalysis::NotStreamable(_) = analyze_path(path) {
+                    return not_streamable;
                 }
             }
-            // For now, treat unions as not streamable for simplicity
             XPathAnalysis::NotStreamable(NotStreamableReason::IncompatibleUnion)
         }
         _ => XPathAnalysis::NotStreamable(NotStreamableReason::NotPathExpr),
@@ -128,67 +133,49 @@ pub fn analyze_xpath(expr: &Expr) -> XPathAnalysis {
 fn analyze_path(path: &PathExpr) -> XPathAnalysis {
     let mut streamable_steps = Vec::new();
     let mut max_position: Option<usize> = None;
-    let mut i = 0;
+    // Set by a `//` (`/descendant-or-self::node()/`) step: the next step may
+    // select any descendant of the current context, not only its children.
+    let mut pending_descendant = false;
 
-    while i < path.steps.len() {
-        let step = &path.steps[i];
-
+    for step in &path.steps {
         // Check for backward axes
         if is_backward_axis(step.axis) {
             return XPathAnalysis::NotStreamable(NotStreamableReason::UsesBackwardAxis(step.axis));
         }
 
-        // Handle descendant-or-self from //
-        // Note: // in XPath is defined as /descendant-or-self::node()/, so we check for NodeTest::Node
-        let descendant_or_self =
-            step.axis == Axis::DescendantOrSelf && step.node_test == NodeTest::Node;
-
-        if descendant_or_self {
-            // This is the // shorthand, next step is the actual match
-            i += 1;
-            if i >= path.steps.len() {
-                // Just // at the end - match any element
-                streamable_steps.push(StreamableStep {
-                    descendant_or_self: true,
-                    name: None,
-                    prefix: None,
-                    namespace_uri: None,
-                    attribute_predicates: Vec::new(),
-                    position_predicate: None,
-                });
-                break;
-            }
-            let next_step = &path.steps[i];
-
-            // Check the actual step after //
-            if is_backward_axis(next_step.axis) {
-                return XPathAnalysis::NotStreamable(NotStreamableReason::UsesBackwardAxis(
-                    next_step.axis,
-                ));
-            }
-
-            match analyze_step(next_step, true) {
-                Ok((s, pos)) => {
-                    if let Some(p) = pos {
-                        max_position = Some(max_position.map_or(p, |m| m.max(p)));
-                    }
-                    streamable_steps.push(s);
-                }
-                Err(reason) => return XPathAnalysis::NotStreamable(reason),
-            }
-        } else {
-            match analyze_step(step, false) {
-                Ok((s, pos)) => {
-                    if let Some(p) = pos {
-                        max_position = Some(max_position.map_or(p, |m| m.max(p)));
-                    }
-                    streamable_steps.push(s);
-                }
-                Err(reason) => return XPathAnalysis::NotStreamable(reason),
-            }
+        // `//` in XPath is `/descendant-or-self::node()/`
+        if step.axis == Axis::DescendantOrSelf
+            && step.node_test == NodeTest::Node
+            && step.predicates.is_empty()
+        {
+            pending_descendant = true;
+            continue;
         }
 
-        i += 1;
+        let descendant = match step.axis {
+            Axis::Child => pending_descendant,
+            Axis::Descendant => true,
+            // self::, following::, following-sibling::, attribute::, namespace::
+            // and descendant-or-self:: with a name test select nodes the
+            // streaming matcher cannot track exactly.
+            _ => return XPathAnalysis::NotStreamable(NotStreamableReason::ComplexPredicate),
+        };
+        pending_descendant = false;
+
+        match analyze_step(step, descendant) {
+            Ok((s, pos)) => {
+                if let Some(p) = pos {
+                    max_position = Some(max_position.map_or(p, |m| m.max(p)));
+                }
+                streamable_steps.push(s);
+            }
+            Err(reason) => return XPathAnalysis::NotStreamable(reason),
+        }
+    }
+
+    // A trailing `//` (or an empty path) selects non-element nodes too.
+    if pending_descendant || streamable_steps.is_empty() {
+        return XPathAnalysis::NotStreamable(NotStreamableReason::ComplexPredicate);
     }
 
     XPathAnalysis::Streamable(StreamableXPath {
@@ -205,33 +192,56 @@ fn analyze_step(
     let (mut name, prefix) = match &step.node_test {
         NodeTest::Any => (None, None),
         NodeTest::Name(n) => (Some(n.clone()), None),
+        NodeTest::QName { prefix, local } if local == "*" => (None, Some(prefix.clone())),
         NodeTest::QName { prefix, local } => (Some(local.clone()), Some(prefix.clone())),
-        NodeTest::Text | NodeTest::Node => (None, None),
+        // text() / node() select non-element nodes, which are not matched
+        _ => return Err(NotStreamableReason::ComplexPredicate),
     };
 
     let mut attribute_predicates = Vec::new();
     let mut position_predicate = None;
     let mut namespace_uri = None;
+    let mut local_name_from_predicate = false;
     let mut max_pos: Option<usize> = None;
 
-    for pred in &step.predicates {
+    for (index, pred) in step.predicates.iter().enumerate() {
         match analyze_predicate(pred)? {
             PredicateAnalysis::Attribute(ap) => attribute_predicates.push(ap),
             PredicateAnalysis::Position(pp) => {
+                // A position is only the sibling position when it is the first
+                // predicate of a child step: after another predicate it counts
+                // within the filtered set, and on `descendant::` it counts all
+                // descendants of the context.
+                if index != 0 || step.axis == Axis::Descendant {
+                    return Err(NotStreamableReason::ComplexPredicate);
+                }
                 if let Some(max) = position_max(&pp) {
                     max_pos = Some(max_pos.map_or(max, |m| m.max(max)));
                 }
                 position_predicate = Some(pp);
             }
             PredicateAnalysis::NamespaceUri(uri) => {
+                if namespace_uri.is_some() {
+                    return Err(NotStreamableReason::ComplexPredicate);
+                }
                 namespace_uri = Some(uri);
             }
             PredicateAnalysis::LocalName(local) => {
-                // local-name() predicate overrides the name from node test
+                // Folding `local-name()='x'` into the name test is only exact
+                // when the node test does not already constrain the name.
+                if name.is_some() {
+                    return Err(NotStreamableReason::ComplexPredicate);
+                }
                 name = Some(local);
+                local_name_from_predicate = true;
             }
-            PredicateAnalysis::Ignored => {}
         }
+    }
+
+    // The sibling position is counted per node test; a name folded in from
+    // `local-name()` would change which siblings are counted.
+    if local_name_from_predicate && position_predicate.is_some() {
+        return Err(NotStreamableReason::ComplexPredicate);
     }
 
     Ok((
@@ -252,122 +262,109 @@ enum PredicateAnalysis {
     Position(PositionPredicate),
     NamespaceUri(String),
     LocalName(String),
-    Ignored,
+}
+
+/// Returns the attribute name (`local` or `prefix:local`) of an `@name` path.
+fn attribute_name(expr: &Expr) -> Option<String> {
+    let Expr::Path(path) = expr else {
+        return None;
+    };
+    if path.absolute || path.steps.len() != 1 {
+        return None;
+    }
+    let step = &path.steps[0];
+    if step.axis != Axis::Attribute || !step.predicates.is_empty() {
+        return None;
+    }
+    match &step.node_test {
+        NodeTest::Name(n) => Some(n.clone()),
+        NodeTest::QName { prefix, local } if local != "*" => Some(format!("{prefix}:{local}")),
+        _ => None,
+    }
+}
+
+/// Converts an XPath number to a non-negative integer position, if it is one.
+fn as_position(n: f64) -> Option<usize> {
+    (n.is_finite() && n >= 0.0 && n.fract() == 0.0).then_some(n as usize)
 }
 
 fn analyze_predicate(pred: &Predicate) -> Result<PredicateAnalysis, NotStreamableReason> {
+    if predicate_uses_last(pred) {
+        return Err(NotStreamableReason::UsesLast);
+    }
+
     match pred {
         Predicate::Position(n) => Ok(PredicateAnalysis::Position(PositionPredicate::Exact(*n))),
 
         Predicate::Comparison { left, op, right } => {
-            // Check for @attr = 'value'
-            if let Expr::Path(path) = left.as_ref() {
-                if path.steps.len() == 1 && path.steps[0].axis == Axis::Attribute {
-                    if let NodeTest::Name(attr_name) = &path.steps[0].node_test {
-                        if let Expr::String(value) = right.as_ref() {
-                            return Ok(PredicateAnalysis::Attribute(AttributePredicate {
-                                name: attr_name.clone(),
-                                op: *op,
-                                value: value.clone(),
-                            }));
-                        }
+            // @attr = 'value' / @attr != 'value' (string comparison only:
+            // numeric and relational comparisons convert values to numbers)
+            if let (Some(attr_name), Expr::String(value)) = (attribute_name(left), right.as_ref()) {
+                return match op {
+                    ComparisonOp::Equal => Ok(PredicateAnalysis::Attribute(AttributePredicate {
+                        name: attr_name,
+                        op: *op,
+                        value: value.clone(),
+                    })),
+                    // `@a != ''` is not representable: an empty NotEqual value
+                    // encodes the `[@a]` existence check.
+                    ComparisonOp::NotEqual if !value.is_empty() => {
+                        Ok(PredicateAnalysis::Attribute(AttributePredicate {
+                            name: attr_name,
+                            op: *op,
+                            value: value.clone(),
+                        }))
                     }
-                }
+                    _ => Err(NotStreamableReason::ComplexPredicate),
+                };
             }
 
-            // Check for position() comparisons
-            if let Expr::Function { name, args } = left.as_ref() {
-                if name == "position" && args.is_empty() {
-                    if let Expr::Number(n) = right.as_ref() {
-                        let pos = *n as usize;
-                        return match op {
-                            ComparisonOp::Equal => {
-                                Ok(PredicateAnalysis::Position(PositionPredicate::Exact(pos)))
-                            }
-                            ComparisonOp::LessOrEqual => Ok(PredicateAnalysis::Position(
-                                PositionPredicate::LessOrEqual(pos),
-                            )),
-                            ComparisonOp::LessThan => Ok(PredicateAnalysis::Position(
-                                PositionPredicate::LessThan(pos),
-                            )),
-                            ComparisonOp::GreaterOrEqual => Ok(PredicateAnalysis::Position(
-                                PositionPredicate::GreaterOrEqual(pos),
-                            )),
-                            ComparisonOp::GreaterThan => Ok(PredicateAnalysis::Position(
-                                PositionPredicate::GreaterThan(pos),
-                            )),
+            if let (Expr::Function { name, args }, right) = (left.as_ref(), right.as_ref()) {
+                if !args.is_empty() {
+                    return Err(NotStreamableReason::ComplexPredicate);
+                }
+                match (name.as_str(), right) {
+                    ("position", Expr::Number(n)) => {
+                        let pos = as_position(*n).ok_or(NotStreamableReason::ComplexPredicate)?;
+                        let pp = match op {
+                            ComparisonOp::Equal => PositionPredicate::Exact(pos),
+                            ComparisonOp::LessOrEqual => PositionPredicate::LessOrEqual(pos),
+                            ComparisonOp::LessThan => PositionPredicate::LessThan(pos),
+                            ComparisonOp::GreaterOrEqual => PositionPredicate::GreaterOrEqual(pos),
+                            ComparisonOp::GreaterThan => PositionPredicate::GreaterThan(pos),
                             ComparisonOp::NotEqual => {
-                                // position() != n is not useful for streaming optimization
-                                Ok(PredicateAnalysis::Ignored)
+                                return Err(NotStreamableReason::ComplexPredicate);
                             }
                         };
+                        return Ok(PredicateAnalysis::Position(pp));
                     }
-                }
-
-                // Check for namespace-uri() = 'URI'
-                if name == "namespace-uri" && args.is_empty() {
-                    if let Expr::String(uri) = right.as_ref() {
-                        if *op == ComparisonOp::Equal {
-                            return Ok(PredicateAnalysis::NamespaceUri(uri.clone()));
-                        }
+                    ("namespace-uri", Expr::String(uri)) if *op == ComparisonOp::Equal => {
+                        return Ok(PredicateAnalysis::NamespaceUri(uri.clone()));
                     }
-                }
-
-                // Check for local-name() = 'name'
-                if name == "local-name" && args.is_empty() {
-                    if let Expr::String(local) = right.as_ref() {
-                        if *op == ComparisonOp::Equal {
-                            return Ok(PredicateAnalysis::LocalName(local.clone()));
-                        }
+                    ("local-name", Expr::String(local)) if *op == ComparisonOp::Equal => {
+                        return Ok(PredicateAnalysis::LocalName(local.clone()));
                     }
+                    _ => {}
                 }
             }
 
-            // Check for last() usage
-            if uses_last(left) || uses_last(right) {
-                return Err(NotStreamableReason::UsesLast);
-            }
-
-            // Other comparisons might work, but complex ones need fallback
-            Ok(PredicateAnalysis::Ignored)
+            Err(NotStreamableReason::ComplexPredicate)
         }
 
         Predicate::Expr(expr) => {
-            // Check for last() usage
-            if uses_last(expr) {
-                return Err(NotStreamableReason::UsesLast);
+            // @attr (existence check)
+            if let Some(attr_name) = attribute_name(expr) {
+                return Ok(PredicateAnalysis::Attribute(AttributePredicate {
+                    name: attr_name,
+                    op: ComparisonOp::NotEqual, // existence check
+                    value: String::new(),
+                }));
             }
 
-            // Check for @attr (existence check)
-            if let Expr::Path(path) = expr.as_ref() {
-                if path.steps.len() == 1 && path.steps[0].axis == Axis::Attribute {
-                    if let NodeTest::Name(attr_name) = &path.steps[0].node_test {
-                        return Ok(PredicateAnalysis::Attribute(AttributePredicate {
-                            name: attr_name.clone(),
-                            op: ComparisonOp::NotEqual, // existence check
-                            value: String::new(),
-                        }));
-                    }
-                }
-            }
-
-            // For complex expressions, we'll rely on fallback
             Err(NotStreamableReason::ComplexPredicate)
         }
 
-        Predicate::And(left, right) | Predicate::Or(left, right) => {
-            // Check for last() in either side
-            if predicate_uses_last(left) || predicate_uses_last(right) {
-                return Err(NotStreamableReason::UsesLast);
-            }
-            // Complex predicates need fallback
-            Err(NotStreamableReason::ComplexPredicate)
-        }
-
-        Predicate::Not(inner) => {
-            if predicate_uses_last(inner) {
-                return Err(NotStreamableReason::UsesLast);
-            }
+        Predicate::And(..) | Predicate::Or(..) | Predicate::Not(..) => {
             Err(NotStreamableReason::ComplexPredicate)
         }
     }
@@ -482,9 +479,9 @@ mod tests {
     }
 
     #[test]
-    fn test_double_slash_at_end() {
-        // Just // should be streamable
-        assert!(is_streamable("//"));
+    fn test_double_slash_at_end_not_streamable() {
+        // A bare `//` selects every node, not only elements
+        assert!(!is_streamable("//"));
     }
 
     #[test]
@@ -574,9 +571,9 @@ mod tests {
     }
 
     #[test]
-    fn test_position_not_equal_ignored() {
-        // position() != n is ignored for optimization
-        assert!(is_streamable("//item[position()!=3]"));
+    fn test_position_not_equal_not_streamable() {
+        // position() != n has no streaming representation; it must not be dropped
+        assert!(!is_streamable("//item[position()!=3]"));
     }
 
     // =============================================================================
@@ -769,18 +766,22 @@ mod tests {
     }
 
     #[test]
-    fn test_following_sibling_axis_streamable() {
-        assert!(is_streamable("/root/item/following-sibling::*"));
+    fn test_sibling_and_self_axes_not_streamable() {
+        // The streaming matcher only tracks the ancestor chain of the current
+        // element, so these axes cannot be evaluated exactly.
+        assert!(!is_streamable("/root/item/following-sibling::*"));
+        assert!(!is_streamable("/root/item/following::*"));
+        assert!(!is_streamable("/root/self::*"));
+        assert!(!is_streamable("//a/descendant-or-self::item"));
     }
 
     #[test]
-    fn test_following_axis_streamable() {
-        assert!(is_streamable("/root/item/following::*"));
-    }
-
-    #[test]
-    fn test_self_axis_streamable() {
-        assert!(is_streamable("/root/self::*"));
+    fn test_descendant_axis_is_descendant_step() {
+        let result = get_streamable("/root/descendant::item").unwrap();
+        assert_eq!(result.steps.len(), 2);
+        assert!(result.steps[1].descendant_or_self);
+        // A position on descendant:: counts all descendants, not siblings
+        assert!(!is_streamable("/root/descendant::item[1]"));
     }
 
     // =============================================================================
@@ -824,13 +825,10 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_text_node_test() {
-        assert!(is_streamable("//text()"));
-    }
-
-    #[test]
-    fn test_node_node_test() {
-        assert!(is_streamable("//node()"));
+    fn test_non_element_node_tests_not_streamable() {
+        // Only elements are matched while streaming
+        assert!(!is_streamable("//text()"));
+        assert!(!is_streamable("//node()"));
     }
 
     #[test]
