@@ -519,8 +519,12 @@ impl<'a> XPathEvaluator<'a> {
     ) -> Result<Vec<XmlNode>> {
         match predicate {
             Predicate::Position(pos) => {
-                // 1-based position
-                Ok(nodes.into_iter().nth(*pos - 1).into_iter().collect())
+                // 1-based position; a hand-built `Position(0)` selects nothing
+                Ok(pos
+                    .checked_sub(1)
+                    .and_then(|idx| nodes.into_iter().nth(idx))
+                    .into_iter()
+                    .collect())
             }
             _ => {
                 let size = nodes.len();
@@ -916,5 +920,20 @@ mod tests {
         } else {
             panic!("expected nodes or string, got {:?}", result);
         }
+    }
+
+    #[test]
+    fn test_hand_built_position_zero_selects_nothing() {
+        use crate::xpath::parser::{PathExpr, Predicate, Step};
+
+        let doc = parse(r#"<root><item/><item/></root>"#).unwrap();
+        let mut item = Step::child("item");
+        item.predicates.push(Predicate::Position(0));
+        let expr = Expr::Path(PathExpr {
+            absolute: true,
+            steps: vec![Step::child("root"), item],
+        });
+        let result = XPathEvaluator::new(&doc).evaluate_expr(&expr).unwrap();
+        assert!(matches!(result, XPathResult::Nodes(ref nodes) if nodes.is_empty()));
     }
 }
