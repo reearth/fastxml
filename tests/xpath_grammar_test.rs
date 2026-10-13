@@ -246,6 +246,7 @@ fn filter_expressions_take_predicates_and_paths() {
     assert_eq!(number(&d, "count((/root)//a)"), 3.0);
     assert_eq!(number(&d, "count((//a)[1] | //b)"), 2.0);
     assert_eq!(number(&d, "count((//a)[. > 1][1])"), 1.0);
+    #[cfg(feature = "compare-libxml")]
     for xpath in [
         "(//a)[1]",
         "(//a)[2]",
