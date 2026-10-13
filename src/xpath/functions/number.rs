@@ -8,7 +8,7 @@
 
 use crate::error::Result;
 use crate::xpath::error::XPathEvalError;
-use crate::xpath::types::{EvaluationContext, XPathValue};
+use crate::xpath::types::{EvaluationContext, XPathValue, string_to_number};
 
 /// `number([object])` - converts the argument to a number.
 pub fn fn_number(args: Vec<XPathValue>, ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
@@ -46,7 +46,7 @@ pub fn fn_sum(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPa
                 .iter()
                 .map(|n| {
                     n.get_content()
-                        .and_then(|s| s.trim().parse::<f64>().ok())
+                        .map(|s| string_to_number(&s))
                         .unwrap_or(f64::NAN)
                 })
                 .fold(0.0, |acc, v| if v.is_nan() { f64::NAN } else { acc + v });
@@ -92,7 +92,8 @@ pub fn fn_ceiling(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result
 
 /// `round(number)` - rounds to the nearest integer.
 ///
-/// Note: XPath rounds .5 towards positive infinity (not banker's rounding).
+/// XPath 1.0 §4.4: ties round towards positive infinity (not banker's
+/// rounding), and an argument in `[-0.5, 0)` rounds to negative zero.
 pub fn fn_round(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<XPathValue> {
     if args.len() != 1 {
         return Err(XPathEvalError::WrongArgumentCount {
@@ -109,8 +110,19 @@ pub fn fn_round(args: Vec<XPathValue>, _ctx: &EvaluationContext<'_>) -> Result<X
     let result = if value.is_nan() || value.is_infinite() || value == 0.0 {
         value
     } else {
-        // XPath rounds .5 towards positive infinity
-        (value + 0.5).floor()
+        // `value - floor` is exact, unlike `value + 0.5`, which rounds
+        // 0.49999999999999994 up to 1.
+        let floor = value.floor();
+        let rounded = if value - floor >= 0.5 {
+            floor + 1.0
+        } else {
+            floor
+        };
+        if rounded == 0.0 && value < 0.0 {
+            -0.0
+        } else {
+            rounded
+        }
     };
 
     Ok(XPathValue::Number(result))

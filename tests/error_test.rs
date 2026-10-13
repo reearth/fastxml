@@ -529,12 +529,16 @@ mod xpath_errors {
     #[test]
     fn test_xpath_double_slash_at_end() {
         let doc = Parser::from("<root><child/></root>").parse().unwrap();
-        let result = doc.query("/root//");
-        // Trailing // matches all descendants of root
-        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
-        let nodes = result.unwrap().into_nodes();
-        // Returns root and child (all descendants including self)
-        assert!(!nodes.is_empty(), "// at end matches all descendants");
+        // `//` (and `/` after a step) must be followed by a step in XPath 1.0;
+        // libxml also rejects `/root//` as an invalid expression.
+        for xpath in ["/root//", "/root/"] {
+            let result = doc.query(xpath);
+            assert!(
+                matches!(result, Err(Error::XPathSyntax(_))),
+                "Expected XPathSyntax error for {xpath:?}, got: {:?}",
+                result
+            );
+        }
     }
 
     #[test]
