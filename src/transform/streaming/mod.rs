@@ -8,15 +8,6 @@ mod rewrite;
 mod single;
 mod tracker;
 
-#[cfg(test)]
-mod legacy_multi;
-#[cfg(test)]
-mod legacy_reader;
-#[cfg(test)]
-mod legacy_single;
-#[cfg(test)]
-mod rewrite_diff_tests;
-
 use super::context::TransformContext;
 use super::editable::EditableNode;
 use super::xpath_analyze::StreamableXPath;
