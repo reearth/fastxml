@@ -16,6 +16,7 @@
 //!   [`EngineSettings`] (mode, error cap, aggregation), exactly as with an
 //!   explicit schema.
 
+use std::io::BufRead;
 use std::sync::Arc;
 
 use crate::document::XmlDocument;
@@ -26,7 +27,7 @@ use crate::schema::types::CompiledSchema;
 
 use super::ValidationMode;
 use super::dom::DomSchemaValidator;
-use super::lazy::AutodetectStreamingValidator;
+use super::prescan::{Prescanned, prescan};
 use super::streaming::OnePassSchemaValidator;
 
 /// The caller-chosen engine settings, applied identically to the explicit
@@ -69,7 +70,7 @@ fn schema_unavailable(message: String) -> StructuredError {
 }
 
 /// The root element names no schema.
-pub(crate) fn no_hints_error() -> StructuredError {
+fn no_hints_error() -> StructuredError {
     schema_unavailable(format!(
         "no schema to validate against: the root element has no xsi:schemaLocation or \
          xsi:noNamespaceSchemaLocation attribute (namespace {}); {NOT_VALIDATED}. \
@@ -222,31 +223,63 @@ pub(crate) async fn validate_dom_autodetect_async<F: crate::schema::fetcher::Asy
     )
 }
 
-/// Single-pass streaming validation against the schema named by the
-/// document's hints: the schema is loaded when the root start tag arrives,
-/// and the rest of the document streams through the validator.
-pub(crate) fn validate_streaming_autodetect<R: std::io::BufRead, F: SchemaFetcher + 'static>(
-    reader: R,
-    fetcher: F,
+/// Streams `replay` (the whole input) through the validator for `loaded`.
+///
+/// When the schema could not be loaded the content is not validated, but it
+/// is still parsed to the end, so a malformed document is an `Err` either
+/// way.
+fn validate_streaming_with<R: BufRead>(
+    replay: R,
+    loaded: std::result::Result<CompiledSchema, Vec<StructuredError>>,
     settings: EngineSettings,
 ) -> Result<Vec<StructuredError>> {
-    use crate::event::StreamingParser;
-
-    let mut parser = StreamingParser::new(reader);
-    parser.add_handler(Box::new(AutodetectStreamingValidator::new(
-        fetcher, settings,
-    )));
-    parser.parse()?;
-
-    for handler in parser.into_handlers() {
-        if let Ok(v) = handler
-            .as_any()
-            .downcast::<AutodetectStreamingValidator<F>>()
-        {
-            return Ok(v.into_entries());
+    match loaded {
+        Ok(schema) => {
+            let (entries, _counters) = settings
+                .streaming(Arc::new(schema))
+                .validate_capturing(replay)?;
+            Ok(entries)
+        }
+        Err(errors) => {
+            crate::event::StreamingParser::new(replay).parse()?;
+            Ok(errors)
         }
     }
-    unreachable!("the auto-detecting validator was registered above")
+}
+
+/// Single-pass streaming validation against the schema named by the
+/// document's hints: the pre-scan reads the hints from the root start tag,
+/// the schema is loaded, then the whole input streams through the validator.
+pub(crate) fn validate_streaming_autodetect<R: BufRead, F: SchemaFetcher>(
+    reader: R,
+    fetcher: &F,
+    settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
+    let Prescanned { hints, replay } = prescan(reader)?;
+    let Some(hints) = hints else {
+        return Ok(vec![no_hints_error()]);
+    };
+    validate_streaming_with(replay, load_hinted_schema(&hints, fetcher), settings)
+}
+
+/// Async counterpart of [`validate_streaming_autodetect`]: the schema is
+/// fetched through the async fetcher; reading and parsing the input stay
+/// synchronous, as with an explicit schema.
+#[cfg(feature = "tokio")]
+pub(crate) async fn validate_streaming_autodetect_async<
+    R: BufRead,
+    F: crate::schema::fetcher::AsyncSchemaFetcher,
+>(
+    reader: R,
+    fetcher: &F,
+    settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
+    let Prescanned { hints, replay } = prescan(reader)?;
+    let Some(hints) = hints else {
+        return Ok(vec![no_hints_error()]);
+    };
+    let loaded = load_hinted_schema_async(&hints, fetcher).await;
+    validate_streaming_with(replay, loaded, settings)
 }
 
 #[cfg(test)]
@@ -285,7 +318,7 @@ mod tests {
     fn streaming_without_hints_reports_missing_schema() {
         let reader = std::io::BufReader::new(NO_HINT.as_bytes());
         let errors =
-            validate_streaming_autodetect(reader, crate::schema::fetcher::NoopFetcher, settings())
+            validate_streaming_autodetect(reader, &crate::schema::fetcher::NoopFetcher, settings())
                 .unwrap();
         assert_no_schema(&errors);
     }

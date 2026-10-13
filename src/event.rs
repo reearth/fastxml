@@ -281,9 +281,20 @@ impl<R: BufRead> StreamingParser<R> {
     }
 
     /// Parses the document, dispatching events to all handlers.
-    fn drive_loop<F>(&mut self, mut on_event: F) -> Result<()>
+    fn drive_loop<F>(&mut self, on_event: F) -> Result<()>
     where
         F: FnMut(&RawEvent<'_>) -> Result<()>,
+    {
+        self.drive_loop_until(on_event, || false)
+    }
+
+    /// Like [`drive_loop`](Self::drive_loop), but returns as soon as `stop`
+    /// is true after a markup construct has been read and dispatched. At
+    /// end of input the end-of-document checks run as usual.
+    fn drive_loop_until<F, S>(&mut self, mut on_event: F, stop: S) -> Result<()>
+    where
+        F: FnMut(&RawEvent<'_>) -> Result<()>,
+        S: Fn() -> bool,
     {
         let mut buffer = Vec::with_capacity(8 * 1024);
         let Self {
@@ -343,6 +354,9 @@ impl<R: BufRead> StreamingParser<R> {
                 }
             }
             buffer.clear();
+            if stop() {
+                break;
+            }
         }
 
         Ok(())
@@ -369,6 +383,32 @@ impl<R: BufRead> StreamingParser<R> {
             });
         self.handlers = handlers;
         result
+    }
+
+    /// Reads the prolog and the document element's start tag, and nothing
+    /// after it, passing each event to `on_event` with the same
+    /// well-formedness checks as [`parse`](Self::parse). Registered handlers
+    /// are not invoked.
+    ///
+    /// Returns `true` once the root start tag has been dispatched (for an
+    /// empty-element root, its end event too). Input that ends before a root
+    /// element fails the end-of-document check, so `false` is only returned
+    /// if that check ever lets such input through.
+    pub fn parse_through_root_start<F>(&mut self, mut on_event: F) -> Result<bool>
+    where
+        F: FnMut(&RawEvent<'_>) -> Result<()>,
+    {
+        let root_seen = std::cell::Cell::new(false);
+        self.drive_loop_until(
+            |event| {
+                if matches!(event, RawEvent::StartElement { .. }) {
+                    root_seen.set(true);
+                }
+                on_event(event)
+            },
+            || root_seen.get(),
+        )?;
+        Ok(root_seen.get())
     }
 
     /// Drives the parser, invoking `on_event` for every event as it is read.

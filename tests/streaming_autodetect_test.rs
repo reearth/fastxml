@@ -365,3 +365,39 @@ fn max_errors_and_aggregation_apply() {
     assert_eq!(capped, [first]);
     assert_eq!(aggregated, [format!("{first} x3")]);
 }
+
+/// The async entry point streams too, with the same outcome as `run_with`.
+#[cfg(feature = "tokio")]
+#[tokio::test]
+async fn async_streaming_matches_sync() {
+    let missing = format!(
+        "<root xmlns=\"urn:t\" xmlns:xsi=\"{XSI}\" xsi:schemaLocation=\"urn:t mem://missing.xsd\"><n>abc</n></root>"
+    );
+    let inputs = [
+        doc_t("<n>1</n>"),
+        doc_t("\n  <n>abc</n>\n  <n>2</n>\n    <bad/>\n"),
+        format!(
+            "\u{feff}<?xml version=\"1.0\"?>\n<!-- c -->\n{}",
+            doc_t("\n<n>q</n>")
+        ),
+        missing.clone(),
+        missing.replace("</n>", "</m>"),
+        "<root><n>1</n></root>".to_string(),
+        String::new(),
+    ];
+    for xml in &inputs {
+        let sync = from_bytes(xml.as_bytes());
+        let from_str = describe(
+            Validator::from(xml.as_str())
+                .run_async_with(&MemFetcher::new())
+                .await,
+        );
+        let from_reader = describe(
+            Validator::from_reader(BufReader::with_capacity(3, xml.as_bytes()))
+                .run_async_with(&MemFetcher::new())
+                .await,
+        );
+        assert_eq!(from_str, sync, "{xml}");
+        assert_eq!(from_reader, sync, "{xml}");
+    }
+}

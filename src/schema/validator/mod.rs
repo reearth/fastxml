@@ -13,13 +13,13 @@ mod attributes;
 mod decls;
 mod dom;
 mod facade;
-mod lazy;
+mod prescan;
 mod state;
 mod streaming;
 mod xsi_type;
 
 // Internal layout (maintainer note): `dom` and `streaming` are the two
-// engines, `state` holds streaming per-element state, `api` + `lazy`
+// engines, `state` holds streaming per-element state, `api` + `prescan`
 // implement schema auto-detection from the document's hints, and `facade`
 // is the public `Validator` / `Report` surface.
 pub use self::mode::ValidationMode;

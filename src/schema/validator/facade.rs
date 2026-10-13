@@ -193,30 +193,32 @@ impl<'a> Validator<'a> {
     }
 
     /// Async version of [`run_with`](Self::run_with), loading the schema
-    /// named by the document's hints through an async `fetcher`.
+    /// named by the document's hints through an async `fetcher`. Same
+    /// policy and same report as [`run_with`](Self::run_with), for DOM and
+    /// streaming input alike.
     ///
-    /// Async resolution is currently supported for an explicit schema (any
-    /// input) and for the DOM + `xsi:schemaLocation` case; async streaming
-    /// location resolution returns an error (use [`run_with`](Self::run_with)).
+    /// Only schema fetching is asynchronous: the input itself is read and
+    /// parsed synchronously, as with an explicit schema.
     #[cfg(feature = "tokio")]
     pub async fn run_async_with<F: crate::schema::fetcher::AsyncSchemaFetcher>(
         self,
         fetcher: &F,
     ) -> Result<Report> {
+        use super::api::{validate_dom_autodetect_async, validate_streaming_autodetect_async};
+
         let (source, schema, settings) = self.into_parts();
         let (entries, counters) = match schema {
             Some(schema) => validate_with_schema(source, schema, settings)?,
             None => {
                 let entries = match source {
                     Source::Dom(doc) => {
-                        super::api::validate_dom_autodetect_async(doc, fetcher, settings).await?
+                        validate_dom_autodetect_async(doc, fetcher, settings).await?
                     }
-                    _ => {
-                        return Err(crate::error::Error::InvalidOperation(
-                            "async xsi:schemaLocation resolution is only supported for DOM input; \
-                             use run_with for streaming input, or provide a schema"
-                                .to_string(),
-                        ));
+                    Source::Bytes(bytes) => {
+                        validate_streaming_autodetect_async(bytes, fetcher, settings).await?
+                    }
+                    Source::Reader(reader) => {
+                        validate_streaming_autodetect_async(reader, fetcher, settings).await?
                     }
                 };
                 (entries, None)
@@ -263,9 +265,11 @@ fn run_location_with<F: SchemaFetcher + 'static>(
 ) -> Result<Vec<StructuredError>> {
     match source {
         Source::Dom(doc) => super::api::validate_dom_autodetect(doc, &fetcher, settings),
-        Source::Bytes(bytes) => super::api::validate_streaming_autodetect(bytes, fetcher, settings),
+        Source::Bytes(bytes) => {
+            super::api::validate_streaming_autodetect(bytes, &fetcher, settings)
+        }
         Source::Reader(reader) => {
-            super::api::validate_streaming_autodetect(reader, fetcher, settings)
+            super::api::validate_streaming_autodetect(reader, &fetcher, settings)
         }
     }
 }

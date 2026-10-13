@@ -98,7 +98,7 @@ cargo run --release --example bench -- <xml-file> --mode streaming
 - **validator/** - Validation implementations
   - **facade.rs** - Unified `Validator` entry point and `Report`
   - **streaming/** - Single-pass streaming validator (OnePassSchemaValidator)
-  - **lazy.rs** - Lazy schema loading validator
+  - **prescan.rs** - Reads the root element's schema hints ahead of auto-detecting streaming validation
   - **dom/** - DOM-based validation
 - **fetcher/** - Schema fetching (file, HTTP sync/async, in-memory and file caching)
 - **builder.rs** - `Schema` constructors
