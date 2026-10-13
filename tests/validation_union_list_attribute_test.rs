@@ -264,3 +264,17 @@ fn xml_namespace_attribute_reference_is_matched() {
     assert_valid(xsd, r#"<root xml:lang="en"/>"#);
     assert_invalid(xsd, "<root/>", "required attribute 'lang' is missing");
 }
+
+#[test]
+fn unprefixed_attribute_is_not_the_declared_xml_one() {
+    let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+<xs:import namespace="http://www.w3.org/XML/1998/namespace"/>
+<xs:element name="root"><xs:complexType><xs:attribute ref="xml:lang" use="required"/></xs:complexType></xs:element>
+</xs:schema>"#;
+    // `lang` is in no namespace, so it is neither `xml:lang` nor declared.
+    assert_invalid(
+        xsd,
+        r#"<root lang="en"/>"#,
+        "required attribute 'lang' is missing",
+    );
+}
