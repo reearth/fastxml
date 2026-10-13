@@ -122,9 +122,10 @@ impl FetchPolicy {
     ///
     /// On success returns the location to hand to the underlying fetcher:
     /// the normalized URL for a remote location, the location unchanged for
-    /// an absolute path or `file://` URL, and the absolute path (joined onto
-    /// the base directory) for a relative path, so the fetcher reads exactly
-    /// the file that was checked.
+    /// an absolute path, `file://` plus the checked path for a `file://` URL
+    /// (whatever the scheme's case), and the absolute path (joined onto the
+    /// base directory) for a relative path, so the fetcher reads exactly the
+    /// file that was checked.
     ///
     /// # Errors
     ///
@@ -147,13 +148,18 @@ impl FetchPolicy {
                     .canonicalize()
                     .map_err(|e| deny(format!("cannot resolve {}: {}", path.display(), e)))?;
                 if self.dir_allowed(&canonical) {
-                    Ok(
-                        if Path::new(location).is_relative() && !has_file_scheme(location) {
-                            path.display().to_string()
-                        } else {
-                            location.to_string()
-                        },
-                    )
+                    // Hand over exactly the path that was checked: a relative
+                    // path joined onto the base directory, and a `file://`
+                    // URL with its scheme spelled the way `FileFetcher`
+                    // recognizes it (any other spelling would be read as a
+                    // relative path).
+                    Ok(if has_file_scheme(location) {
+                        format!("file://{}", path.display())
+                    } else if Path::new(location).is_relative() {
+                        path.display().to_string()
+                    } else {
+                        location.to_string()
+                    })
                 } else {
                     Err(deny(format!(
                         "{} is not inside any allowed directory",

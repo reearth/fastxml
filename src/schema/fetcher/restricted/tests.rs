@@ -116,6 +116,18 @@ fn relative_path_is_handed_to_inner_as_checked_absolute_path() {
 }
 
 #[test]
+fn file_url_is_handed_to_inner_with_a_lowercase_scheme() {
+    // `FileFetcher` only strips a lowercase `file://`; any other spelling
+    // would be read as a relative path, i.e. not the file that was checked.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.xsd"), "<a/>").unwrap();
+    let f = RestrictedFetcher::new(MockFetcher::new()).allow_dir(tmp.path());
+    let path = tmp.path().join("a.xsd").display().to_string();
+    f.fetch(&format!("FILE://{path}")).unwrap();
+    assert_eq!(f.inner().calls(), vec![format!("file://{path}")]);
+}
+
+#[test]
 fn wraps_file_fetcher() {
     let tmp = tempfile::tempdir().unwrap();
     let allowed = tmp.path().join("allowed");
