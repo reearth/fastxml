@@ -229,12 +229,7 @@ fn declares(def: &AttributeDef, name: &str, ns: Option<&str>, chameleon_ns: Opti
     let ns = ns.unwrap_or("");
     (def.name == local || def.name == name)
         && def.namespace.as_deref().is_none_or(|def_ns| {
-            def_ns == ns
-                || (def.is_ref && def_ns.is_empty() && chameleon_ns == Some(ns))
-                // The DOM records no namespace for `xml:`-prefixed
-                // attributes (the prefix is bound implicitly), so an
-                // attribute without one may be the declared `xml:` one.
-                || (def_ns == XML_NS && ns.is_empty())
+            def_ns == ns || (def.is_ref && def_ns.is_empty() && chameleon_ns == Some(ns))
         })
 }
 
