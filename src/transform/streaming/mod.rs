@@ -4,8 +4,18 @@ mod dispatch;
 mod helpers;
 mod multi;
 mod reader;
+mod rewrite;
 mod single;
 mod tracker;
+
+#[cfg(test)]
+mod legacy_multi;
+#[cfg(test)]
+mod legacy_reader;
+#[cfg(test)]
+mod legacy_single;
+#[cfg(test)]
+mod rewrite_diff_tests;
 
 use super::context::TransformContext;
 use super::editable::EditableNode;
@@ -45,16 +55,6 @@ pub type MultiTransformHandlerWithContext<'a> = (
     &'a StreamableXPath,
     &'a mut dyn FnMut(&mut EditableNode, &TransformContext),
 );
-
-/// State for tracking a single XPath handler during multi-xpath transform processing.
-/// Includes match_start_offset for zero-copy output.
-pub(crate) struct TransformHandlerState<'a> {
-    pub(crate) xpath: &'a StreamableXPath,
-    pub(crate) builder: Option<super::editable::EditableNodeBuilder>,
-    pub(crate) match_context: Option<TransformContext>,
-    /// Byte offset where the match started (for zero-copy output).
-    pub(crate) match_start_offset: usize,
-}
 
 #[cfg(test)]
 mod tests;
