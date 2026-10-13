@@ -60,6 +60,10 @@ pub enum SchemaError {
         message: String,
     },
     /// Circular dependency detected in schema imports
+    ///
+    /// Only [`DependencyTracker::topological_order`](crate::schema::xsd::resolver::DependencyTracker::topological_order)
+    /// produces this. The schema resolvers never do: mutual imports and
+    /// includes are legal in XSD, and each schema document is fetched once.
     CircularDependency {
         /// The URI that caused the circular dependency
         uri: String,
