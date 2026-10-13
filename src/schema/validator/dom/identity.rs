@@ -187,7 +187,10 @@ fn compile_with_schema_ns(
     scoped: &[(String, String)],
     xpath: &str,
 ) -> Option<Query> {
-    let mut query = Query::compile(xpath).ok()?;
+    let xpath = crate::schema::xsd::identity_xpath::strip_whitespace(xpath);
+    let mut query = Query::compile(&xpath).ok()?;
+    // `xml` is bound without a declaration.
+    query = query.namespace("xml", crate::namespace::common::XML_NS);
     for (prefix, uri) in &schema.prefix_namespaces {
         if !prefix.is_empty() && !scoped.iter().any(|(p, _)| p == prefix) {
             query = query.namespace(prefix.clone(), uri.clone());

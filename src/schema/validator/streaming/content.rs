@@ -419,18 +419,24 @@ impl OnePassSchemaValidator {
                 .collect()
         };
 
-        // Path of local names for elements on the stack (depth 1..=depth).
-        let local_names: Vec<&str> = self
+        // Path of (namespace, local name) for elements on the stack
+        // (depth 1..=depth).
+        let path: Vec<super::identity::PathName<'_>> = self
             .state
             .element_stack
             .iter()
-            .map(|ctx| ctx.name.rsplit(':').next().unwrap_or(ctx.name.as_ref()))
+            .map(|ctx| {
+                (
+                    ctx.namespace.as_deref().filter(|ns| !ns.is_empty()),
+                    ctx.name.rsplit(':').next().unwrap_or(ctx.name.as_ref()),
+                )
+            })
             .collect();
 
         for scope in &mut self.identity_scopes {
             // Selector match: relative path from just below the scope.
             if depth > scope.depth {
-                let rel = &local_names[scope.depth..depth];
+                let rel = &path[scope.depth..depth];
                 if super::identity::selector_matches(&scope.selector, rel) {
                     let mut fields = vec![super::identity::FieldState::Unset; scope.fields.len()];
                     // Attribute fields on the selected node resolve now.
@@ -469,7 +475,7 @@ impl OnePassSchemaValidator {
             // Attribute fields on elements below a selected node.
             for selected in &mut scope.selected {
                 if depth > selected.depth {
-                    let rel = &local_names[selected.depth..depth];
+                    let rel = &path[selected.depth..depth];
                     for (i, field) in scope.fields.iter().enumerate() {
                         if let Some(ref attr) = field.attr
                             && super::identity::field_steps_match(field, rel)
@@ -507,7 +513,9 @@ impl OnePassSchemaValidator {
 
         // Open new scopes for constraints declared on this element.
         for constraint in elem_constraints {
-            if let Some(scope) = super::identity::ScopeState::new(constraint, depth) {
+            let schema_prefix = |prefix: &str| self.schema.prefix_namespaces.get(prefix).cloned();
+            if let Some(scope) = super::identity::ScopeState::new(constraint, depth, &schema_prefix)
+            {
                 self.identity_scopes.push(scope);
             }
         }
@@ -536,26 +544,25 @@ impl OnePassSchemaValidator {
         };
         let text =
             crate::schema::xsd::value_compare::identity_key(text_kind, ctx.text_content.trim());
-        let ended_local = ctx
-            .name
-            .rsplit(':')
-            .next()
-            .unwrap_or(ctx.name.as_ref())
-            .to_string();
-
-        // Local names of the still-open ancestors (depth 1..ended_depth).
-        let local_names: Vec<String> = self
-            .state
-            .element_stack
-            .iter()
-            .map(|c| {
+        let path_name = |c: &ElementContext| -> (Option<String>, String) {
+            (
+                c.namespace
+                    .as_deref()
+                    .filter(|ns| !ns.is_empty())
+                    .map(str::to_string),
                 c.name
                     .rsplit(':')
                     .next()
                     .unwrap_or(c.name.as_ref())
-                    .to_string()
-            })
-            .collect();
+                    .to_string(),
+            )
+        };
+        let ended_name = path_name(ctx);
+
+        // (namespace, local name) of the still-open ancestors
+        // (depth 1..ended_depth).
+        let ancestors: Vec<(Option<String>, String)> =
+            self.state.element_stack.iter().map(path_name).collect();
 
         let mut errors: Vec<String> = Vec::new();
 
@@ -563,11 +570,12 @@ impl OnePassSchemaValidator {
             // Element-text fields below a selected node.
             for selected in &mut scope.selected {
                 if ended_depth > selected.depth {
-                    let mut rel: Vec<&str> = local_names[selected.depth..ended_depth - 1]
+                    let mut rel: Vec<super::identity::PathName<'_>> = ancestors
+                        [selected.depth..ended_depth - 1]
                         .iter()
-                        .map(|s| s.as_str())
+                        .map(|(ns, local)| (ns.as_deref(), local.as_str()))
                         .collect();
-                    rel.push(&ended_local);
+                    rel.push((ended_name.0.as_deref(), ended_name.1.as_str()));
                     for (i, field) in scope.fields.iter().enumerate() {
                         if field.attr.is_none()
                             && !field.steps.is_empty()
