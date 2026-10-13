@@ -1,6 +1,20 @@
 //! Single-pass streaming processor for XML transformation.
 
+mod dispatch;
+#[cfg(test)]
+mod dispatch_diff_tests;
 mod helpers;
+// Temporary copies of the pre-dispatch engines, compared against
+// `dispatch` by the differential test. Removed before merge.
+#[cfg(test)]
+#[allow(dead_code)]
+mod legacy_multi;
+#[cfg(test)]
+#[allow(dead_code)]
+mod legacy_reader;
+#[cfg(test)]
+#[allow(dead_code)]
+mod legacy_single;
 mod multi;
 mod reader;
 mod single;
@@ -24,6 +38,7 @@ pub use single::{
 };
 pub use tracker::{ElementInfo, PathTracker};
 
+pub(crate) use dispatch::{DispatchCallback, DispatchHandler, InputSource, dispatch};
 pub(crate) use helpers::{add_pi_to_builder, extract_element_info, split_bom};
 
 /// Handler pair for multi-xpath processing: (xpath, callback).
@@ -45,6 +60,7 @@ pub type MultiTransformHandlerWithContext<'a> = (
 );
 
 /// State for tracking a single XPath handler during multi-xpath processing.
+#[cfg(test)]
 pub(crate) struct HandlerState<'a> {
     pub(crate) xpath: &'a StreamableXPath,
     pub(crate) builder: Option<super::editable::EditableNodeBuilder>,
