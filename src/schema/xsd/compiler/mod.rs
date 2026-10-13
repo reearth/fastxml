@@ -7,7 +7,7 @@ mod cache;
 mod cycles;
 mod facet_checks;
 mod validity;
-pub(crate) use cache::inherited_wildcard;
+pub(crate) use cache::{build_complex_automaton, inherited_wildcard, substitution_index};
 mod particles;
 mod redefine;
 mod references;
@@ -53,6 +53,13 @@ pub struct XsdCompiler {
     /// documents, so QName references can be resolved against the owning
     /// document exactly as the reference checker does.
     pub(crate) current_doc_bindings: HashMap<String, String>,
+    /// Target namespace and `elementFormDefault` of the schema document that
+    /// declared the particles being compiled: the current document, or the
+    /// defining document while a named model group from another document is
+    /// expanded. Decides local element namespaces and wildcard targets.
+    pub(crate) particle_doc: (Option<String>, FormDefault),
+    /// `elementFormDefault` of the document defining each named model group.
+    pub(crate) group_forms: HashMap<NsName, FormDefault>,
 }
 
 impl XsdCompiler {
@@ -69,6 +76,8 @@ impl XsdCompiler {
             current_target_ns: None,
             current_target_prefix: None,
             current_doc_bindings: HashMap::new(),
+            particle_doc: (None, FormDefault::Unqualified),
+            group_forms: HashMap::new(),
         }
     }
 
@@ -79,6 +88,18 @@ impl XsdCompiler {
     /// compiled and their types/elements are merged. If the same type/element is
     /// defined multiple times, the last definition wins.
     pub fn compile(&mut self, schemas: Vec<XsdSchema>) -> Result<CompiledSchema> {
+        // xs:override (XSD 1.1) replaces components of another document;
+        // compiling without applying it would silently produce the wrong
+        // component set, so it is rejected.
+        if let Some(over) = schemas.iter().flat_map(|s| &s.overrides).next() {
+            return Err(crate::schema::error::SchemaError::InvalidSchema {
+                message: format!(
+                    "xs:override (schemaLocation '{}') is an XSD 1.1 feature and is not supported",
+                    over.schema_location
+                ),
+            }
+            .into());
+        }
         let mut schemas = schemas;
         let single_document = schemas.len() == 1;
         // Namespace strictness must be computed while import/include/redefine
@@ -233,7 +254,8 @@ impl XsdCompiler {
         for grp in &schema.groups {
             if let (Some(name), Some(particle)) = (&grp.name, &grp.particle) {
                 let key = NsName::new(ns.clone(), name.clone());
-                self.groups.insert(key, particle.clone());
+                self.groups.insert(key.clone(), particle.clone());
+                self.group_forms.insert(key, schema.element_form_default);
             }
         }
         for ag in &schema.attribute_groups {
@@ -252,6 +274,7 @@ impl XsdCompiler {
         // QName references can be resolved per-document (mirrors the reference
         // checker), independent of the last-wins accumulated prefix table.
         self.current_doc_bindings = schema.namespace_bindings.clone();
+        self.particle_doc = (schema.target_namespace.clone(), schema.element_form_default);
 
         // Find the prefix for THIS schema's target namespace.
         // First try the schema's OWN bindings (deterministic for each schema),
@@ -313,7 +336,8 @@ impl XsdCompiler {
         // Compile elements: global top-level elements are always qualified
         // in the target namespace regardless of elementFormDefault.
         for element in schema.elements {
-            let compiled = self.compile_element(&element)?;
+            let mut compiled = self.compile_element(&element)?;
+            compiled.namespace = Some(self.current_target_ns.clone().unwrap_or_default());
             let ns_name = NsName::new(
                 self.current_target_ns.clone().unwrap_or_default(),
                 element.name.clone(),
@@ -376,9 +400,10 @@ impl XsdCompiler {
     /// (`references.rs::resolve_ns`):
     ///
     /// - the `xml` prefix maps to the XML namespace;
-    /// - a declared prefix resolves against the owning document's bindings
+    /// - a declared prefix resolves against the declarations in scope where
+    ///   the QName was written, else the owning document's root bindings
     ///   (returns `None` for an undeclared prefix);
-    /// - an unprefixed name takes the document's default namespace when one is
+    /// - an unprefixed name takes the default namespace in scope when one is
     ///   bound, otherwise the owning document's target namespace (the same
     ///   leniency [`resolve_qname`](Self::resolve_qname) applies when it
     ///   requalifies an unprefixed reference), falling back to the
@@ -392,18 +417,14 @@ impl XsdCompiler {
         let local = qname.local.trim();
         let ns: std::sync::Arc<str> = match qname.prefix.as_deref().map(str::trim) {
             Some("xml") => crate::namespace::common::XML_NS.into(),
-            Some(p) => self.current_doc_bindings.get(p)?.as_str().into(),
-            None => {
-                let default_ns = self
-                    .current_doc_bindings
-                    .get("")
-                    .map(String::as_str)
-                    .filter(|d| !d.is_empty());
-                match default_ns {
-                    Some(d) => d.into(),
-                    None => self.current_target_ns.as_deref().unwrap_or("").into(),
-                }
-            }
+            Some(_) => qname.bound_namespace(&self.current_doc_bindings)?.into(),
+            // With no default namespace, the defining document's target
+            // namespace: the current document, or the document a named group
+            // or attribute group being expanded comes from.
+            None => match qname.bound_namespace(&self.current_doc_bindings) {
+                Some(d) => d.into(),
+                None => self.particle_doc.0.as_deref().unwrap_or("").into(),
+            },
         };
         Some(NsName::new(ns, local))
     }

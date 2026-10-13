@@ -29,6 +29,10 @@ pub struct XsdSchema {
     pub includes: Vec<XsdInclude>,
     /// Redefine declarations
     pub redefines: Vec<XsdRedefine>,
+    /// Override declarations (`xs:override`, XSD 1.1). Recorded so callers
+    /// can detect them; the compiler rejects a schema that uses one. Their
+    /// child definitions are kept here, not among the top-level ones.
+    pub overrides: Vec<XsdOverride>,
     /// Top-level element declarations
     pub elements: Vec<XsdElement>,
     /// Type definitions (simple and complex)
@@ -39,7 +43,15 @@ pub struct XsdSchema {
     pub attribute_groups: Vec<XsdAttributeGroup>,
     /// Model group definitions
     pub groups: Vec<XsdGroup>,
-    /// Namespace bindings (prefix -> URI)
+    /// Namespace bindings declared on the root `xs:schema` element (prefix
+    /// -> URI; the empty prefix is the default namespace). These are in scope
+    /// throughout the document.
+    ///
+    /// Declarations on nested elements are scoped to that element and are
+    /// not recorded here (declarations inside `xs:annotation` content are
+    /// ignored entirely). QName-valued attributes are resolved against the
+    /// declarations in scope where they appear, captured on
+    /// [`QName::namespace`](super::QName::namespace).
     pub namespace_bindings: HashMap<String, String>,
 }
 
@@ -108,6 +120,46 @@ impl XsdRedefine {
             complex_types: Vec::new(),
             groups: Vec::new(),
             attribute_groups: Vec::new(),
+        }
+    }
+}
+
+/// Override declaration (`xs:override`, XSD 1.1).
+///
+/// Replaces components of the referenced schema document with the
+/// definitions it contains. fastxml targets XSD 1.0, so the compiler
+/// rejects schemas that use it; the declaration is recorded rather than
+/// ignored so the replacement definitions are never mistaken for ordinary
+/// top-level ones.
+#[derive(Debug, Clone)]
+pub struct XsdOverride {
+    /// Schema location URL of the overridden document
+    pub schema_location: String,
+    /// Overriding simple types
+    pub simple_types: Vec<XsdSimpleType>,
+    /// Overriding complex types
+    pub complex_types: Vec<XsdComplexType>,
+    /// Overriding model groups
+    pub groups: Vec<XsdGroup>,
+    /// Overriding attribute groups
+    pub attribute_groups: Vec<XsdAttributeGroup>,
+    /// Overriding element declarations
+    pub elements: Vec<XsdElement>,
+    /// Overriding attribute declarations
+    pub attributes: Vec<XsdAttribute>,
+}
+
+impl XsdOverride {
+    /// Creates a new override declaration.
+    pub fn new(schema_location: impl Into<String>) -> Self {
+        Self {
+            schema_location: schema_location.into(),
+            simple_types: Vec::new(),
+            complex_types: Vec::new(),
+            groups: Vec::new(),
+            attribute_groups: Vec::new(),
+            elements: Vec::new(),
+            attributes: Vec::new(),
         }
     }
 }

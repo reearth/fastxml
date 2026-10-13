@@ -41,12 +41,32 @@ pub(crate) fn validate_identity_constraints(
         let is_key = task.constraint.constraint_type == CompiledConstraintType::Key;
         let mut seen: HashSet<Vec<String>> = HashSet::new();
 
-        for selected in select_nodes(schema, doc, &task.node, &task.constraint.selector_xpath) {
+        for selected in select_nodes(
+            schema,
+            &task.constraint.selector_namespaces,
+            doc,
+            &task.node,
+            &task.constraint.selector_xpath,
+        ) {
             let outcomes: Vec<FieldOutcome> = task
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| field_value(schema, doc, &selected, f, node_kinds, attr_kinds))
+                .enumerate()
+                .map(|(i, f)| {
+                    field_value(
+                        schema,
+                        task.constraint
+                            .field_namespaces
+                            .get(i)
+                            .map_or(&[][..], Vec::as_slice),
+                        doc,
+                        &selected,
+                        f,
+                        node_kinds,
+                        attr_kinds,
+                    )
+                })
                 .collect();
 
             if outcomes.iter().any(|v| matches!(v, FieldOutcome::Multiple)) {
@@ -107,12 +127,32 @@ pub(crate) fn validate_identity_constraints(
             continue;
         };
 
-        for selected in select_nodes(schema, doc, &task.node, &task.constraint.selector_xpath) {
+        for selected in select_nodes(
+            schema,
+            &task.constraint.selector_namespaces,
+            doc,
+            &task.node,
+            &task.constraint.selector_xpath,
+        ) {
             let outcomes: Vec<FieldOutcome> = task
                 .constraint
                 .field_xpaths
                 .iter()
-                .map(|f| field_value(schema, doc, &selected, f, node_kinds, attr_kinds))
+                .enumerate()
+                .map(|(i, f)| {
+                    field_value(
+                        schema,
+                        task.constraint
+                            .field_namespaces
+                            .get(i)
+                            .map_or(&[][..], Vec::as_slice),
+                        doc,
+                        &selected,
+                        f,
+                        node_kinds,
+                        attr_kinds,
+                    )
+                })
                 .collect();
             if !outcomes.iter().all(|v| matches!(v, FieldOutcome::Value(_))) {
                 continue; // incomplete keyref tuples are not checked
@@ -140,13 +180,21 @@ pub(crate) fn validate_identity_constraints(
 
 /// Compiles an XPath with the schema's namespace bindings registered, so
 /// prefixes used in selector/field expressions resolve as declared in the
-/// schema document.
-fn compile_with_schema_ns(schema: &CompiledSchema, xpath: &str) -> Option<Query> {
+/// schema document: the bindings in scope on the selector/field element
+/// (`scoped`) over the schema-wide prefix table.
+fn compile_with_schema_ns(
+    schema: &CompiledSchema,
+    scoped: &[(String, String)],
+    xpath: &str,
+) -> Option<Query> {
     let mut query = Query::compile(xpath).ok()?;
     for (prefix, uri) in &schema.prefix_namespaces {
-        if !prefix.is_empty() {
+        if !prefix.is_empty() && !scoped.iter().any(|(p, _)| p == prefix) {
             query = query.namespace(prefix.clone(), uri.clone());
         }
+    }
+    for (prefix, uri) in scoped {
+        query = query.namespace(prefix.clone(), uri.clone());
     }
     Some(query)
 }
@@ -154,11 +202,12 @@ fn compile_with_schema_ns(schema: &CompiledSchema, xpath: &str) -> Option<Query>
 /// Evaluates a selector XPath relative to `context`, returning element nodes.
 fn select_nodes(
     schema: &CompiledSchema,
+    scoped: &[(String, String)],
     doc: &XmlDocument,
     context: &XmlNode,
     xpath: &str,
 ) -> Vec<XmlNode> {
-    let Some(query) = compile_with_schema_ns(schema, xpath) else {
+    let Some(query) = compile_with_schema_ns(schema, scoped, xpath) else {
         return Vec::new();
     };
     match query.eval_from(doc, context) {
@@ -194,6 +243,7 @@ fn direct_attr_local(xpath: &str) -> Option<&str> {
 /// at most one node (cvc-identity-constraint).
 fn field_value(
     schema: &CompiledSchema,
+    scoped: &[(String, String)],
     doc: &XmlDocument,
     context: &XmlNode,
     xpath: &str,
@@ -203,7 +253,7 @@ fn field_value(
         crate::schema::xsd::primitive::PrimitiveKind,
     >,
 ) -> FieldOutcome {
-    let Some(query) = compile_with_schema_ns(schema, xpath) else {
+    let Some(query) = compile_with_schema_ns(schema, scoped, xpath) else {
         return FieldOutcome::Absent;
     };
     match query.eval_from(doc, context) {

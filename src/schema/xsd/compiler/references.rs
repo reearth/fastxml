@@ -449,16 +449,20 @@ impl Checker<'_> {
     /// Resolves a QName's namespace using this schema's bindings.
     /// Returns `None` when the prefix is undeclared. QName attribute values
     /// are whitespace-collapsed, so stray whitespace is trimmed first.
-    fn resolve_ns(&self, prefix: Option<&str>) -> Option<String> {
-        match prefix {
+    /// Prefixes resolve against the declarations in scope where the QName
+    /// was written (captured at parse time), falling back to the document's
+    /// root bindings.
+    fn resolve_ns(&self, qname: &QName) -> Option<String> {
+        match qname.prefix.as_deref().map(str::trim) {
             Some("xml") => Some(XML_NS.to_string()),
-            Some(p) => self.schema.namespace_bindings.get(p).cloned(),
+            Some(_) => qname
+                .bound_namespace(&self.schema.namespace_bindings)
+                .map(str::to_string),
             None => Some(
-                self.schema
-                    .namespace_bindings
-                    .get("")
-                    .cloned()
-                    .unwrap_or_default(),
+                qname
+                    .bound_namespace(&self.schema.namespace_bindings)
+                    .unwrap_or_default()
+                    .to_string(),
             ),
         }
     }
@@ -489,7 +493,7 @@ impl Checker<'_> {
         // QName values are whitespace-collapsed before resolution.
         let prefix = qname.prefix.as_deref().map(str::trim);
         let local = qname.local.trim();
-        let Some(ns) = self.resolve_ns(prefix) else {
+        let Some(ns) = self.resolve_ns(qname) else {
             // Undeclared prefix: the QName cannot denote any component.
             return Err(SchemaError::DanglingReference {
                 kind: kind.as_str(),
@@ -590,9 +594,8 @@ impl Checker<'_> {
         let Some(qname) = base else {
             return FacetBase::Unknown;
         };
-        let prefix = qname.prefix.as_deref().map(str::trim);
         let local = qname.local.trim();
-        let Some(ns) = self.resolve_ns(prefix) else {
+        let Some(ns) = self.resolve_ns(qname) else {
             return FacetBase::Unknown;
         };
         // A user-defined type shadowing a built-in name stays Unknown.
@@ -616,7 +619,7 @@ impl Checker<'_> {
     fn resolve_type_info(&self, qname: &QName) -> Option<TypeInfo> {
         let prefix = qname.prefix.as_deref().map(str::trim);
         let local = qname.local.trim();
-        let ns = self.resolve_ns(prefix)?;
+        let ns = self.resolve_ns(qname)?;
         if let Some(info) = self.tables.lookup_type_info(&ns, local) {
             return Some(info);
         }
@@ -694,9 +697,8 @@ impl Checker<'_> {
     /// When a keyref's refer target resolves, it must be a key/unique (not
     /// another keyref) and its field count must match the keyref's.
     fn check_keyref_target(&self, ic: &XsdIdentityConstraint, refer: &QName) -> Result<()> {
-        let prefix = refer.prefix.as_deref().map(str::trim);
         let local = refer.local.trim();
-        let Some(ns) = self.resolve_ns(prefix) else {
+        let Some(ns) = self.resolve_ns(refer) else {
             return Ok(()); // already reported by check_ref
         };
         let Some(info) = self.tables.lookup_key(&ns, local) else {

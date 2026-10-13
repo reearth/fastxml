@@ -46,6 +46,7 @@ pub mod compiler;
 pub mod constraints;
 pub mod content_automaton;
 pub mod content_model;
+mod content_query;
 pub mod error;
 pub mod facets;
 pub(crate) mod identity_xpath;

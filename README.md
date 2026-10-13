@@ -598,6 +598,28 @@ for error in report.errors() {
 }
 ```
 
+### Content-Model Query
+
+A producer that writes XML can ask a compiled schema where each child element
+goes in its parent's content model, so children are emitted in the order the
+schema declares, including ADE elements that arrive through substitution groups
+(e.g. PLATEAU i-UR properties at CityGML's `_GenericApplicationPropertyOf…`
+hooks). Matching is namespace-exact.
+
+```rust
+use fastxml::schema::Schema;
+
+let schema = Schema::builder().add("building.xsd", xsd_bytes).resolve()?;
+let bldg = "http://www.opengis.net/citygml/building/2.0";
+let uro = "https://www.geospatial.jp/iur/uro/3.2";
+
+// By type name, or by global element name (`element_content_automaton`).
+let model = schema.type_content_automaton(bldg, "BuildingType").unwrap();
+let height = model.position_of(Some(bldg), "measuredHeight"); // Some(index)
+let ade = model.position_of(Some(uro), "buildingIDAttribute"); // the ADE hook's index
+assert!(height < ade);
+```
+
 ## XPath
 
 ### Basic Usage
@@ -678,7 +700,8 @@ demonstrations of both the modern and compatibility APIs.
 | Substitution groups | ✅ |
 | Content-model automaton (choice totals, sequence-as-unit occurrence, UPA detection) | ✅ |
 | XSD 1.1 datatypes (dateTimeStamp, dayTimeDuration, yearMonthDuration, explicitTimezone) | ✅ |
-| Other XSD 1.1 features (assertions, conditional type assignment, openContent, override) | ❌ |
+| Other XSD 1.1 features (assertions, conditional type assignment, openContent) | ❌ |
+| xs:override (XSD 1.1) | ❌ (recorded in the AST; compiling a schema that uses it is an error) |
 
 ### Not Supported
 
@@ -739,8 +762,8 @@ and re-parsing (see the roadmap).
 | valid schemas accepted      | 100.0% | 11,139 | 0   | 0   |
 | invalid schemas rejected    | 79.8%  | 2,675  | 677 | 0   |
 | valid instances             | 99.4%  | 13,845 | 86  | 132 |
-| invalid instances rejected  | 96.9%  | 10,639 | 341 | 51  |
-| **overall**                 | **97.2%** | **38,298** | **1,104** | **183** |
+| invalid instances rejected  | 96.9%  | 10,641 | 339 | 51  |
+| **overall**                 | **97.2%** | **38,300** | **1,102** | **183** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
 (zero false rejections), while 79.8% of invalid schemas are rejected. The

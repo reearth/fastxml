@@ -1,8 +1,6 @@
 //! Shared attribute validation logic for the DOM and streaming validators.
 
-use crate::schema::types::{
-    AttributeDef, CompiledSchema, ComplexType, ContentModel, SimpleType, TypeDef,
-};
+use crate::schema::types::{AttributeDef, CompiledSchema, ComplexType, SimpleType, TypeDef};
 use crate::schema::xsd::facets::{FacetCache, FacetConstraints, FacetValidator};
 use crate::schema::xsd::primitive::PrimitiveKind;
 
@@ -142,12 +140,8 @@ pub(crate) fn element_text_primitive_kind(
     match type_def {
         TypeDef::Simple(simple) => PrimitiveKind::resolve(schema, simple),
         TypeDef::Complex(complex) => {
-            if matches!(&complex.content, ContentModel::SimpleContent { .. })
-                && let Some(TypeDef::Simple(simple)) = schema.complex_base_def(complex)
-            {
-                return PrimitiveKind::resolve(schema, simple);
-            }
-            None
+            let simple = schema.simple_content_value_type(complex)?;
+            PrimitiveKind::resolve(schema, simple)
         }
     }
 }

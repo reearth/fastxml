@@ -23,7 +23,10 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::schema::types::{ElementDef, Particle, WildcardConstraint};
+use crate::schema::types::{ElementDef, NsName, NsNameRef, Particle, WildcardConstraint};
+
+/// Expanded names (`{namespace}local`) admitted by one element position.
+type ExactNames = indexmap::IndexSet<NsName, rustc_hash::FxBuildHasher>;
 
 /// Cap for structural expansion of group occurrence bounds. A group with
 /// `minOccurs`/`maxOccurs` beyond this is treated as unbounded above the
@@ -97,6 +100,10 @@ struct Occur {
 pub struct ContentAutomaton {
     /// Matcher per position (positions are 0-based here; state = pos + 1)
     matchers: Vec<PosMatcher>,
+    /// Expanded names admitted per position: the declared element and its
+    /// substitution-group members (empty for wildcard positions). Used by
+    /// the namespace-exact [`Self::position_of`] query only.
+    exact: Vec<ExactNames>,
     /// Leaf occurrence bounds per position
     occurs: Vec<Occur>,
     /// Outgoing transitions per state (state 0 = start): target positions
@@ -321,6 +328,48 @@ impl ContentAutomaton {
     pub(crate) fn matchers(&self) -> &[PosMatcher] {
         &self.matchers
     }
+
+    /// Index of the first position, in content-model order, that accepts a
+    /// child element `{namespace}local` (`None` or `""` for no namespace).
+    ///
+    /// Matching is namespace-exact: an element position accepts its declared
+    /// element and the members of its substitution group by expanded name
+    /// only (unlike validation, there is no bare-local-name fallback), and a
+    /// wildcard position accepts a namespace its constraint admits, judged
+    /// against the target namespace of the schema that declared it.
+    ///
+    /// Positions follow the content model in document order, with an
+    /// extension's inherited content first. A particle repeated through a
+    /// group's occurrence bounds has one position per expanded copy; the
+    /// first one is returned. A producer can therefore order the children
+    /// of an element by this index. Returns `None` when no position accepts
+    /// the child.
+    pub fn position_of(&self, namespace: Option<&str>, local: &str) -> Option<usize> {
+        let namespace = namespace.unwrap_or("");
+        let key = NsNameRef {
+            namespace_uri: namespace,
+            local_name: local,
+        };
+        let ns = Some(namespace).filter(|ns| !ns.is_empty());
+        self.matchers
+            .iter()
+            .zip(&self.exact)
+            .position(|(matcher, exact)| match matcher {
+                PosMatcher::Element { .. } => exact.contains(&key),
+                PosMatcher::Wildcard(wc) => wc.matches(ns),
+            })
+    }
+
+    /// Number of positions (element and wildcard particles, counting each
+    /// copy made by group occurrence expansion).
+    pub fn len(&self) -> usize {
+        self.matchers.len()
+    }
+
+    /// Whether the content model has no positions (empty content).
+    pub fn is_empty(&self) -> bool {
+        self.matchers.is_empty()
+    }
 }
 
 // =========================================================================
@@ -340,9 +389,12 @@ enum Node {
 /// Builder state: positions created so far.
 struct Builder<'a> {
     matchers: Vec<PosMatcher>,
+    exact: Vec<ExactNames>,
     occurs: Vec<Occur>,
     /// substitution member lookup: head element name -> member names
     subst: &'a dyn Fn(&str) -> Vec<String>,
+    /// substitution member lookup by expanded name
+    subst_ns: &'a dyn Fn(&NsName) -> Vec<NsName>,
     /// Source-particle identity for expansion copies (UPA bookkeeping):
     /// maps a particle's address-independent path to one id. Incremented
     /// per *source* leaf; expansion copies reuse the current id via
@@ -387,6 +439,19 @@ impl Builder<'_> {
         // UPA violations, never rejects a valid schema for them).
         let mut decl_names = FxHashSet::default();
         decl_names.insert(def.name.clone());
+        // Expanded names for the namespace-exact query: a reference carries
+        // the referenced element's (namespace, local); a local declaration
+        // its own namespace and (unprefixed) name.
+        let declared = def.ref_ns.clone().unwrap_or_else(|| {
+            let local = def
+                .name
+                .split_once(':')
+                .map_or(def.name.as_str(), |(_, l)| l);
+            NsName::new(def.namespace.as_deref().unwrap_or(""), local)
+        });
+        let mut exact = ExactNames::default();
+        exact.extend((self.subst_ns)(&declared));
+        exact.insert(declared);
         let min = def.min_occurs;
         let pos = self.matchers.len();
         let particle_id = self.fresh_particle_id();
@@ -396,6 +461,7 @@ impl Builder<'_> {
             particle_id,
             def: Arc::new(def.clone()),
         });
+        self.exact.push(exact);
         self.occurs.push(Occur {
             min: min.max(1),
             max: def.max_occurs,
@@ -415,6 +481,7 @@ impl Builder<'_> {
         let pos = self.matchers.len();
         self.matchers
             .push(PosMatcher::Wildcard(Arc::new(wc.clone())));
+        self.exact.push(ExactNames::default());
         self.occurs.push(Occur {
             min: min.max(1),
             max: wc.max_occurs,
@@ -617,10 +684,23 @@ pub fn build_automaton(
     particle: &Particle,
     subst: &dyn Fn(&str) -> Vec<String>,
 ) -> Option<ContentAutomaton> {
+    build_automaton_ns(particle, subst, &|_| Vec::new())
+}
+
+/// [`build_automaton`] with namespace-aware substitution members for the
+/// exact [`ContentAutomaton::position_of`] query: `subst_ns` maps a head
+/// element's expanded name to its (transitive) members' expanded names.
+pub(crate) fn build_automaton_ns(
+    particle: &Particle,
+    subst: &dyn Fn(&str) -> Vec<String>,
+    subst_ns: &dyn Fn(&NsName) -> Vec<NsName>,
+) -> Option<ContentAutomaton> {
     let mut b = Builder {
         matchers: Vec::new(),
+        exact: Vec::new(),
         occurs: Vec::new(),
         subst,
+        subst_ns,
         next_particle_id: 0,
         current_particle_id: None,
     };
@@ -668,6 +748,7 @@ pub fn build_automaton(
 
     Some(ContentAutomaton {
         matchers: b.matchers,
+        exact: b.exact,
         occurs: b.occurs,
         transitions,
         accepting,

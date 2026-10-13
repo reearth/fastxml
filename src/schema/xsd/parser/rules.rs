@@ -45,11 +45,7 @@ impl XsdParser {
                 Some((p, l)) => (Some(p), l),
                 None => (None, qname),
             };
-            let ns = match prefix {
-                Some(p) => self.schema.namespace_bindings.get(p).cloned(),
-                None => self.schema.namespace_bindings.get("").cloned(),
-            };
-            ns.as_deref() == Some(XSD_NAMESPACE)
+            self.in_scope_namespace(prefix.unwrap_or("")) == Some(XSD_NAMESPACE)
                 && crate::schema::xsd::builtin::is_builtin_xsd_type_local(local)
         };
 
@@ -57,13 +53,7 @@ impl XsdParser {
             let Some((prefix, local)) = raw_name.split_once(':') else {
                 continue;
             };
-            if self
-                .schema
-                .namespace_bindings
-                .get(prefix)
-                .map(String::as_str)
-                != Some(VC_NS)
-            {
+            if self.in_scope_namespace(prefix) != Some(VC_NS) {
                 continue;
             }
             let prune = match local {
@@ -202,7 +192,8 @@ impl XsdParser {
         }
 
         if let Some(parent) = self.child_state_stack.last_mut() {
-            let parent_allows_repeat = parent.name == "schema" || parent.name == "redefine";
+            let parent_allows_repeat =
+                matches!(parent.name.as_str(), "schema" | "redefine" | "override");
             if local == "annotation" {
                 if !parent_allows_repeat {
                     if parent.annotations >= 1 {
@@ -528,7 +519,7 @@ impl XsdParser {
         let parent_is_top = self
             .child_state_stack
             .last()
-            .is_some_and(|p| p.name == "schema" || p.name == "redefine");
+            .is_some_and(|p| matches!(p.name.as_str(), "schema" | "redefine" | "override"));
 
         // Named group / attributeGroup definitions are top-level only; uses
         // elsewhere must be references (src-attribute_group / src-model_group).

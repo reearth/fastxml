@@ -41,6 +41,10 @@ pub struct XsdParser {
     /// namespace). Tracks `xmlns="..."` overrides so unprefixed XSD elements
     /// are recognized even when the schema root uses a prefix.
     default_ns_stack: Vec<Option<String>>,
+    /// Namespace declarations in scope per open element (prefix -> URI; the
+    /// empty prefix is the default namespace, `""` once undeclared). QName
+    /// attribute values are resolved against the innermost entry.
+    ns_scope_stack: Vec<std::sync::Arc<HashMap<String, String>>>,
     /// Per-open-XSD-element child bookkeeping for structural rules
     /// (annotation placement, notation placement).
     child_state_stack: Vec<ChildState>,
@@ -95,6 +99,7 @@ impl XsdParser {
             current_text: String::new(),
             skip_depth: 0,
             default_ns_stack: Vec::new(),
+            ns_scope_stack: Vec::new(),
             child_state_stack: Vec::new(),
             seen_ids: std::collections::HashSet::new(),
             seen_constraint_names: std::collections::HashSet::new(),
@@ -133,6 +138,28 @@ impl XsdParser {
             // Mismatched prefixes
             (Some(Some(_)), None) | (Some(None), Some(_)) | (None, Some(_)) => false,
         }
+    }
+
+    /// The namespace URI bound to `prefix` (the empty prefix is the default
+    /// namespace) by the declarations in scope on the current element.
+    fn in_scope_namespace(&self, prefix: &str) -> Option<&str> {
+        if prefix == "xml" {
+            return Some(crate::namespace::common::XML_NS);
+        }
+        self.ns_scope_stack.last()?.get(prefix).map(String::as_str)
+    }
+
+    /// Parses a QName attribute value and captures the namespace its prefix
+    /// (or, unprefixed, the default namespace) is bound to in scope here.
+    fn qname(&self, value: &str) -> QName {
+        let mut qname = QName::parse(value);
+        let prefix = qname.prefix.as_deref().map(str::trim).unwrap_or("");
+        qname.namespace = match self.in_scope_namespace(prefix) {
+            Some(ns) => Some(ns.to_string()),
+            None if qname.prefix.is_none() => Some(String::new()),
+            None => None,
+        };
+        qname
     }
 
     /// Gets the local name of an XSD element.

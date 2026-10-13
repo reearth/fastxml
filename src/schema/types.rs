@@ -404,6 +404,30 @@ impl CompiledSchema {
         self.type_by_ref(ns, base)
     }
 
+    /// Resolves the simple type governing the text value of a complex type
+    /// with `simpleContent`, following the base chain through other
+    /// simpleContent complex types (a restriction of a simpleContent type,
+    /// such as `gml:LengthType` of `gml:MeasureType`, inherits its value
+    /// type). Returns `None` when the type does not have simple content or
+    /// the chain cannot be resolved to a simple type.
+    pub fn simple_content_value_type<'a>(&'a self, c: &'a ComplexType) -> Option<&'a SimpleType> {
+        let mut current = c;
+        // Chains have no depth limit, but an acyclic one visits each type at
+        // most once, so a walk longer than the type count means a cycle
+        // (which compilation normally rejects). The `+ 1` covers an
+        // anonymous starting type.
+        for _ in 0..=self.types_ns.len() {
+            if !matches!(current.content, ContentModel::SimpleContent { .. }) {
+                return None;
+            }
+            match self.complex_base_def(current)? {
+                TypeDef::Simple(simple) => return Some(simple),
+                TypeDef::Complex(base) => current = base,
+            }
+        }
+        None
+    }
+
     /// Resolves a simple type's base-type definition (ns-first, string
     /// fallback). The synthetic `list(...)`/`union(...)` markers carry no
     /// `base_ns` and miss the string lookup too, returning `None` as before.
@@ -504,6 +528,13 @@ pub struct ElementDef {
     pub fixed: Option<String>,
     /// Identity constraints (unique, key, keyref)
     pub constraints: Vec<CompiledConstraint>,
+    /// The namespace URI an instance element matching this declaration has
+    /// (`Some("")` for no namespace). Compiled schemas always set it: a
+    /// global declaration is in the target namespace, a local one too when
+    /// it is qualified (`form` / `elementFormDefault`) and in no namespace
+    /// otherwise, a reference is in the referenced element's namespace.
+    /// `None` on definitions built by hand.
+    pub namespace: Option<String>,
 }
 
 impl ElementDef {
@@ -524,6 +555,7 @@ impl ElementDef {
             default: None,
             fixed: None,
             constraints: Vec::new(),
+            namespace: None,
         }
     }
 
@@ -993,6 +1025,15 @@ pub struct CompiledConstraint {
     pub field_xpaths: Vec<String>,
     /// For keyref: the key being referenced
     pub refer: Option<String>,
+    /// Namespace bindings (prefix -> URI) in scope on the selector element
+    /// in the schema document. They take precedence over the schema-wide
+    /// prefix table when the selector is evaluated; empty on constraints
+    /// built by hand.
+    pub selector_namespaces: Vec<(String, String)>,
+    /// Namespace bindings in scope on each field element, index-aligned
+    /// with [`field_xpaths`](Self::field_xpaths) (missing entries mean
+    /// none).
+    pub field_namespaces: Vec<Vec<(String, String)>>,
 }
 
 impl CompiledConstraint {
@@ -1004,6 +1045,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: None,
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -1015,6 +1058,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: None,
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
@@ -1030,6 +1075,8 @@ impl CompiledConstraint {
             selector_xpath: selector.into(),
             field_xpaths: Vec::new(),
             refer: Some(refer.into()),
+            selector_namespaces: Vec::new(),
+            field_namespaces: Vec::new(),
         }
     }
 
