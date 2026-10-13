@@ -31,12 +31,14 @@
 //! [`collect_multi`](Transformer::collect_multi).
 
 use std::io::{BufRead, Write};
+use std::ops::ControlFlow;
 
 use crate::transform::FallbackMode;
 use crate::transform::builder::StreamTransformer;
 use crate::transform::context::TransformContext;
 use crate::transform::editable::EditableNode;
 use crate::transform::error::{TransformError, TransformResult};
+use crate::transform::matched::ElementMatch;
 use crate::transform::multi::CollectMulti;
 use crate::transform::reader::StreamTransformerReader;
 use crate::transform::streamable::IntoStreamable;
@@ -129,6 +131,83 @@ impl<'a> Transformer<'a> {
             }
         };
         Transformer { inner, deferred }
+    }
+
+    /// Registers a read-only handler for `xpath`, called at the start tag of
+    /// each matching element with its name, namespace and attributes.
+    ///
+    /// Unlike [`on`](Self::on), no subtree is buffered, so memory use does not
+    /// grow with the size of the matched elements. Every match is reported,
+    /// including elements nested inside another match (and inside an `on`
+    /// handler's subtree). Return [`ControlFlow::Break`] to stop this
+    /// handler; once every handler has stopped, the rest of the input is not
+    /// read (and so not checked for well-formedness).
+    ///
+    /// Runs with [`for_each`](Self::for_each) only: the output terminals
+    /// return an error. The XPath must be streamable, except for in-memory
+    /// input with [`allow_fallback`](Self::allow_fallback), where a
+    /// non-streamable XPath is evaluated against a DOM of the input.
+    ///
+    /// ```
+    /// use std::ops::ControlFlow;
+    /// use fastxml::transform::Transformer;
+    ///
+    /// let xml = r#"<root><item id="1"><item id="2"/></item></root>"#;
+    /// let mut ids = Vec::new();
+    /// Transformer::from_reader(xml.as_bytes())
+    ///     .on_match("//item", |m| {
+    ///         ids.push(m.get_attribute("id").unwrap_or_default().to_string());
+    ///         ControlFlow::Continue(())
+    ///     })
+    ///     .for_each()?;
+    /// assert_eq!(ids, ["1", "2"]);
+    /// # Ok::<(), fastxml::transform::TransformError>(())
+    /// ```
+    pub fn on_match<X, F>(self, xpath: X, callback: F) -> Self
+    where
+        X: IntoStreamable,
+        F: FnMut(&ElementMatch) -> ControlFlow<()> + 'a,
+    {
+        let Transformer { inner, deferred } = self;
+        let inner = match inner {
+            Inner::InMemory(t) => Inner::InMemory(t.on_match(xpath, callback)),
+            Inner::Reader(t) => Inner::Reader(t.on_match(xpath, callback)),
+        };
+        Transformer { inner, deferred }
+    }
+
+    /// Limits the handler registered just before this call to `n` calls.
+    /// Once a handler has reached its limit, no further subtrees are built
+    /// for it; once every handler has stopped, the rest of the input is not
+    /// read (and so not checked for well-formedness).
+    ///
+    /// Applies to [`for_each`](Self::for_each) only: the output terminals
+    /// must copy the whole document and return an error instead. Calling it
+    /// before any handler is registered is also an error, reported by the
+    /// terminal.
+    ///
+    /// ```
+    /// use fastxml::transform::Transformer;
+    ///
+    /// let xml = "<r><i n='1'/><i n='2'/><i n='3'/></r>";
+    /// let mut seen = Vec::new();
+    /// Transformer::from(xml)
+    ///     .on("//i", |node| seen.push(node.get_attribute("n").unwrap()))
+    ///     .limit(2)
+    ///     .for_each()?;
+    /// assert_eq!(seen, ["1", "2"]);
+    /// # Ok::<(), fastxml::transform::TransformError>(())
+    /// ```
+    pub fn limit(mut self, n: usize) -> Self {
+        let applied = match &mut self.inner {
+            Inner::InMemory(t) => t.limit_last(n),
+            Inner::Reader(t) => t.limit_last(n),
+        };
+        if !applied {
+            self.deferred
+                .get_or_insert("limit must follow a handler (on, on_with_context or on_match)");
+        }
+        self
     }
 
     /// Binds a namespace prefix used in the handler XPath expressions.
