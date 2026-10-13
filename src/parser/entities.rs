@@ -2,14 +2,36 @@
 //!
 //! quick-xml hands the DOCTYPE declaration over as raw text; this module
 //! extracts `<!ENTITY name "value">` declarations from the internal subset
-//! so entity references in content and attribute values can be resolved.
-//! External (SYSTEM/PUBLIC) and parameter (`%`) entities are skipped.
+//! so entity references in content and attribute values can be resolved
+//! (by [`super::expand`]). External (SYSTEM/PUBLIC) and parameter (`%`)
+//! entities are skipped: references to external entities are rejected as
+//! unknown, and markup reached through parameter entities is not read.
 
 use std::collections::{HashMap, HashSet};
 
 /// Parses the internal DTD subset of a DOCTYPE declaration into a map of
-/// general entity name → fully expanded replacement text.
+/// general entity name → replacement text (character references expanded,
+/// entity references kept for expansion at the point of use; see
+/// [`super::expand`]).
+#[cfg(test)]
 pub(crate) fn parse_internal_entities(doctype: &str) -> HashMap<String, String> {
+    parse_entity_declarations(doctype).replacements
+}
+
+/// The general entities declared in a DOCTYPE's internal subset.
+#[derive(Debug, Default)]
+pub(crate) struct EntityDeclarations {
+    /// Internal entities: name → replacement text (see
+    /// [`parse_internal_entities`]).
+    pub replacements: HashMap<String, String>,
+    /// External parsed entities (`SYSTEM`/`PUBLIC` without `NDATA`), whose
+    /// replacement text is not read.
+    pub external: HashSet<String>,
+}
+
+/// Parses the general entity declarations of a DOCTYPE's internal subset.
+pub(crate) fn parse_entity_declarations(doctype: &str) -> EntityDeclarations {
+    let mut external_parsed: HashSet<String> = HashSet::new();
     let mut raw = HashMap::new();
     // Every general entity *name* declared in the subset, including external
     // (SYSTEM/PUBLIC) and unparsed (NDATA) ones for which we hold no value. A
@@ -19,7 +41,7 @@ pub(crate) fn parse_internal_entities(doctype: &str) -> HashMap<String, String> 
     // The internal subset lives between '[' and the matching ']'.
     let subset = match (doctype.find('['), doctype.rfind(']')) {
         (Some(start), Some(end)) if start < end => &doctype[start + 1..end],
-        _ => return raw,
+        _ => return EntityDeclarations::default(),
     };
 
     let bytes = subset.as_bytes();
@@ -61,6 +83,24 @@ pub(crate) fn parse_internal_entities(doctype: &str) -> HashMap<String, String> 
                 raw.entry(name.to_string())
                     .or_insert_with(|| subset[value_start..j].to_string());
             }
+        } else if !name.is_empty() {
+            // External: SYSTEM/PUBLIC literal(s), then `NDATA name` for an
+            // unparsed entity. Find the declaration's end outside quotes.
+            let mut k = j;
+            let mut quote = None;
+            while k < bytes.len() {
+                match (quote, bytes[k]) {
+                    (Some(q), b) if b == q => quote = None,
+                    (None, b'"' | b'\'') => quote = Some(bytes[k]),
+                    (None, b'>') => break,
+                    _ => {}
+                }
+                k += 1;
+            }
+            let unparsed = subset[j..k].split_ascii_whitespace().any(|w| w == "NDATA");
+            if !unparsed && !raw.contains_key(name) {
+                external_parsed.insert(name.to_string());
+            }
         }
         i = j.max(i + pos + 1);
     }
@@ -74,27 +114,42 @@ pub(crate) fn parse_internal_entities(doctype: &str) -> HashMap<String, String> 
     let pe_referenced = subset_has_pe_reference(subset);
     let strict = !external && !pe_referenced;
 
-    // Pre-expand each value (character references and nested general
-    // entities), since quick-xml inserts resolver replacements literally
-    // without rescanning them. In strict mode an entity whose expansion cycles
-    // or reaches an undeclared entity is "poisoned": it is omitted from the map
-    // so that any *use* of it is reported as an unknown entity (a rejection).
-    let mut out = HashMap::new();
-    for name in raw.keys() {
-        let mut path = vec![name.clone()];
-        match expand_checked(&raw[name], &raw, &declared, &mut path) {
-            Ok(value) => {
-                out.insert(name.clone(), value);
-            }
-            Err(_) if strict => { /* poison: leave undeclared */ }
-            Err(_) => {
-                // Ambiguous (external subset or PE in play): keep a best-effort
-                // expansion and accept.
-                out.insert(name.clone(), expand(&raw[name], &raw, 0));
-            }
-        }
+    // The replacement text of an internal entity is its literal value with
+    // character references (and parameter-entity references, which are not
+    // supported here) expanded; general entity references, including the
+    // predefined ones, are left in place and expanded when the entity is
+    // used, at which point the replacement text is parsed again
+    // (XML 1.0 §4.5, Appendix D).
+    let replacements: HashMap<String, String> = raw
+        .iter()
+        .map(|(name, value)| (name.clone(), replacement_text(value)))
+        .collect();
+
+    // In strict mode an entity whose expansion cycles or reaches an
+    // undeclared entity is "poisoned": it is omitted from the map so that any
+    // *use* of it is reported as an unknown entity (a rejection). Otherwise
+    // (external subset or PE in play) every entity is kept.
+    if !strict {
+        return EntityDeclarations {
+            replacements,
+            external: external_parsed,
+        };
     }
-    out
+    let mut state: HashMap<&str, Visit> = HashMap::new();
+    let names: Vec<&str> = replacements.keys().map(String::as_str).collect();
+    let resolvable: HashSet<&str> = names
+        .into_iter()
+        .filter(|name| resolves(name, &replacements, &declared, &mut state))
+        .collect();
+    let kept = replacements
+        .iter()
+        .filter(|(name, _)| resolvable.contains(name.as_str()))
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect();
+    EntityDeclarations {
+        replacements: kept,
+        external: external_parsed,
+    }
 }
 
 /// True when the part of the DOCTYPE before the internal subset references an
@@ -122,147 +177,112 @@ fn subset_has_pe_reference(subset: &str) -> bool {
     false
 }
 
-/// Fully expands an entity value, failing on a reference cycle or a reference
-/// to an entity that is neither predefined nor internally declared.
-fn expand_checked(
-    value: &str,
-    entities: &HashMap<String, String>,
-    declared: &HashSet<String>,
-    path: &mut Vec<String>,
-) -> Result<String, ExpandError> {
+/// Expands the character references in an entity's literal value. A
+/// malformed reference is left as written; it is rejected when the entity is
+/// used.
+fn replacement_text(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
-    loop {
-        // A CDATA section inside an entity value is literal text: any `&name;`
-        // it contains is not a reference.
-        if let Some(cd) = rest.find("<![CDATA[") {
-            out.push_str(&scan_refs(&rest[..cd], entities, declared, path)?);
-            let body = &rest[cd + "<![CDATA[".len()..];
-            match body.find("]]>") {
-                Some(end) => {
-                    out.push_str(&body[..end]);
-                    rest = &body[end + 3..];
-                    continue;
+    while let Some(pos) = rest.find("&#") {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + 2..];
+        let decoded = after.find(';').and_then(|semi| {
+            let digits = &after[..semi];
+            let code = match digits.strip_prefix('x') {
+                Some(hex) if !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                    u32::from_str_radix(hex, 16).ok()
                 }
-                None => {
-                    out.push_str(body);
-                    return Ok(out);
+                None if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => {
+                    digits.parse::<u32>().ok()
                 }
-            }
-        }
-        out.push_str(&scan_refs(rest, entities, declared, path)?);
-        return Ok(out);
-    }
-}
-
-/// Expands references in a fragment that contains no CDATA section.
-fn scan_refs(
-    value: &str,
-    entities: &HashMap<String, String>,
-    declared: &HashSet<String>,
-    path: &mut Vec<String>,
-) -> Result<String, ExpandError> {
-    let mut out = String::with_capacity(value.len());
-    let mut rest = value;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let after = &rest[amp + 1..];
-        let Some(semi) = after.find(';') else {
-            // A bare '&' is handled by character-level checks elsewhere.
-            out.push('&');
-            rest = after;
-            continue;
-        };
-        let name = &after[..semi];
-        if let Some(stripped) = name.strip_prefix('#') {
-            let code = if let Some(hex) = stripped.strip_prefix(['x', 'X']) {
-                u32::from_str_radix(hex, 16).ok()
-            } else {
-                stripped.parse::<u32>().ok()
+                _ => None,
             };
-            if let Some(c) = code.and_then(char::from_u32) {
+            Some((code.and_then(char::from_u32)?, semi))
+        });
+        match decoded {
+            Some((c, semi)) => {
                 out.push(c);
+                rest = &after[semi + 1..];
             }
-        } else if matches!(name, "lt" | "gt" | "amp" | "quot" | "apos") {
-            // Predefined entities are always available.
-        } else if let Some(replacement) = entities.get(name) {
-            if path.iter().any(|p| p == name) {
-                return Err(ExpandError::Cycle);
-            }
-            path.push(name.to_string());
-            let expanded = expand_checked(replacement, entities, declared, path)?;
-            path.pop();
-            out.push_str(&expanded);
-        } else if declared.contains(name) {
-            // Declared but external/unparsed: we hold no replacement text, so
-            // stop expanding here without treating it as undeclared.
-        } else {
-            return Err(ExpandError::Undeclared);
-        }
-        rest = &after[semi + 1..];
-    }
-    out.push_str(rest);
-    Ok(out)
-}
-
-/// Why a strict entity expansion failed.
-enum ExpandError {
-    /// A reference cycle among internal entities.
-    Cycle,
-    /// A reference to an entity that is neither predefined nor internally
-    /// declared.
-    Undeclared,
-}
-
-/// Expands character references and known general entity references in an
-/// entity value. Depth-limited to break reference cycles.
-fn expand(value: &str, entities: &HashMap<String, String>, depth: usize) -> String {
-    if depth > 8 {
-        return value.to_string();
-    }
-    let mut out = String::with_capacity(value.len());
-    let mut rest = value;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let after = &rest[amp + 1..];
-        let Some(semi) = after.find(';') else {
-            out.push('&');
-            rest = after;
-            continue;
-        };
-        let name = &after[..semi];
-        if let Some(stripped) = name.strip_prefix('#') {
-            let code = if let Some(hex) = stripped.strip_prefix(['x', 'X']) {
-                u32::from_str_radix(hex, 16).ok()
-            } else {
-                stripped.parse::<u32>().ok()
-            };
-            match code.and_then(char::from_u32) {
-                Some(c) => out.push(c),
-                None => {
-                    out.push('&');
-                    out.push_str(&after[..=semi]);
-                }
-            }
-        } else if let Some(replacement) = entities.get(name) {
-            out.push_str(&expand(replacement, entities, depth + 1));
-        } else {
-            match name {
-                "lt" => out.push('<'),
-                "gt" => out.push('>'),
-                "amp" => out.push('&'),
-                "quot" => out.push('"'),
-                "apos" => out.push('\''),
-                _ => {
-                    out.push('&');
-                    out.push_str(&after[..=semi]);
-                }
+            None => {
+                out.push_str("&#");
+                rest = after;
             }
         }
-        rest = &after[semi + 1..];
     }
     out.push_str(rest);
     out
+}
+
+/// Depth-first search state for [`resolves`].
+#[derive(Clone, Copy, PartialEq)]
+enum Visit {
+    InProgress,
+    Ok,
+    Bad,
+}
+
+/// Whether every general entity reachable from `name` is declared and the
+/// references form no cycle. Memoized in `state`, so the check is linear in
+/// the size of the declarations even for exponential expansions.
+fn resolves<'a>(
+    name: &'a str,
+    replacements: &'a HashMap<String, String>,
+    declared: &HashSet<String>,
+    state: &mut HashMap<&'a str, Visit>,
+) -> bool {
+    match state.get(name) {
+        Some(Visit::Ok) => return true,
+        Some(Visit::Bad) | Some(Visit::InProgress) => return false,
+        None => {}
+    }
+    let Some(text) = replacements.get(name) else {
+        // Declared but external/unparsed: we hold no replacement text, so
+        // stop here without treating it as undeclared.
+        return declared.contains(name);
+    };
+    state.insert(name, Visit::InProgress);
+    let ok = entity_references(text).all(|r| {
+        matches!(r, "lt" | "gt" | "amp" | "quot" | "apos")
+            || match replacements.get_key_value(r) {
+                Some((key, _)) => resolves(key, replacements, declared, state),
+                None => declared.contains(r),
+            }
+    });
+    state.insert(name, if ok { Visit::Ok } else { Visit::Bad });
+    ok
+}
+
+/// The general entity names referenced in a replacement text, skipping
+/// character references and the contents of CDATA sections.
+fn entity_references(text: &str) -> impl Iterator<Item = &str> {
+    let mut names = Vec::new();
+    let mut rest = text;
+    loop {
+        let (chunk, next) = match rest.find("<![CDATA[") {
+            Some(cd) => {
+                let body = &rest[cd + "<![CDATA[".len()..];
+                let next = body.find("]]>").map(|end| &body[end + 3..]);
+                (&rest[..cd], next)
+            }
+            None => (rest, None),
+        };
+        let mut scan = chunk;
+        while let Some(amp) = scan.find('&') {
+            let after = &scan[amp + 1..];
+            let Some(semi) = after.find(';') else { break };
+            let name = &after[..semi];
+            if !name.starts_with('#') && !name.is_empty() {
+                names.push(name);
+            }
+            scan = &after[semi + 1..];
+        }
+        match next {
+            Some(n) => rest = n,
+            None => break,
+        }
+    }
+    names.into_iter()
 }
 
 #[cfg(test)]
@@ -285,7 +305,26 @@ mod tests {
     fn expands_char_refs_and_nesting() {
         let map = parse_internal_entities(r#"doc [ <!ENTITY a "&#65;"> <!ENTITY b "x&a;y"> ]"#);
         assert_eq!(map.get("a").map(String::as_str), Some("A"));
-        assert_eq!(map.get("b").map(String::as_str), Some("xAy"));
+        // Entity references stay in the replacement text; they are expanded
+        // (and the result reparsed) where the entity is used.
+        assert_eq!(map.get("b").map(String::as_str), Some("x&a;y"));
+    }
+
+    #[test]
+    fn predefined_references_stay_in_replacement_text() {
+        let map = parse_internal_entities(r#"doc [ <!ENTITY e "a&amp;b&#38;lt;c"> ]"#);
+        assert_eq!(map.get("e").map(String::as_str), Some("a&amp;b&lt;c"));
+    }
+
+    #[test]
+    fn exponential_entities_are_checked_without_expanding() {
+        let mut subset = String::from(r#"<!ENTITY a0 "0123456789">"#);
+        for i in 1..40 {
+            let p = i - 1;
+            subset.push_str(&format!(r#"<!ENTITY a{i} "&a{p};&a{p};">"#));
+        }
+        let map = parse_internal_entities(&format!("doc [ {subset} ]"));
+        assert!(map.contains_key("a39"));
     }
 
     #[test]

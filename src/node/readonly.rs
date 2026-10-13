@@ -10,7 +10,10 @@ use super::types::{NodeId, NodeType};
 /// A read-only reference to a node.
 ///
 /// This is a lightweight, read-only view of a node that provides
-/// the same getters as `XmlNode` but cannot modify the document.
+/// the same getters as `XmlNode` and offers no setters. It does not make the
+/// document immutable: [`into_node`](Self::into_node) hands back the mutable
+/// handle, and other `XmlNode` handles to the same document can still modify
+/// it.
 #[derive(Clone)]
 pub struct XmlRoNode {
     inner: XmlNode,
@@ -62,17 +65,19 @@ impl XmlRoNode {
         self.inner.get_content()
     }
 
-    /// Returns an attribute value.
+    /// Returns an attribute value by qualified or local name; see
+    /// [`XmlNode::get_attribute`].
     pub fn get_attribute(&self, name: &str) -> Option<String> {
         self.inner.get_attribute(name)
     }
 
-    /// Returns an attribute value with namespace.
+    /// Returns an attribute value by local name and namespace URI; see
+    /// [`XmlNode::get_attribute_ns`].
     pub fn get_attribute_ns(&self, name: &str, ns_uri: &str) -> Option<String> {
         self.inner.get_attribute_ns(name, ns_uri)
     }
 
-    /// Returns all attributes.
+    /// Returns all attributes; see [`XmlNode::get_attributes`] for the keys.
     pub fn get_attributes(&self) -> IndexMap<String, String> {
         self.inner.get_attributes()
     }
@@ -105,12 +110,12 @@ impl XmlRoNode {
             .collect()
     }
 
-    /// Returns the first child.
+    /// Returns the first child node of any type.
     pub fn first_child(&self) -> Option<XmlRoNode> {
         self.inner.first_child().map(XmlRoNode::from_node)
     }
 
-    /// Returns the last child.
+    /// Returns the last child node of any type.
     pub fn last_child(&self) -> Option<XmlRoNode> {
         self.inner.last_child().map(XmlRoNode::from_node)
     }
