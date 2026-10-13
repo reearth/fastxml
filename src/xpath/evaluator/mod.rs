@@ -214,6 +214,7 @@ impl<'a> XPathEvaluator<'a> {
                         }
                     }
                 }
+                self.doc.sort_in_document_order(&mut all_nodes);
                 Ok(XPathResult::Nodes(all_nodes))
             }
             Expr::Comparison { left, op, right } => {
@@ -230,7 +231,7 @@ impl<'a> XPathEvaluator<'a> {
             Expr::Filter { expr, predicates } => {
                 let mut nodes = self.eval_node_set(expr, ctx, "a filter predicate")?;
                 // Filter predicates count positions in document order.
-                nodes.sort_by_key(|n| n.id());
+                self.doc.sort_in_document_order(&mut nodes);
                 for predicate in predicates {
                     nodes = self.apply_predicate(predicate, nodes, ctx)?;
                 }
@@ -346,9 +347,7 @@ impl<'a> XPathEvaluator<'a> {
             current_nodes = next_nodes;
         }
 
-        // Sort by node ID to ensure document order
-        // Node IDs are assigned in document order during parsing
-        current_nodes.sort_by_key(|n| n.id());
+        self.doc.sort_in_document_order(&mut current_nodes);
 
         Ok(XPathResult::Nodes(current_nodes))
     }
@@ -404,18 +403,15 @@ impl<'a> XPathEvaluator<'a> {
         }
 
         let attributes = context.attrs();
-        let node_for = |a: &crate::node::types::Attr| {
-            self.doc.create_attribute_node(
-                &a.name,
-                &a.value,
-                a.prefix.as_deref(),
-                a.ns_uri.as_deref(),
-            )
+        // One node per attribute, reused across evaluations; `index` (the
+        // attribute's position on the element) orders them
+        let node_for = |(index, a): (usize, &crate::node::types::Attr)| {
+            self.doc.attribute_node(context.id(), index, a)
         };
 
         match &step.node_test {
             // @* - every attribute
-            NodeTest::Any => Ok(attributes.iter().map(node_for).collect()),
+            NodeTest::Any => Ok(attributes.iter().enumerate().map(node_for).collect()),
             NodeTest::Name(name) => {
                 // @name - XPath 1.0 selects the attribute `name` in no
                 // namespace. fastxml is lenient here and, like
@@ -424,8 +420,14 @@ impl<'a> XPathEvaluator<'a> {
                 // unprefixed one, so `@id` keeps finding `gml:id`.
                 let found = attributes
                     .iter()
-                    .find(|a| a.name.as_ref() == name.as_str() && a.prefix.is_none())
-                    .or_else(|| attributes.iter().find(|a| a.name.as_ref() == name.as_str()));
+                    .enumerate()
+                    .find(|(_, a)| a.name.as_ref() == name.as_str() && a.prefix.is_none())
+                    .or_else(|| {
+                        attributes
+                            .iter()
+                            .enumerate()
+                            .find(|(_, a)| a.name.as_ref() == name.as_str())
+                    });
                 Ok(found.map(node_for).into_iter().collect())
             }
             NodeTest::QName { prefix, local } => {
@@ -444,7 +446,8 @@ impl<'a> XPathEvaluator<'a> {
                 let wildcard = local == "*";
                 Ok(attributes
                     .iter()
-                    .filter(|a| {
+                    .enumerate()
+                    .filter(|(_, a)| {
                         a.ns_uri.as_deref() == Some(uri.as_str())
                             && (wildcard || a.name.as_ref() == local.as_str())
                     })
@@ -483,35 +486,28 @@ impl<'a> XPathEvaluator<'a> {
             current = node.get_parent();
         }
 
-        // Filter and create namespace nodes based on node test
-        let mut result = Vec::new();
-        match &step.node_test {
-            NodeTest::Any => {
-                // namespace::* - return all in-scope namespaces
-                // Sort by prefix for consistent ordering (xml namespace first, then alphabetical)
-                let mut sorted: Vec<_> = namespaces.into_iter().collect();
-                sorted.sort_by(|(a, _), (b, _)| {
-                    // xml namespace always comes first
-                    match (a.as_str(), b.as_str()) {
-                        ("xml", _) => std::cmp::Ordering::Less,
-                        (_, "xml") => std::cmp::Ordering::Greater,
-                        _ => a.cmp(b),
-                    }
-                });
-                for (prefix, uri) in sorted {
-                    let ns_node = self.doc.create_namespace_node(&prefix, &uri);
-                    result.push(ns_node);
-                }
-            }
-            NodeTest::Name(name) => {
-                // namespace::prefix - return specific namespace
-                if let Some(uri) = namespaces.get(name) {
-                    let ns_node = self.doc.create_namespace_node(name, uri);
-                    result.push(ns_node);
-                }
-            }
-            _ => {}
-        }
+        // Order the namespace nodes: xml first, then by prefix. The position
+        // in this order is the node's document-order index.
+        let mut sorted: Vec<_> = namespaces.into_iter().collect();
+        sorted.sort_by(|(a, _), (b, _)| match (a.as_str(), b.as_str()) {
+            ("xml", _) => std::cmp::Ordering::Less,
+            (_, "xml") => std::cmp::Ordering::Greater,
+            _ => a.cmp(b),
+        });
+
+        let wanted = |prefix: &str| match &step.node_test {
+            // namespace::* - all in-scope namespaces
+            NodeTest::Any => true,
+            // namespace::prefix - one namespace
+            NodeTest::Name(name) => prefix == name,
+            _ => false,
+        };
+        let result = sorted
+            .iter()
+            .enumerate()
+            .filter(|(_, (prefix, _))| wanted(prefix))
+            .map(|(index, (prefix, uri))| self.doc.namespace_node(context.id(), index, prefix, uri))
+            .collect();
 
         Ok(result)
     }

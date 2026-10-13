@@ -312,3 +312,83 @@ fn test_hand_built_position_zero_selects_nothing() {
     let result = XPathEvaluator::new(&doc).evaluate_expr(&expr).unwrap();
     assert!(matches!(result, XPathResult::Nodes(ref nodes) if nodes.is_empty()));
 }
+
+// Attribute and namespace axis nodes are pseudo-nodes created on demand; they
+// must be created once per owner element and sorted in XPath document order.
+
+fn node_ids(doc: &XmlDocument, xpath: &str) -> Vec<usize> {
+    evaluate(doc, xpath)
+        .unwrap()
+        .into_nodes()
+        .iter()
+        .map(|n| n.id())
+        .collect()
+}
+
+#[test]
+fn test_attribute_axis_does_not_grow_document() {
+    let doc = parse(r#"<root><a id="1" x="y"/><a id="2"/></root>"#).unwrap();
+    let first = node_ids(&doc, "//@*");
+    assert_eq!(first.len(), 3);
+    let count = doc.node_count();
+    for _ in 0..10 {
+        assert_eq!(node_ids(&doc, "//@*"), first);
+        assert_eq!(node_ids(&doc, "//@id").len(), 2);
+    }
+    assert_eq!(doc.node_count(), count);
+}
+
+#[test]
+fn test_namespace_axis_does_not_grow_document() {
+    let doc = parse(r#"<root xmlns:p="urn:p"><a xmlns:q="urn:q"/></root>"#).unwrap();
+    let first = node_ids(&doc, "//a/namespace::*");
+    assert_eq!(first.len(), 3); // xml, p, q
+    let count = doc.node_count();
+    for _ in 0..10 {
+        assert_eq!(node_ids(&doc, "//a/namespace::*"), first);
+        assert_eq!(node_ids(&doc, "//a/namespace::p").len(), 1);
+    }
+    assert_eq!(doc.node_count(), count);
+}
+
+#[test]
+fn test_same_attribute_node_across_evaluations() {
+    let doc = parse(r#"<root><a x="1"/></root>"#).unwrap();
+    let by_name = node_ids(&doc, "//a/@x");
+    let by_wildcard = node_ids(&doc, "//a/@*");
+    assert_eq!(by_name, by_wildcard);
+    // The same attribute selected by both operands appears once.
+    assert_eq!(node_ids(&doc, "//a/@x | //@x"), by_name);
+}
+
+#[test]
+fn test_attribute_nodes_in_document_order() {
+    let doc = parse(r#"<root><a x="1"><b/></a><a x="2"><b/></a></root>"#).unwrap();
+    for xpath in ["//a/b | //a/@x", "//a/@x | //a/b"] {
+        let nodes = evaluate(&doc, xpath).unwrap().into_nodes();
+        let names: Vec<String> = nodes
+            .iter()
+            .map(|n| {
+                if n.get_type() == NodeType::Attribute {
+                    format!("@{}", n.get_content().unwrap_or_default())
+                } else {
+                    n.get_name()
+                }
+            })
+            .collect();
+        assert_eq!(names, ["@1", "b", "@2", "b"], "{xpath}");
+    }
+}
+
+#[test]
+fn test_namespace_nodes_before_attributes_and_children() {
+    let doc = parse(r#"<root xmlns:p="urn:p" x="1"><c/></root>"#).unwrap();
+    let nodes = evaluate(&doc, "/root/c | /root/@x | /root/namespace::p")
+        .unwrap()
+        .into_nodes();
+    let types: Vec<NodeType> = nodes.iter().map(|n| n.get_type()).collect();
+    assert_eq!(
+        types,
+        [NodeType::Namespace, NodeType::Attribute, NodeType::Element]
+    );
+}

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::error::Result;
 use crate::namespace::{Namespace, NamespaceResolver};
@@ -22,6 +22,53 @@ pub struct XmlDocument {
     pub(crate) root_element_id: Option<NodeId>,
     /// Cached namespace resolver for XPath
     pub(crate) namespace_resolver: Arc<RwLock<NamespaceResolver>>,
+    /// Attribute / namespace nodes the XPath evaluator has created, so each
+    /// is created once and sorts in document order
+    pub(crate) pseudo_nodes: Arc<Mutex<PseudoNodes>>,
+}
+
+/// Where a pseudo-node sits in XPath document order: right after its owner
+/// element (namespace nodes first, then attribute nodes), before the owner's
+/// children.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct DocOrderKey {
+    owner: NodeId,
+    /// 0 for the owner itself (and every ordinary node), 1 for namespace
+    /// nodes, 2 for attribute nodes
+    kind: u8,
+    index: usize,
+}
+
+/// Identifies an attribute by its owner element, prefix and local name.
+type AttrKey = (NodeId, Option<Arc<str>>, Arc<str>);
+
+/// Registry of the attribute and namespace nodes created for XPath results.
+///
+/// Attributes and namespace bindings are stored on their element, not as
+/// nodes; the attribute and namespace axes materialize them as extra nodes
+/// appended to the node list. The registry makes that happen once per
+/// (element, attribute) and (element, prefix), so repeated queries reuse the
+/// same node instead of growing the document, and records each node's owner
+/// so node-sets can be sorted in document order (node IDs alone would put
+/// every such node after all elements).
+#[derive(Debug, Default)]
+pub(crate) struct PseudoNodes {
+    /// attribute key -> attribute node
+    attributes: rustc_hash::FxHashMap<AttrKey, NodeId>,
+    /// (owner, prefix) -> namespace node
+    namespaces: rustc_hash::FxHashMap<(NodeId, String), NodeId>,
+    /// pseudo-node -> its document-order position
+    order: rustc_hash::FxHashMap<NodeId, DocOrderKey>,
+}
+
+impl PseudoNodes {
+    fn order_key(&self, id: NodeId) -> DocOrderKey {
+        self.order.get(&id).copied().unwrap_or(DocOrderKey {
+            owner: id,
+            kind: 0,
+            index: 0,
+        })
+    }
 }
 
 impl XmlDocument {
@@ -34,6 +81,7 @@ impl XmlDocument {
             nodes: Arc::new(RwLock::new(nodes)),
             root_element_id: None,
             namespace_resolver: Arc::new(RwLock::new(NamespaceResolver::new())),
+            pseudo_nodes: Arc::default(),
         }
     }
 
@@ -166,7 +214,9 @@ impl XmlDocument {
     /// Creates a pseudo-attribute node for XPath evaluation.
     ///
     /// These nodes are added to the document's node list and can be used
-    /// in XPath results. They store the attribute name and value.
+    /// in XPath results. They store the attribute name and value. Every call
+    /// adds a new node, unattached to any element; the XPath evaluator creates
+    /// one node per attribute and reuses it across queries.
     pub fn create_attribute_node(
         &self,
         name: &str,
@@ -191,7 +241,9 @@ impl XmlDocument {
     /// Creates a pseudo-namespace node for XPath evaluation.
     ///
     /// These nodes are added to the document's node list and can be used
-    /// in XPath results. They store the namespace prefix and URI.
+    /// in XPath results. They store the namespace prefix and URI. Every call
+    /// adds a new node, unattached to any element; the XPath evaluator creates
+    /// one node per element and prefix and reuses it across queries.
     pub fn create_namespace_node(&self, prefix: &str, uri: &str) -> XmlNode {
         let mut nodes = self.nodes.write();
         let id = nodes.len();
@@ -202,6 +254,119 @@ impl XmlDocument {
         XmlNode {
             id,
             nodes: Arc::clone(&self.nodes),
+        }
+    }
+
+    /// Returns the XPath attribute node for `attr`, the `index`-th attribute
+    /// of element `owner`, creating it on first use (see [`PseudoNodes`]).
+    pub(crate) fn attribute_node(
+        &self,
+        owner: NodeId,
+        index: usize,
+        attr: &crate::node::types::Attr,
+    ) -> XmlNode {
+        let mut pseudo = self.pseudo_nodes.lock();
+        let key = (owner, attr.prefix.clone(), Arc::clone(&attr.name));
+        let id = match pseudo.attributes.get(&key) {
+            Some(&id) => {
+                // The element may have been edited since the node was made.
+                let current = |n: &NodeData| {
+                    n.content.as_deref() == Some(&*attr.value) && n.namespace_uri == attr.ns_uri
+                };
+                if !self.nodes.read().get(id).is_some_and(current) {
+                    if let Some(node) = self.nodes.write().get_mut(id) {
+                        node.content = Some(attr.value.to_string());
+                        node.namespace_uri = attr.ns_uri.clone();
+                    }
+                }
+                id
+            }
+            None => {
+                let id = self
+                    .create_attribute_node(
+                        &attr.name,
+                        &attr.value,
+                        attr.prefix.as_deref(),
+                        attr.ns_uri.as_deref(),
+                    )
+                    .id;
+                pseudo.attributes.insert(key, id);
+                id
+            }
+        };
+        pseudo.order.insert(
+            id,
+            DocOrderKey {
+                owner,
+                kind: 2,
+                index,
+            },
+        );
+        XmlNode {
+            id,
+            nodes: Arc::clone(&self.nodes),
+        }
+    }
+
+    /// Returns the XPath namespace node binding `prefix` to `uri` on element
+    /// `owner` (its `index`-th namespace node), creating it on first use (see
+    /// [`PseudoNodes`]).
+    pub(crate) fn namespace_node(
+        &self,
+        owner: NodeId,
+        index: usize,
+        prefix: &str,
+        uri: &str,
+    ) -> XmlNode {
+        let mut pseudo = self.pseudo_nodes.lock();
+        let key = (owner, prefix.to_string());
+        let id = match pseudo.namespaces.get(&key) {
+            Some(&id) => {
+                // The element may have been edited since the node was made.
+                if !self
+                    .nodes
+                    .read()
+                    .get(id)
+                    .is_some_and(|n| n.content.as_deref() == Some(uri))
+                {
+                    if let Some(node) = self.nodes.write().get_mut(id) {
+                        node.content = Some(uri.to_string());
+                    }
+                }
+                id
+            }
+            None => {
+                let id = self.create_namespace_node(prefix, uri).id;
+                pseudo.namespaces.insert(key, id);
+                id
+            }
+        };
+        pseudo.order.insert(
+            id,
+            DocOrderKey {
+                owner,
+                kind: 1,
+                index,
+            },
+        );
+        XmlNode {
+            id,
+            nodes: Arc::clone(&self.nodes),
+        }
+    }
+
+    /// Sorts nodes of this document into XPath document order.
+    ///
+    /// Node IDs follow document order for parsed nodes; attribute and
+    /// namespace nodes made by [`attribute_node`](Self::attribute_node) /
+    /// [`namespace_node`](Self::namespace_node) are placed right after their
+    /// element, before its children.
+    pub(crate) fn sort_in_document_order(&self, nodes: &mut [XmlNode]) {
+        let pseudo = self.pseudo_nodes.lock();
+        if pseudo.order.is_empty() {
+            nodes.sort_by_key(XmlNode::id);
+        } else {
+            nodes.sort_by_cached_key(|n| pseudo.order_key(n.id));
         }
     }
 }
@@ -497,6 +662,7 @@ impl DocumentBuilder {
             nodes: Arc::new(RwLock::new(self.nodes)),
             root_element_id: self.root_element_id,
             namespace_resolver: Arc::new(RwLock::new(NamespaceResolver::new())),
+            pseudo_nodes: Arc::default(),
         };
         // Extract namespaces from root element
         document.extract_and_register_namespaces();
