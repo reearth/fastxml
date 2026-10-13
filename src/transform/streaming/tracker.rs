@@ -425,6 +425,13 @@ impl PathTracker {
     }
 
     /// Resolves a document prefix (`""` = default namespace) in the scope of
+    /// the current element.
+    pub(crate) fn resolve_in_scope(&self, prefix: &str) -> Option<&str> {
+        let index = self.ns_frames.len().checked_sub(1)?;
+        self.lookup_in_scope(prefix, index)
+    }
+
+    /// Resolves a document prefix (`""` = default namespace) in the scope of
     /// `path[index]`.
     fn lookup_in_scope(&self, prefix: &str, index: usize) -> Option<&str> {
         if prefix == "xml" {

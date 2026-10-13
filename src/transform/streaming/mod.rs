@@ -1,5 +1,6 @@
 //! Single-pass streaming processor for XML transformation.
 
+mod dispatch;
 mod helpers;
 mod multi;
 mod reader;
@@ -24,6 +25,7 @@ pub use single::{
 };
 pub use tracker::{ElementInfo, PathTracker};
 
+pub(crate) use dispatch::{DispatchCallback, DispatchHandler, InputSource, dispatch};
 pub(crate) use helpers::{add_pi_to_builder, extract_element_info, split_bom};
 
 /// Handler pair for multi-xpath processing: (xpath, callback).
@@ -43,13 +45,6 @@ pub type MultiTransformHandlerWithContext<'a> = (
     &'a StreamableXPath,
     &'a mut dyn FnMut(&mut EditableNode, &TransformContext),
 );
-
-/// State for tracking a single XPath handler during multi-xpath processing.
-pub(crate) struct HandlerState<'a> {
-    pub(crate) xpath: &'a StreamableXPath,
-    pub(crate) builder: Option<super::editable::EditableNodeBuilder>,
-    pub(crate) match_context: Option<TransformContext>,
-}
 
 /// State for tracking a single XPath handler during multi-xpath transform processing.
 /// Includes match_start_offset for zero-copy output.

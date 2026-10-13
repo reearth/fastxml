@@ -15,7 +15,8 @@ use super::helpers::{
     extract_element_info, serialize_editable, xml_parse_error_at_offset,
 };
 use super::tracker::PathTracker;
-use super::{HandlerState, MultiHandler, MultiTransformHandler, TransformHandlerState};
+use super::{DispatchCallback, DispatchHandler, InputSource, dispatch};
+use super::{MultiHandler, MultiTransformHandler, TransformHandlerState};
 
 /// Processes XML from a reader with streaming iteration (no transformation output).
 ///
@@ -32,118 +33,17 @@ where
     R: BufRead,
     F: FnMut(&mut EditableNode),
 {
-    let mut xml_reader = Reader::from_reader(reader);
-    xml_reader.config_mut().trim_text(false);
-
-    let mut tracker = PathTracker::for_xpaths(namespaces, [xpath]);
-    let mut subtree_builder: Option<EditableNodeBuilder> = None;
-    let mut match_count: usize = 0;
-    let mut buf = Vec::new();
-
-    loop {
-        let before_pos = xml_reader.buffer_position() as usize;
-
-        match xml_reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-
-                tracker.push_element(element_info);
-
-                if let Some(ref mut builder) = subtree_builder {
-                    add_start_to_builder(builder, &e, namespaces)?;
-                } else if tracker.matches(xpath) {
-                    let mut builder = EditableNodeBuilder::new();
-                    builder.set_namespaces(namespaces.clone());
-                    add_start_to_builder(&mut builder, &e, namespaces)?;
-                    subtree_builder = Some(builder);
-                }
-            }
-
-            Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-
-                tracker.push_element(element_info);
-
-                if let Some(ref mut builder) = subtree_builder {
-                    add_empty_to_builder(builder, &e, namespaces)?;
-                } else if tracker.matches(xpath) {
-                    let mut builder = EditableNodeBuilder::new();
-                    builder.set_namespaces(namespaces.clone());
-                    add_empty_to_builder(&mut builder, &e, namespaces)?;
-
-                    let mut editable = builder.build()?;
-                    callback(&mut editable);
-                    match_count += 1;
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::End(e)) => {
-                if let Some(mut builder) = subtree_builder.take() {
-                    add_end_to_builder(&mut builder, &e)?;
-
-                    if builder.is_complete() {
-                        let mut editable = builder.build()?;
-                        callback(&mut editable);
-                        match_count += 1;
-                    } else {
-                        subtree_builder = Some(builder);
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::Text(e)) => {
-                if let Some(ref mut builder) = subtree_builder {
-                    let text = e
-                        .unescape()
-                        .map_err(|err| TransformError::XmlParse(err.to_string()))?;
-                    builder.text(&text);
-                }
-            }
-
-            Ok(Event::CData(e)) => {
-                if let Some(ref mut builder) = subtree_builder {
-                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                    builder.cdata(text);
-                }
-            }
-
-            Ok(Event::Comment(e)) => {
-                if let Some(ref mut builder) = subtree_builder {
-                    let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                    builder.comment(text);
-                }
-            }
-
-            Ok(Event::PI(e)) => {
-                if let Some(ref mut builder) = subtree_builder {
-                    add_pi_to_builder(builder, &e)?;
-                }
-            }
-
-            Ok(Event::Eof) => {
-                break;
-            }
-
-            Ok(_) => {}
-
-            Err(e) => {
-                let byte_offset = xml_reader.buffer_position() as usize;
-                return Err(xml_parse_error_at_offset(
-                    format!("{:?}", e),
-                    byte_offset,
-                    Some(tracker.current_xpath()),
-                ));
-            }
-        }
-
-        buf.clear();
-    }
-
-    Ok(match_count)
+    let mut handlers = [DispatchHandler {
+        xpath,
+        callback: DispatchCallback::Node(&mut callback),
+        limit: None,
+    }];
+    dispatch(
+        Reader::from_reader(reader),
+        InputSource::Reader,
+        &mut handlers,
+        namespaces,
+    )
 }
 
 /// Processes XML from a reader with streaming transformation.
@@ -341,7 +241,6 @@ where
 ///
 /// Reader-based version of `process_for_each_multi`. Reads from a `BufRead` source
 /// instead of requiring the entire XML string in memory.
-#[allow(clippy::needless_range_loop)]
 pub fn process_for_each_multi_from_reader<'a, R>(
     reader: R,
     handlers: &mut [MultiHandler<'a>],
@@ -350,138 +249,20 @@ pub fn process_for_each_multi_from_reader<'a, R>(
 where
     R: BufRead,
 {
-    let mut xml_reader = Reader::from_reader(reader);
-    xml_reader.config_mut().trim_text(false);
-
-    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
-    let mut match_count: usize = 0;
-    let mut buf = Vec::new();
-
-    let mut states: Vec<HandlerState> = handlers
-        .iter()
-        .map(|(xpath, _)| HandlerState {
+    let mut handlers: Vec<DispatchHandler<'_>> = handlers
+        .iter_mut()
+        .map(|(xpath, callback)| DispatchHandler {
             xpath,
-            builder: None,
-            match_context: None,
+            callback: DispatchCallback::Node(&mut **callback),
+            limit: None,
         })
         .collect();
-
-    loop {
-        let before_pos = xml_reader.buffer_position() as usize;
-
-        match xml_reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        add_start_to_builder(builder, &e, namespaces)?;
-                    } else if tracker.matches(states[i].xpath) {
-                        let mut builder = EditableNodeBuilder::new();
-                        builder.set_namespaces(namespaces.clone());
-                        add_start_to_builder(&mut builder, &e, namespaces)?;
-                        states[i].builder = Some(builder);
-                    }
-                }
-            }
-
-            Ok(Event::Empty(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        add_empty_to_builder(builder, &e, namespaces)?;
-                    } else if tracker.matches(states[i].xpath) {
-                        let mut builder = EditableNodeBuilder::new();
-                        builder.set_namespaces(namespaces.clone());
-                        add_empty_to_builder(&mut builder, &e, namespaces)?;
-
-                        let mut editable = builder.build()?;
-                        handlers[i].1(&mut editable);
-                        match_count += 1;
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::End(e)) => {
-                for i in 0..states.len() {
-                    if let Some(mut builder) = states[i].builder.take() {
-                        add_end_to_builder(&mut builder, &e)?;
-
-                        if builder.is_complete() {
-                            let mut editable = builder.build()?;
-                            handlers[i].1(&mut editable);
-                            match_count += 1;
-                        } else {
-                            states[i].builder = Some(builder);
-                        }
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::Text(e)) => {
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        let text = e
-                            .unescape()
-                            .map_err(|err| TransformError::XmlParse(err.to_string()))?;
-                        builder.text(&text);
-                    }
-                }
-            }
-
-            Ok(Event::CData(e)) => {
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.cdata(text);
-                    }
-                }
-            }
-
-            Ok(Event::Comment(e)) => {
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.comment(text);
-                    }
-                }
-            }
-
-            Ok(Event::PI(e)) => {
-                for i in 0..states.len() {
-                    if let Some(ref mut builder) = states[i].builder {
-                        add_pi_to_builder(builder, &e)?;
-                    }
-                }
-            }
-
-            Ok(Event::Eof) => {
-                break;
-            }
-
-            Ok(_) => {}
-
-            Err(e) => {
-                let byte_offset = xml_reader.buffer_position() as usize;
-                return Err(xml_parse_error_at_offset(
-                    format!("{:?}", e),
-                    byte_offset,
-                    Some(tracker.current_xpath()),
-                ));
-            }
-        }
-
-        buf.clear();
-    }
-
-    Ok(match_count)
+    dispatch(
+        Reader::from_reader(reader),
+        InputSource::Reader,
+        &mut handlers,
+        namespaces,
+    )
 }
 
 /// Processes XML from a reader with streaming transformation for multiple XPath handlers.

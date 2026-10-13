@@ -5,9 +5,12 @@ use std::io::Write;
 
 use crate::xpath::XPathSource;
 
+use std::ops::ControlFlow;
+
 use super::context::TransformContext;
 use super::editable::EditableNode;
 use super::error::{TransformError, TransformResult};
+use super::matched::ElementMatch;
 use super::streamable::IntoStreamable;
 use super::streaming;
 use super::xpath_analyze::{self, NotStreamableReason, StreamableXPath, XPathAnalysis};
@@ -20,6 +23,19 @@ use super::{
 pub(crate) struct Handler<'a> {
     pub(crate) xpath: XPathSource,
     pub(crate) callback: HandlerCallback<'a>,
+    /// Maximum number of callback calls (`for_each` only); `None` for no
+    /// limit.
+    pub(crate) limit: Option<usize>,
+}
+
+impl<'a> Handler<'a> {
+    pub(crate) fn new(xpath: XPathSource, callback: HandlerCallback<'a>) -> Self {
+        Self {
+            xpath,
+            callback,
+            limit: None,
+        }
+    }
 }
 
 /// Type alias for simple transform callback.
@@ -28,12 +44,77 @@ pub(crate) type SimpleCallback<'a> = Box<dyn FnMut(&mut EditableNode) + 'a>;
 /// Type alias for context-aware transform callback.
 pub(crate) type ContextCallback<'a> = Box<dyn FnMut(&mut EditableNode, &TransformContext) + 'a>;
 
+/// Type alias for read-only match callback.
+pub(crate) type MatchCallback<'a> = Box<dyn FnMut(&ElementMatch) -> ControlFlow<()> + 'a>;
+
 /// Callback type for handlers.
 pub(crate) enum HandlerCallback<'a> {
     /// Simple callback without context
     Simple(SimpleCallback<'a>),
     /// Callback with transform context
     WithContext(ContextCallback<'a>),
+    /// Read-only callback at the matched element's start tag (`for_each`
+    /// only)
+    Match(MatchCallback<'a>),
+}
+
+/// The error for an operation the chosen terminal or input cannot run.
+pub(crate) fn invalid_operation(message: &str) -> TransformError {
+    TransformError::Other(crate::error::Error::InvalidOperation(message.to_string()))
+}
+
+/// Rejects handlers that only make sense when iterating: a transform copies
+/// the whole document to its output, so it can neither stop early nor run
+/// read-only match handlers.
+pub(crate) fn ensure_transformable(handlers: &[Handler<'_>]) -> TransformResult<()> {
+    if handlers
+        .iter()
+        .any(|h| matches!(h.callback, HandlerCallback::Match(_)))
+    {
+        return Err(invalid_operation(
+            "on_match handlers only run with for_each, not when writing output",
+        ));
+    }
+    if handlers.iter().any(|h| h.limit.is_some()) {
+        return Err(invalid_operation(
+            "limit only applies to for_each, not when writing output",
+        ));
+    }
+    Ok(())
+}
+
+/// Sets the limit of the most recently registered handler. Returns `false`
+/// when there is none.
+pub(crate) fn limit_last(handlers: &mut [Handler<'_>], n: usize) -> bool {
+    match handlers.last_mut() {
+        Some(handler) => {
+            handler.limit = Some(n);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Builds the dispatch handler for each registered handler.
+pub(crate) fn dispatch_handlers<'h>(
+    handlers: &'h mut [Handler<'_>],
+    xpaths: &'h [StreamableXPath],
+) -> Vec<streaming::DispatchHandler<'h>> {
+    handlers
+        .iter_mut()
+        .zip(xpaths)
+        .map(|(handler, xpath)| streaming::DispatchHandler {
+            xpath,
+            limit: handler.limit,
+            callback: match &mut handler.callback {
+                HandlerCallback::Simple(f) => streaming::DispatchCallback::Node(f.as_mut()),
+                HandlerCallback::WithContext(f) => {
+                    streaming::DispatchCallback::NodeWithContext(f.as_mut())
+                }
+                HandlerCallback::Match(f) => streaming::DispatchCallback::Match(f.as_mut()),
+            },
+        })
+        .collect()
 }
 
 /// Builder for streaming XML transformations.
@@ -97,10 +178,10 @@ impl<'a> StreamTransformer<'a> {
         X: IntoStreamable,
         F: FnMut(&mut EditableNode) + 'a,
     {
-        self.handlers.push(Handler {
-            xpath: xpath.into_xpath_source(),
-            callback: HandlerCallback::Simple(Box::new(callback)),
-        });
+        self.handlers.push(Handler::new(
+            xpath.into_xpath_source(),
+            HandlerCallback::Simple(Box::new(callback)),
+        ));
         self
     }
 
@@ -139,11 +220,31 @@ impl<'a> StreamTransformer<'a> {
         X: IntoStreamable,
         F: FnMut(&mut EditableNode, &TransformContext) + 'a,
     {
-        self.handlers.push(Handler {
-            xpath: xpath.into_xpath_source(),
-            callback: HandlerCallback::WithContext(Box::new(callback)),
-        });
+        self.handlers.push(Handler::new(
+            xpath.into_xpath_source(),
+            HandlerCallback::WithContext(Box::new(callback)),
+        ));
         self
+    }
+
+    /// Registers a read-only handler called at the start tag of each
+    /// matching element (`for_each` only).
+    pub fn on_match<X, F>(mut self, xpath: X, callback: F) -> Self
+    where
+        X: IntoStreamable,
+        F: FnMut(&ElementMatch) -> ControlFlow<()> + 'a,
+    {
+        self.handlers.push(Handler::new(
+            xpath.into_xpath_source(),
+            HandlerCallback::Match(Box::new(callback)),
+        ));
+        self
+    }
+
+    /// Limits the most recently registered handler to `n` calls. Returns
+    /// `false` when no handler is registered.
+    pub fn limit_last(&mut self, n: usize) -> bool {
+        limit_last(&mut self.handlers, n)
     }
 
     /// Registers a namespace prefix for use in XPath expressions.
@@ -319,6 +420,8 @@ impl<'a> StreamTransformer<'a> {
                 "No handlers registered. Use .on() to add handlers.".to_string(),
             ));
         }
+
+        ensure_transformable(&self.handlers)?;
 
         let mut output = Vec::new();
         let count = self.execute_transform(&mut output)?;
@@ -556,6 +659,9 @@ impl<'a> StreamTransformer<'a> {
                     HandlerCallback::WithContext(f) => {
                         callbacks.push(Box::new(move |node: &mut EditableNode, ctx| f(node, ctx)));
                     }
+                    HandlerCallback::Match(_) => {
+                        unreachable!("rejected by ensure_transformable")
+                    }
                 }
             }
 
@@ -605,142 +711,66 @@ impl<'a> StreamTransformer<'a> {
         }
     }
 
-    /// Internal: Execute for_each with all handlers
+    /// Internal: runs every handler over the input.
     ///
-    /// Optimized to process multiple handlers in a single pass when all XPaths are streamable.
+    /// When every XPath is streamable, all handlers share a single streaming
+    /// pass. Otherwise, with fallback enabled, each handler runs on its own:
+    /// streamable ones streaming, the others against a DOM of the input.
     fn execute_for_each(mut self) -> TransformResult<usize> {
-        // Fast path: single handler
-        if self.handlers.len() == 1 {
-            let handler = self.handlers.remove(0);
-            return stream_for_each_with_callback(
-                self.input,
-                &handler.xpath,
-                &self.namespaces,
-                self.fallback_mode,
-                handler.callback,
-            );
-        }
-
-        // Parse and analyze all XPaths
         let mut analyses: Vec<XPathAnalysis> = Vec::with_capacity(self.handlers.len());
         for handler in &self.handlers {
-            let expr = handler.xpath.parse()?;
-            analyses.push(xpath_analyze::analyze_xpath(&expr));
+            analyses.push(xpath_analyze::analyze_xpath(&handler.xpath.parse()?));
         }
 
-        // Check if all are streamable
-        let mut all_streamable = true;
-        let mut first_not_streamable_reason: Option<(String, NotStreamableReason)> = None;
-
-        for (i, analysis) in analyses.iter().enumerate() {
-            if let XPathAnalysis::NotStreamable(reason) = analysis {
-                all_streamable = false;
-                if first_not_streamable_reason.is_none() {
-                    let xpath_str = self.handlers[i]
+        let not_streamable = analyses
+            .iter()
+            .position(|a| matches!(a, XPathAnalysis::NotStreamable(_)));
+        if let Some(index) = not_streamable {
+            return match self.fallback_mode {
+                FallbackMode::Disabled => {
+                    let Some(XPathAnalysis::NotStreamable(reason)) =
+                        analyses.into_iter().nth(index)
+                    else {
+                        unreachable!("found above")
+                    };
+                    let xpath = self.handlers[index]
                         .xpath
                         .as_string()
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "<ast>".to_string());
-                    first_not_streamable_reason = Some((xpath_str, reason.clone()));
-                }
-                break;
-            }
-        }
-
-        // If not all streamable and fallback is disabled, return error
-        if !all_streamable {
-            match self.fallback_mode {
-                FallbackMode::Disabled => {
-                    let (xpath, reason) = first_not_streamable_reason.unwrap();
-                    return Err(TransformError::NotStreamable { xpath, reason });
+                    Err(TransformError::NotStreamable { xpath, reason })
                 }
                 FallbackMode::Enabled => {
-                    // Fall back to sequential processing
                     let mut total_count = 0;
                     for handler in self.handlers {
-                        let count = stream_for_each_with_callback(
+                        total_count += stream_for_each_with_callback(
                             self.input,
                             &handler.xpath,
                             &self.namespaces,
                             self.fallback_mode,
                             handler.callback,
+                            handler.limit,
                         )?;
-                        total_count += count;
                     }
-                    return Ok(total_count);
+                    Ok(total_count)
                 }
-            }
+            };
         }
 
-        // All streamable - extract StreamableXPath from analyses
-        let streamable_xpaths: Vec<StreamableXPath> = analyses
+        let xpaths: Vec<StreamableXPath> = analyses
             .into_iter()
             .filter_map(|a| match a {
                 XPathAnalysis::Streamable(s) => Some(s),
-                _ => None,
+                XPathAnalysis::NotStreamable(_) => None,
             })
             .collect();
-
-        // Check if any handler uses WithContext
-        let has_context_handler = self
-            .handlers
-            .iter()
-            .any(|h| matches!(h.callback, HandlerCallback::WithContext(_)));
-
-        if has_context_handler {
-            // Use context-aware multi processing
-            type Callback<'a> = Box<dyn FnMut(&mut EditableNode, &TransformContext) + 'a>;
-            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
-
-            for handler in self.handlers.iter_mut() {
-                match &mut handler.callback {
-                    HandlerCallback::Simple(f) => {
-                        // Wrap simple callback to ignore context
-                        callbacks.push(Box::new(move |node: &mut EditableNode, _ctx| f(node)));
-                    }
-                    HandlerCallback::WithContext(f) => {
-                        callbacks.push(Box::new(move |node: &mut EditableNode, ctx| f(node, ctx)));
-                    }
-                }
-            }
-
-            // Build handlers array for the multi function
-            let mut handler_pairs: Vec<streaming::MultiHandlerWithContext<'_>> = streamable_xpaths
-                .iter()
-                .zip(callbacks.iter_mut())
-                .map(|(xpath, cb)| {
-                    (
-                        xpath,
-                        cb.as_mut() as &mut dyn FnMut(&mut EditableNode, &TransformContext),
-                    )
-                })
-                .collect();
-
-            streaming::process_for_each_multi_with_context(
-                self.input,
-                &mut handler_pairs,
-                &self.namespaces,
-            )
-        } else {
-            // Use simple multi processing (no context)
-            type Callback<'a> = Box<dyn FnMut(&mut EditableNode) + 'a>;
-            let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
-
-            for handler in self.handlers.iter_mut() {
-                if let HandlerCallback::Simple(f) = &mut handler.callback {
-                    callbacks.push(Box::new(move |node: &mut EditableNode| f(node)));
-                }
-            }
-
-            // Build handlers array for the multi function
-            let mut handler_pairs: Vec<streaming::MultiHandler<'_>> = streamable_xpaths
-                .iter()
-                .zip(callbacks.iter_mut())
-                .map(|(xpath, cb)| (xpath, cb.as_mut() as &mut dyn FnMut(&mut EditableNode)))
-                .collect();
-
-            streaming::process_for_each_multi(self.input, &mut handler_pairs, &self.namespaces)
-        }
+        let mut handlers = dispatch_handlers(&mut self.handlers, &xpaths);
+        streaming::dispatch(
+            quick_xml::Reader::from_str(self.input),
+            streaming::InputSource::Str(self.input),
+            &mut handlers,
+            &self.namespaces,
+        )
     }
 }
 

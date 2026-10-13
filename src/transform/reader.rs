@@ -3,9 +3,14 @@
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
-use super::builder::{Handler, HandlerCallback};
+use std::ops::ControlFlow;
+
+use super::builder::{
+    Handler, HandlerCallback, dispatch_handlers, ensure_transformable, limit_last,
+};
 use super::editable::EditableNode;
 use super::error::{TransformError, TransformResult};
+use super::matched::ElementMatch;
 use super::streamable::IntoStreamable;
 use super::streaming;
 use super::xpath_analyze::{self, StreamableXPath, XPathAnalysis};
@@ -62,11 +67,31 @@ impl<'a, R: BufRead> StreamTransformerReader<'a, R> {
         X: IntoStreamable,
         F: FnMut(&mut EditableNode) + 'a,
     {
-        self.handlers.push(Handler {
-            xpath: xpath.into_xpath_source(),
-            callback: HandlerCallback::Simple(Box::new(callback)),
-        });
+        self.handlers.push(Handler::new(
+            xpath.into_xpath_source(),
+            HandlerCallback::Simple(Box::new(callback)),
+        ));
         self
+    }
+
+    /// Registers a read-only handler called at the start tag of each
+    /// matching element (`for_each` only).
+    pub fn on_match<X, F>(mut self, xpath: X, callback: F) -> Self
+    where
+        X: IntoStreamable,
+        F: FnMut(&ElementMatch) -> ControlFlow<()> + 'a,
+    {
+        self.handlers.push(Handler::new(
+            xpath.into_xpath_source(),
+            HandlerCallback::Match(Box::new(callback)),
+        ));
+        self
+    }
+
+    /// Limits the most recently registered handler to `n` calls. Returns
+    /// `false` when no handler is registered.
+    pub fn limit_last(&mut self, n: usize) -> bool {
+        limit_last(&mut self.handlers, n)
     }
 
     /// Registers a namespace prefix for use in XPath expressions.
@@ -103,6 +128,7 @@ impl<'a, R: BufRead> StreamTransformerReader<'a, R> {
             ));
         }
 
+        ensure_transformable(&self.handlers)?;
         self.execute_transform_reader(writer)
     }
 
@@ -162,7 +188,7 @@ impl<'a, R: BufRead> StreamTransformerReader<'a, R> {
                         writer,
                     );
                 }
-                HandlerCallback::WithContext(_) => {
+                HandlerCallback::WithContext(_) | HandlerCallback::Match(_) => {
                     return Err(TransformError::InvalidXPath(
                         "WithContext callbacks are not supported in reader mode".to_string(),
                     ));
@@ -198,77 +224,38 @@ impl<'a, R: BufRead> StreamTransformerReader<'a, R> {
         )
     }
 
-    /// Internal: Execute for_each with reader source
+    /// Internal: runs every handler over the input in one streaming pass.
+    /// Every XPath must be streamable (there is no fallback for reader input).
     fn execute_for_each_reader(mut self) -> TransformResult<usize> {
-        // Parse and analyze all XPaths
-        let mut analyses: Vec<XPathAnalysis> = Vec::with_capacity(self.handlers.len());
+        let mut xpaths: Vec<StreamableXPath> = Vec::with_capacity(self.handlers.len());
         for handler in &self.handlers {
-            let expr = handler.xpath.parse()?;
-            analyses.push(xpath_analyze::analyze_xpath(&expr));
-        }
-
-        // All must be streamable (no fallback for reader mode)
-        let mut streamable_xpaths: Vec<StreamableXPath> = Vec::with_capacity(analyses.len());
-        for (i, analysis) in analyses.into_iter().enumerate() {
-            match analysis {
-                XPathAnalysis::Streamable(s) => streamable_xpaths.push(s),
+            match xpath_analyze::analyze_xpath(&handler.xpath.parse()?) {
+                XPathAnalysis::Streamable(s) => xpaths.push(s),
                 XPathAnalysis::NotStreamable(reason) => {
-                    let xpath_str = self.handlers[i]
+                    let xpath = handler
                         .xpath
                         .as_string()
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "<ast>".to_string());
-                    return Err(TransformError::NotStreamable {
-                        xpath: xpath_str,
-                        reason,
-                    });
+                    return Err(TransformError::NotStreamable { xpath, reason });
                 }
             }
         }
-
-        // Fast path: single handler
-        if self.handlers.len() == 1 {
-            let handler = self.handlers.remove(0);
-            match handler.callback {
-                HandlerCallback::Simple(mut f) => {
-                    return streaming::process_for_each_from_reader(
-                        self.reader,
-                        &streamable_xpaths[0],
-                        &self.namespaces,
-                        |node| f(node),
-                    );
-                }
-                HandlerCallback::WithContext(_) => {
-                    return Err(TransformError::InvalidXPath(
-                        "WithContext callbacks are not supported in reader mode".to_string(),
-                    ));
-                }
-            }
-        }
-
-        // Multi-handler path
-        type Callback<'a> = Box<dyn FnMut(&mut EditableNode) + 'a>;
-        let mut callbacks: Vec<Callback<'_>> = Vec::with_capacity(self.handlers.len());
-
-        for handler in self.handlers.iter_mut() {
-            if let HandlerCallback::Simple(f) = &mut handler.callback {
-                callbacks.push(Box::new(move |node: &mut EditableNode| f(node)));
-            } else {
-                return Err(TransformError::InvalidXPath(
-                    "WithContext callbacks are not supported in reader mode".to_string(),
-                ));
-            }
-        }
-
-        let mut handler_pairs: Vec<streaming::MultiHandler<'_>> = streamable_xpaths
+        if self
+            .handlers
             .iter()
-            .zip(callbacks.iter_mut())
-            .map(|(xpath, cb)| (xpath, cb.as_mut() as &mut dyn FnMut(&mut EditableNode)))
-            .collect();
+            .any(|h| matches!(h.callback, HandlerCallback::WithContext(_)))
+        {
+            return Err(TransformError::InvalidXPath(
+                "WithContext callbacks are not supported in reader mode".to_string(),
+            ));
+        }
 
-        streaming::process_for_each_multi_from_reader(
-            self.reader,
-            &mut handler_pairs,
+        let mut handlers = dispatch_handlers(&mut self.handlers, &xpaths);
+        streaming::dispatch(
+            quick_xml::Reader::from_reader(self.reader),
+            streaming::InputSource::Reader,
+            &mut handlers,
             &self.namespaces,
         )
     }

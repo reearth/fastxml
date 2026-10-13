@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 use std::io::Write;
+use std::ops::ControlFlow;
 
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -23,6 +24,7 @@ use crate::xpath::evaluator::evaluate;
 use super::context::TransformContext;
 use super::editable::{EditableNode, EditableNodeBuilder};
 use super::error::{TransformError, TransformResult};
+use super::matched::ElementMatch;
 use super::streaming::{PathTracker, add_pi_to_builder, extract_element_info, split_bom};
 
 /// Processes XML using two-pass fallback for non-streamable XPath.
@@ -362,6 +364,20 @@ pub fn process_for_each_with_context<F>(
 where
     F: FnMut(&mut EditableNode, &TransformContext),
 {
+    for_each_limited(input, xpath_expr, &mut callback, None)
+}
+
+/// [`process_for_each_with_context`] stopping after `limit` callback calls:
+/// no further subtree is built once the limit is reached.
+pub(crate) fn for_each_limited(
+    input: &str,
+    xpath_expr: &str,
+    callback: &mut dyn FnMut(&mut EditableNode, &TransformContext),
+    limit: Option<usize>,
+) -> TransformResult<usize> {
+    if limit == Some(0) {
+        return Ok(0);
+    }
     let (_, input) = split_bom(input);
 
     // Pass 1: Parse document and evaluate XPath
@@ -384,19 +400,17 @@ where
     }
 
     // Pass 2: Stream through and call callback for matches
-    iterate_with_matches(input, &doc, &matching_node_ids, &mut callback)
+    iterate_with_matches(input, &doc, &matching_node_ids, callback, limit)
 }
 
 /// Second pass: stream through input, calling callback for matched nodes.
-fn iterate_with_matches<F>(
+fn iterate_with_matches(
     input: &str,
     doc: &XmlDocument,
     matching_ids: &HashSet<usize>,
-    callback: &mut F,
-) -> TransformResult<usize>
-where
-    F: FnMut(&mut EditableNode, &TransformContext),
-{
+    callback: &mut dyn FnMut(&mut EditableNode, &TransformContext),
+    limit: Option<usize>,
+) -> TransformResult<usize> {
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
 
@@ -458,6 +472,9 @@ where
                         let mut editable = builder.build()?;
                         callback(&mut editable, &tracker.to_context());
                         match_count += 1;
+                        if limit == Some(match_count) {
+                            return Ok(match_count);
+                        }
                     }
                 }
 
@@ -476,6 +493,9 @@ where
                         let ctx = match_context.take().unwrap_or_else(|| tracker.to_context());
                         callback(&mut editable, &ctx);
                         match_count += 1;
+                        if limit == Some(match_count) {
+                            return Ok(match_count);
+                        }
                     } else {
                         in_matched_subtree = Some((id, builder));
                     }
@@ -534,6 +554,55 @@ where
     }
 
     Ok(match_count)
+}
+
+/// Reports the elements `xpath_expr` selects, in document order, as
+/// read-only matches (the fallback for a non-streamable
+/// [`on_match`](super::Transformer::on_match) XPath). Stops after `limit`
+/// calls or when the callback breaks. Returns the number of calls.
+pub(crate) fn process_matches(
+    input: &str,
+    xpath_expr: &str,
+    callback: &mut dyn FnMut(&ElementMatch) -> ControlFlow<()>,
+    limit: Option<usize>,
+) -> TransformResult<usize> {
+    let (_, input) = split_bom(input);
+    let doc = parse(input).map_err(|e| TransformError::XmlParse(e.to_string()))?;
+    let result =
+        evaluate(&doc, xpath_expr).map_err(|e| TransformError::InvalidXPath(e.to_string()))?;
+    let XPathResult::Nodes(mut nodes) = result else {
+        return Err(TransformError::InvalidXPath(
+            "XPath must return nodes for iteration".to_string(),
+        ));
+    };
+    // Node ids follow document order.
+    nodes.retain(|node| node.is_element());
+    nodes.sort_by_key(|node| node.id());
+    nodes.dedup_by_key(|node| node.id());
+
+    let mut calls = 0;
+    for node in nodes {
+        if limit == Some(calls) {
+            break;
+        }
+        let attributes = node
+            .attrs()
+            .into_iter()
+            .map(|attr| {
+                (
+                    attr.qname(),
+                    attr.value.to_string(),
+                    attr.ns_uri.map(|u| u.to_string()),
+                )
+            })
+            .filter(|(name, _, _)| name != "xmlns" && !name.starts_with("xmlns:"));
+        let element = ElementMatch::new(node.qname(), node.get_namespace_uri(), attributes);
+        calls += 1;
+        if callback(&element).is_break() {
+            break;
+        }
+    }
+    Ok(calls)
 }
 
 #[cfg(test)]

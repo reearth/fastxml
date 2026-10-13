@@ -343,6 +343,28 @@ Transformer::from_reader(reader)
     .for_each()?;
 ```
 
+#### Read-only Matches and Early Stopping
+
+`on` buffers each matched element's whole subtree so the callback can edit it. When you only need the element's own name and attributes, use `on_match`: it is called at the start tag, buffers nothing, and reports nested matches too. Return `ControlFlow::Break(())` to stop that handler, or cap any handler with `.limit(n)`. Once every handler has stopped, the rest of the input is not read.
+
+```rust
+use std::ops::ControlFlow;
+use fastxml::transform::Transformer;
+
+let reader = BufReader::new(File::open("large_file.xml")?);
+let mut buildings = Vec::new();
+Transformer::from_reader(reader)
+    .namespace("bldg", "http://www.opengis.net/citygml/building/2.0")
+    .on_match("//bldg:Building", |m| {
+        buildings.push(m.get_attribute("gml:id").unwrap_or_default().to_string());
+        ControlFlow::Continue(())
+    })
+    .limit(10) // the first 10 buildings only
+    .for_each()?;
+```
+
+`on_match` and `limit` work with `for_each` only; the output terminals (`write_to`, `to_string`, `into_bytes`) must copy the whole document and return an error.
+
 #### Advanced transforms
 
 These richer operations are available for in-memory input (`Transformer::from`): single-pass data extraction, multi-XPath collection, parent-context access, root-namespace auto-detection, and fallback for non-streamable XPath. (On `Transformer::from_reader` they return an error, since they need random access.)
