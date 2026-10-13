@@ -394,7 +394,7 @@ impl<R: BufRead> StreamingParser<R> {
     /// empty-element root, its end event too). Input that ends before a root
     /// element fails the end-of-document check, so `false` is only returned
     /// if that check ever lets such input through.
-    pub fn parse_through_root_start<F>(&mut self, mut on_event: F) -> Result<bool>
+    pub(crate) fn parse_through_root_start<F>(&mut self, mut on_event: F) -> Result<bool>
     where
         F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
