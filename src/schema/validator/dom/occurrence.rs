@@ -295,20 +295,17 @@ impl DomSchemaValidator {
                     .position(|e| e == actual_name);
 
                 if earlier_pos.is_some() {
-                    // Element is out of order
+                    // Element is out of order: it belongs before the
+                    // element most recently matched in the sequence.
                     let node_name = node.get_name();
-                    let expected_after = if expected_index > 0 {
-                        flattened.ordered_elements[expected_index - 1].clone()
-                    } else {
-                        "(beginning)".to_string()
-                    };
+                    let must_precede = &flattened.ordered_elements[expected_index];
 
                     let error = self
                         .make_error(
                             ValidationErrorType::InvalidContent,
                             format!(
-                                "element '{}' in '{}' appears out of sequence order (expected after '{}')",
-                                actual_name, node_name, expected_after
+                                "element '{}' in '{}' appears out of sequence order (it must come before '{}')",
+                                actual_name, node_name, must_precede
                             ),
                             node,
                         )

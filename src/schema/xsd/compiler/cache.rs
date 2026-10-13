@@ -50,8 +50,6 @@ impl XsdCompiler {
         schema: &CompiledSchema,
         subst_ns: &SubstitutionIndex,
     ) -> Option<crate::schema::xsd::content_automaton::ContentAutomaton> {
-        // C4: the type's own compile-time resolved base_ns first, then the
-        // legacy accumulated-bindings resolution.
         let base_of = |c: &ComplexType| {
             let base_name = c.base_type.as_deref()?;
             c.base_ns
@@ -77,17 +75,7 @@ impl XsdCompiler {
         let mut visited = HashSet::new();
         let elements = self.collect_elements_with_inheritance_ns(complex, schema, &mut visited);
 
-        let content_model_type = match &complex.content {
-            ContentModel::Sequence(_) => ContentModelType::Sequence,
-            ContentModel::Choice(_) => ContentModelType::Choice,
-            ContentModel::All(_) => ContentModelType::All,
-            ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
-            ContentModel::Empty => ContentModelType::Empty,
-            ContentModel::SimpleContent { .. } => ContentModelType::Empty,
-            ContentModel::Any { .. } => ContentModelType::Sequence,
-        };
-
-        let mut flattened = FlattenedChildren::with_content_model(content_model_type);
+        let mut flattened = FlattenedChildren::with_content_model(content_model_type(complex));
         for elem in elements {
             flattened
                 .constraints
@@ -125,7 +113,7 @@ impl XsdCompiler {
                 if !visited.contains(base_type.as_str()) {
                     visited.insert(base_type.clone());
 
-                    // C4: the type's own compile-time resolved base_ns first
+                    // the type's own compile-time resolved base_ns first
                     // (per owning document), then the legacy resolutions.
                     let base_complex = complex
                         .base_ns
@@ -166,7 +154,7 @@ pub(crate) fn inherited_wildcard(
     if complex.wildcard.is_some() {
         return complex.wildcard.clone();
     }
-    // C4: ns-first base hops (compile-time resolved base_ns, string
+    // ns-first base hops (compile-time resolved base_ns, string
     // fallback inside simple/complex base resolution).
     let mut current = complex;
     for _ in 0..16 {
@@ -194,6 +182,86 @@ pub(crate) fn inherited_wildcard(
         }
     }
     None
+}
+
+/// Collects all child element declarations of a complex type, including
+/// those inherited through extension, base first. Base types resolve ns-first
+/// (compile-time `base_ns`) with the string lookup as fallback.
+pub(crate) fn collect_elements_with_inheritance(
+    complex: &ComplexType,
+    schema: &CompiledSchema,
+    visited: &mut HashSet<String>,
+) -> Vec<ElementDef> {
+    let mut elements = Vec::new();
+    match &complex.content {
+        ContentModel::Sequence(elems) | ContentModel::Choice(elems) | ContentModel::All(elems) => {
+            elements.extend(elems.iter().cloned());
+        }
+        ContentModel::ComplexExtension {
+            base_type,
+            elements: ext_elements,
+        } => {
+            if !visited.contains(base_type.as_str()) {
+                visited.insert(base_type.clone());
+                // A no-namespace base whose local name collides with a type
+                // in another (imported) namespace must not be resolved by
+                // local name, hence the ns-first hop.
+                if let Some(TypeDef::Complex(base_complex)) = schema.complex_base_def(complex) {
+                    elements.extend(collect_elements_with_inheritance(
+                        base_complex,
+                        schema,
+                        visited,
+                    ));
+                }
+            }
+            elements.extend(ext_elements.iter().cloned());
+        }
+        _ => {}
+    }
+    elements
+}
+
+/// Flattens a complex type's child-element constraints at validation time,
+/// for types the compile-time cache does not cover (anonymous types, or a
+/// named type reached only through a string key). Produces the same picture
+/// as the compile-time cache, including the content-model automaton.
+pub(crate) fn flatten_type_children(
+    complex: &ComplexType,
+    schema: &CompiledSchema,
+) -> FlattenedChildren {
+    let mut flattened = FlattenedChildren::with_content_model(content_model_type(complex));
+    let mut visited = HashSet::new();
+    let elements = collect_elements_with_inheritance(complex, schema, &mut visited);
+    let mut ordered: Vec<String> = Vec::with_capacity(elements.len());
+    for elem in &elements {
+        flattened
+            .constraints
+            .insert(elem.name.clone(), (elem.min_occurs, elem.max_occurs));
+        ordered.push(elem.name.clone());
+    }
+    flattened.ordered_elements = Arc::from(ordered);
+    flattened.wildcard = inherited_wildcard(complex, schema);
+    let base_of = |c: &ComplexType| {
+        let base_name = c.base_type.as_deref()?;
+        schema.type_by_ref(c.base_ns.as_ref(), base_name)
+    };
+    let subst_ns = substitution_index(schema);
+    flattened.automaton =
+        build_complex_automaton(complex, schema, &subst_ns, &base_of).map(Arc::new);
+    flattened
+}
+
+/// The coarse content-model kind of a complex type.
+fn content_model_type(complex: &ComplexType) -> ContentModelType {
+    match &complex.content {
+        ContentModel::Sequence(_) => ContentModelType::Sequence,
+        ContentModel::Choice(_) => ContentModelType::Choice,
+        ContentModel::All(_) => ContentModelType::All,
+        ContentModel::ComplexExtension { .. } => ContentModelType::Sequence,
+        ContentModel::Empty => ContentModelType::Empty,
+        ContentModel::SimpleContent { .. } => ContentModelType::Empty,
+        ContentModel::Any { .. } => ContentModelType::Sequence,
+    }
 }
 
 /// Transitive substitution-group members per head element, by expanded name.

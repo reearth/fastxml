@@ -357,6 +357,37 @@ impl ConstraintValidator {
         let _ = set.add(value);
     }
 
+    /// Like [`record_key_value`](Self::record_key_value), for a tuple the
+    /// caller has already checked to be complete. Field values may be empty
+    /// strings: an empty string is a value, not a missing field.
+    pub(crate) fn record_complete_key_tuple(
+        &mut self,
+        constraint: &IdentityConstraint,
+        value: KeyValue,
+    ) {
+        let set = self
+            .key_values
+            .entry(constraint.name.clone())
+            .or_insert_with(|| KeyValueSet::new(&constraint.name, constraint.fields.len()));
+        let _ = set.add(value);
+    }
+
+    /// Like [`add_keyref_value`](Self::add_keyref_value), for a tuple the
+    /// caller has already checked to be complete (empty strings are values).
+    pub(crate) fn add_complete_keyref_tuple(
+        &mut self,
+        constraint: &IdentityConstraint,
+        value: KeyValue,
+    ) {
+        if let Some(refer) = &constraint.refer {
+            self.pending_keyrefs.push(PendingKeyRef {
+                constraint_name: constraint.name.clone(),
+                refer: refer.clone(),
+                value,
+            });
+        }
+    }
+
     /// Adds a keyref value to be validated at the end.
     pub fn add_keyref_value(&mut self, constraint: &IdentityConstraint, value: KeyValue) {
         if let Some(refer) = &constraint.refer {

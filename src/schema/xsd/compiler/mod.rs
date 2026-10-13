@@ -7,7 +7,10 @@ mod cache;
 mod cycles;
 mod facet_checks;
 mod validity;
-pub(crate) use cache::{build_complex_automaton, inherited_wildcard, substitution_index};
+pub(crate) use cache::{
+    build_complex_automaton, collect_elements_with_inheritance, flatten_type_children,
+    substitution_index,
+};
 mod particles;
 mod redefine;
 mod references;

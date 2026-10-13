@@ -342,12 +342,9 @@ impl OnePassSchemaValidator {
                 .position(|e| e.as_str() == child_name);
 
             if earlier_pos.is_some() {
-                // Element is out of order
-                let expected_after = if current_index > 0 {
-                    ordered_elements[current_index - 1].clone()
-                } else {
-                    "(beginning)".to_string()
-                };
+                // Element is out of order: it belongs before the element
+                // most recently matched in the sequence.
+                let must_precede = ordered_elements[current_index].clone();
 
                 // Get parent name for error message
                 let parent_name = self
@@ -361,8 +358,8 @@ impl OnePassSchemaValidator {
                     .make_error(
                         ValidationErrorType::InvalidContent,
                         format!(
-                            "element '{}' in '{}' appears out of sequence order (expected after '{}')",
-                            child_name, parent_name, expected_after
+                            "element '{}' in '{}' appears out of sequence order (it must come before '{}')",
+                            child_name, parent_name, must_precede
                         ),
                     )
                     .with_node_name(&parent_name)
@@ -533,5 +530,36 @@ impl OnePassSchemaValidator {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OnePassSchemaValidator;
+    #[test]
+    fn test_streaming_sequence_order_error_names_the_preceding_element() {
+        // Anonymous `sequence(a, c)` without a particle tree: no automaton, so
+        // the count-based sequence-order check runs.
+        let mut complex = crate::schema::types::ComplexType::new("");
+        complex.content = crate::schema::types::ContentModel::Sequence(vec![
+            crate::schema::types::ElementDef::new("a"),
+            crate::schema::types::ElementDef::new("c"),
+        ]);
+        let mut seq = crate::schema::types::ElementDef::new("seq");
+        seq.inline_type = Some(crate::schema::types::TypeDef::Complex(complex));
+        let mut schema = crate::schema::types::CompiledSchema::new();
+        schema
+            .elements_ns
+            .insert(crate::schema::types::NsName::new("", "seq"), seq);
+
+        let errors = OnePassSchemaValidator::new(std::sync::Arc::new(schema))
+            .validate("<seq><c/><a/></seq>".as_bytes())
+            .unwrap();
+        assert!(
+            errors.iter().any(|e| e.message.as_ref()
+                == "element 'a' in 'seq' appears out of sequence order (it must come before 'c')"),
+            "{:?}",
+            errors
+        );
     }
 }
