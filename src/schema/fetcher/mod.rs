@@ -5,11 +5,13 @@
 //! - [`FileFetcher`] - Reads schemas from local filesystem
 //! - [`CombinedFetcher`] - Chains multiple fetchers
 //! - [`NoopFetcher`] - Always fails (for testing)
+//! - [`RestrictedFetcher`] - Only fetches locations allowed by a [`FetchPolicy`]
 //! - [`UreqFetcher`] - Sync HTTP client (requires `ureq` feature)
 //! - [`ReqwestFetcher`] - Async HTTP client (requires `tokio` feature)
 //! - [`DefaultFetcher`] - Recommended sync default fetcher (requires `ureq` feature for HTTP)
 //! - [`AsyncDefaultFetcher`] - Recommended async default fetcher (requires `tokio` feature)
 //! - [`AsyncFileFetcher`] - Async local file fetcher (requires `tokio` feature)
+//! - [`AsyncRestrictedFetcher`] - Async [`RestrictedFetcher`] (requires `tokio` feature)
 //!
 //! # Default Fetchers
 //!
@@ -54,6 +56,7 @@ mod combined;
 mod file;
 mod file_cache;
 mod noop;
+mod restricted;
 mod result;
 mod traits;
 
@@ -76,6 +79,7 @@ pub use combined::CombinedFetcher;
 pub use file::FileFetcher;
 pub use file_cache::FileCachingFetcher;
 pub use noop::NoopFetcher;
+pub use restricted::{FetchPolicy, RestrictedFetcher};
 pub use result::FetchResult;
 pub use traits::SchemaFetcher;
 
@@ -84,6 +88,9 @@ pub use file_cache::AsyncFileCachingFetcher;
 
 #[cfg(feature = "tokio")]
 pub use traits::AsyncSchemaFetcher;
+
+#[cfg(feature = "tokio")]
+pub use restricted::AsyncRestrictedFetcher;
 
 #[cfg(feature = "tokio")]
 pub use self::async_default::AsyncDefaultFetcher;

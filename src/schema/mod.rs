@@ -20,6 +20,7 @@
 //! - `UreqFetcher` - Sync HTTP client (requires `ureq` feature)
 //! - `ReqwestFetcher` - Async HTTP client (requires `tokio` feature)
 //! - `NoopFetcher` - No network access (testing)
+//! - [`RestrictedFetcher`] - Only fetches locations allowed by a [`FetchPolicy`]
 //! - [`CachingFetcher`] - Wraps any fetcher with in-memory caching
 //!
 //! # Example
@@ -47,8 +48,8 @@ pub use validator::{Report, Validator};
 
 // Re-export main types
 pub use fetcher::{
-    CachingFetcher, CombinedFetcher, DefaultFetcher, FetchResult, FileCachingFetcher, FileFetcher,
-    NoopFetcher, SchemaFetcher,
+    CachingFetcher, CombinedFetcher, DefaultFetcher, FetchPolicy, FetchResult, FileCachingFetcher,
+    FileFetcher, NoopFetcher, RestrictedFetcher, SchemaFetcher,
 };
 pub use types::{
     AttributeDef, CompiledSchema, ComplexType, ContentModel, ElementDef, ProcessContents,
@@ -62,7 +63,7 @@ pub use fetcher::UreqFetcher;
 #[cfg(feature = "tokio")]
 pub use fetcher::{
     AsyncCachingFetcher, AsyncDefaultFetcher, AsyncFileCachingFetcher, AsyncFileFetcher,
-    AsyncSchemaFetcher, ReqwestFetcher,
+    AsyncRestrictedFetcher, AsyncSchemaFetcher, ReqwestFetcher,
 };
 
 // Re-export schema resolution functions
