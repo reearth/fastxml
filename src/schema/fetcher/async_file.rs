@@ -38,7 +38,8 @@ pub struct AsyncFileFetcher {
 impl AsyncFileFetcher {
     /// Creates a new async file fetcher without a base directory.
     ///
-    /// Only absolute paths and `file://` URLs will work.
+    /// Absolute paths and `file://` URLs are read directly; a relative path
+    /// is resolved against the current working directory.
     pub fn new() -> Self {
         Self { base_dir: None }
     }

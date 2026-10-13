@@ -523,11 +523,12 @@ struct SchemaInfo {
 
 #[cfg(feature = "ureq")]
 fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Option<SchemaInfo> {
+    // Keep the exported files: the libxml comparison reads them from disk.
     let options = if let Some(path) = xml_file_path {
         let base_dir = Path::new(path).parent().unwrap_or(Path::new("."));
-        ResolveOptions::with_base_dir(base_dir)
+        ResolveOptions::with_base_dir(base_dir).keep_export_dir()
     } else {
-        ResolveOptions::default()
+        ResolveOptions::default().keep_export_dir()
     };
 
     let fetcher = if let Some(path) = xml_file_path {

@@ -2,24 +2,16 @@
 //!
 //! This module provides support for:
 //! - Schema fetching with redirect support and caching
-//! - Schema compilation and type definitions
-//! - Streaming validation
+//! - Schema compilation and type definitions ([`Schema`])
+//! - Validation of DOM documents and streams ([`Validator`])
 //!
-//! # Architecture
+//! # Validation
 //!
-//! The schema system uses a SAX-like event sharing design for memory efficiency:
-//!
-//! ```text
-//! XML Data
-//!    │
-//!    v
-//! StreamingParser ─────────┬─────────────> DocumentBuilder
-//!                          │
-//!                          └─────────────> OnePassSchemaValidator
-//! ```
-//!
-//! Both the document builder and schema validator receive the same events,
-//! allowing single-pass parsing with validation.
+//! [`Validator`] validates either a parsed [`XmlDocument`](crate::XmlDocument)
+//! (DOM engine) or raw XML from a string, bytes or a reader (single-pass
+//! streaming engine, suited to large files). The schema is given with
+//! [`Validator::schema`] or loaded from the document's
+//! `xsi:schemaLocation` / `xsi:noNamespaceSchemaLocation` hints.
 //!
 //! # Fetching
 //!
@@ -43,12 +35,13 @@ mod builder;
 pub mod error;
 pub mod export;
 pub mod fetcher;
+pub(crate) mod hints;
 pub mod resolve;
 pub mod types;
 pub mod validator;
 pub mod xsd;
 
-// Re-export the redesigned schema-construction and validation API
+// Re-export the schema-construction and validation API
 pub use builder::{Schema, SchemaBuilder};
 pub use validator::{Report, Validator};
 
