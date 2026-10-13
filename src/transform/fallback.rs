@@ -20,8 +20,10 @@ use crate::serialize::{SerializeOptions, node_to_xml_string_with_options};
 use crate::xpath::XPathResult;
 use crate::xpath::evaluator::evaluate;
 
+use super::context::TransformContext;
 use super::editable::{EditableNode, EditableNodeBuilder};
 use super::error::{TransformError, TransformResult};
+use super::streaming::{PathTracker, add_pi_to_builder, extract_element_info, split_bom};
 
 /// Processes XML using two-pass fallback for non-streamable XPath.
 pub fn process_fallback<W, F>(
@@ -34,6 +36,25 @@ where
     W: Write,
     F: FnMut(&mut EditableNode),
 {
+    process_fallback_with_context(input, xpath_expr, |node, _| transform_fn(node), writer)
+}
+
+/// Processes XML using two-pass fallback, passing each match its
+/// [`TransformContext`] (ancestors, position, depth) computed the same way as
+/// on the streaming path.
+pub fn process_fallback_with_context<W, F>(
+    input: &str,
+    xpath_expr: &str,
+    mut transform_fn: F,
+    writer: &mut W,
+) -> TransformResult<usize>
+where
+    W: Write,
+    F: FnMut(&mut EditableNode, &TransformContext),
+{
+    let (bom, input) = split_bom(input);
+    writer.write_all(bom.as_bytes())?;
+
     // Pass 1: Parse document and evaluate XPath
     let doc = parse(input).map_err(|e| TransformError::XmlParse(e.to_string()))?;
 
@@ -69,7 +90,7 @@ fn process_with_matches<W, F>(
 ) -> TransformResult<usize>
 where
     W: Write,
-    F: FnMut(&mut EditableNode),
+    F: FnMut(&mut EditableNode, &TransformContext),
 {
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
@@ -85,12 +106,17 @@ where
 
     // Track when we're inside a matched subtree
     let mut in_matched_subtree: Option<(usize, EditableNodeBuilder)> = None;
+    // Ancestor chain for the context passed to the callback
+    let mut tracker = PathTracker::new();
+    let mut match_context: Option<TransformContext> = None;
 
     loop {
         let before_pos = reader.buffer_position() as usize;
 
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
+                tracker.push_element(extract_element_info(&e, before_pos)?);
+
                 // Calculate expected node ID based on structure
                 let parent_id = *node_stack.last().unwrap_or(&0);
                 let child_idx = current_child_index.last().copied().unwrap_or(0);
@@ -106,6 +132,7 @@ where
                         // Start of a matched node
                         writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
 
+                        match_context = Some(tracker.to_context());
                         let mut builder = EditableNodeBuilder::new();
                         add_event_to_builder(&mut builder, &Event::Start(e.clone()), input)?;
                         in_matched_subtree = Some((id, builder));
@@ -124,6 +151,7 @@ where
 
             Ok(Event::Empty(e)) => {
                 let after_pos = reader.buffer_position() as usize;
+                tracker.push_element(extract_element_info(&e, before_pos)?);
 
                 let parent_id = *node_stack.last().unwrap_or(&0);
                 let child_idx = current_child_index.last().copied().unwrap_or(0);
@@ -140,7 +168,7 @@ where
                         add_event_to_builder(&mut builder, &Event::Empty(e.clone()), input)?;
 
                         let mut editable = builder.build()?;
-                        transform_fn(&mut editable);
+                        transform_fn(&mut editable, &tracker.to_context());
                         transform_count += 1;
 
                         if !editable.is_removed() {
@@ -154,6 +182,7 @@ where
                 if let Some(idx) = current_child_index.last_mut() {
                     *idx += 1;
                 }
+                tracker.pop_element();
             }
 
             Ok(Event::End(e)) => {
@@ -165,7 +194,8 @@ where
                     if builder.is_complete() {
                         // Matched subtree complete
                         let mut editable = builder.build()?;
-                        transform_fn(&mut editable);
+                        let ctx = match_context.take().unwrap_or_else(|| tracker.to_context());
+                        transform_fn(&mut editable, &ctx);
                         transform_count += 1;
 
                         if !editable.is_removed() {
@@ -181,6 +211,7 @@ where
 
                 node_stack.pop();
                 current_child_index.pop();
+                tracker.pop_element();
             }
 
             Ok(Event::Text(e)) => {
@@ -203,6 +234,12 @@ where
                 if let Some((_, ref mut builder)) = in_matched_subtree {
                     let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
                     builder.comment(text);
+                }
+            }
+
+            Ok(Event::PI(e)) => {
+                if let Some((_, ref mut builder)) = in_matched_subtree {
+                    add_pi_to_builder(builder, &e)?;
                 }
             }
 
@@ -312,6 +349,21 @@ pub fn process_for_each<F>(input: &str, xpath_expr: &str, mut callback: F) -> Tr
 where
     F: FnMut(&mut EditableNode),
 {
+    process_for_each_with_context(input, xpath_expr, |node, _| callback(node))
+}
+
+/// Processes XML for iteration without transformation (two-pass fallback),
+/// passing each match its [`TransformContext`].
+pub fn process_for_each_with_context<F>(
+    input: &str,
+    xpath_expr: &str,
+    mut callback: F,
+) -> TransformResult<usize>
+where
+    F: FnMut(&mut EditableNode, &TransformContext),
+{
+    let (_, input) = split_bom(input);
+
     // Pass 1: Parse document and evaluate XPath
     let doc = parse(input).map_err(|e| TransformError::XmlParse(e.to_string()))?;
 
@@ -343,7 +395,7 @@ fn iterate_with_matches<F>(
     callback: &mut F,
 ) -> TransformResult<usize>
 where
-    F: FnMut(&mut EditableNode),
+    F: FnMut(&mut EditableNode, &TransformContext),
 {
     let mut reader = Reader::from_str(input);
     reader.config_mut().trim_text(false);
@@ -354,10 +406,17 @@ where
     let mut buf = Vec::new();
 
     let mut in_matched_subtree: Option<(usize, EditableNodeBuilder)> = None;
+    // Ancestor chain for the context passed to the callback
+    let mut tracker = PathTracker::new();
+    let mut match_context: Option<TransformContext> = None;
 
     loop {
+        let before_pos = reader.buffer_position() as usize;
+
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
+                tracker.push_element(extract_element_info(&e, before_pos)?);
+
                 let parent_id = *node_stack.last().unwrap_or(&0);
                 let child_idx = current_child_index.last().copied().unwrap_or(0);
                 let expected_id = find_child_element_id(doc, parent_id, child_idx);
@@ -366,6 +425,7 @@ where
                     add_event_to_builder(builder, &Event::Start(e.clone()), input)?;
                 } else if let Some(id) = expected_id {
                     if matching_ids.contains(&id) {
+                        match_context = Some(tracker.to_context());
                         let mut builder = EditableNodeBuilder::new();
                         add_event_to_builder(&mut builder, &Event::Start(e.clone()), input)?;
                         in_matched_subtree = Some((id, builder));
@@ -382,6 +442,8 @@ where
             }
 
             Ok(Event::Empty(e)) => {
+                tracker.push_element(extract_element_info(&e, before_pos)?);
+
                 let parent_id = *node_stack.last().unwrap_or(&0);
                 let child_idx = current_child_index.last().copied().unwrap_or(0);
                 let expected_id = find_child_element_id(doc, parent_id, child_idx);
@@ -394,7 +456,7 @@ where
                         add_event_to_builder(&mut builder, &Event::Empty(e.clone()), input)?;
 
                         let mut editable = builder.build()?;
-                        callback(&mut editable);
+                        callback(&mut editable, &tracker.to_context());
                         match_count += 1;
                     }
                 }
@@ -402,6 +464,7 @@ where
                 if let Some(idx) = current_child_index.last_mut() {
                     *idx += 1;
                 }
+                tracker.pop_element();
             }
 
             Ok(Event::End(e)) => {
@@ -410,7 +473,8 @@ where
 
                     if builder.is_complete() {
                         let mut editable = builder.build()?;
-                        callback(&mut editable);
+                        let ctx = match_context.take().unwrap_or_else(|| tracker.to_context());
+                        callback(&mut editable, &ctx);
                         match_count += 1;
                     } else {
                         in_matched_subtree = Some((id, builder));
@@ -419,6 +483,7 @@ where
 
                 node_stack.pop();
                 current_child_index.pop();
+                tracker.pop_element();
             }
 
             Ok(Event::Text(e)) => {
@@ -441,6 +506,12 @@ where
                 if let Some((_, ref mut builder)) = in_matched_subtree {
                     let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
                     builder.comment(text);
+                }
+            }
+
+            Ok(Event::PI(e)) => {
+                if let Some((_, ref mut builder)) = in_matched_subtree {
+                    add_pi_to_builder(builder, &e)?;
                 }
             }
 

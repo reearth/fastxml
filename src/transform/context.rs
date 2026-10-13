@@ -47,14 +47,16 @@ impl TransformContext {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// StreamTransformer::new(xml)
-    ///     .on_with_context("//item", |node, ctx| {
-    ///         if let Some(parent) = ctx.parent() {
-    ///             println!("Parent: {}", parent.qname);
-    ///         }
+    /// ```
+    /// use fastxml::transform::Transformer;
+    ///
+    /// let xml = r#"<root><items><item/></items></root>"#;
+    /// Transformer::from(xml)
+    ///     .on_with_context("//item", |_node, ctx| {
+    ///         assert_eq!(ctx.parent().map(|p| p.qname.as_str()), Some("items"));
     ///     })
-    ///     .run()?;
+    ///     .for_each()?;
+    /// # Ok::<(), fastxml::transform::TransformError>(())
     /// ```
     pub fn parent(&self) -> Option<&AncestorInfo> {
         self.ancestors.last()

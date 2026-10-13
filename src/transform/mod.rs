@@ -6,28 +6,41 @@
 //!
 //! # Features
 //!
-//! - **Zero-copy output**: Unchanged portions of the input are written directly
-//!   without copying or re-serialization
+//! - **Zero-copy output**: With in-memory input, the input outside matched
+//!   elements is copied to the output verbatim (matched elements are
+//!   re-serialized from their DOM)
 //! - **Selective DOM**: Only matched elements are converted to a modifiable DOM
 //! - **Streaming**: Single-pass processing for compatible XPath expressions
-//! - **Fallback**: Automatic two-pass processing for complex XPath patterns
+//! - **Fallback**: Opt-in two-pass processing for other XPath expressions
+//!   (`allow_fallback()`; disabled by default)
 //! - **Multiple handlers**: Register multiple XPath-callback pairs
 //!
 //! # Streamable XPath Patterns
 //!
-//! The following patterns can be processed in a single streaming pass:
+//! An XPath is streamable when the single-pass matcher can evaluate it
+//! exactly, so it selects the same elements as the DOM XPath evaluator:
 //!
-//! - Absolute paths: `/root/items/item`
-//! - Descendant search: `//item`
-//! - Attribute predicates: `//item[@id='2']`
-//! - Namespaced elements: `//ns:item`
-//! - Position predicates with upper bound: `//item[position() <= 3]`
+//! - Child and descendant steps: `/root/items/item`, `//item`, `//a/b`,
+//!   `//a//b`, `/root//item`, `/root/descendant::item`
+//! - Element name tests: `item`, `*`, `ns:item`, `ns:*` (prefixes are compared
+//!   by namespace URI, resolved from the document's `xmlns` declarations)
+//! - Attribute predicates: `[@id='2']`, `[@id!='2']`, `[@id]`, `[@gml:id='b2']`
+//! - A position as the first predicate of a child step: `//item[2]`,
+//!   `/root/*[1]`, `//item[position() <= 3]`, `//item[1][@k='x']`
+//! - `[namespace-uri()='…']`, and `[local-name()='…']` on `*`
 //!
-//! The following patterns require two-pass processing:
+//! Anything else is not streamable, for example:
 //!
-//! - `last()` function: `//item[last()]`, `//item[position()=last()]`
+//! - `last()`: `//item[last()]`, `//item[position()=last()]`
 //! - Backward axes: `//item/parent::*`, `//item/ancestor::root`
-//! - Complex predicates requiring full tree evaluation
+//! - Sibling and self axes: `//a/following-sibling::b`, `self::*`
+//! - Non-element node tests: `//text()`, `//node()`
+//! - `and` / `or` / `not()`, numeric or relational comparisons (`[@id=3]`,
+//!   `[@id>3]`), `position() != n`, a position after another predicate
+//!   (`//item[@k='x'][1]`), and unions
+//!
+//! Non-streamable expressions return [`TransformError::NotStreamable`] unless
+//! fallback is enabled.
 //!
 //! # Examples
 //!
@@ -107,9 +120,10 @@ pub mod streaming;
 mod unified;
 pub mod xpath_analyze;
 
-// The public transform entry point is `Transformer`; the in-memory and
-// reader-based engines (`builder` / `reader`) and the `stream_transform*` free
-// functions are internal and reached via `crate::transform::…`.
+// The public transform entry point is `Transformer`. The builders behind it
+// (`builder` / `reader`) and the `stream_transform*` free functions are
+// internal; the lower-level engine modules (`streaming`, `fallback`,
+// `xpath_analyze`, `span`) are public.
 pub use context::{AncestorInfo, TransformContext};
 pub use editable::{EditableNode, EditableNodeBuilder, EditableNodeRef, Modification, NewNode};
 pub use error::{ErrorLocation, TransformError, TransformResult};

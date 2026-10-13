@@ -1,8 +1,9 @@
-//! Byte span tracking for zero-copy output.
+//! Byte span type.
 
 /// A span of bytes in the source XML string.
 ///
-/// Used to track positions for zero-copy output of unchanged regions.
+/// A standalone utility type; the transform engines track their zero-copy
+/// positions directly and do not use it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ByteSpan {
     /// Start position (inclusive)

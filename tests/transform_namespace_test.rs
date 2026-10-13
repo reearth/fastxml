@@ -134,6 +134,56 @@ fn test_local_name_only_matching() {
     assert_eq!(matched_ids, vec!["1", "2"]);
 }
 
+/// Element namespaces are resolved from the document's own xmlns declarations
+/// and compared by URI with the caller's prefix bindings.
+#[test]
+fn test_prefixed_step_matches_by_namespace_uri() {
+    let xml = r#"<root xmlns:g="urn:gml" xmlns:h="urn:gml" xmlns:o="urn:other"><g:f id="1"/><h:f id="2"/><o:f id="3"/><f id="4"/></root>"#;
+
+    let ids = |prefix: &str, uri: &str, xpath: &str| {
+        Transformer::from(xml)
+            .namespace(prefix, uri)
+            .collect(xpath, |n| n.get_attribute("id").unwrap_or_default())
+            .unwrap()
+    };
+
+    // Both g:f and h:f are in urn:gml, whatever prefix the XPath uses
+    assert_eq!(ids("gml", "urn:gml", "//gml:f"), vec!["1", "2"]);
+    // The document's g is urn:gml, not the caller's urn:other
+    assert_eq!(ids("g", "urn:other", "//g:f"), vec!["3"]);
+}
+
+#[test]
+fn test_namespace_scope_follows_nested_declarations() {
+    // The same prefix is rebound on a descendant; the default namespace is
+    // declared below the root.
+    let xml = r#"<root xmlns:p="urn:a"><p:x id="1"/><wrap xmlns:p="urn:b"><p:x id="2"/></wrap><d xmlns="urn:a"><x id="3"/></d></root>"#;
+
+    let ids: Vec<String> = Transformer::from(xml)
+        .namespace("a", "urn:a")
+        .collect("//a:x", |n| n.get_attribute("id").unwrap_or_default())
+        .unwrap();
+    assert_eq!(ids, vec!["1", "3"]);
+}
+
+/// The README "Namespace URI Matching" example: different prefixes, same URI.
+#[test]
+fn test_readme_namespace_uri_matching_example() {
+    let xml = r#"<root xmlns:gml="http://www.opengis.net/gml" xmlns:g="http://www.opengis.net/gml"><gml:feature id="1"/><g:feature id="2"/><gml:other id="3"/></root>"#;
+
+    let mut ids = Vec::new();
+    Transformer::from(xml)
+        .namespace("gml", "http://www.opengis.net/gml")
+        .on(
+            "//*[namespace-uri()='http://www.opengis.net/gml'][local-name()='feature']",
+            |node| ids.push(node.get_attribute("id").unwrap_or_default()),
+        )
+        .for_each()
+        .unwrap();
+
+    assert_eq!(ids, vec!["1", "2"]);
+}
+
 // =============================================================================
 // Attribute Namespace Preservation Tests
 // =============================================================================
