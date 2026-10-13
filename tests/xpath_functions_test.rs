@@ -791,10 +791,11 @@ mod number_functions {
             compare_with_libxml!(xpath: xml, xpath, &doc);
         }
 
-        // The largest double below 0.5 is not a tie: it rounds to 0.
+        // The largest double below 0.5 is not a tie: it rounds to 0. Not
+        // compared with libxml, which computes floor(x + 0.5) and gets 1
+        // because 0.49999999999999994 + 0.5 rounds up to 1.0.
         let result = doc.query("round(0.49999999999999994)").unwrap();
         assert_eq!(result.to_number(), 0.0);
-        compare_with_libxml!(xpath: xml, "round(0.49999999999999994)", &doc);
 
         let result = doc.query("round(-2.5)").unwrap();
         assert_eq!(result.to_number(), -2.0);
