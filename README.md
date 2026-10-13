@@ -142,6 +142,9 @@ fastxml = { version = "0.11", features = ["tokio"] }
 | `AsyncCachingFetcher` | Wraps any async fetcher with in-memory caching (requires `tokio`) |
 | `FileCachingFetcher` | Wraps any sync fetcher with file-based caching (temp directory) |
 | `AsyncFileCachingFetcher` | Wraps any async fetcher with file-based caching (requires `tokio`) |
+| `RestrictedFetcher` | Wraps any sync fetcher; only fetches allowed URL prefixes and local directories |
+| `AsyncRestrictedFetcher` | Wraps any async fetcher; only fetches allowed URL prefixes and local directories (requires `tokio`) |
+| `NoopFetcher` | Fetches nothing (every fetch fails) |
 
 **Traits:**
 
@@ -589,6 +592,27 @@ let report = Validator::from_reader(reader).run()?;
 To supply a custom fetcher, use `.run_with(fetcher)` instead of `.run()`.
 
 If the document names no schema, or a named schema (or anything it imports or includes) cannot be fetched, parsed or compiled, the report carries an error-level `SchemaNotFound` entry explaining what failed, the content is not validated, and `is_valid()` is `false`. Relative locations are resolved by the fetcher (e.g. `DefaultFetcher::with_base_dir(dir)`).
+
+#### Security: untrusted documents
+
+Auto-detection fetches whatever the document names: its `xsi:schemaLocation` / `xsi:noNamespaceSchemaLocation`, and then every `xs:import` / `xs:include` / `xs:redefine` location in the fetched schemas. With the default fetcher that means any local file path or `file://` URL is read and any URL is requested. When the document comes from an untrusted source, do one of the following:
+
+- Pass an explicit schema with `.schema(..)`, so nothing named by the document is fetched.
+- Use `NoopFetcher` (`.run_with(NoopFetcher)`) together with a schema you supply.
+- Wrap the fetcher in `RestrictedFetcher` to allow only listed URL prefixes and local directories:
+
+```rust
+use fastxml::schema::{DefaultFetcher, RestrictedFetcher, Validator};
+
+let fetcher = RestrictedFetcher::new(DefaultFetcher::new())
+    .allow_url_prefix("https://schemas.opengis.net/")
+    .allow_dir("./schemas");
+let report = Validator::from(&doc).run_with(fetcher)?;
+```
+
+A URL must match an allowed prefix by scheme, host, port and path (after normalizing `..` segments). A local path or `file://` URL must lie inside an allowed directory after resolving `..` and symlinks. Any other location fails to load and the report is invalid. The final URL after an HTTP redirect is checked too, but by then the redirected request has already been sent. To avoid contacting the redirect target at all, use an inner fetcher that does not follow redirects, such as `UreqFetcher::new().max_redirects(0)`.
+
+The `fastxml-validate` CLI does the same with the repeatable `--allow-url <PREFIX>` and `--allow-dir <DIR>` options.
 
 ### Async Validation
 
