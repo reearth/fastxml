@@ -549,9 +549,7 @@ mod tests {
     /// or fail with the same error.
     fn assert_paths_agree(xml: &[u8]) {
         let from_slice = parse(xml).map(|d| dump(&d)).map_err(|e| e.to_string());
-        // From 3 bytes up: a reader whose first fill returns fewer bytes than
-        // a UTF-8 BOM hides the BOM from quick-xml (a separate issue).
-        for capacity in [3, 4, 7, 64, 8192] {
+        for capacity in [1, 2, 3, 7, 64, 8192] {
             let reader = std::io::BufReader::with_capacity(capacity, xml);
             let from_reader = parse_from_bufread(reader, &ParserOptions::default())
                 .map(|d| dump(&d))
@@ -602,7 +600,7 @@ mod tests {
                 .map_err(|e| e.to_string())
         };
         let from_slice = dump(crate::Parser::from(xml).events());
-        for capacity in [3, 4, 7, 64, 8192] {
+        for capacity in [1, 2, 3, 7, 64, 8192] {
             let reader = std::io::BufReader::with_capacity(capacity, xml);
             let from_reader = dump(crate::Parser::from_reader(reader).events());
             assert_eq!(
