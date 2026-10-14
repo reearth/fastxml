@@ -21,8 +21,6 @@ pub enum NotStreamableReason {
     UsesLast,
     /// Uses backward axis (parent, ancestor, preceding, etc.)
     UsesBackwardAxis(Axis),
-    /// Uses count() on siblings or other context-dependent count
-    UsesContextDependentCount,
     /// Uses a predicate, axis or node test that the single-pass matcher cannot
     /// evaluate exactly (e.g. `and`/`or`/`not()`, numeric or relational
     /// comparisons, a position after another predicate, `following-sibling::`,
@@ -42,7 +40,6 @@ impl std::fmt::Display for NotStreamableReason {
         match self {
             Self::UsesLast => write!(f, "uses last() function which requires knowing total count"),
             Self::UsesBackwardAxis(axis) => write!(f, "uses backward axis {:?}", axis),
-            Self::UsesContextDependentCount => write!(f, "uses context-dependent count"),
             Self::ComplexPredicate => write!(
                 f,
                 "uses a predicate, axis or node test that cannot be evaluated in a single streaming pass"
