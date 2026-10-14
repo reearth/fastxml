@@ -298,6 +298,9 @@ impl XsdParser {
         if let Some(sg) = attrs.get("substitutionGroup") {
             elem.substitution_group = Some(self.qname(sg));
         }
+        if let Some(block) = attrs.get("block") {
+            elem.block = Some(parse_derivation_control(block));
+        }
         if attrs.get("nillable").is_some_and(|v| v == "true") {
             elem.nillable = true;
         }

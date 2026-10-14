@@ -147,16 +147,18 @@ fn check_element_consistency(content: &ContentModel) -> Result<()> {
 }
 
 /// Maps a parsed `block` attribute to the compiled [`BlockSet`].
-fn compile_block_set(control: Option<&DerivationControl>) -> BlockSet {
+pub(crate) fn compile_block_set(control: Option<&DerivationControl>) -> BlockSet {
     match control {
         None => BlockSet::default(),
         Some(DerivationControl::All) => BlockSet {
             extension: true,
             restriction: true,
+            substitution: true,
         },
         Some(DerivationControl::List(types)) => BlockSet {
             extension: types.contains(&DerivationType::Extension),
             restriction: types.contains(&DerivationType::Restriction),
+            substitution: types.contains(&DerivationType::Substitution),
         },
     }
 }
@@ -692,6 +694,9 @@ impl XsdCompiler {
             compiled.required = attr.use_ == AttributeUse::Required;
             compiled.prohibited = attr.use_ == AttributeUse::Prohibited;
             compiled.is_ref = true;
+            // A use can carry its own value constraint.
+            compiled.default = attr.default.clone();
+            compiled.fixed = attr.fixed.clone();
             return Ok(compiled);
         }
 

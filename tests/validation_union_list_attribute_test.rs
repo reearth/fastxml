@@ -302,3 +302,16 @@ fn anonymous_attribute_type_in_simple_content_is_enforced() {
     assert_invalid(xsd, r#"<e a="6">text</e>"#, "6");
     assert_invalid(xsd, r#"<e a="six">text</e>"#, "six");
 }
+
+#[test]
+fn value_constraint_on_an_attribute_reference_is_enforced() {
+    let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+        targetNamespace="urn:t" xmlns:t="urn:t">
+      <xs:attribute name="a" type="xs:string"/>
+      <xs:element name="e">
+        <xs:complexType><xs:attribute ref="t:a" fixed="yes"/></xs:complexType>
+      </xs:element>
+    </xs:schema>"#;
+    assert_valid(xsd, r#"<t:e xmlns:t="urn:t" t:a="yes"/>"#);
+    assert_invalid(xsd, r#"<t:e xmlns:t="urn:t" t:a="no"/>"#, "yes");
+}

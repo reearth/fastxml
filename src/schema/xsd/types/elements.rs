@@ -64,6 +64,8 @@ pub struct XsdElement {
     pub form: Option<FormDefault>,
     /// Identity constraints (unique, key, keyref)
     pub identity_constraints: Vec<XsdIdentityConstraint>,
+    /// Disallowed substitutions (`block` attribute)
+    pub block: Option<super::complex::DerivationControl>,
 }
 
 impl XsdElement {
@@ -83,6 +85,7 @@ impl XsdElement {
             fixed: None,
             form: None,
             identity_constraints: Vec::new(),
+            block: None,
         }
     }
 
@@ -102,6 +105,7 @@ impl XsdElement {
             fixed: None,
             form: None,
             identity_constraints: Vec::new(),
+            block: None,
         }
     }
 }

@@ -528,6 +528,8 @@ pub struct ElementDef {
     pub fixed: Option<String>,
     /// Identity constraints (unique, key, keyref)
     pub constraints: Vec<CompiledConstraint>,
+    /// Disallowed substitutions (`block`, or the schema's `blockDefault`)
+    pub block: BlockSet,
     /// The namespace URI an instance element matching this declaration has
     /// (`Some("")` for no namespace). Compiled schemas always set it: a
     /// global declaration is in the target namespace, a local one too when
@@ -555,6 +557,7 @@ impl ElementDef {
             default: None,
             fixed: None,
             constraints: Vec::new(),
+            block: BlockSet::default(),
             namespace: None,
         }
     }
@@ -738,6 +741,8 @@ pub struct BlockSet {
     pub extension: bool,
     /// `block` includes `restriction` (or `#all`)
     pub restriction: bool,
+    /// `block` includes `substitution` (or `#all`); element declarations only
+    pub substitution: bool,
 }
 
 impl BlockSet {

@@ -126,6 +126,25 @@ fn rcase_rules() {
             seq(&e(r#"type="x:S" fixed="b""#)),
             false,
         ),
+        // NameAndTypeOK: block
+        (
+            "same block",
+            seq(&e(r##"block="#all""##)),
+            seq(&e(r##"block="#all""##)),
+            true,
+        ),
+        (
+            "wider block",
+            seq(&e(r#"block="extension""#)),
+            seq(&e(r#"block="extension restriction""#)),
+            true,
+        ),
+        (
+            "narrower block",
+            seq(&e(r#"block="extension restriction""#)),
+            seq(&e(r#"block="extension""#)),
+            false,
+        ),
         // NameAndTypeOK: namespaces and types
         (
             "ref to another namespace",

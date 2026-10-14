@@ -32,14 +32,19 @@ use Verdict::{Ok as VOk, Unknown, Violation};
 /// content model. Runs after type compilation (particle trees and the
 /// substitution caches are available on `schema`).
 pub(crate) fn check_particle_restrictions(schema: &CompiledSchema) -> Result<()> {
+    for_each_complex_type(schema, |ct, what| check_one(ct, what, schema))
+}
+
+/// Runs `check` on every complex type of `schema`, named or anonymous, with
+/// a description of it for messages.
+pub(crate) fn for_each_complex_type(
+    schema: &CompiledSchema,
+    mut check: impl FnMut(&ComplexType, &str) -> Result<()>,
+) -> Result<()> {
     let mut anonymous: Vec<(&str, &ComplexType)> = Vec::new();
     for (ns_name, type_def) in &schema.types_ns {
         if let TypeDef::Complex(ct) = type_def {
-            check_one(
-                ct,
-                &format!("type '{}'", schema.display_name(ns_name)),
-                schema,
-            )?;
+            check(ct, &format!("type '{}'", schema.display_name(ns_name)))?;
             collect_anonymous(ct.particle.as_deref(), &mut anonymous);
         }
     }
@@ -50,7 +55,7 @@ pub(crate) fn check_particle_restrictions(schema: &CompiledSchema) -> Result<()>
     }
     // Anonymous types nest: each one may hold further local elements.
     while let Some((element, ct)) = anonymous.pop() {
-        check_one(ct, &format!("the type of element '{element}'"), schema)?;
+        check(ct, &format!("the type of element '{element}'"))?;
         collect_anonymous(ct.particle.as_deref(), &mut anonymous);
     }
     Ok(())

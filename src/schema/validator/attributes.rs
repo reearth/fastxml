@@ -186,9 +186,11 @@ pub(crate) fn validate_attribute_value(
     value: &str,
     cache: &mut FacetCache,
 ) -> Option<String> {
+    // A reference's own fixed value governs; the declaration's otherwise.
+    let use_fixed = attr.fixed.as_ref();
     let attr = resolve_ref(schema, attr);
 
-    if let Some(ref fixed) = attr.fixed {
+    if let Some(fixed) = use_fixed.or(attr.fixed.as_ref()) {
         if value != fixed {
             return Some(format!(
                 "attribute '{}' must have the fixed value '{}', found '{}'",
