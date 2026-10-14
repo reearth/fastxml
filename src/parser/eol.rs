@@ -16,12 +16,19 @@ use std::io::{self, BufRead, Read};
 /// Most bytes normalized into the internal buffer per fill.
 const NORMALIZE_CHUNK: usize = 64 * 1024;
 
+/// The UTF-8 byte order mark.
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
+
 /// A [`BufRead`] adapter that turns CR LF and lone CR into LF.
 ///
 /// Input without CR passes through without copying: the adapter hands out
 /// the inner reader's buffer up to the next CR. From a CR on, up to 64 KiB
 /// of the inner reader's current buffer is normalized into an internal
 /// buffer in one pass, so input with CR LF line ends costs about one copy.
+///
+/// The first fill also holds a leading byte order mark in one piece:
+/// quick-xml recognizes a BOM only when one fill holds all of it, and a
+/// reader may return it in shorter reads.
 pub(crate) struct EolNormalizer<R> {
     inner: R,
     /// Length of the prefix of the inner buffer known to contain no CR.
@@ -31,6 +38,8 @@ pub(crate) struct EolNormalizer<R> {
     pos: usize,
     /// The last byte normalized was a CR: an LF right after it is dropped.
     skip_lf: bool,
+    /// Nothing has been read yet.
+    at_start: bool,
 }
 
 impl<R> EolNormalizer<R> {
@@ -42,6 +51,7 @@ impl<R> EolNormalizer<R> {
             normalized: Vec::new(),
             pos: 0,
             skip_lf: false,
+            at_start: true,
         }
     }
 }
@@ -50,6 +60,12 @@ impl<R: BufRead> BufRead for EolNormalizer<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.pos < self.normalized.len() {
             return Ok(&self.normalized[self.pos..]);
+        }
+        if self.at_start {
+            self.at_start = false;
+            if self.join_split_bom()? {
+                return Ok(&self.normalized);
+            }
         }
         if self.clean == 0 {
             loop {
@@ -113,6 +129,38 @@ impl<R: BufRead> BufRead for EolNormalizer<R> {
     }
 }
 
+impl<R: BufRead> EolNormalizer<R> {
+    /// When the first fill holds only the start of a BOM, reads the rest of
+    /// it into the internal buffer. Returns whether it did.
+    fn join_split_bom(&mut self) -> io::Result<bool> {
+        let chunk = self.inner.fill_buf()?;
+        if chunk.is_empty() || chunk.len() >= UTF8_BOM.len() || !UTF8_BOM.starts_with(chunk) {
+            return Ok(false);
+        }
+        let mut head = Vec::with_capacity(UTF8_BOM.len());
+        while head.len() < UTF8_BOM.len() {
+            let chunk = self.inner.fill_buf()?;
+            if chunk.is_empty() {
+                break;
+            }
+            head.push(chunk[0]);
+            self.inner.consume(1);
+            if !UTF8_BOM.starts_with(&head) {
+                break;
+            }
+        }
+        // At most one byte here is not part of the BOM: a CR becomes an LF,
+        // and an LF right after it is dropped on the next fill.
+        if head.last() == Some(&b'\r') {
+            *head.last_mut().expect("not empty") = b'\n';
+            self.skip_lf = true;
+        }
+        self.normalized = head;
+        self.pos = 0;
+        Ok(true)
+    }
+}
+
 impl<R: BufRead> Read for EolNormalizer<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
@@ -157,6 +205,24 @@ mod tests {
             expected.extend(std::iter::repeat_n(b'a', pad));
             expected.extend_from_slice(b"\nb\n");
             assert_eq!(out, expected, "pad {pad}");
+        }
+    }
+
+    #[test]
+    fn first_fill_holds_a_bom_split_across_reads() {
+        for cap in [1, 2] {
+            let mut r =
+                EolNormalizer::new(io::BufReader::with_capacity(cap, &b"\xEF\xBB\xBF<r/>"[..]));
+            assert_eq!(r.fill_buf().unwrap(), UTF8_BOM, "capacity {cap}");
+        }
+    }
+
+    #[test]
+    fn a_split_bom_prefix_keeps_the_bytes_after_it() {
+        for cap in [1, 2, 8] {
+            assert_eq!(normalize(b"\xEF\r\n<", cap), b"\xEF\n<", "capacity {cap}");
+            assert_eq!(normalize(b"\xEF\xBB<", cap), b"\xEF\xBB<", "capacity {cap}");
+            assert_eq!(normalize(b"\xEF", cap), b"\xEF", "capacity {cap}");
         }
     }
 
