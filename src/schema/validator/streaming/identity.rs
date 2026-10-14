@@ -345,7 +345,7 @@ impl OnePassSchemaValidator {
         let type_def = match ctx.type_ref.as_deref() {
             // Namespace-qualified type identity first, string fallback.
             Some(tr) => self.schema.type_by_ref(ctx.type_ns.as_ref(), tr),
-            None => ctx.inline_type.as_ref(),
+            None => ctx.inline_type.as_deref(),
         };
         match type_def {
             Some(TypeDef::Complex(c)) => Some(c),
@@ -483,7 +483,7 @@ impl OnePassSchemaValidator {
         // An element-only or mixed element cannot supply a field value.
         let has_simple_value = match ctx.type_ref.as_deref() {
             Some(tr) => self.schema.type_by_ref(ctx.type_ns.as_ref(), tr),
-            None => ctx.inline_type.as_ref(),
+            None => ctx.inline_type.as_deref(),
         }
         .is_none_or(super::super::attributes::type_has_simple_value);
 

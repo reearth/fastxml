@@ -201,7 +201,7 @@ impl OnePassSchemaValidator {
                 ctx.type_sym = type_sym;
                 ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
-                ctx.inline_type = anon_type;
+                ctx.inline_type = anon_type.map(Box::new);
             }
         } else if let Some(elem) = elem_def {
             // Global element found - get type information from cache
@@ -228,7 +228,7 @@ impl OnePassSchemaValidator {
                 ctx.type_sym = type_sym;
                 ctx.type_ns = type_ns;
                 ctx.flattened_children = flattened_children;
-                ctx.inline_type = anon_type;
+                ctx.inline_type = anon_type.map(Box::new);
             }
         } else if wildcard_mode == Some(crate::schema::types::ProcessContents::Lax) {
             // Undeclared element admitted by a lax wildcard; its subtree
@@ -467,7 +467,7 @@ impl OnePassSchemaValidator {
         }
 
         // Inline (anonymous) type captured on the context at element start.
-        match self.state.current_element()?.inline_type.as_ref()? {
+        match self.state.current_element()?.inline_type.as_deref()? {
             TypeDef::Complex(complex) => {
                 Some(Arc::new(CollectedAttrs::collect(&self.schema, complex)))
             }
@@ -610,7 +610,7 @@ impl OnePassSchemaValidator {
                 Some(TypeDef::Simple(s)) => PrimitiveKind::resolve(&self.schema, s),
                 _ => None,
             }
-        } else if let Some(TypeDef::Simple(s)) = ctx.inline_type.as_ref() {
+        } else if let Some(TypeDef::Simple(s)) = ctx.inline_type.as_deref() {
             PrimitiveKind::resolve(&self.schema, s)
         } else {
             None

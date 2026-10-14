@@ -9,7 +9,10 @@ use crate::schema::types::{ContentModelType, FlattenedChildren, NsName};
 
 /// One lexical scope of namespace declarations: `(prefix, uri)` pairs, the
 /// prefix `""` denoting the default namespace.
-type NsScope = SmallVec<[(String, Arc<str>); 4]>;
+/// The namespace declarations of one element. Most elements declare none,
+/// and an empty `Vec` is three words that allocate nothing, so pushing a
+/// scope per element stays cheap.
+type NsScope = Vec<(String, Arc<str>)>;
 
 /// Validation state during streaming.
 #[derive(Debug, Default)]
@@ -81,7 +84,7 @@ pub(crate) struct ElementContext {
     pub fixed_value: Option<String>,
     /// Inline (anonymous) type from the element declaration, used when the
     /// declaration carries no named type reference.
-    pub inline_type: Option<crate::schema::types::TypeDef>,
+    pub inline_type: Option<Box<crate::schema::types::TypeDef>>,
     /// Set when this element was admitted by a lax/skip wildcard; its
     /// subtree inherits that processing mode.
     pub wildcard_mode: Option<crate::schema::types::ProcessContents>,
@@ -214,7 +217,7 @@ impl ValidationState {
         Self {
             element_stack: Vec::with_capacity(64),
             depth: 0,
-            namespace_stack: vec![SmallVec::new()],
+            namespace_stack: vec![Vec::new()],
             ns_resolution_cache: SmallVec::new(),
         }
     }
