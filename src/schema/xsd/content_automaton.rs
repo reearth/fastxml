@@ -16,8 +16,10 @@
 //!   Expansion is capped; beyond the cap the bound degrades gracefully to
 //!   unbounded (lenient, never a false error).
 //!
-//! `xs:all` is not regular and is validated by the existing count-based
-//! path; types whose content contains `xs:all` get no automaton.
+//! `xs:all` is validated by the existing count-based path; types whose
+//! content contains `xs:all` get no automaton. (An XSD 1.0 `xs:all` is
+//! regular, as each element occurs at most once, but as a regular
+//! expression it needs one branch per ordering of its elements.)
 
 use std::sync::Arc;
 
@@ -510,8 +512,8 @@ impl Builder<'_> {
                     Some(Node::Alt(nodes))
                 }
             }
-            // xs:all is not regular; the caller refuses to build an
-            // automaton for content containing it.
+            // xs:all is left to the count-based path; the caller refuses
+            // to build an automaton for content containing it.
             Particle::All { .. } => None,
         }
     }
@@ -542,6 +544,10 @@ impl Builder<'_> {
             b.next_particle_id = id_base;
             b.build_once(particle)
         };
+        // Beyond the cap only EXPAND_CAP copies are required, so whatever
+        // `max` is, the rest must stay open (lenient) or valid content with
+        // more copies would be rejected.
+        let capped = min > EXPAND_CAP;
         let req = min.min(EXPAND_CAP);
         let mut parts: Vec<Node> = Vec::new();
         for _ in 0..req {
@@ -553,7 +559,7 @@ impl Builder<'_> {
                 let star = copy(self)?;
                 parts.push(Node::Star(Box::new(star)));
             }
-            Some(m) if m > min && m - min <= EXPAND_CAP && min <= EXPAND_CAP => {
+            Some(m) if !capped && m > min && m - min <= EXPAND_CAP => {
                 // {min,max}: nested optional copies keep determinism:
                 // G{1,3} = G (G (G)?)?
                 let mut tail: Option<Node> = None;
@@ -569,7 +575,7 @@ impl Builder<'_> {
                     parts.push(t);
                 }
             }
-            Some(m) if m > min => {
+            Some(m) if capped || m > min => {
                 // Bound too large to expand: degrade to unbounded (lenient).
                 let star = copy(self)?;
                 parts.push(Node::Star(Box::new(star)));
@@ -932,6 +938,21 @@ mod tests {
         };
         let a = build_automaton(&p, &no_subst).unwrap();
         assert!(a.upa_violation.is_some());
+    }
+
+    #[test]
+    fn exact_bound_above_the_cap_is_lenient() {
+        // (a b){20,20}: the bound is beyond EXPAND_CAP, so it degrades to
+        // "at least the capped count" and never rejects 20 pairs.
+        let p = Particle::Sequence {
+            min: 20,
+            max: Some(20),
+            items: vec![elem("a", 1, Some(1)), elem("b", 1, Some(1))],
+        };
+        let a = build_automaton(&p, &no_subst).unwrap();
+        let twenty: Vec<&str> = ["a", "b"].iter().copied().cycle().take(40).collect();
+        assert!(run(&a, &twenty).is_ok(), "{:?}", run(&a, &twenty));
+        assert!(run(&a, &["a", "b", "a"]).is_err(), "dangling a");
     }
 
     #[test]
