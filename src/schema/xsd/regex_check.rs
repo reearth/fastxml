@@ -137,7 +137,7 @@ impl Checker {
             }
             Some('\\') => {
                 self.pos += 1;
-                self.escape(true)
+                self.escape(true).map(drop)
             }
             Some('.') => {
                 self.pos += 1;
@@ -157,17 +157,22 @@ impl Checker {
 
     /// An escape after `\`. With `allow_multi`, multi-character and category
     /// escapes are allowed (atoms and class members); range endpoints allow
-    /// only single-character escapes.
-    fn escape(&mut self, allow_multi: bool) -> Result<(), String> {
+    /// only single-character escapes. Returns the character a single-character
+    /// escape stands for, `None` for the others.
+    fn escape(&mut self, allow_multi: bool) -> Result<Option<char>, String> {
         let Some(c) = self.bump() else {
             return Err("trailing '\\'".to_string());
         };
         match c {
             // SingleCharEsc
-            'n' | 'r' | 't' | '\\' | '|' | '.' | '?' | '*' | '+' | '(' | ')' | '{' | '}' | '-'
-            | '[' | ']' | '^' => Ok(()),
+            'n' => Ok(Some('\n')),
+            'r' => Ok(Some('\r')),
+            't' => Ok(Some('\t')),
+            '\\' | '|' | '.' | '?' | '*' | '+' | '(' | ')' | '{' | '}' | '-' | '[' | ']' | '^' => {
+                Ok(Some(c))
+            }
             // MultiCharEsc
-            's' | 'S' | 'i' | 'I' | 'c' | 'C' | 'd' | 'D' | 'w' | 'W' if allow_multi => Ok(()),
+            's' | 'S' | 'i' | 'I' | 'c' | 'C' | 'd' | 'D' | 'w' | 'W' if allow_multi => Ok(None),
             // catEsc / complEsc
             'p' | 'P' if allow_multi => {
                 if !self.eat('{') {
@@ -181,7 +186,7 @@ impl Checker {
                     return Err("unterminated character property (missing '}')".to_string());
                 }
                 let name: String = self.chars[start..self.pos - 1].iter().collect();
-                check_char_property(&name)
+                check_char_property(&name).map(|()| None)
             }
             other => Err(format!("invalid escape '\\{}'", other)),
         }
@@ -224,9 +229,20 @@ impl Checker {
                             }
                             return Ok(());
                         }
-                        // Otherwise '-' is a literal member (XmlCharIncDash)
+                        // A '-' ending the group (or the positive group
+                        // before a subtraction, as in `[a-z--[aeiou]]`) is a
+                        // literal member.
+                        Some(']') => members += 1,
+                        Some('-') if self.chars.get(self.pos + 1) == Some(&'[') => members += 1,
+                        // Elsewhere it must be escaped (XSD 1.0 Second
+                        // Edition, F.1: "The - character is a valid
+                        // character range only at the beginning or end of
+                        // a positive character group").
                         _ => {
-                            members += 1;
+                            return Err(
+                                "'-' must be escaped unless it starts or ends a character group"
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -241,22 +257,16 @@ impl Checker {
     /// One positive character group member: a char or escape, optionally the
     /// start of a range.
     fn class_member(&mut self) -> Result<(), String> {
-        // First endpoint
-        let single = match self.peek() {
+        // First endpoint: the character it stands for, if a single one.
+        let first = match self.peek() {
             Some('\\') => {
                 self.pos += 1;
-                let escape_char = self.peek();
-                self.escape(true)?;
-                // Multi-char / category escapes cannot be range endpoints
-                !matches!(
-                    escape_char,
-                    Some('s' | 'S' | 'i' | 'I' | 'c' | 'C' | 'd' | 'D' | 'w' | 'W' | 'p' | 'P')
-                )
+                self.escape(true)?
             }
             Some('[') => return Err("unescaped '[' in character class".to_string()),
-            Some(_) => {
+            Some(c) => {
                 self.pos += 1;
-                true
+                Some(c)
             }
             None => return Err("unbalanced '[' (missing ']')".to_string()),
         };
@@ -266,23 +276,28 @@ impl Checker {
             && !matches!(self.chars.get(self.pos + 1), Some(']') | Some('[') | None)
         {
             self.pos += 1; // consume '-'
-            if !single {
+            let Some(first) = first else {
                 return Err("character range start must be a single character".to_string());
-            }
+            };
             // Second endpoint must be a single char or single-char escape
-            match self.peek() {
+            let last = match self.peek() {
                 Some('\\') => {
                     self.pos += 1;
-                    self.escape(false).map_err(|_| {
+                    self.escape(false).ok().flatten().ok_or_else(|| {
                         "character range end must be a single character".to_string()
-                    })?;
+                    })?
                 }
-                Some(']') | None => {
-                    return Err("missing character range end".to_string());
+                Some('-') => {
+                    return Err("'-' must be escaped as a character range end".to_string());
                 }
-                Some(_) => {
+                Some(c) => {
                     self.pos += 1;
+                    c
                 }
+                None => return Err("missing character range end".to_string()),
+            };
+            if first > last {
+                return Err(format!("character range '{first}-{last}' is reversed"));
             }
         }
         Ok(())
@@ -290,8 +305,7 @@ impl Checker {
 }
 
 /// Validates a `\p{...}` character property name: a Unicode general
-/// category, or an `Is`-prefixed block name (block names themselves are not
-/// checked against the Unicode database).
+/// category, or an `Is`-prefixed Unicode 3.1 block name.
 fn check_char_property(name: &str) -> Result<(), String> {
     const CATEGORIES: &[&str] = &[
         "L", "Lu", "Ll", "Lt", "Lm", "Lo", "M", "Mn", "Mc", "Me", "N", "Nd", "Nl", "No", "P", "Pc",
@@ -301,10 +315,11 @@ fn check_char_property(name: &str) -> Result<(), String> {
     if CATEGORIES.contains(&name) {
         return Ok(());
     }
-    if let Some(block) = name.strip_prefix("Is") {
-        if !block.is_empty() && block.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            return Ok(());
-        }
+    if name
+        .strip_prefix("Is")
+        .is_some_and(crate::schema::xsd::facets::is_xsd_block_name)
+    {
+        return Ok(());
     }
     Err(format!("invalid character property '{}'", name))
 }
@@ -332,6 +347,11 @@ mod tests {
             "[a-z--[b-z]]",
             "foo\\?bar",
             "\\i\\c*",
+            "[a-a]",
+            "[\\--a]",
+            "[a-c-[b]]",
+            "\\p{IsLatin-1Supplement}",
+            "\\P{IsHighSurrogates}",
             "[\\n\\r\\t\\\\\\|\\.\\-\\^\\?\\*\\+\\{\\}\\[\\]\\(\\)]*",
         ] {
             assert!(check_xsd_regex(p).is_ok(), "should accept: {p}");
@@ -361,6 +381,18 @@ mod tests {
             "a\\",
             "*a",
             "?",
+            // '-' inside a group, other than at its start or end
+            "[^a-d-b-c]",
+            "[a-c-1-4x-z-7-9]*",
+            "[a-a-x-x]+",
+            "[a--b]",
+            // reversed ranges
+            "a[b-a]",
+            "[a-;]",
+            "[>-=]",
+            "[a-\\[]",
+            // unknown block
+            "\\p{IsaA0-a9}",
         ] {
             assert!(check_xsd_regex(p).is_err(), "should reject: {p}");
         }

@@ -6,6 +6,9 @@
 //! schema document that compiles cleanly, with the test group's documentation,
 //! plus a summary grouped by test-group family prefix.
 //!
+//! It also compiles every expected-valid schema document and lists those that
+//! are rejected, so a stricter check can be tried without the full suite.
+//!
 //! Usage: cargo run -p fastxml-conformance --release --bin analyze_xsd_schemas
 
 use fastxml_conformance::catalog::xsdtests::{SchemaValidity, XsdTestSuite};
@@ -36,10 +39,34 @@ fn main() {
     let mut compiled: Vec<String> = Vec::new(); // wrongly compiled detail lines
     // family -> (compiled, total-invalid)
     let mut by_family: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut valid_total = 0usize;
+    let mut rejected: Vec<String> = Vec::new(); // expected-valid but rejected
 
     for test_set in &suite.test_sets {
         for group in &test_set.groups {
             for schema_doc in &group.schemas {
+                if schema_doc.expected == SchemaValidity::Valid {
+                    let Ok(content) = fs::read(&schema_doc.path) else {
+                        continue;
+                    };
+                    valid_total += 1;
+                    let result = catch_unwind(AssertUnwindSafe(|| {
+                        fastxml::schema::Schema::from_xsd(&content)
+                    }));
+                    let error = match result {
+                        Ok(Ok(_)) => continue,
+                        Ok(Err(e)) => e.to_string(),
+                        Err(_) => "panic".to_string(),
+                    };
+                    rejected.push(format!(
+                        "REJECTED\t{}\t{}\t{}\t{}",
+                        test_set.name,
+                        group.name,
+                        schema_doc.path.display(),
+                        error
+                    ));
+                    continue;
+                }
                 if schema_doc.expected != SchemaValidity::Invalid {
                     continue;
                 }
@@ -87,6 +114,10 @@ fn main() {
         blocked,
         100.0 * pass as f64 / (pass + fail) as f64
     );
+    println!("VALID\trejected={}\tof={}", rejected.len(), valid_total);
+    for line in &rejected {
+        println!("{line}");
+    }
     println!();
     println!("=== Wrongly-compiled by family prefix (sorted by count) ===");
     let mut rows: Vec<_> = by_family

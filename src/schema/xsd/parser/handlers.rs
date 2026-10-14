@@ -468,17 +468,11 @@ impl XsdParser {
     pub(super) fn handle_restriction(&mut self, attrs: &HashMap<String, String>) -> Result<()> {
         let base = attrs.get("base").map(|s| self.qname(s));
 
-        // Determine context from stack
-        let parent_is_simple_content = self
-            .stack
-            .iter()
-            .rev()
-            .any(|f| matches!(f, StackFrame::SimpleContent));
-        let parent_is_complex_content = self
-            .stack
-            .iter()
-            .rev()
-            .any(|f| matches!(f, StackFrame::ComplexContent { .. }));
+        // The direct parent decides: a simpleType nested anywhere inside a
+        // simpleContent or complexContent has a restriction of its own.
+        let parent_is_simple_content = matches!(self.stack.last(), Some(StackFrame::SimpleContent));
+        let parent_is_complex_content =
+            matches!(self.stack.last(), Some(StackFrame::ComplexContent { .. }));
 
         if parent_is_complex_content {
             let restriction = XsdComplexContentRestriction {
@@ -519,12 +513,7 @@ impl XsdParser {
             .map(|s| self.qname(s))
             .unwrap_or_else(|| QName::new(""));
 
-        // Determine context from stack
-        let parent_is_simple_content = self
-            .stack
-            .iter()
-            .rev()
-            .any(|f| matches!(f, StackFrame::SimpleContent));
+        let parent_is_simple_content = matches!(self.stack.last(), Some(StackFrame::SimpleContent));
 
         if parent_is_simple_content {
             let extension = XsdSimpleContentExtension {

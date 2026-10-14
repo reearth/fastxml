@@ -838,3 +838,70 @@ fn nested_schema_element_rejected() {
     </xs:schema>"#;
     assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
 }
+
+#[test]
+fn simple_type_inside_simple_content_keeps_its_restriction() {
+    // An attribute's anonymous simpleType nested in a simpleContent
+    // extension or restriction has a restriction of its own.
+    for derivation in ["extension", "restriction"] {
+        let xsd = format!(
+            "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'>\
+             <xs:complexType name='c'><xs:simpleContent><xs:{derivation} base='xs:string'>\
+             <xs:attribute name='a'><xs:simpleType><xs:restriction base='xs:int'>\
+             <xs:maxInclusive value='5'/></xs:restriction></xs:simpleType></xs:attribute>\
+             </xs:{derivation}></xs:simpleContent></xs:complexType></xs:schema>"
+        );
+        let schema = parse_xsd_ast(xsd.as_bytes()).unwrap();
+        let XsdTypeDef::Complex(ct) = &schema.types[0] else {
+            panic!("expected a complex type");
+        };
+        let XsdComplexContent::SimpleContent(sc) = &ct.content else {
+            panic!(
+                "{derivation}: expected simple content, got {:?}",
+                ct.content
+            );
+        };
+        let attributes = match &sc.derivation {
+            XsdSimpleContentDerivation::Extension(e) => &e.attributes,
+            XsdSimpleContentDerivation::Restriction(r) => &r.attributes,
+        };
+        let inline = attributes[0].inline_type.as_ref().unwrap();
+        let XsdSimpleTypeContent::Restriction(r) = &inline.content else {
+            panic!("{derivation}: expected a restriction");
+        };
+        assert_eq!(r.base.as_ref().unwrap().local, "int", "{derivation}");
+        assert_eq!(r.facets.len(), 1, "{derivation}");
+    }
+}
+
+#[test]
+fn attributes_not_in_the_schema_for_schemas_are_rejected() {
+    let schema = |body: &str| {
+        format!(
+            "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema' xmlns:f='urn:f'>{body}</xs:schema>"
+        )
+    };
+    for body in [
+        "<xs:attribute name='a' value='string'/>",
+        "<xs:attribute name='a' use='required'/>",
+        "<xs:attribute name='a' form='qualified'/>",
+        "<xs:element name='e' minOccurs='0'/>",
+        "<xs:complexType name='c'><xs:sequence><xs:element name='e'><xs:complexType name='inner'/></xs:element></xs:sequence></xs:complexType>",
+        "<xs:element name='e'><xs:simpleType name='s'><xs:restriction base='xs:string'/></xs:simpleType></xs:element>",
+    ] {
+        assert!(
+            parse_xsd_ast(schema(body).as_bytes()).is_err(),
+            "should reject: {body}"
+        );
+    }
+    for body in [
+        "<xs:attribute name='a' type='xs:string' f:note='x' xml:lang='en' id='a1'/>",
+        "<xs:complexType name='c'><xs:attribute name='a' use='required' form='qualified'/></xs:complexType>",
+        "<xs:element name='e'><xs:complexType><xs:sequence><xs:element name='i' minOccurs='0'/></xs:sequence></xs:complexType></xs:element>",
+    ] {
+        assert!(
+            parse_xsd_ast(schema(body).as_bytes()).is_ok(),
+            "should accept: {body}"
+        );
+    }
+}
