@@ -616,7 +616,7 @@ The `fastxml-validate` CLI does the same with the repeatable `--allow-url <PREFI
 
 ### Async Validation
 
-Validate with async schema fetching (requires `tokio` feature) via `run_async()` (default fetcher) or `run_async_with(&fetcher)`:
+Validate with async schema fetching (requires `tokio` feature) via `run_async()` (default fetcher) or `run_async_with(&fetcher)`. This works for DOM and streaming input alike; only the schema fetching is async, the input is read synchronously:
 
 ```rust
 use fastxml::{Parser, schema::Validator};
