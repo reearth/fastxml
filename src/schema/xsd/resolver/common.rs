@@ -12,65 +12,6 @@ use crate::schema::error::SchemaError;
 
 use super::super::types::XsdSchema;
 
-/// Extracts dependency URIs from a schema.
-///
-/// Collects all import and include locations and resolves them against the base URI.
-#[allow(dead_code)]
-pub fn extract_dependencies(schema: &XsdSchema, base_uri: &str) -> Vec<String> {
-    let mut deps = Vec::new();
-
-    for import in &schema.imports {
-        if let Some(location) = &import.schema_location {
-            if let Ok(uri) = resolve_uri(base_uri, location) {
-                deps.push(uri);
-            }
-        }
-    }
-
-    for include in &schema.includes {
-        if let Ok(uri) = resolve_uri(base_uri, &include.schema_location) {
-            deps.push(uri);
-        }
-    }
-
-    deps
-}
-
-/// Checks for circular dependencies.
-///
-/// Returns an error if the URI is already in the resolving set.
-#[allow(dead_code)]
-pub fn check_cycle(uri: &str, resolving: &HashSet<String>) -> Result<()> {
-    if resolving.contains(uri) {
-        return Err(SchemaError::CircularDependency {
-            uri: uri.to_string(),
-        }
-        .into());
-    }
-    Ok(())
-}
-
-/// Orders schemas for output with entry schema last.
-///
-/// Dependencies should be compiled before the schemas that depend on them.
-#[allow(dead_code)]
-pub fn order_schemas_for_output(
-    schemas: &HashMap<String, XsdSchema>,
-    entry_uri: &str,
-) -> Vec<XsdSchema> {
-    let mut result: Vec<XsdSchema> = schemas
-        .iter()
-        .filter(|(uri, _)| *uri != entry_uri)
-        .map(|(_, schema)| schema.clone())
-        .collect();
-
-    if let Some(entry) = schemas.get(entry_uri) {
-        result.push(entry.clone());
-    }
-
-    result
-}
-
 /// Resolves a relative URI against a base URI.
 pub fn resolve_uri(base: &str, relative: &str) -> Result<String> {
     // If relative is already absolute, use it directly
@@ -288,53 +229,5 @@ mod tests {
 
         assert_eq!(schemas.len(), 1);
         assert_eq!(schemas[0].elements.len(), 1);
-    }
-
-    #[test]
-    fn test_extract_dependencies() {
-        let schema = XsdSchema {
-            imports: vec![XsdImport {
-                namespace: Some("http://example.com/types".to_string()),
-                schema_location: Some("types.xsd".to_string()),
-            }],
-            includes: vec![crate::schema::xsd::types::XsdInclude {
-                schema_location: "common.xsd".to_string(),
-            }],
-            ..Default::default()
-        };
-
-        let deps = extract_dependencies(&schema, "http://example.com/main.xsd");
-        assert_eq!(deps.len(), 2);
-        assert!(deps.contains(&"http://example.com/types.xsd".to_string()));
-        assert!(deps.contains(&"http://example.com/common.xsd".to_string()));
-    }
-
-    #[test]
-    fn test_check_cycle() {
-        let mut resolving = HashSet::new();
-        resolving.insert("http://example.com/a.xsd".to_string());
-
-        // Should not error for new URI
-        assert!(check_cycle("http://example.com/b.xsd", &resolving).is_ok());
-
-        // Should error for existing URI
-        assert!(check_cycle("http://example.com/a.xsd", &resolving).is_err());
-    }
-
-    #[test]
-    fn test_order_schemas_for_output() {
-        let mut schemas = HashMap::new();
-        schemas.insert(
-            "http://example.com/entry.xsd".to_string(),
-            XsdSchema::default(),
-        );
-        schemas.insert(
-            "http://example.com/dep.xsd".to_string(),
-            XsdSchema::default(),
-        );
-
-        let ordered = order_schemas_for_output(&schemas, "http://example.com/entry.xsd");
-        assert_eq!(ordered.len(), 2);
-        // Entry should be last (but since we can't distinguish them here, just check count)
     }
 }

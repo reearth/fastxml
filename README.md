@@ -760,14 +760,14 @@ change in library behaviour must land with an updated baseline. See
 
 | Category | Pass rate | pass | fail | unsupported |
 |----------|-----------|------|------|-------------|
-| valid documents          | 93.2% | 381  | 28  | 403 |
+| valid documents          | 93.4% | 382  | 27  | 403 |
 | invalid documents (DTD)  | 96.7% | 206  | 7   | 29  |
-| not-well-formed          | 90.8% | 1104 | 112 | 282 |
+| not-well-formed          | 92.8% | 1128 | 88  | 282 |
 | error (optional)         | —     | 0    | 0   | 33  |
-| **overall**              | **92.0%** | **1691** | **147** | **747** |
+| **overall**              | **93.4%** | **1716** | **122** | **747** |
 
-The streaming engine is within a few tests of DOM (overall 91.9%; not-well-formed
-1102 pass / 114 fail). `unsupported` is dominated by XML 1.1 / 5th-edition-only
+The streaming engine is within a few tests of DOM (overall 93.3%; not-well-formed
+1126 pass / 90 fail). `unsupported` is dominated by XML 1.1 / 5th-edition-only
 tests and non-UTF-8 encodings, which fastxml does not target (it targets XML 1.0
 4th edition, UTF-8). fastxml is always namespace-aware, so the four
 `NAMESPACE="no"` tests that assume a bare colon is an ordinary name character are
@@ -791,9 +791,9 @@ and re-parsing (see the roadmap).
 |----------|-----------|------|------|---------|
 | valid schemas accepted      | 100.0% | 11,139 | 0   | 0   |
 | invalid schemas rejected    | 79.8%  | 2,675  | 677 | 0   |
-| valid instances             | 99.4%  | 13,845 | 86  | 132 |
-| invalid instances rejected  | 96.9%  | 10,641 | 339 | 51  |
-| **overall**                 | **97.2%** | **38,300** | **1,102** | **183** |
+| valid instances             | 99.6%  | 13,877 | 54  | 132 |
+| invalid instances rejected  | 97.8%  | 10,743 | 237 | 51  |
+| **overall**                 | **97.5%** | **38,434** | **968** | **183** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
 (zero false rejections), while 79.8% of invalid schemas are rejected. The
@@ -805,9 +805,9 @@ validity, and a particle-restriction (rcase-*) engine — each rule only fires
 when its verdict is certain, so partially-resolved real-world schema sets
 (CityGML/PLATEAU) keep compiling. `blocked` instances are those whose schema
 could not be resolved/compiled, plus one wildcard instance whose validity is
-nondeterministic in fastxml. The streaming engine scores 97.2% overall. XSD
-1.1-only test groups are excluded (XSD 1.0 target); the 28 indeterminate
-schema/instance tests are reported as `unsupported`.
+nondeterministic in fastxml. The streaming engine scores 97.5% overall
+(38,433 pass). XSD 1.1-only test groups are excluded (XSD 1.0 target); the 28
+indeterminate schema/instance tests are reported as `unsupported`.
 
 > **Numbers from v0.9.x and earlier are not directly comparable** — the harness
 > previously counted *any* error as a pass for negative tests and dropped
@@ -837,12 +837,13 @@ Known issues and planned improvements, roughly in priority order:
   facet checking across user-defined base chains, MapAndSum and
   wildcard-namespace-set comparisons in the rcase engine, and rules that
   need resolved imports.
-- XSD 1.1: assertions (`xs:assert`), conditional type assignment
-  (`xs:alternative`), `openContent`, `xs:override`. Datatypes are done.
+- XSD 1.1 is not planned: fastxml targets XSD 1.0 (it also accepts the XSD
+  1.1 datatypes). A schema that uses `xs:override` is rejected with a clear
+  error rather than misread.
 
 **XML parsing**
 
-- Stricter not-well-formed detection (90.8% of W3C not-wf tests now pass under
+- Stricter not-well-formed detection (92.8% of W3C not-wf tests now pass under
   the honest denominator, up from 26%). Enforced: the `Char` and `Name`
   productions (XML 1.0 4th-edition character classes); document structure
   (exactly one root, no character data or second root outside it, no literal

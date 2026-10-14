@@ -3,7 +3,7 @@
 //! This module provides the async implementation of schema resolution
 //! for import/include chains.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use indexmap::IndexMap;
 
@@ -22,8 +22,6 @@ pub struct AsyncSchemaResolver<'a, F: AsyncSchemaFetcher> {
     /// matters: HashMap order made same-local-name / cross-namespace schemas
     /// validate nondeterministically.
     schemas: IndexMap<String, XsdSchema>,
-    /// URIs currently being resolved (for cycle detection)
-    resolving: HashSet<String>,
 }
 
 impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
@@ -32,7 +30,6 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
         Self {
             fetcher,
             schemas: IndexMap::new(),
-            resolving: HashSet::new(),
         }
     }
 
@@ -55,14 +52,6 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
         queue.push_back(entry_uri.to_string());
 
         while let Some(current_uri) = queue.pop_front() {
-            if self.resolving.contains(&current_uri) {
-                return Err(crate::schema::error::SchemaError::CircularDependency {
-                    uri: current_uri,
-                }
-                .into());
-            }
-            self.resolving.insert(current_uri.clone());
-
             // Get imports and includes from the current schema
             let (imports, includes) = {
                 let schema = self.schemas.get(&current_uri).ok_or_else(|| {
@@ -108,8 +97,6 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
                     queue.push_back(resolved_uri);
                 }
             }
-
-            self.resolving.remove(&current_uri);
         }
 
         // Return schemas in order (entry last for easier compilation)
@@ -165,14 +152,6 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
         queue.push_back(entry_uri.to_string());
 
         while let Some(current_uri) = queue.pop_front() {
-            if self.resolving.contains(&current_uri) {
-                return Err(crate::schema::error::SchemaError::CircularDependency {
-                    uri: current_uri,
-                }
-                .into());
-            }
-            self.resolving.insert(current_uri.clone());
-
             // Get imports and includes from the current schema
             let (imports, includes) = {
                 let schema = self.schemas.get(&current_uri).ok_or_else(|| {
@@ -218,8 +197,6 @@ impl<'a, F: AsyncSchemaFetcher> AsyncSchemaResolver<'a, F> {
                     queue.push_back(resolved_uri);
                 }
             }
-
-            self.resolving.remove(&current_uri);
         }
 
         Ok(())
