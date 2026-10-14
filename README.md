@@ -814,13 +814,13 @@ and re-parsing (see the roadmap).
 | Category | Pass rate | pass | fail | blocked |
 |----------|-----------|------|------|---------|
 | valid schemas accepted      | 100.0% | 11,139 | 0   | 0   |
-| invalid schemas rejected    | 85.2%  | 2,856  | 496 | 0   |
+| invalid schemas rejected    | 87.6%  | 2,937  | 415 | 0   |
 | valid instances             | 99.6%  | 13,877 | 54  | 132 |
 | invalid instances rejected  | 98.1%  | 10,770 | 210 | 51  |
-| **overall**                 | **98.1%** | **38,642** | **760** | **183** |
+| **overall**                 | **98.3%** | **38,723** | **679** | **183** |
 
 Schema compilation stays asymmetric by design: every valid schema compiles
-(zero false rejections), while 85.2% of invalid schemas are rejected. The
+(zero false rejections), while 87.6% of invalid schemas are rejected. The
 rejection rules cover reference integrity (dangling QName references into
 fully-present namespaces), circular definitions, cos-all-limited,
 identity-constraint XPath grammar, attribute/placement/lexical
@@ -829,8 +829,8 @@ validity, and a particle-restriction (rcase-*) engine — each rule only fires
 when its verdict is certain, so partially-resolved real-world schema sets
 (CityGML/PLATEAU) keep compiling. `blocked` instances are those whose schema
 could not be resolved/compiled, plus one wildcard instance whose validity is
-nondeterministic in fastxml. The streaming engine scores 98.1% overall
-(38,641 pass). XSD 1.1-only test groups are excluded (XSD 1.0 target); the 28
+nondeterministic in fastxml. The streaming engine scores 98.3% overall
+(38,722 pass). XSD 1.1-only test groups are excluded (XSD 1.0 target); the 28
 indeterminate schema/instance tests are reported as `unsupported`.
 
 > **Numbers from v0.9.x and earlier are not directly comparable** — the harness
@@ -853,16 +853,17 @@ Known issues and planned improvements, roughly in priority order:
 
 **Schema (XSD) coverage**
 
-- Invalid-schema rejection (85.2%, up from 52.3%): implemented reference
+- Invalid-schema rejection (87.6%, up from 52.3%): implemented reference
   integrity, circular definitions, cos-all-limited, identity-constraint XPath
   grammar, attribute/placement/lexical rules, the attributes each XSD element
   allows, derivation controls, facet validity (including against the facets
   of user-defined base types in the same document), value-constraint
   validity, XSD regular-expression syntax, and a certainty-gated rcase-*
-  particle-restriction engine. Remaining gaps: the particle-restriction
-  rules (NameAndTypeOK details, MapAndSum, wildcard-namespace-set
-  comparisons), attribute-use restriction legality, redefine legality, and
-  rules that need resolved imports. `gMonth` facet values in the pre-errata
+  particle-restriction engine (applied to anonymous types too, with
+  MapAndSum, RecurseUnordered, NSRecurseCheckCardinality and namespace-set
+  comparisons). Remaining gaps: element `block` in NameAndTypeOK,
+  attribute-use restriction legality, redefine legality, and rules that
+  need resolved imports. `gMonth` facet values in the pre-errata
   `--MM--` form stay accepted, as the test suite also has instances that
   use that form as valid.
 - XSD 1.1 is not planned: fastxml targets XSD 1.0 (it also accepts the XSD
