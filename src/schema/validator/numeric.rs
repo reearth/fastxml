@@ -1,8 +1,8 @@
 //! Lean, allocation-free lexical scanners for the numeric value-check fast
 //! path.
 //!
-//! Streaming validation of large CityGML documents is dominated by numeric
-//! value checking: a single `gml:posList` / `gml:coordinates` text node is one
+//! Validating large CityGML documents, by either engine, is dominated by
+//! numeric value checking: a single `gml:posList` / `gml:coordinates` text node is one
 //! string of tens of thousands of whitespace-separated doubles. The canonical
 //! path ([`FacetValidator`](crate::schema::xsd::facets::FacetValidator) +
 //! [`PrimitiveKind::validate`](crate::schema::xsd::primitive::PrimitiveKind))

@@ -283,7 +283,7 @@ impl OnePassSchemaValidator {
         // The parent has an anonymous type (no named-type identity): resolve
         // the child against that type's own content model — never against a
         // same-named global element, which may be a different declaration.
-        let Some(TypeDef::Complex(complex)) = parent_ctx.inline_type.clone() else {
+        let Some(TypeDef::Complex(complex)) = parent_ctx.inline_type.as_deref().cloned() else {
             return Arc::new(InlineResolved::default());
         };
         let schema = Arc::clone(&self.schema);

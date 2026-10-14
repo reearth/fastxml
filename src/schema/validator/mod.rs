@@ -13,6 +13,7 @@ mod attributes;
 mod decls;
 mod dom;
 mod facade;
+mod numeric;
 mod prescan;
 mod state;
 mod streaming;

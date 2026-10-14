@@ -61,6 +61,46 @@ impl XmlNode {
             .and_then(|n| n.namespace_uri.as_deref().map(str::to_string))
     }
 
+    /// The interned local name, shared rather than copied (empty for a
+    /// node without one).
+    pub(crate) fn name_arc(&self) -> Arc<str> {
+        let nodes = self.nodes.read();
+        nodes
+            .get(self.id)
+            .map(|n| Arc::clone(&n.name))
+            .unwrap_or_else(|| Arc::from(""))
+    }
+
+    /// The interned prefix, shared rather than copied.
+    pub(crate) fn prefix_arc(&self) -> Option<Arc<str>> {
+        let nodes = self.nodes.read();
+        nodes.get(self.id).and_then(|n| n.prefix.clone())
+    }
+
+    /// The interned namespace URI, shared rather than copied.
+    pub(crate) fn namespace_uri_arc(&self) -> Option<Arc<str>> {
+        let nodes = self.nodes.read();
+        nodes.get(self.id).and_then(|n| n.namespace_uri.clone())
+    }
+
+    /// The text and CDATA of the node's direct children, concatenated, read
+    /// under one lock.
+    pub(crate) fn child_text(&self) -> String {
+        let nodes = self.nodes.read();
+        let mut text = String::new();
+        if let Some(node) = nodes.get(self.id) {
+            for id in node.child_ids() {
+                if let Some(child) = nodes.get(id)
+                    && matches!(child.node_type, NodeType::Text | NodeType::CData)
+                    && let Some(content) = child.content.as_deref()
+                {
+                    text.push_str(content);
+                }
+            }
+        }
+        text
+    }
+
     /// Returns the namespace (if any).
     pub fn get_namespace(&self) -> Option<Namespace> {
         let nodes = self.nodes.read();

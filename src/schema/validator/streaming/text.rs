@@ -12,9 +12,9 @@ use crate::error::{ErrorLevel, ValidationErrorType};
 use crate::schema::types::{ContentModel, NsName, TypeDef};
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 
+use super::super::numeric::{self, NumClass, NumericPlan};
 use super::super::state::ElementContext;
 use super::OnePassSchemaValidator;
-use super::numeric::{self, NumClass, NumericPlan};
 
 /// Memoized text-validation plan for a declared type.
 #[derive(Clone)]

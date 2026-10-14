@@ -28,7 +28,9 @@ use super::streaming::ValidationOptions;
 #[derive(Default)]
 struct ParentContext {
     allowed: Option<Arc<FlattenedChildren>>,
-    elements: Vec<ElementDef>,
+    /// The type's child element declarations, shared through the run-time
+    /// type cache rather than copied for every instance element.
+    elements: Arc<Vec<ElementDef>>,
     /// Wildcard admitting otherwise-undeclared children (from the type's
     /// content model, or propagated from an enclosing lax/skip wildcard).
     wildcard: Option<WildcardConstraint>,
@@ -142,6 +144,11 @@ pub struct DomSchemaValidator {
     pub(crate) max_errors: usize,
     /// Memoized facet constraints per named simple type
     pub(crate) facet_cache: std::cell::RefCell<crate::schema::xsd::facets::FacetCache>,
+    /// The attribute picture of each named complex type, keyed by the
+    /// type's address in `schema`, which is immutable and outlives the
+    /// validator, so an address never comes to name another type.
+    pub(crate) attr_cache:
+        std::cell::RefCell<rustc_hash::FxHashMap<usize, Arc<super::attributes::CollectedAttrs>>>,
     /// Interned error strings (messages repeat heavily on invalid files)
     pub(crate) error_strings: std::cell::RefCell<rustc_hash::FxHashSet<std::sync::Arc<str>>>,
     /// (message, node_name) -> index into the error vec, used when
@@ -160,6 +167,7 @@ impl DomSchemaValidator {
             options: ValidationOptions::default(),
             max_errors: 0,
             facet_cache: Default::default(),
+            attr_cache: Default::default(),
             error_strings: Default::default(),
             aggregate_index: Default::default(),
         }
@@ -310,9 +318,10 @@ impl DomSchemaValidator {
         ids: &mut DocIdState,
         errors: &mut Vec<StructuredError>,
     ) -> ParentContext {
-        let name = node.get_name();
-        let prefix = node.get_prefix();
-        let node_ns = node.get_namespace_uri();
+        let name_arc = node.name_arc();
+        let name: &str = &name_arc;
+        let prefix = node.prefix_arc();
+        let node_ns = node.namespace_uri_arc();
 
         // Look up the element declaration. A local declaration in the
         // parent's type wins over a global element with the same name — the
@@ -327,14 +336,14 @@ impl DomSchemaValidator {
         let elem_def = match inline_def {
             Some(e) if e.ref_ns.is_none() => Some(e),
             _ => self
-                .lookup_element(&name, prefix.as_deref(), node_ns.as_deref())
+                .lookup_element(name, prefix.as_deref(), node_ns.as_deref())
                 .or(inline_def),
         };
 
         // Check if element is allowed by parent's type definition
         let is_allowed_by_parent = parent_ctx
             .and_then(|ctx| ctx.allowed.as_ref())
-            .map(|fc| fc.constraints.contains_key(&name))
+            .map(|fc| fc.constraints.contains_key(name))
             .unwrap_or(false);
 
         // An undeclared element whose xsi:type names a schema type is
@@ -343,7 +352,7 @@ impl DomSchemaValidator {
         let mut declared_by_xsi_type = false;
         let elem_def = match elem_def {
             None if !is_allowed_by_parent => {
-                xsi_declaration = self.xsi_type_declaration(node, &name);
+                xsi_declaration = self.xsi_type_declaration(node, name);
                 declared_by_xsi_type = xsi_declaration.is_some();
                 xsi_declaration.as_ref()
             }
@@ -403,7 +412,7 @@ impl DomSchemaValidator {
                                 format!("element '{}': {}", name, message),
                                 node,
                             )
-                            .with_node_name(&name)
+                            .with_node_name(name)
                             .with_level(ErrorLevel::Error);
                         self.push_error(errors, error);
                     }
@@ -418,7 +427,7 @@ impl DomSchemaValidator {
                         format!("element '{}' is abstract and cannot be used directly", name),
                         node,
                     )
-                    .with_node_name(&name)
+                    .with_node_name(name)
                     .with_level(ErrorLevel::Error);
                 self.push_error(errors, error);
             }
@@ -437,7 +446,7 @@ impl DomSchemaValidator {
                             ),
                             node,
                         )
-                        .with_node_name(&name)
+                        .with_node_name(name)
                         .with_level(ErrorLevel::Error);
                     self.push_error(errors, error);
                 } else if !node.get_child_elements().is_empty()
@@ -449,7 +458,7 @@ impl DomSchemaValidator {
                             format!("element '{}' has xsi:nil=\"true\" but is not empty", name),
                             node,
                         )
-                        .with_node_name(&name)
+                        .with_node_name(name)
                         .with_level(ErrorLevel::Error);
                     self.push_error(errors, error);
                 }
@@ -478,15 +487,13 @@ impl DomSchemaValidator {
                 }
             }
 
-            // Count child elements
-            let child_counts = self.count_child_elements(node);
-
             // Get flattened children for validation
             let flattened = self.get_flattened_children_for_element(elem);
             if let Some(ref fc) = flattened {
                 // The content-model automaton replaces the count-based
                 // checks when the type has one.
-                if !self.validate_with_automaton(node, &child_counts, fc, nilled, errors) {
+                if !self.validate_with_automaton(node, fc, nilled, errors) {
+                    let child_counts = self.count_child_elements(node);
                     // Validate min_occurs for all children
                     self.validate_min_occurs_batch(node, &child_counts, fc, errors);
 
@@ -523,7 +530,7 @@ impl DomSchemaValidator {
                                 ),
                                 node,
                             )
-                            .with_node_name(&name)
+                            .with_node_name(name)
                             .with_level(ErrorLevel::Error);
                         self.push_error(errors, error);
                     }
@@ -538,7 +545,7 @@ impl DomSchemaValidator {
                                     ),
                                     node,
                                 )
-                                .with_node_name(&name)
+                                .with_node_name(name)
                                 .with_level(ErrorLevel::Error);
                             self.push_error(errors, error);
                         }
@@ -633,6 +640,7 @@ impl DomSchemaValidator {
         ids: &mut DocIdState,
         errors: &mut Vec<StructuredError>,
     ) {
+        let named = elem.type_ref.is_some();
         let type_def = if let Some(ref type_ref) = elem.type_ref {
             // ns-first (compile-time resolved), string fallback.
             self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
@@ -642,12 +650,25 @@ impl DomSchemaValidator {
         // A simple type admits no attributes at all; an unresolved or absent
         // type (xs:anyType) admits any.
         let collected = match type_def {
-            Some(TypeDef::Complex(complex)) => {
-                // DOM validation collects the attribute picture per element
-                // (no per-type cache); the streaming validator memoizes it.
-                super::attributes::CollectedAttrs::collect(&self.schema, complex)
+            // A named type lives in the schema, so it is memoized by address.
+            // An inline type may sit in a declaration copied for this element
+            // alone, so it is collected afresh.
+            Some(TypeDef::Complex(complex)) if named => {
+                let key = complex as *const _ as usize;
+                let cached = self.attr_cache.borrow().get(&key).cloned();
+                cached.unwrap_or_else(|| {
+                    let built = Arc::new(super::attributes::CollectedAttrs::collect(
+                        &self.schema,
+                        complex,
+                    ));
+                    self.attr_cache.borrow_mut().insert(key, Arc::clone(&built));
+                    built
+                })
             }
-            Some(TypeDef::Simple(_)) => super::attributes::CollectedAttrs::none(),
+            Some(TypeDef::Complex(complex)) => Arc::new(
+                super::attributes::CollectedAttrs::collect(&self.schema, complex),
+            ),
+            Some(TypeDef::Simple(_)) => Arc::new(super::attributes::CollectedAttrs::none()),
             None => return,
         };
         let complex = match type_def {
@@ -757,7 +778,7 @@ impl DomSchemaValidator {
 
     /// Collects the child element declarations of an element's type so
     /// locally declared children can be resolved during recursion.
-    fn element_child_declarations(&self, elem: &ElementDef) -> Vec<ElementDef> {
+    fn element_child_declarations(&self, elem: &ElementDef) -> Arc<Vec<ElementDef>> {
         let type_def = if let Some(ref type_ref) = elem.type_ref {
             // ns-first (compile-time resolved), string fallback.
             self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
@@ -765,10 +786,11 @@ impl DomSchemaValidator {
             elem.inline_type.as_ref()
         };
         match type_def {
-            Some(TypeDef::Complex(complex)) => {
-                super::decls::collect_elements(&self.schema, complex)
-            }
-            _ => Vec::new(),
+            Some(TypeDef::Complex(complex)) => self
+                .runtime_types
+                .borrow_mut()
+                .elements(&self.schema, complex),
+            _ => Arc::default(),
         }
     }
 
