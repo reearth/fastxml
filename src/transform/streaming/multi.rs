@@ -4,19 +4,12 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use quick_xml::Reader;
-use quick_xml::events::Event;
 
-use super::super::editable::EditableNodeBuilder;
-use super::super::error::{TransformError, TransformResult};
-use super::helpers::{
-    add_empty_to_builder, add_end_to_builder, add_pi_to_builder, add_start_to_builder,
-    extract_element_info, serialize_editable, split_bom, xml_parse_error_with_location,
-};
-use super::tracker::PathTracker;
+use super::super::error::TransformResult;
+use super::rewrite::{RewriteCallback, RewriteHandler, rewrite_str};
 use super::{DispatchCallback, DispatchHandler, InputSource, dispatch};
 use super::{
     MultiHandler, MultiHandlerWithContext, MultiTransformHandler, MultiTransformHandlerWithContext,
-    TransformHandlerState,
 };
 
 /// Processes XML with streaming iteration for multiple XPath handlers in a single pass.
@@ -76,203 +69,20 @@ pub fn process_for_each_multi_with_context<'a>(
 /// When multiple handlers could match nested elements, only the **first matching handler**
 /// (in registration order) is active at a time. While a handler is processing an element's
 /// subtree, other handlers cannot match elements within that subtree.
-#[allow(clippy::needless_range_loop)]
 pub fn process_streaming_multi<'a, W: Write>(
     input: &str,
     handlers: &mut [MultiTransformHandler<'a>],
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
-    let (bom, input) = split_bom(input);
-    writer.write_all(bom.as_bytes())?;
-
-    let mut reader = Reader::from_str(input);
-    reader.config_mut().trim_text(false);
-
-    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
-    let mut transform_count: usize = 0;
-    let mut buf = Vec::new();
-    let mut prev_written: usize = 0;
-
-    // Initialize handler states
-    let mut states: Vec<TransformHandlerState> = handlers
-        .iter()
-        .map(|(xpath, _)| TransformHandlerState {
+    let mut handlers: Vec<RewriteHandler<'_>> = handlers
+        .iter_mut()
+        .map(|(xpath, callback)| RewriteHandler {
             xpath,
-            builder: None,
-            match_context: None,
-            match_start_offset: 0,
+            callback: RewriteCallback::Node(&mut **callback),
         })
         .collect();
-
-    // Track which handler is currently active (first-match-wins strategy)
-    let mut active_handler: Option<usize> = None;
-
-    loop {
-        let before_pos = reader.buffer_position() as usize;
-
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                if let Some(idx) = active_handler {
-                    // Already inside matched subtree, keep buffering
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_start_to_builder(builder, &e, namespaces)?;
-                    }
-                } else {
-                    // Check each handler for a match (first-match-wins)
-                    for i in 0..states.len() {
-                        if tracker.matches(states[i].xpath) {
-                            // Match starts here!
-                            // 1. Write everything before this point (zero-copy)
-                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
-
-                            // 2. Start buffering subtree
-                            let mut builder = EditableNodeBuilder::new();
-                            builder.set_namespaces(namespaces.clone());
-                            add_start_to_builder(&mut builder, &e, namespaces)?;
-                            states[i].builder = Some(builder);
-                            states[i].match_start_offset = before_pos;
-                            active_handler = Some(i);
-                            break; // First match wins
-                        }
-                    }
-                }
-            }
-
-            Ok(Event::Empty(e)) => {
-                let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                if let Some(idx) = active_handler {
-                    // Inside matched subtree
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_empty_to_builder(builder, &e, namespaces)?;
-                    }
-                } else {
-                    // Check each handler for a match (first-match-wins)
-                    for i in 0..states.len() {
-                        if tracker.matches(states[i].xpath) {
-                            // This empty element is a match
-                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
-
-                            let mut builder = EditableNodeBuilder::new();
-                            builder.set_namespaces(namespaces.clone());
-                            add_empty_to_builder(&mut builder, &e, namespaces)?;
-
-                            // Process immediately since it's complete
-                            let mut editable = builder.build()?;
-                            handlers[i].1(&mut editable);
-                            transform_count += 1;
-
-                            if !editable.is_removed() {
-                                serialize_editable(&editable, writer)?;
-                            }
-
-                            prev_written = after_pos;
-                            break; // First match wins
-                        }
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::End(e)) => {
-                let after_pos = reader.buffer_position() as usize;
-
-                if let Some(idx) = active_handler {
-                    if let Some(mut builder) = states[idx].builder.take() {
-                        add_end_to_builder(&mut builder, &e)?;
-
-                        if builder.is_complete() {
-                            // Subtree complete, process it
-                            let mut editable = builder.build()?;
-                            handlers[idx].1(&mut editable);
-                            transform_count += 1;
-
-                            if !editable.is_removed() {
-                                serialize_editable(&editable, writer)?;
-                            }
-
-                            prev_written = after_pos;
-                            active_handler = None;
-                        } else {
-                            // Not complete yet, put back
-                            states[idx].builder = Some(builder);
-                        }
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::Text(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = e
-                            .unescape()
-                            .map_err(|err| TransformError::XmlParse(err.to_string()))?;
-                        builder.text(&text);
-                    }
-                }
-            }
-
-            Ok(Event::CData(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.cdata(text);
-                    }
-                }
-            }
-
-            Ok(Event::Comment(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.comment(text);
-                    }
-                }
-            }
-
-            Ok(Event::PI(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_pi_to_builder(builder, &e)?;
-                    }
-                }
-            }
-
-            Ok(Event::Eof) => {
-                // Write remaining (zero-copy)
-                writer.write_all(&input.as_bytes()[prev_written..])?;
-                break;
-            }
-
-            Ok(_) => {
-                // Decl, DocType, and PIs outside a match - pass through
-                // (copied verbatim with the surrounding input)
-            }
-
-            Err(e) => {
-                let byte_offset = reader.buffer_position() as usize;
-                return Err(xml_parse_error_with_location(
-                    format!("{:?}", e),
-                    byte_offset,
-                    input,
-                    Some(tracker.current_xpath()),
-                ));
-            }
-        }
-
-        buf.clear();
-    }
-
-    Ok(transform_count)
+    rewrite_str(input, &mut handlers, namespaces, writer)
 }
 
 /// Processes XML with streaming transformation and context for multiple XPath handlers in a single pass.
@@ -282,210 +92,18 @@ pub fn process_streaming_multi<'a, W: Write>(
 /// # Strategy: First-Match-Wins
 ///
 /// Uses the same first-match-wins strategy as [`process_streaming_multi`].
-#[allow(clippy::needless_range_loop)]
 pub fn process_streaming_multi_with_context<'a, W: Write>(
     input: &str,
     handlers: &mut [MultiTransformHandlerWithContext<'a>],
     namespaces: &HashMap<String, String>,
     writer: &mut W,
 ) -> TransformResult<usize> {
-    let (bom, input) = split_bom(input);
-    writer.write_all(bom.as_bytes())?;
-
-    let mut reader = Reader::from_str(input);
-    reader.config_mut().trim_text(false);
-
-    let mut tracker = PathTracker::for_xpaths(namespaces, handlers.iter().map(|(x, _)| *x));
-    let mut transform_count: usize = 0;
-    let mut buf = Vec::new();
-    let mut prev_written: usize = 0;
-
-    // Initialize handler states
-    let mut states: Vec<TransformHandlerState> = handlers
-        .iter()
-        .map(|(xpath, _)| TransformHandlerState {
+    let mut handlers: Vec<RewriteHandler<'_>> = handlers
+        .iter_mut()
+        .map(|(xpath, callback)| RewriteHandler {
             xpath,
-            builder: None,
-            match_context: None,
-            match_start_offset: 0,
+            callback: RewriteCallback::NodeWithContext(&mut **callback),
         })
         .collect();
-
-    // Track which handler is currently active (first-match-wins strategy)
-    let mut active_handler: Option<usize> = None;
-
-    loop {
-        let before_pos = reader.buffer_position() as usize;
-
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) => {
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                if let Some(idx) = active_handler {
-                    // Already inside matched subtree, keep buffering
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_start_to_builder(builder, &e, namespaces)?;
-                    }
-                } else {
-                    // Check each handler for a match (first-match-wins)
-                    for i in 0..states.len() {
-                        if tracker.matches(states[i].xpath) {
-                            // Match starts here!
-                            // 1. Write everything before this point (zero-copy)
-                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
-
-                            // 2. Capture context at match point
-                            states[i].match_context = Some(tracker.to_context());
-
-                            // 3. Start buffering subtree
-                            let mut builder = EditableNodeBuilder::new();
-                            builder.set_namespaces(namespaces.clone());
-                            add_start_to_builder(&mut builder, &e, namespaces)?;
-                            states[i].builder = Some(builder);
-                            states[i].match_start_offset = before_pos;
-                            active_handler = Some(i);
-                            break; // First match wins
-                        }
-                    }
-                }
-            }
-
-            Ok(Event::Empty(e)) => {
-                let after_pos = reader.buffer_position() as usize;
-                let element_info = extract_element_info(&e, before_pos)?;
-                tracker.push_element(element_info);
-
-                if let Some(idx) = active_handler {
-                    // Inside matched subtree
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_empty_to_builder(builder, &e, namespaces)?;
-                    }
-                } else {
-                    // Check each handler for a match (first-match-wins)
-                    for i in 0..states.len() {
-                        if tracker.matches(states[i].xpath) {
-                            // This empty element is a match
-                            writer.write_all(&input.as_bytes()[prev_written..before_pos])?;
-
-                            let ctx = tracker.to_context();
-
-                            let mut builder = EditableNodeBuilder::new();
-                            builder.set_namespaces(namespaces.clone());
-                            add_empty_to_builder(&mut builder, &e, namespaces)?;
-
-                            // Process immediately since it's complete
-                            let mut editable = builder.build()?;
-                            handlers[i].1(&mut editable, &ctx);
-                            transform_count += 1;
-
-                            if !editable.is_removed() {
-                                serialize_editable(&editable, writer)?;
-                            }
-
-                            prev_written = after_pos;
-                            break; // First match wins
-                        }
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::End(e)) => {
-                let after_pos = reader.buffer_position() as usize;
-
-                if let Some(idx) = active_handler {
-                    if let Some(mut builder) = states[idx].builder.take() {
-                        add_end_to_builder(&mut builder, &e)?;
-
-                        if builder.is_complete() {
-                            // Subtree complete, process it
-                            let mut editable = builder.build()?;
-                            let ctx = states[idx]
-                                .match_context
-                                .take()
-                                .unwrap_or_else(|| tracker.to_context());
-                            handlers[idx].1(&mut editable, &ctx);
-                            transform_count += 1;
-
-                            if !editable.is_removed() {
-                                serialize_editable(&editable, writer)?;
-                            }
-
-                            prev_written = after_pos;
-                            active_handler = None;
-                        } else {
-                            // Not complete yet, put back
-                            states[idx].builder = Some(builder);
-                        }
-                    }
-                }
-
-                tracker.pop_element();
-            }
-
-            Ok(Event::Text(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = e
-                            .unescape()
-                            .map_err(|err| TransformError::XmlParse(err.to_string()))?;
-                        builder.text(&text);
-                    }
-                }
-            }
-
-            Ok(Event::CData(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.cdata(text);
-                    }
-                }
-            }
-
-            Ok(Event::Comment(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        let text = std::str::from_utf8(&e).map_err(TransformError::Utf8)?;
-                        builder.comment(text);
-                    }
-                }
-            }
-
-            Ok(Event::PI(e)) => {
-                if let Some(idx) = active_handler {
-                    if let Some(ref mut builder) = states[idx].builder {
-                        add_pi_to_builder(builder, &e)?;
-                    }
-                }
-            }
-
-            Ok(Event::Eof) => {
-                // Write remaining (zero-copy)
-                writer.write_all(&input.as_bytes()[prev_written..])?;
-                break;
-            }
-
-            Ok(_) => {
-                // Decl, DocType, and PIs outside a match - pass through
-                // (copied verbatim with the surrounding input)
-            }
-
-            Err(e) => {
-                let byte_offset = reader.buffer_position() as usize;
-                return Err(xml_parse_error_with_location(
-                    format!("{:?}", e),
-                    byte_offset,
-                    input,
-                    Some(tracker.current_xpath()),
-                ));
-            }
-        }
-
-        buf.clear();
-    }
-
-    Ok(transform_count)
+    rewrite_str(input, &mut handlers, namespaces, writer)
 }
