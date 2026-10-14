@@ -534,6 +534,36 @@ mod tests {
     }
 
     #[test]
+    fn simple_content_base_and_element_value_constraints() {
+        for (body, ok) in [
+            (
+                r#"<xs:complexType name="c"><xs:simpleContent><xs:extension base="xs:string"/></xs:simpleContent></xs:complexType>"#,
+                true,
+            ),
+            (
+                r#"<xs:complexType name="c"><xs:simpleContent><xs:restriction base="xs:string"/></xs:simpleContent></xs:complexType>"#,
+                false,
+            ),
+            (
+                r#"<xs:complexType name="c"><xs:simpleContent><xs:extension base="xs:anyType"/></xs:simpleContent></xs:complexType>"#,
+                false,
+            ),
+            (r#"<xs:element name="e" type="xs:ID" default="a"/>"#, false),
+            (
+                r#"<xs:element name="e" fixed="a"><xs:complexType><xs:sequence><xs:element name="i"/></xs:sequence></xs:complexType></xs:element>"#,
+                false,
+            ),
+            (
+                r#"<xs:element name="e" fixed="a"><xs:complexType mixed="true"><xs:sequence><xs:element name="i" minOccurs="0"/></xs:sequence></xs:complexType></xs:element>"#,
+                true,
+            ),
+        ] {
+            let result = schema_of(body);
+            assert_eq!(result.is_ok(), ok, "{body}: {:?}", result.err());
+        }
+    }
+
+    #[test]
     fn rejects_global_id_attribute_with_default() {
         let result = schema_of(r#"<xs:attribute name="a" type="xs:ID" default="x"/>"#);
         assert!(result.is_err());

@@ -11,6 +11,8 @@ mod allowed_attributes;
 mod attribute_values;
 mod content_model;
 
+pub(super) use content_model::check_required_content;
+
 use std::collections::HashMap;
 
 use crate::error::Result;
@@ -241,6 +243,11 @@ impl XsdParser {
 
     /// Pushes the child-bookkeeping state for a newly opened XSD element.
     pub(super) fn push_child_state(&mut self, local: &str, attrs: &HashMap<String, String>) {
+        let parent = self
+            .child_state_stack
+            .last()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         self.child_state_stack.push(ChildState {
             name: local.to_string(),
             children_seen: 0,
@@ -253,6 +260,11 @@ impl XsdParser {
             is_ref: attrs.contains_key("ref"),
             has_type: attrs.contains_key("type"),
             attr_keys: std::collections::HashSet::new(),
+            has_base: ["base", "itemType", "memberTypes"]
+                .iter()
+                .any(|a| attrs.contains_key(*a)),
+            parent,
+            phase: 0,
         });
     }
 

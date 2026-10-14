@@ -87,6 +87,14 @@ pub(super) struct ChildState {
     /// Keys of attribute uses / attributeGroup refs seen in this scope, for
     /// duplicate detection.
     pub(super) attr_keys: std::collections::HashSet<String>,
+    /// Whether the element names its base or member types by attribute
+    /// (`base`, `itemType`, `memberTypes`).
+    pub(super) has_base: bool,
+    /// Local name of the parent XSD element (empty for the root).
+    pub(super) parent: String,
+    /// Position reached in the parent's ordered content (see
+    /// `content_phase`), so children out of order are rejected.
+    pub(super) phase: u8,
 }
 
 impl XsdParser {

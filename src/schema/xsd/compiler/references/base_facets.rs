@@ -65,13 +65,62 @@ impl Checker<'_> {
     /// element's `default`/`fixed` value must be valid for its simple type.
     pub(super) fn check_element_value(&self, element: &XsdElement) -> Result<()> {
         let value = element.default.as_deref().or(element.fixed.as_deref());
+        if value.is_none() {
+            return Ok(());
+        }
+        let invalid =
+            |message: String| -> Result<()> { Err(SchemaError::InvalidSchema { message }.into()) };
+        let complex = match (element.inline_type.as_deref(), &element.type_ref) {
+            (Some(XsdTypeDef::Complex(ct)), _) => Some(ct),
+            (None, Some(t)) => self.own_complex_type(t),
+            _ => None,
+        };
+        // Clause 2: a complex type takes a value constraint only with
+        // simple or mixed content.
+        if let Some(ct) = complex {
+            if !ct.mixed
+                && matches!(
+                    ct.content,
+                    XsdComplexContent::Particle(_) | XsdComplexContent::Empty
+                )
+            {
+                return invalid(format!(
+                    "element '{}': default/fixed needs simple or mixed content",
+                    element.name
+                ));
+            }
+            return Ok(());
+        }
         let inline = match element.inline_type.as_deref() {
             Some(XsdTypeDef::Simple(st)) => Some(st),
-            Some(XsdTypeDef::Complex(_)) => return Ok(()),
-            None => None,
+            _ => None,
         };
         let type_ref = element.type_ref.as_ref();
+        // Clause 5: no value constraint on an xs:ID-derived type.
+        let kind = match (type_ref, inline) {
+            (Some(t), _) => self.facets_of(t, 0).and_then(|(_, kind)| kind),
+            (None, Some(inline)) => self.facets_of_type(inline, 0).and_then(|(_, kind)| kind),
+            (None, None) => None,
+        };
+        if kind == Some(PrimitiveKind::Id) {
+            return invalid(format!(
+                "element '{}': an xs:ID-typed element cannot have default/fixed",
+                element.name
+            ));
+        }
         self.check_value_constraint("element", &element.name, value, type_ref, inline)
+    }
+
+    /// The top-level complex type `qname` names in this schema document.
+    fn own_complex_type(&self, qname: &QName) -> Option<&XsdComplexType> {
+        if self.resolve_ns(qname)? != tns_key(self.schema) {
+            return None;
+        }
+        let local = qname.local.trim();
+        self.schema.types.iter().find_map(|t| match t {
+            XsdTypeDef::Complex(ct) if ct.name.as_deref() == Some(local) => Some(ct),
+            _ => None,
+        })
     }
 
     /// Checks a value constraint in the primitive value space of the simple

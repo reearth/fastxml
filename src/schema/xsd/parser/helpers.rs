@@ -21,6 +21,16 @@ pub(super) fn parse_attributes(attrs: &[(&str, &str)]) -> HashMap<String, String
 pub(super) fn parse_occurs(attrs: &HashMap<String, String>) -> Result<(Occurs, Occurs)> {
     use crate::schema::error::SchemaError;
 
+    // minOccurs is a nonNegativeInteger: only maxOccurs can be unbounded.
+    if attrs
+        .get("minOccurs")
+        .is_some_and(|m| m.trim() == "unbounded")
+    {
+        return Err(SchemaError::InvalidOccurs {
+            value: "minOccurs cannot be 'unbounded'".to_string(),
+        }
+        .into());
+    }
     let min = if let Some(min_str) = attrs.get("minOccurs") {
         Occurs::parse(min_str).map_err(|e| SchemaError::InvalidOccurs { value: e })?
     } else {

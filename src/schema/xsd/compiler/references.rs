@@ -651,6 +651,33 @@ impl Checker<'_> {
     }
 
     /// Errors when a complexContent base resolves to a simple type.
+    /// Complex Type Definition Representation OK (§3.4.3 clause 2): the
+    /// base of simple content is never anyType (its content is not
+    /// simple), and a restriction's base is a complex type, not a simple
+    /// one.
+    fn check_simple_content_base(&self, base: &QName, restriction: bool) -> Result<()> {
+        let builtin = self.resolve_ns(base).as_deref() == Some(XSD_NS)
+            && !self
+                .tables
+                .types
+                .get(XSD_NS)
+                .is_some_and(|m| m.contains_key(base.local.trim()));
+        let local = base.local.trim();
+        let message = if builtin && local == "anyType" {
+            "simple content cannot derive from anyType"
+        } else if restriction && builtin && is_builtin_xsd_type_local(local) {
+            "a simple content restriction requires a complex base type"
+        } else if restriction {
+            return self.require_complex_type(base, "a simple content restriction");
+        } else {
+            return Ok(());
+        };
+        Err(SchemaError::InvalidSchema {
+            message: format!("{message}, found '{base}'"),
+        }
+        .into())
+    }
+
     fn require_complex_type(&self, qname: &QName, from: &str) -> Result<()> {
         if self.resolve_type_info(qname).is_some_and(|i| !i.is_complex) {
             return Err(SchemaError::InvalidSchema {
@@ -809,6 +836,7 @@ impl Checker<'_> {
             XsdComplexContent::SimpleContent(sc) => match &sc.derivation {
                 XsdSimpleContentDerivation::Extension(ext) => {
                     self.check_ref(RefKind::Type, &ext.base, &from)?;
+                    self.check_simple_content_base(&ext.base, false)?;
                     self.check_final(&ext.base, DerivationType::Extension, &from)?;
                     for attr in &ext.attributes {
                         self.check_attribute(attr, &from)?;
@@ -819,6 +847,7 @@ impl Checker<'_> {
                 }
                 XsdSimpleContentDerivation::Restriction(r) => {
                     self.check_ref(RefKind::Type, &r.base, &from)?;
+                    self.check_simple_content_base(&r.base, true)?;
                     self.check_final(&r.base, DerivationType::Restriction, &from)?;
                     check_facets(&r.facets, self.facet_base(Some(&r.base)))?;
                     for attr in &r.attributes {

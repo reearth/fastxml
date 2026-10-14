@@ -905,3 +905,61 @@ fn attributes_not_in_the_schema_for_schemas_are_rejected() {
         );
     }
 }
+
+#[test]
+fn content_order_and_placement_rules() {
+    let schema = |body: &str| {
+        format!("<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'>{body}</xs:schema>")
+    };
+    for body in [
+        // attributes before the particle, attribute after anyAttribute
+        "<xs:complexType name='c'><xs:attribute name='a'/><xs:sequence/></xs:complexType>",
+        "<xs:complexType name='c'><xs:anyAttribute/><xs:attribute name='a'/></xs:complexType>",
+        "<xs:complexType name='c'><xs:complexContent><xs:extension base='xs:anyType'><xs:attributeGroup ref='g'/><xs:choice/></xs:extension></xs:complexContent></xs:complexType>",
+        // simpleContent admits no particle; its extension no facet
+        "<xs:complexType name='c'><xs:simpleContent><xs:extension base='xs:string'><xs:sequence/></xs:extension></xs:simpleContent></xs:complexType>",
+        "<xs:complexType name='c'><xs:simpleContent><xs:extension base='xs:string'><xs:length value='5'/></xs:extension></xs:simpleContent></xs:complexType>",
+        // facets come before attributes
+        "<xs:complexType name='c'><xs:simpleContent><xs:restriction base='x'><xs:attribute name='a'/><xs:length value='5'/></xs:restriction></xs:simpleContent></xs:complexType>",
+        // simpleContent / complexContent need a derivation
+        "<xs:complexType name='c'><xs:complexContent/></xs:complexType>",
+        "<xs:complexType name='c'><xs:simpleContent><xs:annotation/></xs:simpleContent></xs:complexType>",
+        // other syntax
+        "<xs:complexType name='c'><xs:sequence><xs:element name='e' minOccurs='unbounded'/></xs:sequence></xs:complexType>",
+        "<xs:complexType name='c' xs:type='xs:int'/>",
+        "<xs:attribute name='xmlns'/>",
+        // simple type structure
+        "<xs:simpleType name='s'><xs:annotation/></xs:simpleType>",
+        "<xs:simpleType name='s'><xs:union/></xs:simpleType>",
+        "<xs:simpleType name='s'><xs:restriction base='xs:string'><xs:simpleType><xs:restriction base='xs:string'/></xs:simpleType></xs:restriction></xs:simpleType>",
+        "<xs:simpleType name='s'><xs:list itemType='xs:int'><xs:simpleType><xs:restriction base='xs:int'/></xs:simpleType></xs:list></xs:simpleType>",
+        "<xs:simpleType><xs:restriction base='xs:string'/></xs:simpleType>",
+        // local elements, named group bodies
+        "<xs:complexType name='c'><xs:sequence><xs:element name='e' abstract='true'/></xs:sequence></xs:complexType>",
+        "<xs:group name='g'><xs:sequence minOccurs='0'/></xs:group>",
+    ] {
+        assert!(
+            parse_xsd_ast(schema(body).as_bytes()).is_err(),
+            "should reject: {body}"
+        );
+    }
+    for body in [
+        "<xs:complexType name='c'><xs:sequence/><xs:attribute name='a'/><xs:attributeGroup ref='g'/><xs:attribute name='b'/><xs:anyAttribute/></xs:complexType>",
+        "<xs:complexType name='c'><xs:simpleContent><xs:restriction base='x'><xs:simpleType><xs:restriction base='xs:string'/></xs:simpleType><xs:length value='5'/><xs:pattern value='a*'/><xs:attribute name='a'/></xs:restriction></xs:simpleContent></xs:complexType>",
+        "<xs:simpleType name='s'><xs:restriction base='xs:string'><xs:length value='5'/><xs:pattern value='a*'/></xs:restriction></xs:simpleType>",
+        "<xs:simpleType name='s'><xs:union memberTypes='xs:int'><xs:simpleType><xs:restriction base='xs:string'/></xs:simpleType><xs:simpleType><xs:restriction base='xs:date'/></xs:simpleType></xs:union></xs:simpleType>",
+        "<xs:simpleType name='s'><xs:list><xs:simpleType><xs:restriction base='xs:int'/></xs:simpleType></xs:list></xs:simpleType>",
+        "<xs:group name='g'><xs:sequence><xs:element name='e' minOccurs='0'/></xs:sequence></xs:group>",
+    ] {
+        assert!(
+            parse_xsd_ast(schema(body).as_bytes()).is_ok(),
+            "should accept: {body}"
+        );
+    }
+}
+
+#[test]
+fn empty_target_namespace_is_rejected() {
+    let xsd = "<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema' targetNamespace=''/>";
+    assert!(parse_xsd_ast(xsd.as_bytes()).is_err());
+}

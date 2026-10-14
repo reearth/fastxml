@@ -112,8 +112,19 @@ impl XsdParser {
         let Some(allowed) = allowed(local) else {
             return Ok(());
         };
+        let xsd_prefix = match &self.xsd_prefix {
+            Some(Some(prefix)) => Some(prefix.as_str()),
+            _ => None,
+        };
         for name in attrs.keys() {
-            if name.contains(':') || name == "xmlns" || name == "id" {
+            if let Some((prefix, _)) = name.split_once(':') {
+                // Attributes in the XSD namespace itself are not allowed.
+                if Some(prefix) == xsd_prefix {
+                    return invalid(format!("attribute '{name}' is not allowed on '{local}'"));
+                }
+                continue;
+            }
+            if name == "xmlns" || name == "id" {
                 continue;
             }
             if !allowed.contains(&name.as_str()) {
@@ -121,15 +132,34 @@ impl XsdParser {
             }
         }
 
+        // no-xmlns: an attribute declaration cannot be named xmlns.
+        if local == "attribute" && attrs.get("name").is_some_and(|n| n.trim() == "xmlns") {
+            return invalid("an attribute cannot be named 'xmlns'".to_string());
+        }
+
         let top_level = matches!(
             self.stack.last(),
             Some(StackFrame::Schema | StackFrame::Redefine(_) | StackFrame::Override(_)) | None
         );
+        if top_level && matches!(local, "complexType" | "simpleType") && !attrs.contains_key("name")
+        {
+            return invalid(format!("a top-level '{local}' requires a 'name'"));
+        }
+        // The model group of a named group definition has no occurrence
+        // bounds of its own (the group references carry them).
+        let in_group_definition = self
+            .child_state_stack
+            .last()
+            .is_some_and(|p| p.name == "group");
         let forbidden: &[&str] = match (local, top_level) {
             ("element", true) => &["ref", "form", "minOccurs", "maxOccurs"],
+            ("element", false) => &["abstract", "final", "substitutionGroup"],
             ("attribute", true) => &["ref", "form", "use"],
             ("group" | "attributeGroup", true) => &["ref", "minOccurs", "maxOccurs"],
             ("complexType" | "simpleType", false) => &["name"],
+            ("sequence" | "choice" | "all", false) if in_group_definition => {
+                &["minOccurs", "maxOccurs"]
+            }
             _ => &[],
         };
         if let Some(name) = forbidden.iter().find(|a| attrs.contains_key(**a)) {
