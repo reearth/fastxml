@@ -22,7 +22,7 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ```toml
 [dependencies]
-fastxml = "0.11"
+fastxml = "0.12"
 ```
 
 | Feature | Description |
@@ -33,8 +33,8 @@ fastxml = "0.11"
 | `compare-libxml` | Enable libxml2 comparison tests |
 
 ```toml
-fastxml = { version = "0.11", features = ["ureq"] }   # sync schema fetching
-fastxml = { version = "0.11", features = ["tokio"] }  # async schema fetching
+fastxml = { version = "0.12", features = ["ureq"] }   # sync schema fetching
+fastxml = { version = "0.12", features = ["tokio"] }  # async schema fetching
 ```
 
 ## Quick start
