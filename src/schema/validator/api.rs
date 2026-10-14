@@ -6,7 +6,11 @@
 //! The policy, shared by the DOM and streaming engines:
 //!
 //! - Every hinted schema, and everything it imports, includes or redefines,
-//!   must be fetched, parsed and compiled. If any step fails — or the root
+//!   must be fetched, parsed and compiled. The one exception is a hint that
+//!   cannot be fetched for a namespace another loaded schema already
+//!   provides: a hint is only a hint (XSD 1.0 §4.3.2), so it is skipped
+//!   with a warning, as libxml2 skips a second location for a namespace it
+//!   has imported. If any other step fails — or the root
 //!   element carries no hint at all, or a hint is malformed — the report gets
 //!   an error-level [`SchemaNotFound`](ValidationErrorType::SchemaNotFound)
 //!   entry naming what failed, and the document content is **not** validated
@@ -133,6 +137,47 @@ fn compile(
     Ok(compiled)
 }
 
+/// A hinted schema compiled, with warnings about hints skipped on the way;
+/// or the error-level entries explaining why there is no schema.
+pub(crate) type LoadedSchema =
+    std::result::Result<(CompiledSchema, Vec<StructuredError>), Vec<StructuredError>>;
+
+fn skipped_hint_warning(hint: &SchemaHint, e: &crate::error::Error) -> StructuredError {
+    StructuredError::new(
+        format!(
+            "skipped schema '{}' named by the {}: it could not be fetched ({e}), and another              loaded schema already provides that namespace",
+            hint.location,
+            hint.describe()
+        ),
+        ValidationErrorType::SchemaNotFound,
+    )
+    .with_level(ErrorLevel::Warning)
+}
+
+/// Settles the hints whose fetch failed once every other hint is loaded:
+/// one for a namespace a loaded schema provides becomes a warning, any other
+/// an error.
+fn settle_unreachable_hints(
+    unreachable: Vec<(&SchemaHint, crate::error::Error)>,
+    schemas: &[crate::schema::xsd::types::XsdSchema],
+    errors: &mut Vec<StructuredError>,
+) -> Vec<StructuredError> {
+    let mut warnings = Vec::new();
+    for (hint, e) in unreachable {
+        let provided = hint.namespace.as_deref().is_some_and(|ns| {
+            schemas
+                .iter()
+                .any(|s| s.target_namespace.as_deref() == Some(ns))
+        });
+        if provided {
+            warnings.push(skipped_hint_warning(hint, &e));
+        } else {
+            errors.push(fetch_failed_error(hint, &e));
+        }
+    }
+    warnings
+}
+
 /// Loads every hinted schema with its dependencies and compiles them.
 ///
 /// `Err` carries the error-level entries explaining why the schema is not
@@ -140,8 +185,9 @@ fn compile(
 pub(crate) fn load_hinted_schema<F: SchemaFetcher>(
     hints: &SchemaHints,
     fetcher: &F,
-) -> std::result::Result<CompiledSchema, Vec<StructuredError>> {
+) -> LoadedSchema {
     let mut errors = hint_errors(hints);
+    let mut unreachable = Vec::new();
     // One resolver for all hints, so shared dependencies are fetched once.
     let mut resolver = crate::schema::xsd::SchemaResolver::new(fetcher);
     for hint in &hints.hints {
@@ -151,13 +197,15 @@ pub(crate) fn load_hinted_schema<F: SchemaFetcher>(
                     errors.push(load_failed_error(hint, &e));
                 }
             }
-            Err(e) => errors.push(fetch_failed_error(hint, &e)),
+            Err(e) => unreachable.push((hint, e)),
         }
     }
+    let schemas = resolver.take_all_schemas();
+    let warnings = settle_unreachable_hints(unreachable, &schemas, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
-    compile(resolver.take_all_schemas())
+    compile(schemas).map(|schema| (schema, warnings))
 }
 
 /// Async counterpart of [`load_hinted_schema`].
@@ -165,8 +213,9 @@ pub(crate) fn load_hinted_schema<F: SchemaFetcher>(
 pub(crate) async fn load_hinted_schema_async<F: crate::schema::fetcher::AsyncSchemaFetcher>(
     hints: &SchemaHints,
     fetcher: &F,
-) -> std::result::Result<CompiledSchema, Vec<StructuredError>> {
+) -> LoadedSchema {
     let mut errors = hint_errors(hints);
+    let mut unreachable = Vec::new();
     let mut resolver = crate::schema::xsd::AsyncSchemaResolver::new(fetcher);
     for hint in &hints.hints {
         match fetcher.fetch(&hint.location).await {
@@ -178,22 +227,27 @@ pub(crate) async fn load_hinted_schema_async<F: crate::schema::fetcher::AsyncSch
                     errors.push(load_failed_error(hint, &e));
                 }
             }
-            Err(e) => errors.push(fetch_failed_error(hint, &e)),
+            Err(e) => unreachable.push((hint, e)),
         }
     }
+    let schemas = resolver.take_all_schemas();
+    let warnings = settle_unreachable_hints(unreachable, &schemas, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
-    compile(resolver.take_all_schemas())
+    compile(schemas).map(|schema| (schema, warnings))
 }
 
 fn validate_dom_with(
     doc: &XmlDocument,
-    loaded: std::result::Result<CompiledSchema, Vec<StructuredError>>,
+    loaded: LoadedSchema,
     settings: EngineSettings,
 ) -> Result<Vec<StructuredError>> {
     match loaded {
-        Ok(schema) => settings.dom(Arc::new(schema)).validate(doc),
+        Ok((schema, mut entries)) => {
+            entries.extend(settings.dom(Arc::new(schema)).validate(doc)?);
+            Ok(entries)
+        }
         Err(errors) => Ok(errors),
     }
 }
@@ -230,14 +284,15 @@ pub(crate) async fn validate_dom_autodetect_async<F: crate::schema::fetcher::Asy
 /// way.
 fn validate_streaming_with<R: BufRead>(
     replay: R,
-    loaded: std::result::Result<CompiledSchema, Vec<StructuredError>>,
+    loaded: LoadedSchema,
     settings: EngineSettings,
 ) -> Result<Vec<StructuredError>> {
     match loaded {
-        Ok(schema) => {
-            let (entries, _counters) = settings
+        Ok((schema, mut entries)) => {
+            let (errors, _counters) = settings
                 .streaming(Arc::new(schema))
                 .validate_capturing(replay)?;
+            entries.extend(errors);
             Ok(entries)
         }
         Err(errors) => {
@@ -274,10 +329,11 @@ pub(crate) fn validate_streaming_autodetect_bytes<F: SchemaFetcher>(
         return Ok(vec![no_hints_error()]);
     };
     match load_hinted_schema(&hints, fetcher) {
-        Ok(schema) => {
-            let (entries, _counters) = settings
+        Ok((schema, mut entries)) => {
+            let (errors, _counters) = settings
                 .streaming(Arc::new(schema))
                 .validate_capturing_bytes(xml)?;
+            entries.extend(errors);
             Ok(entries)
         }
         Err(errors) => {
