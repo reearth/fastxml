@@ -1,6 +1,6 @@
 //! rcase-NameAndTypeOK: one element declaration restricting another.
 
-use crate::schema::types::{CompiledSchema, ElementDef, TypeDef};
+use crate::schema::types::{BlockSet, CompiledSchema, ElementDef, TypeDef};
 
 use super::Verdict::{self, Ok as VOk, Unknown, Violation};
 use super::{builtin_parent, local_name};
@@ -70,6 +70,17 @@ pub(super) fn element_restrict(
             de.name
         ));
     }
+    // The restriction disallows at least the substitutions the base does.
+    if let (Some(db), Some(bb)) = (block_of(de, schema), block_of(be, schema))
+        && ((bb.extension && !db.extension)
+            || (bb.restriction && !db.restriction)
+            || (bb.substitution && !db.substitution))
+    {
+        return Violation(format!(
+            "element '{}' blocks fewer substitutions than the base element",
+            de.name
+        ));
+    }
     match fixed_ok(de, be, schema) {
         VOk => type_derivation_ok(de, be, schema),
         other => other,
@@ -86,6 +97,15 @@ pub(super) fn known_namespace<'a>(e: &'a ElementDef, schema: &CompiledSchema) ->
         return None;
     }
     e.namespace.as_deref()
+}
+
+/// The `block` of an element declaration: a reference's is its target's,
+/// unknown when the target is not in this schema.
+fn block_of(e: &ElementDef, schema: &CompiledSchema) -> Option<BlockSet> {
+    match &e.ref_ns {
+        Some(r) => schema.elements_ns.get(r).map(|g| g.block),
+        None => Some(e.block),
+    }
 }
 
 /// rcase-NameAndTypeOK clause 4: when the base element has a fixed value,

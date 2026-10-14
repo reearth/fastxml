@@ -283,6 +283,9 @@ impl XsdCompiler {
         }
 
         let mut compiled = ElementDef::new(&elem.name);
+        compiled.block = super::types::compile_block_set(
+            elem.block.as_ref().or(self.current_block_default.as_ref()),
+        );
         // A local declaration is in the declaring document's target
         // namespace when qualified, in no namespace otherwise (global
         // declarations are re-qualified by the caller).

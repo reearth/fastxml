@@ -669,6 +669,11 @@ impl Checker<'_> {
             "a simple content restriction requires a complex base type"
         } else if restriction {
             return self.require_complex_type(base, "a simple content restriction");
+        } else if self
+            .own_complex_type(base)
+            .is_some_and(|ct| !matches!(ct.content, XsdComplexContent::SimpleContent(_)))
+        {
+            "a simple content extension requires a simple type or simple content"
         } else {
             return Ok(());
         };
@@ -861,6 +866,20 @@ impl Checker<'_> {
             XsdComplexContent::ComplexContent(cc) => match &cc.derivation {
                 XsdComplexContentDerivation::Extension(ext) => {
                     self.check_ref(RefKind::Type, &ext.base, &from)?;
+                    // cos-ct-extends 1.4: simple content stays simple.
+                    if ext.particle.is_some()
+                        && self.own_complex_type(&ext.base).is_some_and(|b| {
+                            matches!(b.content, XsdComplexContent::SimpleContent(_))
+                        })
+                    {
+                        return Err(SchemaError::InvalidSchema {
+                            message: format!(
+                                "{from} cannot add content to the simple content of '{}'",
+                                ext.base
+                            ),
+                        }
+                        .into());
+                    }
                     self.require_complex_type(&ext.base, "complexContent extension base")?;
                     self.check_final(&ext.base, DerivationType::Extension, &from)?;
                     if let Some(p) = &ext.particle {

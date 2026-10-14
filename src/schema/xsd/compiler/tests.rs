@@ -116,3 +116,160 @@ fn test_compile_extension() {
         panic!("Expected complex type");
     }
 }
+
+/// Compiles a schema in namespace `http://t` with `body` as its content.
+fn compile_body(body: &str) -> crate::error::Result<CompiledSchema> {
+    let xsd = format!(
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+            targetNamespace="http://t" xmlns:x="http://t">{body}</xs:schema>"#
+    );
+    compile_schemas(vec![parse_xsd_ast(xsd.as_bytes())?])
+}
+
+#[test]
+fn attribute_uses_under_restriction() {
+    let base = r###"<xs:complexType name="B">
+        <xs:attribute name="req" use="required"/>
+        <xs:attribute name="fix" fixed="1" type="xs:int"/>
+        <xs:attribute name="opt"/>
+    </xs:complexType>
+    <xs:complexType name="W"><xs:anyAttribute namespace="##local"/></xs:complexType>"###;
+    let restrict = |base_type: &str, body: &str| {
+        format!(
+            r#"{base}<xs:complexType name="R"><xs:complexContent>
+               <xs:restriction base="x:{base_type}">{body}</xs:restriction>
+               </xs:complexContent></xs:complexType>"#
+        )
+    };
+    for (what, base_type, body, ok) in [
+        (
+            "keeps required",
+            "B",
+            r#"<xs:attribute name="req" use="required"/>"#,
+            true,
+        ),
+        (
+            "loosens required",
+            "B",
+            r#"<xs:attribute name="req"/>"#,
+            false,
+        ),
+        (
+            "prohibits required",
+            "B",
+            r#"<xs:attribute name="req" use="prohibited"/>"#,
+            false,
+        ),
+        (
+            "same fixed value",
+            "B",
+            r#"<xs:attribute name="fix" fixed="01" type="xs:int"/>"#,
+            true,
+        ),
+        (
+            "other fixed value",
+            "B",
+            r#"<xs:attribute name="fix" fixed="2" type="xs:int"/>"#,
+            false,
+        ),
+        (
+            "prohibits optional",
+            "B",
+            r#"<xs:attribute name="opt" use="prohibited"/>"#,
+            true,
+        ),
+        (
+            "adds an attribute",
+            "B",
+            r#"<xs:attribute name="new"/>"#,
+            false,
+        ),
+        ("adds a wildcard", "B", "<xs:anyAttribute/>", false),
+        (
+            "attribute within the wildcard",
+            "W",
+            r#"<xs:attribute name="new"/>"#,
+            true,
+        ),
+        (
+            "narrower wildcard",
+            "W",
+            r###"<xs:anyAttribute namespace="##local"/>"###,
+            true,
+        ),
+        ("wider wildcard", "W", "<xs:anyAttribute/>", false),
+    ] {
+        let result = compile_body(&restrict(base_type, body));
+        assert_eq!(result.is_ok(), ok, "{what}: {:?}", result.err());
+    }
+}
+
+#[test]
+fn value_constraints_meet_every_facet() {
+    let colors = r#"<xs:simpleType name="Color"><xs:restriction base="xs:string">
+        <xs:enumeration value="red"/><xs:enumeration value="blue"/>
+    </xs:restriction></xs:simpleType>
+    <xs:attribute name="g" type="xs:int" fixed="7"/>"#;
+    for (what, body, ok) in [
+        (
+            "enumerated default",
+            r#"<xs:element name="e" type="x:Color" default="red"/>"#,
+            true,
+        ),
+        (
+            "default outside the enumeration",
+            r#"<xs:element name="e" type="x:Color" default="green"/>"#,
+            false,
+        ),
+        (
+            "nested attribute outside the enumeration",
+            r#"<xs:complexType name="c"><xs:attribute name="a" type="x:Color" fixed="green"/></xs:complexType>"#,
+            false,
+        ),
+        (
+            "use repeating the fixed value",
+            r#"<xs:complexType name="c"><xs:attribute ref="x:g" fixed="07"/></xs:complexType>"#,
+            true,
+        ),
+        (
+            "use changing the fixed value",
+            r#"<xs:complexType name="c"><xs:attribute ref="x:g" fixed="8"/></xs:complexType>"#,
+            false,
+        ),
+        (
+            "attribute twice through a group",
+            r#"<xs:attributeGroup name="ag"><xs:attribute name="a"/></xs:attributeGroup>
+               <xs:complexType name="c"><xs:attribute name="a"/><xs:attributeGroup ref="x:ag"/></xs:complexType>"#,
+            false,
+        ),
+    ] {
+        let result = compile_body(&format!("{colors}{body}"));
+        assert_eq!(result.is_ok(), ok, "{what}: {:?}", result.err());
+    }
+}
+
+#[test]
+fn simple_content_extension_bases() {
+    let element_only = r#"<xs:complexType name="E"><xs:sequence><xs:element name="i"/></xs:sequence></xs:complexType>
+        <xs:complexType name="S"><xs:simpleContent><xs:extension base="xs:string"/></xs:simpleContent></xs:complexType>"#;
+    for (what, body, ok) in [
+        (
+            "simple content from simple content",
+            r#"<xs:complexType name="c"><xs:simpleContent><xs:extension base="x:S"/></xs:simpleContent></xs:complexType>"#,
+            true,
+        ),
+        (
+            "simple content from element-only content",
+            r#"<xs:complexType name="c"><xs:simpleContent><xs:extension base="x:E"/></xs:simpleContent></xs:complexType>"#,
+            false,
+        ),
+        (
+            "elements added to simple content",
+            r#"<xs:complexType name="c"><xs:complexContent><xs:extension base="x:S"><xs:sequence><xs:element name="i"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>"#,
+            false,
+        ),
+    ] {
+        let result = compile_body(&format!("{element_only}{body}"));
+        assert_eq!(result.is_ok(), ok, "{what}: {:?}", result.err());
+    }
+}

@@ -112,7 +112,7 @@ impl Checker<'_> {
     }
 
     /// The top-level complex type `qname` names in this schema document.
-    fn own_complex_type(&self, qname: &QName) -> Option<&XsdComplexType> {
+    pub(super) fn own_complex_type(&self, qname: &QName) -> Option<&XsdComplexType> {
         if self.resolve_ns(qname)? != tns_key(self.schema) {
             return None;
         }

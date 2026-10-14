@@ -3,10 +3,12 @@
 //! This module compiles parsed XSD schemas into the runtime validation
 //! representation (CompiledSchema).
 
+mod attribute_restriction;
 mod cache;
 mod cycles;
 mod facet_checks;
 mod validity;
+mod value_constraints;
 pub(crate) use cache::{
     build_complex_automaton, collect_elements_with_inheritance, flatten_type_children,
     substitution_index,
@@ -191,6 +193,10 @@ impl XsdCompiler {
         // resolution ambiguous (and rejection unsafe).
         if single_document {
             restriction::check_particle_restrictions(&result)?;
+            restriction::for_each_complex_type(&result, |ct, what| {
+                attribute_restriction::check_attribute_restriction(ct, what, &result)
+            })?;
+            value_constraints::check_value_constraints(&result)?;
         }
 
         validity::check_schema_validity(&result)?;
