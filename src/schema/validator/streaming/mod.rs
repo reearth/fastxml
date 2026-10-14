@@ -204,7 +204,23 @@ impl OnePassSchemaValidator {
         self,
         reader: R,
     ) -> Result<(Vec<StructuredError>, super::ValidationCounters)> {
-        let mut parser = StreamingParser::new(reader);
+        self.capture_with(StreamingParser::new(reader))
+    }
+
+    /// [`validate_capturing`](Self::validate_capturing) over an in-memory
+    /// document, read in place.
+    pub(crate) fn validate_capturing_bytes(
+        self,
+        xml: &[u8],
+    ) -> Result<(Vec<StructuredError>, super::ValidationCounters)> {
+        let xml = crate::parser::source::normalize_line_ends(xml.into())?;
+        self.capture_with(StreamingParser::from_slice(&xml))
+    }
+
+    fn capture_with<'i, S: crate::parser::source::EventSource<'i>>(
+        self,
+        mut parser: StreamingParser<S>,
+    ) -> Result<(Vec<StructuredError>, super::ValidationCounters)> {
         parser.add_handler(Box::new(self));
         parser.parse()?;
 

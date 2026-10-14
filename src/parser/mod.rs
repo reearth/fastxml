@@ -11,73 +11,95 @@ pub(crate) mod encoding;
 pub(crate) mod entities;
 pub(crate) mod eol;
 pub(crate) mod expand;
+pub(crate) mod source;
 pub(crate) mod wellformed;
 
-use std::collections::HashMap;
 use std::io::BufRead;
+use std::sync::Arc;
 
 use quick_xml::Reader;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 use smallvec::SmallVec;
 
 use crate::document::{DocumentBuilder, ParsedAttr, XmlDocument};
 use crate::error::Result;
 use crate::namespace::common::XSI_NS;
 use crate::namespace::{Namespace, split_qname};
-use crate::position::PositionTrackingReader;
-use eol::EolNormalizer;
+use checks::StartTag;
 use expand::{EntityExpander, Segment, TextExpansion};
+use source::{EventSource, SliceSource};
 
-/// Stack of namespace bindings for tracking scope during parsing.
+/// Namespace bindings in scope while parsing, kept as an undo log.
 ///
-/// Each scope contains a map of prefix -> URI bindings. When entering a new
-/// element, a new scope is pushed. When leaving an element, the scope is popped.
-#[derive(Debug, Default)]
+/// `bindings` holds the declarations of every open element, innermost last,
+/// and `marks` records where each open element's declarations start, so
+/// leaving an element truncates back to its mark. A lookup scans from the end,
+/// so the innermost binding of a prefix wins. Documents bind a few dozen
+/// prefixes at most, which a backwards scan resolves faster than hashing the
+/// prefix once per open scope. URIs are interned by the document builder, so
+/// resolving hands out a shared string without another lookup.
+#[derive(Debug)]
 struct NamespaceStack {
-    /// Stack of scopes, each containing prefix -> URI mappings
-    scopes: Vec<HashMap<String, String>>,
+    bindings: Vec<(Box<str>, Arc<str>)>,
+    marks: Vec<usize>,
+    /// The XML namespace, which the `xml` prefix is always bound to.
+    xml_ns: Arc<str>,
+    /// Prefixes resolved since the bindings last changed. Elements reuse a
+    /// handful of prefixes while the bindings, mostly declared on the root,
+    /// rarely change, so this saves scanning past dozens of them per element.
+    resolved: rustc_hash::FxHashMap<Box<str>, Option<Arc<str>>>,
 }
 
 impl NamespaceStack {
-    /// Creates a new empty namespace stack.
+    /// Creates a stack with no bindings.
     fn new() -> Self {
         Self {
-            scopes: vec![HashMap::new()], // Start with one scope
+            bindings: Vec::new(),
+            marks: Vec::new(),
+            xml_ns: Arc::from(crate::namespace::common::XML_NS),
+            resolved: rustc_hash::FxHashMap::default(),
         }
     }
 
-    /// Pushes a new scope onto the stack.
+    /// Opens the scope of a new element.
     fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.marks.push(self.bindings.len());
     }
 
-    /// Pops the current scope from the stack.
+    /// Closes the innermost element's scope, dropping its declarations.
     fn pop_scope(&mut self) {
-        if self.scopes.len() > 1 {
-            self.scopes.pop();
-        }
-    }
-
-    /// Registers a namespace binding in the current scope.
-    fn register(&mut self, prefix: &str, uri: &str) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(prefix.to_string(), uri.to_string());
-        }
-    }
-
-    /// Resolves a prefix to its namespace URI by searching from current scope
-    /// up to root. The `xml` prefix is always bound to the XML namespace.
-    fn resolve(&self, prefix: &str) -> Option<&str> {
-        if prefix == "xml" {
-            return Some(crate::namespace::common::XML_NS);
-        }
-        // Search from innermost to outermost scope
-        for scope in self.scopes.iter().rev() {
-            if let Some(uri) = scope.get(prefix) {
-                return Some(uri.as_str());
+        if let Some(mark) = self.marks.pop() {
+            if mark < self.bindings.len() {
+                self.bindings.truncate(mark);
+                self.resolved.clear();
             }
         }
-        None
+    }
+
+    /// Binds `prefix` (`""` for the default namespace) to `uri` in the
+    /// innermost scope.
+    fn register(&mut self, prefix: &str, uri: Arc<str>) {
+        self.bindings.push((Box::from(prefix), uri));
+        self.resolved.clear();
+    }
+
+    /// Resolves a prefix to its namespace URI, innermost binding first. The
+    /// `xml` prefix is always bound to the XML namespace.
+    fn resolve(&mut self, prefix: &str) -> Option<Arc<str>> {
+        if prefix == "xml" {
+            return Some(self.xml_ns.clone());
+        }
+        if let Some(uri) = self.resolved.get(prefix) {
+            return uri.clone();
+        }
+        let uri = self
+            .bindings
+            .iter()
+            .rev()
+            .find(|(p, _)| &**p == prefix)
+            .map(|(_, uri)| uri.clone());
+        self.resolved.insert(Box::from(prefix), uri.clone());
+        uri
     }
 }
 
@@ -141,7 +163,14 @@ pub(crate) fn parse_with_options<T: AsRef<[u8]>>(
     options: &ParserOptions,
 ) -> Result<XmlDocument> {
     let xml = encoding::to_utf8(xml.as_ref());
-    parse_from_bufread(xml.as_ref(), options)
+    let xml = source::normalize_line_ends(xml)?;
+    // Markup-dense XML averages a node per few dozen bytes (CityGML DEM: one
+    // per ~31); reserving for one per 32 bytes saves most regrowth copies,
+    // and capacity a text-heavy document leaves unused is never touched.
+    let builder = DocumentBuilder::with_node_capacity(xml.len() / 32);
+    let mut source = SliceSource::new(&xml);
+    configure_reader(source.reader_mut(), options);
+    parse_from_source(source, options, builder)
 }
 
 /// Parses XML from a BufRead source.
@@ -149,26 +178,26 @@ pub(crate) fn parse_from_bufread<R: BufRead>(
     reader: R,
     options: &ParserOptions,
 ) -> Result<XmlDocument> {
-    let tracking_reader = PositionTrackingReader::new(EolNormalizer::new(reader));
-    let mut xml_reader = Reader::from_reader(tracking_reader);
-    configure_reader(&mut xml_reader, options);
-    parse_from_reader(&mut xml_reader, options)
+    let mut reader = source::reader_source(reader);
+    configure_reader(&mut reader, options);
+    parse_from_source(reader, options, DocumentBuilder::new())
 }
 
-fn configure_reader<R: BufRead>(reader: &mut Reader<R>, options: &ParserOptions) {
+fn configure_reader<R>(reader: &mut Reader<R>, options: &ParserOptions) {
     reader.config_mut().trim_text(options.trim_text);
     reader.config_mut().expand_empty_elements = options.expand_empty_elements;
     reader.config_mut().check_end_names = options.check_end_names;
     reader.config_mut().check_comments = options.check_comments;
 }
 
-fn parse_from_reader<R: BufRead>(
-    reader: &mut Reader<PositionTrackingReader<EolNormalizer<R>>>,
+fn parse_from_source<'i>(
+    mut reader: impl EventSource<'i>,
     options: &ParserOptions,
+    builder: DocumentBuilder,
 ) -> Result<XmlDocument> {
     let mut dom = DomBuilder {
         options,
-        builder: DocumentBuilder::new(),
+        builder,
         memory_used: 0,
         ns_stack: NamespaceStack::new(),
         expander: EntityExpander::new(),
@@ -177,9 +206,14 @@ fn parse_from_reader<R: BufRead>(
     let mut buf = Vec::with_capacity(options.buffer_size);
 
     loop {
-        let event = reader.read_event_into(&mut buf);
-        let position = reader.get_ref();
-        let (line, column) = (position.line(), position.column());
+        let event = reader.next_event(&mut buf);
+        // Only elements record a position: start tags, and the elements an
+        // entity reference in text expands to.
+        let (line, column) = match &event {
+            Ok(Event::Start(_) | Event::Empty(_)) => reader.line_column(),
+            Ok(Event::Text(t)) if memchr::memchr(b'&', t).is_some() => reader.line_column(),
+            _ => (0, 0),
+        };
         match event {
             Ok(Event::Decl(ref e)) => {
                 dom.checker.decl(std::str::from_utf8(e.as_ref())?)?;
@@ -199,7 +233,7 @@ fn parse_from_reader<R: BufRead>(
             Ok(ref e) => dom.event(e, line, column)?,
             Err(e) => {
                 return Err(crate::parser::error::ParseError::AtPosition {
-                    position: reader.buffer_position(),
+                    position: reader.error_position(),
                     message: e.to_string(),
                 }
                 .into());
@@ -230,16 +264,17 @@ impl DomBuilder<'_> {
         match event {
             Event::Start(e) => {
                 check_memory(self.options, &mut self.memory_used, e.len())?;
-                self.checker.start(e)?;
-                self.start_element(e, line, column)?;
+                let tag = StartTag::decode(e)?;
+                self.checker.start(&tag)?;
+                self.start_element(&tag, line, column)?;
             }
             Event::Empty(e) => {
                 check_memory(self.options, &mut self.memory_used, e.len())?;
-                self.checker.start(e)?;
-                self.start_element(e, line, column)?;
+                let tag = StartTag::decode(e)?;
+                self.checker.start(&tag)?;
+                self.start_element(&tag, line, column)?;
                 // An empty-element tag opens and immediately closes.
-                self.checker
-                    .end(std::str::from_utf8(e.name().into_inner())?)?;
+                self.checker.end(tag.qname)?;
                 self.ns_stack.pop_scope();
                 self.builder.end_element();
             }
@@ -321,12 +356,12 @@ impl DomBuilder<'_> {
         Ok(())
     }
 
-    fn start_element(&mut self, e: &BytesStart<'_>, line: usize, column: usize) -> Result<()> {
+    fn start_element(&mut self, tag: &StartTag<'_>, line: usize, column: usize) -> Result<()> {
         // Push a new scope for this element
         self.ns_stack.push_scope();
 
-        let qname = std::str::from_utf8(e.name().into_inner())?;
-        let (prefix, local_name) = split_qname(qname);
+        let qname = tag.qname;
+        let (prefix, _) = split_qname(qname);
         // Name and character well-formedness were validated by
         // `WellformedChecker::start` before this function ran.
 
@@ -334,19 +369,18 @@ impl DomBuilder<'_> {
         let mut namespace_decls = Vec::new();
         let mut raw_attributes: SmallVec<[(&str, String); 8]> = SmallVec::new();
 
-        for attr_result in e.attributes() {
-            let attr = attr_result?;
-            let key = std::str::from_utf8(attr.key.into_inner())?;
-            let raw = std::str::from_utf8(&attr.value)?;
+        for (key, raw) in &tag.attrs {
+            let key: &str = key;
             let value = self.expander.expand_attr(raw)?.into_owned();
 
             if key == "xmlns" {
                 // Default namespace declaration
-                self.ns_stack.register("", &value);
+                self.ns_stack.register("", self.builder.intern(&value));
                 namespace_decls.push(Namespace::default_ns(value));
             } else if let Some(ns_prefix) = key.strip_prefix("xmlns:") {
                 // Prefixed namespace declaration
-                self.ns_stack.register(ns_prefix, &value);
+                self.ns_stack
+                    .register(ns_prefix, self.builder.intern(&value));
                 namespace_decls.push(Namespace::new(ns_prefix, value));
             } else {
                 raw_attributes.push((key, value));
@@ -355,10 +389,7 @@ impl DomBuilder<'_> {
 
         // Resolve namespace URI for the element; unprefixed elements take
         // the default namespace if one is declared.
-        let namespace_uri = self
-            .ns_stack
-            .resolve(prefix.unwrap_or(""))
-            .map(str::to_string);
+        let namespace_uri = self.ns_stack.resolve(prefix.unwrap_or(""));
 
         // Second pass: split each attribute name and resolve its prefix.
         // Every attribute is kept with its prefix and namespace, including
@@ -376,10 +407,11 @@ impl DomBuilder<'_> {
             })
             .collect();
 
+        let (name, prefix) = self.builder.intern_qname(qname);
         self.builder.start_element_resolved(
-            local_name,
+            name,
             prefix,
-            namespace_uri.as_deref(),
+            namespace_uri,
             &attributes,
             namespace_decls,
             Some(line),
@@ -504,6 +536,78 @@ pub fn parse_schema_location_value(value: &str) -> Result<Vec<(String, String)>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every node of `doc` (type, names, content, attributes, links and
+    /// position) as text, for comparing two parses of one input.
+    fn dump(doc: &XmlDocument) -> Vec<String> {
+        doc.nodes.read().iter().map(|n| format!("{n:?}")).collect()
+    }
+
+    /// Parses `xml` from a byte slice and from readers with small buffers.
+    /// The two input paths must build the same document, positions included,
+    /// or fail with the same error.
+    fn assert_paths_agree(xml: &[u8]) {
+        let from_slice = parse(xml).map(|d| dump(&d)).map_err(|e| e.to_string());
+        // From 3 bytes up: a reader whose first fill returns fewer bytes than
+        // a UTF-8 BOM hides the BOM from quick-xml (a separate issue).
+        for capacity in [3, 4, 7, 64, 8192] {
+            let reader = std::io::BufReader::with_capacity(capacity, xml);
+            let from_reader = parse_from_bufread(reader, &ParserOptions::default())
+                .map(|d| dump(&d))
+                .map_err(|e| e.to_string());
+            assert_eq!(
+                from_slice,
+                from_reader,
+                "input {:?}, reader capacity {capacity}",
+                String::from_utf8_lossy(xml)
+            );
+        }
+    }
+
+    #[test]
+    fn slice_and_reader_inputs_build_the_same_document() {
+        let docs: &[&[u8]] = &[
+            b"<root a='1'>text<child/>tail</root>",
+            b"<?xml version='1.0'?>\n<root>\n  <a x=\"1\" y='2'>v</a>\n</root>\n",
+            b"\xEF\xBB\xBF<root>\n<a/></root>",
+            b"<root>\r\n  <a>x\ry</a>\r\n<b>\r</b></root>\r\n",
+            "<r>日本語\n<名前 属性='値'>ü</名前>\n<e/></r>".as_bytes(),
+            b"<!DOCTYPE r [<!ENTITY e '<i>in</i>'><!ENTITY t 'tt'>]>\n<r>&e;&t;\n<a v='&t;'/></r>",
+            b"<r xmlns='urn:d' xmlns:p='urn:p'><p:a p:x='1'><b/></p:a></r>",
+            b"<r><!-- c --><?pi data?><![CDATA[<x>]]>&amp;&#x41;</r>",
+            b"<r>\n\t\t<a>1 2 3</a>\n\t\t<a>4 5 6</a>\n</r>",
+            // Not well-formed: the errors must match too.
+            b"<r><a></r>",
+            b"<r>\n<a x='1' x='2'/></r>",
+            b"<r>\n\n  <a>&undefined;</a></r>",
+            b"<r>\x01</r>",
+        ];
+        for doc in docs {
+            assert_paths_agree(doc);
+            assert_event_paths_agree(doc);
+        }
+    }
+
+    /// The streaming counterpart of [`assert_paths_agree`]: the same events,
+    /// positions included, or the same error.
+    fn assert_event_paths_agree(xml: &[u8]) {
+        let dump = |events: Result<Vec<crate::event::XmlEvent>>| {
+            events
+                .map(|e| e.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>())
+                .map_err(|e| e.to_string())
+        };
+        let from_slice = dump(crate::Parser::from(xml).events());
+        for capacity in [3, 4, 7, 64, 8192] {
+            let reader = std::io::BufReader::with_capacity(capacity, xml);
+            let from_reader = dump(crate::Parser::from_reader(reader).events());
+            assert_eq!(
+                from_slice,
+                from_reader,
+                "events of {:?}, reader capacity {capacity}",
+                String::from_utf8_lossy(xml)
+            );
+        }
+    }
 
     #[test]
     fn test_parse_simple() {

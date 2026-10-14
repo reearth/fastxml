@@ -98,10 +98,10 @@ impl<'a> Parser<'a> {
     pub fn events(self) -> Result<Vec<XmlEvent>> {
         match self.source {
             Source::Bytes(bytes) => {
-                let utf8 = super::encoding::to_utf8(bytes);
-                collect_events(utf8.as_ref())
+                let utf8 = super::source::normalize_line_ends(super::encoding::to_utf8(bytes))?;
+                collect_events(StreamingParser::from_slice(&utf8))
             }
-            Source::Reader(reader) => collect_events(reader),
+            Source::Reader(reader) => collect_events(StreamingParser::new(reader)),
         }
     }
 
@@ -126,8 +126,8 @@ impl<'a> Parser<'a> {
     {
         match self.source {
             Source::Bytes(bytes) => {
-                let utf8 = super::encoding::to_utf8(bytes);
-                let mut parser = StreamingParser::new(utf8.as_ref());
+                let utf8 = super::source::normalize_line_ends(super::encoding::to_utf8(bytes))?;
+                let mut parser = StreamingParser::from_slice(&utf8);
                 parser.for_each_event(on_event)
             }
             Source::Reader(reader) => {
@@ -138,12 +138,13 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn collect_events<R: BufRead>(reader: R) -> Result<Vec<XmlEvent>> {
+fn collect_events<'i, S: super::source::EventSource<'i>>(
+    mut parser: StreamingParser<S>,
+) -> Result<Vec<XmlEvent>> {
     let collected = Arc::new(Mutex::new((
         Vec::new(),
         crate::event::StringInterner::new(),
     )));
-    let mut parser = StreamingParser::new(reader);
     parser.add_handler(Box::new(CollectHandler(Arc::clone(&collected))));
     parser.parse()?;
     let events = std::mem::take(&mut collected.lock().unwrap().0);

@@ -60,21 +60,21 @@ fn test_node_data_element() {
 fn test_node_data_text() {
     let node = NodeData::text("hello world".to_string());
     assert_eq!(node.node_type, NodeType::Text);
-    assert_eq!(node.content, Some("hello world".to_string()));
+    assert_eq!(node.content.as_deref(), Some("hello world"));
 }
 
 #[test]
 fn test_node_data_cdata() {
     let node = NodeData::cdata("<special>".to_string());
     assert_eq!(node.node_type, NodeType::CData);
-    assert_eq!(node.content, Some("<special>".to_string()));
+    assert_eq!(node.content.as_deref(), Some("<special>"));
 }
 
 #[test]
 fn test_node_data_comment() {
     let node = NodeData::comment("a comment".to_string());
     assert_eq!(node.node_type, NodeType::Comment);
-    assert_eq!(node.content, Some("a comment".to_string()));
+    assert_eq!(node.content.as_deref(), Some("a comment"));
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn test_node_data_processing_instruction() {
         NodeData::processing_instruction("xml".to_string(), Some("version=\"1.0\"".to_string()));
     assert_eq!(node.node_type, NodeType::ProcessingInstruction);
     assert_eq!(node.name.as_ref(), "xml");
-    assert_eq!(node.content, Some("version=\"1.0\"".to_string()));
+    assert_eq!(node.content.as_deref(), Some("version=\"1.0\""));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn test_node_data_attribute() {
     let node = NodeData::attribute("id".to_string(), "123".to_string(), None, None);
     assert_eq!(node.node_type, NodeType::Attribute);
     assert_eq!(node.name.as_ref(), "id");
-    assert_eq!(node.content, Some("123".to_string()));
+    assert_eq!(node.content.as_deref(), Some("123"));
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn test_node_data_namespace_node() {
         NodeData::namespace_node("gml".to_string(), "http://www.opengis.net/gml".to_string());
     assert_eq!(node.node_type, NodeType::Namespace);
     assert_eq!(node.name.as_ref(), "gml");
-    assert_eq!(node.content, Some("http://www.opengis.net/gml".to_string()));
+    assert_eq!(node.content.as_deref(), Some("http://www.opengis.net/gml"));
 }
 
 #[test]

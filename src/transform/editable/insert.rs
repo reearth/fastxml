@@ -72,9 +72,9 @@ fn create_node(
             }
             data
         }
-        NewNode::Text(text) => NodeData::text(text.clone()),
-        NewNode::CData(text) => NodeData::cdata(text.clone()),
-        NewNode::Comment(text) => NodeData::comment(text.clone()),
+        NewNode::Text(text) => NodeData::text(text.as_str()),
+        NewNode::CData(text) => NodeData::cdata(text.as_str()),
+        NewNode::Comment(text) => NodeData::comment(text.as_str()),
     };
     data.set_parent(Some(parent));
     let id = nodes.len();
@@ -103,7 +103,7 @@ pub(super) fn replace_text_in_subtree(doc: &XmlDocument, root: NodeId, old: &str
             NodeType::Text | NodeType::CData => {
                 if let Some(content) = node.content.as_mut() {
                     if content.contains(old) {
-                        *content = content.replace(old, new);
+                        *content = content.replace(old, new).into();
                     }
                 }
             }

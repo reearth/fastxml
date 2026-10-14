@@ -14,12 +14,14 @@
 //! literal ASCII `&#1;`, so the literal-character checks here never see it.
 //! Reference legality is handled separately.
 
+use std::borrow::Cow;
+
 use quick_xml::events::BytesStart;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::error::ParseError;
-use super::wellformed::{check_char_refs, check_chars, check_name, check_text};
+use super::wellformed::{check_attr_value, check_chars, check_name, check_text};
 use crate::error::Result;
 
 /// Where in the document the parser currently is, per the top-level grammar
@@ -416,6 +418,39 @@ fn is_enc_name(e: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
+/// A start (or empty-element) tag decoded once: its qualified name and each
+/// attribute's name and raw, unexpanded value, in source order.
+///
+/// The well-formedness check and the DOM or event builder both read it, so a
+/// tag's attributes are tokenized and checked as UTF-8 only once.
+pub(crate) struct StartTag<'a> {
+    /// The element's qualified name as written.
+    pub(crate) qname: &'a str,
+    /// `(name, raw value)` of every attribute, namespace declarations included.
+    pub(crate) attrs: SmallVec<[(&'a str, Cow<'a, str>); 8]>,
+}
+
+impl<'a> StartTag<'a> {
+    /// Decodes `e`. Fails on a malformed or duplicate attribute and on bytes
+    /// that are not UTF-8.
+    pub(crate) fn decode(e: &'a BytesStart<'a>) -> Result<Self> {
+        let qname = std::str::from_utf8(e.name().into_inner())?;
+        let mut attrs = SmallVec::new();
+        for attr_result in e.attributes() {
+            let attr = attr_result.map_err(|e| ParseError::AttributeError {
+                message: e.to_string(),
+            })?;
+            let key = std::str::from_utf8(attr.key.into_inner())?;
+            let value = match attr.value {
+                Cow::Borrowed(raw) => Cow::Borrowed(std::str::from_utf8(raw)?),
+                Cow::Owned(raw) => Cow::Owned(String::from_utf8(raw).map_err(|e| e.utf8_error())?),
+            };
+            attrs.push((key, value));
+        }
+        Ok(Self { qname, attrs })
+    }
+}
+
 impl WellformedChecker {
     /// Creates a checker for a fresh document.
     pub(crate) fn new() -> Self {
@@ -424,12 +459,12 @@ impl WellformedChecker {
 
     /// Checks a start (or empty-element) tag: the element `Name`, every
     /// attribute's `Name` and raw value, and the document-structure position.
-    pub(crate) fn start(&mut self, e: &BytesStart<'_>) -> Result<()> {
+    pub(crate) fn start(&mut self, tag: &StartTag<'_>) -> Result<()> {
         self.document_started = true;
         if self.dtd_open {
             return Err(unterminated_doctype().into());
         }
-        let qname = std::str::from_utf8(e.name().into_inner())?;
+        let qname = tag.qname;
         check_name(qname, "element name")?;
 
         // Open this element's namespace scope: its own declarations belong to
@@ -444,25 +479,12 @@ impl WellformedChecker {
         // few-attribute case, so the checks add no per-element heap traffic in
         // input that declares no namespaces.
         let mut prefixed: SmallVec<[&str; 8]> = SmallVec::new();
-        for attr_result in e.attributes() {
-            let attr = attr_result.map_err(|e| ParseError::AttributeError {
-                message: e.to_string(),
-            })?;
-            let key = std::str::from_utf8(attr.key.into_inner())?;
+        for (key, value) in &tag.attrs {
+            let key: &str = key;
             check_name(key, "attribute name")?;
-            // Raw value: literal characters must satisfy the Char production;
-            // `&#…;` references survive as plain ASCII and are judged elsewhere.
-            let value = std::str::from_utf8(attr.value.as_ref())?;
-            check_chars(value, "attribute value")?;
-            check_char_refs(value, "attribute value")?;
-            // `<` is forbidden in an attribute value (the AttValue production
-            // excludes it); a literal here can never be a character reference.
-            if value.contains('<') {
-                return Err(not_wf(format!(
-                    "'<' is not allowed in the value of attribute '{key}'"
-                ))
-                .into());
-            }
+            // Raw value: literal characters must satisfy the Char production,
+            // `&#…;` references must be well formed, and `<` is forbidden.
+            check_attr_value(value, key)?;
             if key == "xmlns" {
                 check_default_ns_declaration(value)?;
                 self.bind(String::new(), value.to_string());

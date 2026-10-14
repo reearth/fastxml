@@ -86,9 +86,31 @@ impl<R> PositionTrackingReader<R> {
     }
 }
 
+/// A line and column (both 1-based, columns in UTF-8 characters) advanced
+/// over the bytes of a document as they are read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Position {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self { line: 1, column: 1 }
+    }
+}
+
+impl Position {
+    /// Moves past `bytes`.
+    pub(crate) fn advance(&mut self, bytes: &[u8]) {
+        let mut offset = 0;
+        track(bytes, &mut self.line, &mut self.column, &mut offset);
+    }
+}
+
 /// Bulk position update for a consumed chunk.
 ///
-/// Lines are counted by scanning for `\n` with memchr; columns count UTF-8
+/// Lines are counted by scanning for `\n`; columns count UTF-8
 /// characters as "bytes that are not continuation bytes", which is correct
 /// for valid UTF-8 and works across chunk boundaries without buffering
 /// partial sequences.
@@ -97,7 +119,10 @@ fn track(bytes: &[u8], line: &mut usize, column: &mut usize, byte_offset: &mut u
     let count_chars = |b: &[u8]| b.iter().filter(|&&x| x & 0xC0 != 0x80).count();
     match memchr::memrchr(b'\n', bytes) {
         Some(last_nl) => {
-            *line += memchr::memchr_iter(b'\n', bytes).count();
+            // A plain count compiles to a vectorized compare-and-sum; iterating
+            // matches with `memchr_iter` costs a call per newline, which
+            // dominates on short-line XML.
+            *line += bytes[..=last_nl].iter().filter(|&&b| b == b'\n').count();
             *column = 1 + count_chars(&bytes[last_nl + 1..]);
         }
         None => *column += count_chars(bytes),

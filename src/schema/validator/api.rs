@@ -262,6 +262,32 @@ pub(crate) fn validate_streaming_autodetect<R: BufRead, F: SchemaFetcher>(
     validate_streaming_with(replay, load_hinted_schema(&hints, fetcher), settings)
 }
 
+/// [`validate_streaming_autodetect`] over an in-memory document: the
+/// validating pass reads the input in place instead of replaying it.
+pub(crate) fn validate_streaming_autodetect_bytes<F: SchemaFetcher>(
+    xml: &[u8],
+    fetcher: &F,
+    settings: EngineSettings,
+) -> Result<Vec<StructuredError>> {
+    let Prescanned { hints, .. } = prescan(xml)?;
+    let Some(hints) = hints else {
+        return Ok(vec![no_hints_error()]);
+    };
+    match load_hinted_schema(&hints, fetcher) {
+        Ok(schema) => {
+            let (entries, _counters) = settings
+                .streaming(Arc::new(schema))
+                .validate_capturing_bytes(xml)?;
+            Ok(entries)
+        }
+        Err(errors) => {
+            let xml = crate::parser::source::normalize_line_ends(xml.into())?;
+            crate::event::StreamingParser::from_slice(&xml).parse()?;
+            Ok(errors)
+        }
+    }
+}
+
 /// Async counterpart of [`validate_streaming_autodetect`]: the schema is
 /// fetched through the async fetcher; reading and parsing the input stay
 /// synchronous, as with an explicit schema.
