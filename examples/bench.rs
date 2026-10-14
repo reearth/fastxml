@@ -72,7 +72,8 @@ struct Args {
     #[arg(long)]
     validate: bool,
 
-    /// Cache directory for downloaded URLs
+    /// Cache directory for downloaded URLs; schemas fetched over HTTP are
+    /// kept in its `schemas/` subdirectory across runs (delete it to refetch)
     #[arg(long, default_value = "examples/cache")]
     cache_dir: PathBuf,
 
@@ -521,6 +522,29 @@ struct SchemaInfo {
     entry_filename: Option<String>,
 }
 
+/// Where schemas fetched over HTTP are kept between runs: `<cache-dir>/schemas`.
+static SCHEMA_CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Fetches remote schemas through a file cache that outlives the run, so
+/// repeated benchmarks (and each mode's subprocess) skip the download. Local
+/// files are read directly, so edits to them take effect.
+#[cfg(feature = "ureq")]
+struct BenchFetcher {
+    remote: fastxml::schema::fetcher::FileCachingFetcher<DefaultFetcher>,
+    local: DefaultFetcher,
+}
+
+#[cfg(feature = "ureq")]
+impl fastxml::schema::fetcher::SchemaFetcher for BenchFetcher {
+    fn fetch(&self, url: &str) -> fastxml::error::Result<fastxml::schema::fetcher::FetchResult> {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            self.remote.fetch(url)
+        } else {
+            self.local.fetch(url)
+        }
+    }
+}
+
 #[cfg(feature = "ureq")]
 fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Option<SchemaInfo> {
     // Keep the exported files: the libxml comparison reads them from disk.
@@ -531,11 +555,25 @@ fn get_schema_from_content(content: &[u8], xml_file_path: Option<&str>) -> Optio
         ResolveOptions::default().keep_export_dir()
     };
 
-    let fetcher = if let Some(path) = xml_file_path {
-        let base_dir = Path::new(path).parent().unwrap_or(Path::new("."));
-        DefaultFetcher::with_base_dir(base_dir)
-    } else {
-        DefaultFetcher::new()
+    let new_fetcher = || match xml_file_path {
+        Some(path) => {
+            DefaultFetcher::with_base_dir(Path::new(path).parent().unwrap_or(Path::new(".")))
+        }
+        None => DefaultFetcher::new(),
+    };
+    let cache_dir = SCHEMA_CACHE_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("examples/cache/schemas"));
+    if let Err(e) = fs::create_dir_all(&cache_dir) {
+        eprintln!(
+            "  Note: cannot create schema cache {}: {e}",
+            cache_dir.display()
+        );
+    }
+    let fetcher = BenchFetcher {
+        remote: fastxml::schema::fetcher::FileCachingFetcher::with_dir(new_fetcher(), &cache_dir),
+        local: new_fetcher(),
     };
 
     print!("  Resolving schemas... ");
@@ -1603,6 +1641,7 @@ fn run_file_benchmark(
 
 fn main() {
     let args = Args::parse();
+    let _ = SCHEMA_CACHE_DIR.set(args.cache_dir.join("schemas"));
 
     // Handle internal subprocess mode
     if let Some(internal_mode) = args.internal_mode {

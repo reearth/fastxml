@@ -20,13 +20,94 @@ fn cache_filename(url: &str) -> String {
     format!("{:016x}.xsd", hash)
 }
 
+/// The name of the record kept beside a cache file: the URL the content was
+/// requested as and the URL it was finally fetched from, one per line.
+///
+/// The record is written after the content, so its presence marks a complete
+/// entry, and its first line guards against two URLs sharing a hash.
+fn record_filename(url: &str) -> String {
+    let hash = xxh64::xxh64(url.as_bytes(), 0);
+    format!("{:016x}.url", hash)
+}
+
+fn record_text(url: &str, final_url: &str) -> String {
+    format!("{url}\n{final_url}\n")
+}
+
+/// The final URL a record names, if it was written for `url`.
+fn parse_record(text: &str, url: &str) -> Option<String> {
+    let mut lines = text.lines();
+    (lines.next()? == url).then(|| lines.next().map(str::to_string))?
+}
+
+/// A path to write to before renaming over `path`, unique to this process
+/// and call, so a reader never sees a half-written file.
+fn temp_path(path: &Path) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.{n}.tmp", std::process::id()));
+    path.with_file_name(name)
+}
+
+fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let temp = temp_path(path);
+    std::fs::write(&temp, content)?;
+    std::fs::rename(&temp, path)
+}
+
+/// A cached document: where its content is and the URL it was finally
+/// fetched from.
+#[derive(Debug, Clone)]
+struct Entry {
+    path: PathBuf,
+    final_url: String,
+}
+
+impl Entry {
+    fn result(&self, url: &str, content: Vec<u8>) -> FetchResult {
+        FetchResult {
+            content,
+            final_url: self.final_url.clone(),
+            redirected: self.final_url != url,
+        }
+    }
+}
+
+/// Writes the content and then the record of `url` into `dir`.
+fn store(dir: &Path, url: &str, final_url: &str, content: &[u8]) -> Result<Entry> {
+    let path = dir.join(cache_filename(url));
+    write_atomic(&path, content)?;
+    write_atomic(
+        &dir.join(record_filename(url)),
+        record_text(url, final_url).as_bytes(),
+    )?;
+    Ok(Entry {
+        path,
+        final_url: final_url.to_string(),
+    })
+}
+
+/// The complete entry for `url` a previous fetcher left in `dir`, if any.
+fn load(dir: &Path, url: &str) -> Option<Entry> {
+    let text = std::fs::read_to_string(dir.join(record_filename(url))).ok()?;
+    let final_url = parse_record(&text, url)?;
+    let path = dir.join(cache_filename(url));
+    path.is_file().then_some(Entry { path, final_url })
+}
+
 /// A fetcher wrapper that caches fetch results as files on disk.
 ///
 /// When a URL is requested:
 /// 1. Check the index — if present, read the cached file.
-/// 2. Otherwise delegate to the inner fetcher.
-/// 3. Write the result to a file and register it in the index
-///    (under both the requested URL and the final URL if a redirect occurred).
+/// 2. Otherwise look for an entry an earlier fetcher left in the cache
+///    directory, so a persistent directory is reused across runs.
+/// 3. Otherwise delegate to the inner fetcher, write the result to a file
+///    and register it (under both the requested URL and the final URL if a
+///    redirect occurred).
+///
+/// A cache hit reports the URL the document was finally fetched from, so
+/// relative imports inside it resolve as they did on the first fetch.
 ///
 /// # Cache directory lifecycle
 ///
@@ -52,7 +133,7 @@ pub struct FileCachingFetcher<F: SchemaFetcher> {
     cache_dir: PathBuf,
     /// `Some` → temp dir is deleted on drop; `None` → persistent directory.
     _temp_dir: Option<tempfile::TempDir>,
-    index: DashMap<String, PathBuf>,
+    index: DashMap<String, Entry>,
 }
 
 impl<F: SchemaFetcher> FileCachingFetcher<F> {
@@ -99,10 +180,8 @@ impl<F: SchemaFetcher> FileCachingFetcher<F> {
 
     /// Pre-seeds the cache with content for a given URL.
     pub fn seed(&self, url: &str, content: Vec<u8>) -> Result<()> {
-        let filename = cache_filename(url);
-        let path = self.cache_dir.join(&filename);
-        std::fs::write(&path, &content)?;
-        self.index.insert(url.to_string(), path);
+        let entry = store(&self.cache_dir, url, url, &content)?;
+        self.index.insert(url.to_string(), entry);
         Ok(())
     }
 
@@ -125,40 +204,34 @@ impl<F: SchemaFetcher> FileCachingFetcher<F> {
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }
-
-    /// Writes content to a cache file and registers it in the index for the given URL.
-    fn write_cache(&self, url: &str, content: &[u8]) -> Result<PathBuf> {
-        let filename = cache_filename(url);
-        let path = self.cache_dir.join(&filename);
-        std::fs::write(&path, content)?;
-        self.index.insert(url.to_string(), path.clone());
-        Ok(path)
-    }
 }
 
 impl<F: SchemaFetcher> SchemaFetcher for FileCachingFetcher<F> {
     fn fetch(&self, url: &str) -> Result<FetchResult> {
-        // Check index — read from file cache
-        if let Some(entry) = self.index.get(url) {
-            let content = std::fs::read(entry.value())?;
-            return Ok(FetchResult {
-                content,
-                final_url: url.to_string(),
-                redirected: false,
-            });
+        let cached = match self.index.get(url) {
+            Some(entry) => Some(entry.clone()),
+            None => load(&self.cache_dir, url),
+        };
+        if let Some(entry) = cached {
+            let content = std::fs::read(&entry.path)?;
+            let result = entry.result(url, content);
+            self.index.insert(url.to_string(), entry);
+            return Ok(result);
         }
 
-        // Delegate to inner
         let result = self.inner.fetch(url)?;
-
-        // Write to file cache
-        let path = self.write_cache(url, &result.content)?;
-
-        // Also register under the final URL if a redirect occurred
+        let entry = store(&self.cache_dir, url, &result.final_url, &result.content)?;
+        self.index.insert(url.to_string(), entry);
+        // Also cache it under the final URL if a redirect occurred.
         if result.final_url != url {
-            self.index.insert(result.final_url.clone(), path);
+            let target = store(
+                &self.cache_dir,
+                &result.final_url,
+                &result.final_url,
+                &result.content,
+            )?;
+            self.index.insert(result.final_url.clone(), target);
         }
-
         Ok(result)
     }
 }
@@ -172,7 +245,7 @@ pub struct AsyncFileCachingFetcher<F: super::traits::AsyncSchemaFetcher> {
     inner: F,
     cache_dir: PathBuf,
     _temp_dir: Option<tempfile::TempDir>,
-    index: DashMap<String, PathBuf>,
+    index: DashMap<String, Entry>,
 }
 
 #[cfg(feature = "tokio")]
@@ -213,11 +286,22 @@ impl<F: super::traits::AsyncSchemaFetcher> AsyncFileCachingFetcher<F> {
 
     /// Pre-seeds the cache with content for a given URL.
     pub async fn seed(&self, url: &str, content: Vec<u8>) -> Result<()> {
-        let filename = cache_filename(url);
-        let path = self.cache_dir.join(&filename);
-        tokio::fs::write(&path, &content).await?;
-        self.index.insert(url.to_string(), path);
+        let entry = self.store(url, url, content).await?;
+        self.index.insert(url.to_string(), entry);
         Ok(())
+    }
+
+    /// [`store`] on a blocking thread, so file I/O does not block the
+    /// runtime.
+    async fn store(&self, url: &str, final_url: &str, content: Vec<u8>) -> Result<Entry> {
+        let (dir, url, final_url) = (
+            self.cache_dir.clone(),
+            url.to_string(),
+            final_url.to_string(),
+        );
+        tokio::task::spawn_blocking(move || store(&dir, &url, &final_url, &content))
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()))?
     }
 
     /// Returns the number of cached entries.
@@ -247,30 +331,34 @@ impl<F: super::traits::AsyncSchemaFetcher> super::traits::AsyncSchemaFetcher
     for AsyncFileCachingFetcher<F>
 {
     async fn fetch(&self, url: &str) -> Result<FetchResult> {
-        // Check index — read from file cache
-        if let Some(entry) = self.index.get(url) {
-            let content = tokio::fs::read(entry.value()).await?;
-            return Ok(FetchResult {
-                content,
-                final_url: url.to_string(),
-                redirected: false,
-            });
+        let cached = match self.index.get(url) {
+            Some(entry) => Some(entry.clone()),
+            None => {
+                let (dir, key) = (self.cache_dir.clone(), url.to_string());
+                tokio::task::spawn_blocking(move || load(&dir, &key))
+                    .await
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
+            }
+        };
+        if let Some(entry) = cached {
+            let content = tokio::fs::read(&entry.path).await?;
+            let result = entry.result(url, content);
+            self.index.insert(url.to_string(), entry);
+            return Ok(result);
         }
 
-        // Delegate to inner
         let result = self.inner.fetch(url).await?;
-
-        // Write to file cache
-        let filename = cache_filename(url);
-        let path = self.cache_dir.join(&filename);
-        tokio::fs::write(&path, &result.content).await?;
-        self.index.insert(url.to_string(), path.clone());
-
-        // Also register under the final URL if a redirect occurred
+        let entry = self
+            .store(url, &result.final_url, result.content.clone())
+            .await?;
+        self.index.insert(url.to_string(), entry);
+        // Also cache it under the final URL if a redirect occurred.
         if result.final_url != url {
-            self.index.insert(result.final_url.clone(), path);
+            let target = self
+                .store(&result.final_url, &result.final_url, result.content.clone())
+                .await?;
+            self.index.insert(result.final_url.clone(), target);
         }
-
         Ok(result)
     }
 }
@@ -457,5 +545,110 @@ mod tests {
         let a = cache_filename("http://example.com/a.xsd");
         let b = cache_filename("http://example.com/b.xsd");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_file_caching_fetcher_persistent_dir_is_reused_by_a_new_fetcher() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = "http://example.com/a.xsd";
+        let responses = HashMap::from([(url.to_string(), b"<schema/>".to_vec())]);
+
+        let first =
+            FileCachingFetcher::with_dir(TrackingFetcher::new(responses.clone()), dir.path());
+        assert_eq!(first.fetch(url).unwrap().content, b"<schema/>");
+        assert_eq!(first.inner().call_count(), 1);
+        drop(first);
+
+        // A new fetcher (as in another process) reads the files instead of
+        // fetching again.
+        let second = FileCachingFetcher::with_dir(TrackingFetcher::new(responses), dir.path());
+        let r = second.fetch(url).unwrap();
+        assert_eq!(r.content, b"<schema/>");
+        assert_eq!(r.final_url, url);
+        assert!(!r.redirected);
+        assert_eq!(second.inner().call_count(), 0);
+    }
+
+    #[test]
+    fn test_file_caching_fetcher_cache_hit_keeps_the_redirect_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let original = "http://example.com/original.xsd";
+        let final_url = "http://example.com/dir/final.xsd";
+        let first = FileCachingFetcher::with_dir(
+            RedirectFetcher {
+                content: b"<redirected/>".to_vec(),
+                final_url: final_url.to_string(),
+            },
+            dir.path(),
+        );
+        first.fetch(original).unwrap();
+
+        // Relative imports resolve against the final URL, so a hit must
+        // report it, from memory and from disk alike.
+        let from_memory = first.fetch(original).unwrap();
+        assert_eq!(from_memory.final_url, final_url);
+        assert!(from_memory.redirected);
+
+        let second = FileCachingFetcher::with_dir(NoopFetcher, dir.path());
+        let from_disk = second.fetch(original).unwrap();
+        assert_eq!(from_disk.content, b"<redirected/>");
+        assert_eq!(from_disk.final_url, final_url);
+        assert!(from_disk.redirected);
+        let target = second.fetch(final_url).unwrap();
+        assert_eq!(target.final_url, final_url);
+        assert!(!target.redirected);
+    }
+
+    #[test]
+    fn test_file_caching_fetcher_ignores_a_content_file_without_its_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = "http://example.com/a.xsd";
+        // A file left by an older version, or by an interrupted write.
+        std::fs::write(dir.path().join(cache_filename(url)), b"stale").unwrap();
+
+        let responses = HashMap::from([(url.to_string(), b"<fresh/>".to_vec())]);
+        let fetcher = FileCachingFetcher::with_dir(TrackingFetcher::new(responses), dir.path());
+        assert_eq!(fetcher.fetch(url).unwrap().content, b"<fresh/>");
+        assert_eq!(fetcher.inner().call_count(), 1);
+    }
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test]
+    async fn test_async_file_caching_fetcher_persistent_dir_is_reused() {
+        use crate::schema::fetcher::AsyncSchemaFetcher;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = "http://example.com/a.xsd";
+        let first = FileCachingFetcher::with_dir(
+            RedirectFetcher {
+                content: b"<redirected/>".to_vec(),
+                final_url: "http://example.com/final.xsd".to_string(),
+            },
+            dir.path(),
+        );
+        first.fetch(url).unwrap();
+
+        // The sync and async fetchers share the on-disk format.
+        let second = AsyncFileCachingFetcher::with_dir(NoopAsync, dir.path());
+        let r = second.fetch(url).await.unwrap();
+        assert_eq!(r.content, b"<redirected/>");
+        assert_eq!(r.final_url, "http://example.com/final.xsd");
+        assert!(r.redirected);
+    }
+
+    /// An async fetcher that fails every request.
+    #[cfg(feature = "tokio")]
+    struct NoopAsync;
+
+    #[cfg(feature = "tokio")]
+    #[async_trait::async_trait]
+    impl crate::schema::fetcher::AsyncSchemaFetcher for NoopAsync {
+        async fn fetch(&self, url: &str) -> Result<FetchResult> {
+            Err(crate::schema::fetcher::error::FetchError::RequestFailed {
+                url: url.to_string(),
+                message: "offline".to_string(),
+            }
+            .into())
+        }
     }
 }
