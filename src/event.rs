@@ -16,8 +16,10 @@ use quick_xml::events::Event;
 
 use crate::error::Result;
 use crate::namespace::Namespace;
+use crate::parser::checks::StartTag;
 use crate::parser::eol::EolNormalizer;
 use crate::parser::expand::{self, EntityExpander, Segment, TextExpansion};
+use crate::parser::source::{EventSource, SliceSource, configure_streaming};
 use crate::position::PositionTrackingReader;
 
 /// String interner for reducing memory allocations.
@@ -248,23 +250,37 @@ pub(crate) trait XmlEventHandler: Send + Any {
 /// Internal engine API; the public streaming entry point is
 /// [`Parser`](crate::Parser) (`Parser::from(..).events()` /
 /// `.for_each_event(..)`).
-pub(crate) struct StreamingParser<R: BufRead> {
-    reader: Reader<PositionTrackingReader<EolNormalizer<R>>>,
+pub(crate) struct StreamingParser<S> {
+    reader: S,
     handlers: Vec<Box<dyn XmlEventHandler>>,
     /// General entities declared in the internal DTD subset
     expander: EntityExpander,
 }
 
-impl<R: BufRead> StreamingParser<R> {
+impl<R: BufRead> StreamingParser<Reader<PositionTrackingReader<EolNormalizer<R>>>> {
     /// Creates a new streaming parser from a BufRead source.
     pub fn new(reader: R) -> Self {
-        let position_reader = PositionTrackingReader::new(EolNormalizer::new(reader));
-        let mut xml_reader = Reader::from_reader(position_reader);
-        xml_reader.config_mut().trim_text(false);
-        xml_reader.config_mut().expand_empty_elements = true;
+        let mut reader = crate::parser::source::reader_source(reader);
+        configure_streaming(&mut reader);
+        Self::with_source(reader)
+    }
+}
 
+impl<'i> StreamingParser<SliceSource<'i>> {
+    /// Creates a streaming parser that reads `input` in place. Its line ends
+    /// must already be normalized
+    /// ([`normalize_line_ends`](crate::parser::source::normalize_line_ends)).
+    pub(crate) fn from_slice(input: &'i [u8]) -> Self {
+        let mut source = SliceSource::new(input);
+        configure_streaming(source.reader_mut());
+        Self::with_source(source)
+    }
+}
+
+impl<S> StreamingParser<S> {
+    fn with_source(reader: S) -> Self {
         Self {
-            reader: xml_reader,
+            reader,
             handlers: Vec::new(),
             expander: EntityExpander::new(),
         }
@@ -281,8 +297,9 @@ impl<R: BufRead> StreamingParser<R> {
     }
 
     /// Parses the document, dispatching events to all handlers.
-    fn drive_loop<F>(&mut self, on_event: F) -> Result<()>
+    fn drive_loop<'i, F>(&mut self, on_event: F) -> Result<()>
     where
+        S: EventSource<'i>,
         F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
         self.drive_loop_until(on_event, || false)
@@ -291,10 +308,11 @@ impl<R: BufRead> StreamingParser<R> {
     /// Like [`drive_loop`](Self::drive_loop), but returns as soon as `stop`
     /// is true after a markup construct has been read and dispatched. At
     /// end of input the end-of-document checks run as usual.
-    fn drive_loop_until<F, S>(&mut self, mut on_event: F, stop: S) -> Result<()>
+    fn drive_loop_until<'i, F, Stop>(&mut self, mut on_event: F, stop: Stop) -> Result<()>
     where
+        S: EventSource<'i>,
         F: FnMut(&RawEvent<'_>) -> Result<()>,
-        S: Fn() -> bool,
+        Stop: Fn() -> bool,
     {
         let mut buffer = Vec::with_capacity(8 * 1024);
         let Self {
@@ -304,12 +322,18 @@ impl<R: BufRead> StreamingParser<R> {
             checker: crate::parser::checks::WellformedChecker::new(),
             expander,
             on_event: &mut on_event,
+            utf8: reader.utf8(),
         };
 
         loop {
-            let event_result = reader.read_event_into(&mut buffer);
-            let position = reader.get_ref();
-            let (line, column) = (position.line(), position.column());
+            let event_result = reader.next_event(&mut buffer);
+            // Only element starts carry a position: start tags, and the
+            // elements an entity reference in text expands to.
+            let (line, column) = match &event_result {
+                Ok(Event::Start(_) | Event::Empty(_)) => reader.line_column(),
+                Ok(Event::Text(t)) if memchr::memchr(b'&', t).is_some() => reader.line_column(),
+                _ => (0, 0),
+            };
 
             match event_result {
                 Ok(Event::Decl(ref e)) => {
@@ -347,7 +371,7 @@ impl<R: BufRead> StreamingParser<R> {
                 Ok(ref e) => sink.event(e, line, column)?,
                 Err(e) => {
                     return Err(crate::parser::error::ParseError::AtPosition {
-                        position: reader.get_ref().byte_offset() as u64,
+                        position: reader.consumed(),
                         message: e.to_string(),
                     }
                     .into());
@@ -364,7 +388,10 @@ impl<R: BufRead> StreamingParser<R> {
 
     /// Parses the document, dispatching every event to all registered handlers,
     /// then calling `finish` on each handler.
-    pub fn parse(&mut self) -> Result<()> {
+    pub fn parse<'i>(&mut self) -> Result<()>
+    where
+        S: EventSource<'i>,
+    {
         // Move the handlers out so the drive loop's callback can borrow them
         // without conflicting with the `&mut self` the loop needs.
         let mut handlers = std::mem::take(&mut self.handlers);
@@ -394,8 +421,9 @@ impl<R: BufRead> StreamingParser<R> {
     /// empty-element root, its end event too). Input that ends before a root
     /// element fails the end-of-document check, so `false` is only returned
     /// if that check ever lets such input through.
-    pub(crate) fn parse_through_root_start<F>(&mut self, mut on_event: F) -> Result<bool>
+    pub(crate) fn parse_through_root_start<'i, F>(&mut self, mut on_event: F) -> Result<bool>
     where
+        S: EventSource<'i>,
         F: FnMut(&RawEvent<'_>) -> Result<()>,
     {
         let root_seen = std::cell::Cell::new(false);
@@ -417,8 +445,9 @@ impl<R: BufRead> StreamingParser<R> {
     /// duration of the call, so it may capture and mutate local state (e.g.
     /// accumulate into a `Vec` or counter). Registered handlers are not invoked
     /// by this method.
-    pub fn for_each_event<F>(&mut self, mut on_event: F) -> Result<()>
+    pub fn for_each_event<'i, F>(&mut self, mut on_event: F) -> Result<()>
     where
+        S: EventSource<'i>,
         F: FnMut(&XmlEvent) -> Result<()>,
     {
         let mut interner = StringInterner::new();
@@ -429,13 +458,14 @@ impl<R: BufRead> StreamingParser<R> {
 /// Per-parse state of the streaming loop: well-formedness and entity
 /// bookkeeping plus the event callback, shared by the main loop and the
 /// content fragments of entities that contain markup.
-struct StreamSink<'s, F> {
+struct StreamSink<'s, 'i, F> {
     checker: crate::parser::checks::WellformedChecker,
     expander: &'s mut EntityExpander,
     on_event: &'s mut F,
+    utf8: crate::parser::source::Utf8<'i>,
 }
 
-impl<F> StreamSink<'_, F>
+impl<F> StreamSink<'_, '_, F>
 where
     F: FnMut(&RawEvent<'_>) -> Result<()>,
 {
@@ -444,9 +474,10 @@ where
     fn event(&mut self, event: &Event<'_>, line: usize, column: usize) -> Result<()> {
         match event {
             Event::Start(e) | Event::Empty(e) => {
-                self.checker.start(e)?;
+                let tag = StartTag::decode(e, self.utf8)?;
+                self.checker.start(&tag)?;
                 let (name, prefix, attributes, namespace_decls) =
-                    split_start_event(e, self.expander)?;
+                    split_start_event(&tag, self.expander)?;
                 (self.on_event)(&RawEvent::StartElement {
                     name,
                     prefix,
@@ -457,14 +488,13 @@ where
                 })?;
                 if matches!(event, Event::Empty(_)) {
                     // An empty-element tag opens and immediately closes.
-                    self.checker
-                        .end(std::str::from_utf8(e.name().into_inner())?)?;
+                    self.checker.end(tag.qname)?;
                     (self.on_event)(&RawEvent::EndElement { name, prefix })?;
                 }
             }
             Event::End(e) => {
                 let qname = e.name();
-                let full_name = std::str::from_utf8(qname.as_ref())?;
+                let full_name = self.utf8.str(qname.as_ref())?;
                 self.checker.end(full_name)?;
                 let (prefix, name) = crate::namespace::split_qname(full_name);
                 (self.on_event)(&RawEvent::EndElement { name, prefix })?;
@@ -473,7 +503,7 @@ where
                 // Check the raw (pre-expansion) text: literal characters must
                 // satisfy the Char production, and each character reference
                 // must name a legal XML 1.0 character.
-                let raw = std::str::from_utf8(e.as_ref())?;
+                let raw = self.utf8.str(e.as_ref())?;
                 let raw = self.checker.text(raw)?;
                 self.expander.declare_from(&mut self.checker);
                 match self.expander.expand_text(raw)? {
@@ -489,17 +519,17 @@ where
                 }
             }
             Event::CData(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.cdata(text)?;
                 (self.on_event)(&RawEvent::CData(text))?;
             }
             Event::Comment(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.comment(text)?;
                 (self.on_event)(&RawEvent::Comment(text))?;
             }
             Event::PI(e) => {
-                let content = std::str::from_utf8(e.as_ref())?;
+                let content = self.utf8.str(e.as_ref())?;
                 self.checker.pi(content)?;
                 let mut parts = content.splitn(2, char::is_whitespace);
                 let target = parts.next().unwrap_or("");
@@ -550,7 +580,7 @@ where
 /// Attribute values are expanded and normalized (XML 1.0 §3.3.3).
 #[allow(clippy::type_complexity)]
 fn split_start_event<'a>(
-    e: &'a quick_xml::events::BytesStart<'a>,
+    tag: &'a StartTag<'_>,
     expander: &mut EntityExpander,
 ) -> Result<(
     &'a str,
@@ -558,26 +588,17 @@ fn split_start_event<'a>(
     smallvec::SmallVec<[(&'a str, std::borrow::Cow<'a, str>); 8]>,
     smallvec::SmallVec<[Namespace; 2]>,
 )> {
-    let full_name = std::str::from_utf8(e.name().into_inner())?;
     // Name and character well-formedness were validated by
     // `WellformedChecker::start` before this function ran.
-    let (prefix, name) = crate::namespace::split_qname(full_name);
+    let (prefix, name) = crate::namespace::split_qname(tag.qname);
 
     let mut namespace_decls: smallvec::SmallVec<[Namespace; 2]> = smallvec::SmallVec::new();
     let mut attributes: smallvec::SmallVec<[(&str, std::borrow::Cow<str>); 8]> =
         smallvec::SmallVec::new();
 
-    for attr_result in e.attributes() {
-        let attr = attr_result?;
-        let key = std::str::from_utf8(attr.key.into_inner())?;
-        let value = match attr.value {
-            std::borrow::Cow::Borrowed(raw) => expander.expand_attr(std::str::from_utf8(raw)?)?,
-            std::borrow::Cow::Owned(raw) => std::borrow::Cow::Owned(
-                expander
-                    .expand_attr(std::str::from_utf8(&raw)?)?
-                    .into_owned(),
-            ),
-        };
+    for (key, raw) in &tag.attrs {
+        let key: &str = key;
+        let value = expander.expand_attr(raw)?;
 
         if key == "xmlns" {
             namespace_decls.push(Namespace::default_ns(value.as_ref()));

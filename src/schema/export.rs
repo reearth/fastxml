@@ -92,17 +92,31 @@ pub fn export_schemas_from_xml<F: SchemaFetcher>(
     Ok(set.result())
 }
 
+/// One hinted entry schema: the namespace it is named for (`None` for
+/// `xsi:noNamespaceSchemaLocation`) and its location.
+pub(crate) struct HintLocation {
+    pub(crate) namespace: Option<String>,
+    pub(crate) location: String,
+}
+
 /// The hint locations, mapped through `resolve`; a malformed hint is an error.
 pub(crate) fn hint_locations(
     hints: &SchemaHints,
     resolve: impl Fn(&str) -> String,
-) -> Result<Vec<String>> {
+) -> Result<Vec<HintLocation>> {
     if let Some(problem) = hints.problems.first() {
         return Err(Error::InvalidOperation(format!(
             "malformed schema-location hint: {problem}"
         )));
     }
-    Ok(hints.hints.iter().map(|h| resolve(&h.location)).collect())
+    Ok(hints
+        .hints
+        .iter()
+        .map(|h| HintLocation {
+            namespace: h.namespace.clone(),
+            location: resolve(&h.location),
+        })
+        .collect())
 }
 
 /// One fetched schema document.
@@ -112,6 +126,8 @@ struct Doc {
     uri: String,
     content: Vec<u8>,
     filename: String,
+    /// The document's `targetNamespace`, known once it has been parsed.
+    target_namespace: Option<String>,
 }
 
 /// A closed set of schema documents: the hinted entries and everything they
@@ -123,26 +139,44 @@ pub(crate) struct SchemaSet {
 }
 
 impl SchemaSet {
-    /// Fetches the entry `locations` and, transitively, every document they
-    /// import, include or redefine. Any fetch or parse failure is an error.
-    pub(crate) fn collect<F: SchemaFetcher>(locations: &[String], fetcher: &F) -> Result<Self> {
+    /// Fetches the entry `hints` and, transitively, every document they
+    /// import, include or redefine. Any fetch or parse failure is an error,
+    /// except that an entry that cannot be fetched is skipped when another
+    /// collected document provides the namespace it was named for: a
+    /// schema-location hint is only a hint (XSD 1.0 §4.3.2).
+    pub(crate) fn collect<F: SchemaFetcher>(hints: &[HintLocation], fetcher: &F) -> Result<Self> {
         let mut set = Self {
             docs: Vec::new(),
             by_uri: IndexMap::new(),
         };
         let mut queue = VecDeque::new();
-        for location in locations {
-            if let Some(idx) = set.fetch_new(location, fetcher)? {
-                queue.push_back(idx);
+        let mut unreachable = Vec::new();
+        for hint in hints {
+            match set.fetch_new(&hint.location, fetcher) {
+                Ok(Some(idx)) => queue.push_back(idx),
+                Ok(None) => {}
+                Err(e) => unreachable.push((hint, e)),
             }
         }
         while let Some(idx) = queue.pop_front() {
             let base = set.docs[idx].uri.clone();
-            for location in referenced_locations(&set.docs[idx].content, &base)? {
+            let (target_namespace, locations) = parse_references(&set.docs[idx].content, &base)?;
+            set.docs[idx].target_namespace = target_namespace;
+            for location in locations {
                 let resolved = resolve_uri(&base, &location)?;
                 if let Some(new_idx) = set.fetch_new(&resolved, fetcher)? {
                     queue.push_back(new_idx);
                 }
+            }
+        }
+        for (hint, e) in unreachable {
+            let provided = hint.namespace.is_some()
+                && set
+                    .docs
+                    .iter()
+                    .any(|d| d.target_namespace == hint.namespace);
+            if !provided {
+                return Err(e);
             }
         }
         set.assign_filenames();
@@ -168,6 +202,7 @@ impl SchemaSet {
             uri: fetched.final_url,
             content: fetched.content,
             filename: String::new(),
+            target_namespace: None,
         });
         Ok(Some(idx))
     }
@@ -227,8 +262,9 @@ impl SchemaSet {
     }
 }
 
-/// The import/include/redefine locations a schema document references.
-fn referenced_locations(content: &[u8], uri: &str) -> Result<Vec<String>> {
+/// A schema document's `targetNamespace` and the import/include/redefine
+/// locations it references.
+fn parse_references(content: &[u8], uri: &str) -> Result<(Option<String>, Vec<String>)> {
     let content = crate::parser::encoding::to_utf8(content);
     let schema = crate::schema::xsd::parse_xsd_ast(&content).map_err(|e| {
         Error::from(SchemaError::InvalidSchema {
@@ -242,7 +278,7 @@ fn referenced_locations(content: &[u8], uri: &str) -> Result<Vec<String>> {
         .collect();
     locations.extend(schema.includes.iter().map(|i| i.schema_location.clone()));
     locations.extend(schema.redefines.iter().map(|r| r.schema_location.clone()));
-    Ok(locations)
+    Ok((schema.target_namespace, locations))
 }
 
 /// Writes `catalog.xml` (OASIS XML Catalogs format) into the export
@@ -491,15 +527,16 @@ mod tests {
     }
 
     #[test]
-    fn test_referenced_locations() {
+    fn test_parse_references() {
         let content = br#"
-            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t">
                 <!-- <xs:include schemaLocation="commented-out.xsd"/> -->
                 <xs:import namespace="http://example.com" schemaLocation="types.xsd"/>
                 <xs:include schemaLocation='common.xsd'/>
             </xs:schema>
         "#;
-        let locations = referenced_locations(content, "file:///x.xsd").unwrap();
+        let (target_namespace, locations) = parse_references(content, "file:///x.xsd").unwrap();
+        assert_eq!(target_namespace.as_deref(), Some("urn:t"));
         assert_eq!(locations, vec!["types.xsd", "common.xsd"]);
     }
 

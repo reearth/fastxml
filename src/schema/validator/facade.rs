@@ -244,7 +244,10 @@ fn validate_with_schema(
 ) -> Result<ValidationOutcome> {
     match source {
         Source::Dom(doc) => Ok((settings.dom(schema).validate(doc)?, None)),
-        Source::Bytes(bytes) => run_streaming_with_schema(bytes, schema, settings),
+        Source::Bytes(bytes) => {
+            let (entries, counters) = settings.streaming(schema).validate_capturing_bytes(bytes)?;
+            Ok((entries, Some(counters)))
+        }
         Source::Reader(reader) => run_streaming_with_schema(reader, schema, settings),
     }
 }
@@ -266,7 +269,7 @@ fn run_location_with<F: SchemaFetcher + 'static>(
     match source {
         Source::Dom(doc) => super::api::validate_dom_autodetect(doc, &fetcher, settings),
         Source::Bytes(bytes) => {
-            super::api::validate_streaming_autodetect(bytes, &fetcher, settings)
+            super::api::validate_streaming_autodetect_bytes(bytes, &fetcher, settings)
         }
         Source::Reader(reader) => {
             super::api::validate_streaming_autodetect(reader, &fetcher, settings)

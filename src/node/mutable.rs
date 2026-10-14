@@ -88,7 +88,7 @@ impl XmlNode {
             | NodeType::Comment
             | NodeType::ProcessingInstruction
             | NodeType::Attribute
-            | NodeType::Namespace => node.content.clone(),
+            | NodeType::Namespace => node.content.as_deref().map(str::to_string),
             NodeType::Element => {
                 // Collect text content from all descendant text nodes
                 let mut content = String::new();
@@ -344,7 +344,7 @@ impl XmlNode {
         };
         match node.node_type {
             NodeType::Text | NodeType::CData | NodeType::Comment => {
-                node.content = Some(content.to_string());
+                node.content = Some(Arc::from(content));
             }
             NodeType::Element => {
                 // The old children stay in the node storage, detached.
@@ -353,7 +353,7 @@ impl XmlNode {
                     return;
                 }
                 node.push_child(new_id);
-                let mut text = NodeData::text(content.to_string());
+                let mut text = NodeData::text(content);
                 text.set_parent(Some(self.id));
                 nodes.push(text);
             }

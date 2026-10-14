@@ -275,7 +275,7 @@ impl XmlDocument {
                 };
                 if !self.nodes.read().get(id).is_some_and(current) {
                     if let Some(node) = self.nodes.write().get_mut(id) {
-                        node.content = Some(attr.value.to_string());
+                        node.content = Some(Arc::from(&*attr.value));
                         node.namespace_uri = attr.ns_uri.clone();
                     }
                 }
@@ -330,7 +330,7 @@ impl XmlDocument {
                     .is_some_and(|n| n.content.as_deref() == Some(uri))
                 {
                     if let Some(node) = self.nodes.write().get_mut(id) {
-                        node.content = Some(uri.to_string());
+                        node.content = Some(Arc::from(uri));
                     }
                 }
                 id
@@ -387,6 +387,9 @@ impl std::fmt::Debug for XmlDocument {
     }
 }
 
+/// The interned local name and prefix of a qualified name.
+type QNameParts = (std::sync::Arc<str>, Option<std::sync::Arc<str>>);
+
 /// Builder for constructing XML documents.
 ///
 /// This is used internally by the parser but can also be used
@@ -406,17 +409,20 @@ pub struct DocumentBuilder {
     /// Interned strings for names / prefixes / namespace URIs, so the 2M
     /// nodes of a large document share a few hundred allocations
     strings: rustc_hash::FxHashSet<std::sync::Arc<str>>,
+    /// Interned `(local name, prefix)` of each element qualified name seen, so
+    /// an element costs one lookup instead of one per part
+    qnames: rustc_hash::FxHashMap<Box<str>, QNameParts>,
 }
 
 /// An attribute split into its parts, with its prefix already resolved.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ParsedAttr<'a> {
     /// Prefix as written (`None` when unprefixed)
     pub prefix: Option<&'a str>,
     /// Local name
     pub local: &'a str,
     /// Namespace URI the prefix resolved to
-    pub ns_uri: Option<&'a str>,
+    pub ns_uri: Option<std::sync::Arc<str>>,
     /// Attribute value (after reference expansion and normalization)
     pub value: &'a str,
 }
@@ -428,7 +434,7 @@ fn to_position(value: Option<usize>) -> Option<std::num::NonZeroU32> {
 
 impl DocumentBuilder {
     /// Returns an interned copy of `s`, shared across the document.
-    fn intern(&mut self, s: &str) -> std::sync::Arc<str> {
+    pub(crate) fn intern(&mut self, s: &str) -> std::sync::Arc<str> {
         if let Some(existing) = self.strings.get(s) {
             return std::sync::Arc::clone(existing);
         }
@@ -437,9 +443,27 @@ impl DocumentBuilder {
         arc
     }
 
+    /// Returns the interned local name and prefix of the qualified name
+    /// `qname`.
+    pub(crate) fn intern_qname(&mut self, qname: &str) -> QNameParts {
+        if let Some((local, prefix)) = self.qnames.get(qname) {
+            return (local.clone(), prefix.clone());
+        }
+        let (prefix, local) = crate::namespace::split_qname(qname);
+        let parts = (self.intern(local), prefix.map(|p| self.intern(p)));
+        self.qnames.insert(Box::from(qname), parts.clone());
+        parts
+    }
+
     /// Creates a new document builder.
     pub fn new() -> Self {
-        let mut nodes = Vec::with_capacity(64);
+        Self::with_node_capacity(64)
+    }
+
+    /// Creates a builder whose node array starts with room for `capacity`
+    /// nodes, so a document of known size is not copied as the array grows.
+    pub(crate) fn with_node_capacity(capacity: usize) -> Self {
+        let mut nodes = Vec::with_capacity(capacity.max(1));
         nodes.push(NodeData::document());
 
         Self {
@@ -448,6 +472,7 @@ impl DocumentBuilder {
             node_stack: vec![0], // Start with document node
             next_id: 1,
             strings: rustc_hash::FxHashSet::default(),
+            qnames: rustc_hash::FxHashMap::default(),
         }
     }
 
@@ -490,7 +515,8 @@ impl DocumentBuilder {
                         .iter()
                         .find(|(l, pp, _)| *l == local && *pp == p)
                         .map(|(_, _, u)| *u)
-                        .or((p == "xml").then_some(crate::namespace::common::XML_NS)),
+                        .or((p == "xml").then_some(crate::namespace::common::XML_NS))
+                        .map(|u| self.intern(u)),
                     value,
                 },
                 None => {
@@ -503,12 +529,15 @@ impl DocumentBuilder {
                     ParsedAttr {
                         prefix: legacy.map(|(_, p, _)| *p),
                         local: key,
-                        ns_uri: legacy.map(|(_, _, u)| *u),
+                        ns_uri: legacy.map(|(_, _, u)| self.intern(u)),
                         value,
                     }
                 }
             })
             .collect();
+        let name = self.intern(name);
+        let prefix = prefix.map(|p| self.intern(p));
+        let namespace_uri = namespace_uri.map(|u| self.intern(u));
         self.start_element_resolved(
             name,
             prefix,
@@ -524,9 +553,9 @@ impl DocumentBuilder {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_element_resolved(
         &mut self,
-        name: &str,
-        prefix: Option<&str>,
-        namespace_uri: Option<&str>,
+        name: std::sync::Arc<str>,
+        prefix: Option<std::sync::Arc<str>>,
+        namespace_uri: Option<std::sync::Arc<str>>,
         attributes: &[ParsedAttr<'_>],
         namespace_decls: Vec<Namespace>,
         line: Option<usize>,
@@ -535,17 +564,14 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let interned_name = self.intern(name);
-        let interned_prefix = prefix.map(|s| self.intern(s));
-        let interned_ns = namespace_uri.map(|s| self.intern(s));
-        let mut node = NodeData::element(interned_name, interned_prefix, interned_ns);
+        let mut node = NodeData::element(name, prefix, namespace_uri);
 
         for attr in attributes {
             node.set_attr(crate::node::types::Attr {
                 name: self.intern(attr.local),
                 value: Box::from(attr.value),
                 prefix: attr.prefix.map(|p| self.intern(p)),
-                ns_uri: attr.ns_uri.map(|u| self.intern(u)),
+                ns_uri: attr.ns_uri.clone(),
             });
         }
 
@@ -588,7 +614,17 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::text(content.to_string());
+        // Text made of white space alone (mostly indentation) repeats
+        // throughout a document, so it is interned; other text is stored as is.
+        let content = if content
+            .bytes()
+            .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+        {
+            self.intern(content)
+        } else {
+            std::sync::Arc::from(content)
+        };
+        let mut node = NodeData::text(content);
         let parent_id = *self.node_stack.last().unwrap_or(&0);
         node.set_parent(Some(parent_id));
 
@@ -606,7 +642,7 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::cdata(content.to_string());
+        let mut node = NodeData::cdata(content);
         let parent_id = *self.node_stack.last().unwrap_or(&0);
         node.set_parent(Some(parent_id));
 
@@ -624,7 +660,7 @@ impl DocumentBuilder {
         let id = self.next_id;
         self.next_id += 1;
 
-        let mut node = NodeData::comment(content.to_string());
+        let mut node = NodeData::comment(content);
         let parent_id = *self.node_stack.last().unwrap_or(&0);
         node.set_parent(Some(parent_id));
 

@@ -54,6 +54,21 @@ impl Fixture {
   <xs:element name="root"><xs:complexType><xs:sequence><xs:element name="n" type="xs:int" maxOccurs="unbounded"/></xs:sequence></xs:complexType></xs:element>
 </xs:schema>"#,
         );
+        f.write(
+            "g.xsd",
+            r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:g" elementFormDefault="qualified">
+  <xs:element name="gel" type="xs:string"/>
+</xs:schema>"#,
+        );
+        f.write(
+            "imports_g.xsd",
+            r#"<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t" xmlns="urn:t" elementFormDefault="qualified">
+  <xs:import namespace="urn:g" schemaLocation="g.xsd"/>
+  <xs:element name="root"><xs:complexType><xs:sequence><xs:element name="n" type="xs:int" maxOccurs="unbounded"/></xs:sequence></xs:complexType></xs:element>
+</xs:schema>"#,
+        );
         f
     }
 
@@ -336,4 +351,59 @@ fn relative_hint_resolves_against_fetcher_base_dir() {
         "{:?}",
         r.entries()
     );
+}
+
+/// A document naming `urn:t` at `imports_g.xsd` (which imports `urn:g`) and
+/// `urn:g` again at `g_location`.
+fn doc_with_second_g_hint(f: &Fixture, g_location: &str, body: &str) -> String {
+    format!(
+        r#"<root xmlns="urn:t" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:t {} urn:g {g_location}">{body}</root>"#,
+        f.loc("imports_g.xsd")
+    )
+}
+
+#[test]
+fn unreachable_hint_for_a_namespace_already_loaded_is_a_warning() {
+    // PLATEAU DEM files name GML at a location that does not exist, while
+    // the other schemas import GML from where it is.
+    let f = Fixture::new();
+    let missing = f.loc("missing-g.xsd");
+    both(
+        &doc_with_second_g_hint(&f, &missing, "<n>1</n>"),
+        |engine, r| {
+            assert!(r.is_valid(), "[{engine}] {:?}", r.entries());
+            assert!(
+                r.warnings().iter().any(|w| w.message.contains(&missing)),
+                "[{engine}] the skipped hint should be reported: {:?}",
+                r.entries()
+            );
+        },
+    );
+    // The content is still validated.
+    both(
+        &doc_with_second_g_hint(&f, &missing, "<n>abc</n>"),
+        |engine, r| {
+            assert!(!r.is_valid(), "[{engine}] {:?}", r.entries());
+            assert!(
+                r.errors()
+                    .iter()
+                    .all(|e| e.error_type != ValidationErrorType::SchemaNotFound),
+                "[{engine}] {:?}",
+                r.entries()
+            );
+        },
+    );
+}
+
+#[test]
+fn unreachable_hint_for_a_namespace_nothing_provides_is_an_error() {
+    let f = Fixture::new();
+    let missing = f.loc("missing-other.xsd");
+    let xml = format!(
+        r#"<root xmlns="urn:t" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:t {} urn:other {missing}"><n>1</n></root>"#,
+        f.loc("imports_g.xsd")
+    );
+    both(&xml, |engine, r| {
+        assert_schema_not_loaded(engine, r, &missing)
+    });
 }

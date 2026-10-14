@@ -9,7 +9,7 @@ A fast, memory-efficient XML library for Rust with XPath and schema validation s
 
 ## Features
 
-- 🦀 **Pure Rust** — No C dependencies, no unsafe code
+- 🦀 **Pure Rust** — No C dependencies
 - 🔄 **libxml Compatible** — Consistent parsing/XPath results
 - 💾 **Memory Efficient** — Stream gigabyte-scale XML with ~1.5 MB constant memory; streaming validation independent of document size
 - 🔍 **Full XPath 1.0** — Complete XPath 1.0 support with namespace handling

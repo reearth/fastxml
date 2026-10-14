@@ -33,11 +33,10 @@ pub(crate) fn is_xml_char(c: char) -> bool {
 /// Rejects any character in `s` that violates the `Char` production. `context`
 /// names where the text came from, for the error message.
 pub(crate) fn check_chars(s: &str, context: &str) -> Result<(), ParseError> {
-    for c in s.chars() {
-        if !is_xml_char(c) {
-            return Err(ParseError::NotWellFormed {
-                message: format!("illegal XML character U+{:04X} in {context}", c as u32),
-            });
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if CHAR_SUSPECT[b as usize] {
+            check_suspect_byte(bytes, i, context)?;
         }
     }
     Ok(())
@@ -51,37 +50,108 @@ pub(crate) fn check_chars(s: &str, context: &str) -> Result<(), ParseError> {
 /// traversal, which matters on the hot path where large text nodes and many
 /// small whitespace nodes would otherwise be scanned several times.
 pub(crate) fn check_text(s: &str, context: &str) -> Result<(), ParseError> {
-    // Number of consecutive `]` immediately preceding the current position.
-    let mut brackets: usize = 0;
-    for (i, c) in s.char_indices() {
-        if !is_xml_char(c) {
-            return Err(ParseError::NotWellFormed {
-                message: format!("illegal XML character U+{:04X} in {context}", c as u32),
-            });
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if !TEXT_SPECIAL[b as usize] {
+            continue;
         }
-        match c {
-            ']' => brackets += 1,
-            '>' => {
-                if brackets >= 2 {
+        match b {
+            b'>' => {
+                if i >= 2 && bytes[i - 1] == b']' && bytes[i - 2] == b']' {
                     return Err(ParseError::NotWellFormed {
                         message: format!("the sequence ']]>' is not allowed in {context}"),
                     });
                 }
-                brackets = 0;
             }
-            '&' => {
-                brackets = 0;
+            b'&' => {
                 // Only character references (`&#…`) are validated here; a bare
                 // general-entity reference is resolved (and its existence
                 // checked) elsewhere.
-                if s[i + 1..].starts_with('#') {
-                    check_char_refs(&s[i..], context)?;
+                if bytes.get(i + 1) == Some(&b'#') {
+                    check_char_ref_at(&s[i..], context)?;
                 }
             }
-            _ => brackets = 0,
+            _ => check_suspect_byte(bytes, i, context)?,
         }
     }
     Ok(())
+}
+
+/// Checks the raw value of attribute `key` in one pass: every character
+/// satisfies the `Char` production, every `&#…` is a well-formed reference to a
+/// legal character, and no literal `<` appears (the `AttValue` production
+/// excludes it).
+pub(crate) fn check_attr_value(value: &str, key: &str) -> Result<(), ParseError> {
+    let bytes = value.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if !ATTR_SPECIAL[b as usize] {
+            continue;
+        }
+        match b {
+            b'<' => {
+                return Err(ParseError::NotWellFormed {
+                    message: format!("'<' is not allowed in the value of attribute '{key}'"),
+                });
+            }
+            b'&' => {
+                if bytes.get(i + 1) == Some(&b'#') {
+                    check_char_ref_at(&value[i..], "attribute value")?;
+                }
+            }
+            _ => check_suspect_byte(bytes, i, "attribute value")?,
+        }
+    }
+    Ok(())
+}
+
+/// Bytes that may start a character outside the `Char` production in valid
+/// UTF-8: the C0 controls other than tab, LF and CR, and `0xEF`, the lead byte
+/// of U+FFFE and U+FFFF. Surrogates cannot occur in a `&str`, and every other
+/// code point is legal, so all other bytes need no decoding.
+static CHAR_SUSPECT: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut b = 0;
+    while b < 0x20 {
+        t[b] = !matches!(b, 0x09 | 0x0A | 0x0D);
+        b += 1;
+    }
+    t[0xEF] = true;
+    t
+};
+
+/// [`CHAR_SUSPECT`] plus the bytes [`check_text`] acts on: `>` (end of `]]>`)
+/// and `&` (start of a character reference).
+static TEXT_SPECIAL: [bool; 256] = {
+    let mut t = CHAR_SUSPECT;
+    t[b'>' as usize] = true;
+    t[b'&' as usize] = true;
+    t
+};
+
+/// [`CHAR_SUSPECT`] plus the bytes [`check_attr_value`] acts on: `<` and `&`.
+static ATTR_SPECIAL: [bool; 256] = {
+    let mut t = CHAR_SUSPECT;
+    t[b'<' as usize] = true;
+    t[b'&' as usize] = true;
+    t
+};
+
+/// Rejects the character starting at `bytes[i]`, a [`CHAR_SUSPECT`] byte, when
+/// it is not a legal `Char`. `bytes` is valid UTF-8.
+#[cold]
+fn check_suspect_byte(bytes: &[u8], i: usize, context: &str) -> Result<(), ParseError> {
+    let code = match bytes[i] {
+        0xEF => match bytes.get(i + 1..i + 3) {
+            Some([0xBF, 0xBE]) => 0xFFFE,
+            Some([0xBF, 0xBF]) => 0xFFFF,
+            _ => return Ok(()),
+        },
+        0x09 | 0x0A | 0x0D => return Ok(()),
+        b => u32::from(b),
+    };
+    Err(ParseError::NotWellFormed {
+        message: format!("illegal XML character U+{code:04X} in {context}"),
+    })
 }
 
 /// Rejects malformed or illegal character references (`CharRef`, XML 1.0 P66)
@@ -100,44 +170,50 @@ pub(crate) fn check_text(s: &str, context: &str) -> Result<(), ParseError> {
 pub(crate) fn check_char_refs(s: &str, context: &str) -> Result<(), ParseError> {
     let mut rest = s;
     while let Some(pos) = rest.find("&#") {
-        let after = &rest[pos + 2..];
-        // Only a lowercase `x` introduces a hexadecimal reference (P66).
-        let (hex, digits_and_rest) = match after.strip_prefix('x') {
-            Some(d) => (true, d),
-            None => (false, after),
-        };
-        let n: usize = digits_and_rest
-            .chars()
-            .take_while(|c| {
-                if hex {
-                    c.is_ascii_hexdigit()
-                } else {
-                    c.is_ascii_digit()
-                }
-            })
-            .map(char::len_utf8)
-            .sum();
-        let (digits, tail) = digits_and_rest.split_at(n);
-        if digits.is_empty() || !tail.starts_with(';') {
-            return Err(ParseError::NotWellFormed {
-                message: format!("malformed character reference in {context}"),
-            });
-        }
-        let legal = u32::from_str_radix(digits, if hex { 16 } else { 10 })
-            .ok()
-            .and_then(char::from_u32)
-            .is_some_and(is_xml_char);
-        if !legal {
-            return Err(ParseError::NotWellFormed {
-                message: format!(
-                    "character reference '&#{}{digits};' denotes an illegal character in {context}",
-                    if hex { "x" } else { "" }
-                ),
-            });
-        }
-        rest = &tail[1..];
+        rest = check_char_ref_at(&rest[pos..], context)?;
     }
     Ok(())
+}
+
+/// Checks the one character reference `s` starts with (`s` begins with `&#`)
+/// and returns the text after its `;`.
+fn check_char_ref_at<'s>(s: &'s str, context: &str) -> Result<&'s str, ParseError> {
+    let after = &s[2..];
+    // Only a lowercase `x` introduces a hexadecimal reference (P66).
+    let (hex, digits_and_rest) = match after.strip_prefix('x') {
+        Some(d) => (true, d),
+        None => (false, after),
+    };
+    // Digits are ASCII, so the count of digit bytes is their length.
+    let n = digits_and_rest
+        .bytes()
+        .take_while(|b| {
+            if hex {
+                b.is_ascii_hexdigit()
+            } else {
+                b.is_ascii_digit()
+            }
+        })
+        .count();
+    let (digits, tail) = digits_and_rest.split_at(n);
+    if digits.is_empty() || !tail.starts_with(';') {
+        return Err(ParseError::NotWellFormed {
+            message: format!("malformed character reference in {context}"),
+        });
+    }
+    let legal = u32::from_str_radix(digits, if hex { 16 } else { 10 })
+        .ok()
+        .and_then(char::from_u32)
+        .is_some_and(is_xml_char);
+    if !legal {
+        return Err(ParseError::NotWellFormed {
+            message: format!(
+                "character reference '&#{}{digits};' denotes an illegal character in {context}",
+                if hex { "x" } else { "" }
+            ),
+        });
+    }
+    Ok(&tail[1..])
 }
 
 /// Rejects any `name` that violates the XML 1.0 `Name` production (P5):
@@ -159,6 +235,16 @@ pub(crate) fn check_char_refs(s: &str, context: &str) -> Result<(), ParseError> 
 /// trivially satisfies the `Char` production; callers need not also call
 /// [`check_chars`] on the same name.
 pub(crate) fn check_name(name: &str, context: &str) -> Result<(), ParseError> {
+    // Almost every name is ASCII, where the Appendix B classes reduce to two
+    // byte tables; the first offending byte is then the first offending char.
+    if let [first, rest @ ..] = name.as_bytes() {
+        if name.is_ascii()
+            && ASCII_NAME_START[*first as usize]
+            && rest.iter().all(|&b| ASCII_NAME_CHAR[b as usize])
+        {
+            return Ok(());
+        }
+    }
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if is_name_start_char(c) => {}
@@ -188,6 +274,30 @@ pub(crate) fn check_name(name: &str, context: &str) -> Result<(), ParseError> {
     }
     Ok(())
 }
+
+/// ASCII `NameStartChar`s: `A-Z`, `a-z`, `_` and `:`.
+static ASCII_NAME_START: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut b = 0;
+    while b < 128 {
+        t[b] = (b as u8).is_ascii_alphabetic() || b == b'_' as usize || b == b':' as usize;
+        b += 1;
+    }
+    t
+};
+
+/// ASCII `NameChar`s: the start characters plus `0-9`, `-` and `.`.
+static ASCII_NAME_CHAR: [bool; 256] = {
+    let mut t = ASCII_NAME_START;
+    let mut b = 0;
+    while b < 128 {
+        if (b as u8).is_ascii_digit() || b == b'-' as usize || b == b'.' as usize {
+            t[b] = true;
+        }
+        b += 1;
+    }
+    t
+};
 
 /// True when `c` may begin a `Name` (`NameStartChar`): `Letter | '_' | ':'`.
 #[inline]
@@ -470,5 +580,103 @@ mod tests {
         assert!(check_name("a b", "element name").is_err());
         // Empty name.
         assert!(check_name("", "element name").is_err());
+    }
+
+    /// The character-by-character definitions the byte-level checks replace.
+    fn reference_chars_ok(s: &str) -> bool {
+        s.chars().all(is_xml_char)
+    }
+
+    fn reference_text_ok(s: &str) -> bool {
+        reference_chars_ok(s) && !s.contains("]]>") && check_char_refs(s, "text").is_ok()
+    }
+
+    fn reference_name_ok(name: &str) -> bool {
+        let mut chars = name.chars();
+        chars.next().is_some_and(is_name_start_char) && chars.all(is_name_char)
+    }
+
+    /// Every string of up to four pieces drawn from characters that sit on the
+    /// boundaries the byte tables encode.
+    fn corpus() -> Vec<String> {
+        let pieces = [
+            "a",
+            "Z",
+            "0",
+            "_",
+            ":",
+            "-",
+            ".",
+            " ",
+            "\t",
+            "\n",
+            "\r",
+            "\u{0}",
+            "\u{B}",
+            "\u{1F}",
+            "\u{7F}",
+            "]",
+            ">",
+            "&",
+            "#",
+            "x",
+            ";",
+            "&#60;",
+            "&#xB;",
+            "&#x",
+            "é",
+            "\u{00D7}",
+            "日",
+            "\u{0300}",
+            "\u{FFFD}",
+            "\u{FFFE}",
+            "\u{FFFF}",
+            "\u{EFBF}",
+            "\u{1F600}",
+        ];
+        let mut out = vec![String::new()];
+        let mut frontier = vec![String::new()];
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for prefix in &frontier {
+                for p in pieces {
+                    next.push(format!("{prefix}{p}"));
+                }
+            }
+            out.extend(next.iter().cloned());
+            frontier = next;
+        }
+        out
+    }
+
+    #[test]
+    fn byte_level_checks_match_char_definitions() {
+        for s in corpus() {
+            assert_eq!(
+                check_chars(&s, "t").is_ok(),
+                reference_chars_ok(&s),
+                "check_chars {s:?}"
+            );
+            assert_eq!(
+                check_text(&s, "t").is_ok(),
+                reference_text_ok(&s),
+                "check_text {s:?}"
+            );
+            assert_eq!(
+                check_name(&s, "n").is_ok(),
+                reference_name_ok(&s),
+                "check_name {s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn noncharacters_are_reported_by_code_point() {
+        let err = check_text("a\u{FFFE}", "text").unwrap_err();
+        assert!(err.to_string().contains("U+FFFE"), "{err}");
+        let err = check_chars("\u{FFFF}", "text").unwrap_err();
+        assert!(err.to_string().contains("U+FFFF"), "{err}");
+        // U+EFBF and U+FFFD share the lead byte 0xEF but are legal.
+        assert!(check_text("\u{EFBF}\u{FFFD}", "text").is_ok());
     }
 }

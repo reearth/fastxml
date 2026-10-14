@@ -274,3 +274,36 @@ fn filenames_differing_only_in_case_do_not_collide() {
     // All three schemas plus catalog.xml are on disk.
     assert_eq!(std::fs::read_dir(&out).unwrap().count(), 4);
 }
+
+#[test]
+fn unreachable_hint_for_a_namespace_already_loaded_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(
+        &tmp.path().join("g.xsd"),
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:g"><xs:element name="gel" type="xs:string"/></xs:schema>"#,
+    );
+    let main = tmp.path().join("main.xsd");
+    write(
+        &main,
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:x"><xs:import namespace="urn:g" schemaLocation="g.xsd"/><xs:element name="root" type="xs:string"/></xs:schema>"#,
+    );
+    let missing = tmp.path().join("missing-g.xsd");
+    let xml = format!(
+        r#"<root xmlns="urn:x" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:x {} urn:g {}">v</root>"#,
+        main.display(),
+        missing.display()
+    );
+    let fetcher = DefaultFetcher::new();
+    let resolved = resolve_schema_from_xml(xml.as_bytes(), &fetcher, &ResolveOptions::default())
+        .expect("a hint for a namespace another schema provides is only a hint");
+    assert!(!resolved.is_builtin());
+
+    // A namespace nothing else provides is still an error.
+    let xml = format!(
+        r#"<root xmlns="urn:x" xmlns:xsi="{XSI}" xsi:schemaLocation="urn:x {} urn:other {}">v</root>"#,
+        main.display(),
+        missing.display()
+    );
+    let r = resolve_schema_from_xml(xml.as_bytes(), &fetcher, &ResolveOptions::default());
+    assert!(r.is_err(), "{r:?}");
+}

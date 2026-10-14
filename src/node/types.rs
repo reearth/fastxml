@@ -55,8 +55,9 @@ pub(crate) struct NodeData {
     pub prefix: Option<Arc<str>>,
     /// Namespace URI (if any)
     pub namespace_uri: Option<Arc<str>>,
-    /// Text content (for text, CDATA, and comment nodes)
-    pub content: Option<String>,
+    /// Text content (for text, CDATA, and comment nodes); shared so that
+    /// repeated text such as indentation is stored once
+    pub content: Option<Arc<str>>,
     /// Attribute and namespace data, boxed because most nodes (all text
     /// nodes, attribute-less elements) carry none — this keeps the inline
     /// size of `NodeData` small, which dominates DOM memory.
@@ -115,6 +116,13 @@ pub(crate) struct NodeExtra {
     pub attributes: SmallVec<[Attr; 1]>,
     /// Namespace declarations on this element
     pub namespace_decls: Vec<Namespace>,
+}
+
+/// The empty name text, comment and CDATA nodes carry, shared so creating
+/// such a node allocates nothing for it.
+fn empty_name() -> Arc<str> {
+    static EMPTY: std::sync::LazyLock<Arc<str>> = std::sync::LazyLock::new(|| Arc::from(""));
+    Arc::clone(&EMPTY)
 }
 
 impl NodeData {
@@ -257,7 +265,7 @@ impl NodeData {
     pub fn document() -> Self {
         Self {
             node_type: NodeType::Document,
-            name: Arc::from(""),
+            name: empty_name(),
             prefix: None,
             namespace_uri: None,
             content: None,
@@ -290,13 +298,13 @@ impl NodeData {
     }
 
     /// Creates a new text node.
-    pub fn text(content: String) -> Self {
+    pub fn text(content: impl Into<Arc<str>>) -> Self {
         Self {
             node_type: NodeType::Text,
-            name: Arc::from(""),
+            name: empty_name(),
             prefix: None,
             namespace_uri: None,
-            content: Some(content),
+            content: Some(content.into()),
             extra: None,
             parent_plus1: None,
             children: SmallVec::new(),
@@ -306,13 +314,13 @@ impl NodeData {
     }
 
     /// Creates a new CDATA node.
-    pub fn cdata(content: String) -> Self {
+    pub fn cdata(content: impl Into<Arc<str>>) -> Self {
         Self {
             node_type: NodeType::CData,
-            name: Arc::from(""),
+            name: empty_name(),
             prefix: None,
             namespace_uri: None,
-            content: Some(content),
+            content: Some(content.into()),
             extra: None,
             parent_plus1: None,
             children: SmallVec::new(),
@@ -322,13 +330,13 @@ impl NodeData {
     }
 
     /// Creates a new comment node.
-    pub fn comment(content: String) -> Self {
+    pub fn comment(content: impl Into<Arc<str>>) -> Self {
         Self {
             node_type: NodeType::Comment,
-            name: Arc::from(""),
+            name: empty_name(),
             prefix: None,
             namespace_uri: None,
-            content: Some(content),
+            content: Some(content.into()),
             extra: None,
             parent_plus1: None,
             children: SmallVec::new(),
@@ -339,6 +347,7 @@ impl NodeData {
 
     /// Creates a new processing instruction node.
     pub fn processing_instruction(target: String, content: Option<String>) -> Self {
+        let content = content.map(Arc::from);
         Self {
             node_type: NodeType::ProcessingInstruction,
             name: Arc::from(target.as_str()),
@@ -365,7 +374,7 @@ impl NodeData {
             name: Arc::from(name.as_str()),
             prefix: prefix.map(|p| Arc::from(p.as_str())),
             namespace_uri: namespace_uri.map(|n| Arc::from(n.as_str())),
-            content: Some(value),
+            content: Some(Arc::from(value)),
             extra: None,
             parent_plus1: None,
             children: SmallVec::new(),
@@ -385,7 +394,7 @@ impl NodeData {
             name: Arc::from(prefix.as_str()),
             prefix: None,
             namespace_uri: None,
-            content: Some(uri),
+            content: Some(Arc::from(uri)),
             extra: None,
             parent_plus1: None,
             children: SmallVec::new(),
