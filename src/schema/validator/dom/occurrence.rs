@@ -17,7 +17,6 @@ impl DomSchemaValidator {
     pub(crate) fn validate_with_automaton(
         &self,
         node: &XmlNode,
-        child_counts: &HashMap<String, u32>,
         flattened: &FlattenedChildren,
         nilled: bool,
         errors: &mut Vec<StructuredError>,
@@ -30,18 +29,21 @@ impl DomSchemaValidator {
             return true;
         }
 
-        let node_name = node.get_name();
+        // Names for messages are fetched only when there is an error.
+        let node_name = || node.get_name();
         let mut st = AutomatonState::default();
 
         for child in node.get_child_elements() {
-            let local = child.get_name();
-            let qname = match child.get_prefix() {
-                Some(p) if !p.is_empty() => format!("{}:{}", p, local),
-                _ => local.clone(),
+            let local = child.name_arc();
+            let local: &str = &local;
+            let prefix = child.prefix_arc();
+            let qname: std::borrow::Cow<'_, str> = match prefix.as_deref() {
+                Some(p) if !p.is_empty() => format!("{p}:{local}").into(),
+                _ => local.into(),
             };
-            let ns = child.get_namespace_uri();
+            let ns = child.namespace_uri_arc();
 
-            match automaton.step(&mut st, &qname, &local, ns.as_deref()) {
+            match automaton.step(&mut st, &qname, local, ns.as_deref()) {
                 StepResult::Matched => {}
                 StepResult::TooMany { max } => {
                     if !self.options.skip_max_occurs {
@@ -50,11 +52,13 @@ impl DomSchemaValidator {
                                 ValidationErrorType::TooManyOccurrences,
                                 format!(
                                     "element '{}' occurs more than the allowed {} time(s) in '{}'",
-                                    qname, max, node_name
+                                    qname,
+                                    max,
+                                    node_name()
                                 ),
                                 &child,
                             )
-                            .with_node_name(&qname)
+                            .with_node_name(qname.as_ref())
                             .with_level(ErrorLevel::Error);
                         self.push_error(errors, error);
                     }
@@ -64,8 +68,8 @@ impl DomSchemaValidator {
                     // error from the declaration checks; only declared
                     // elements are reported as content-model violations
                     // (mirrors the streaming validator).
-                    let declared = flattened.constraints.contains_key(&qname)
-                        || flattened.constraints.contains_key(&local)
+                    let declared = flattened.constraints.contains_key(qname.as_ref())
+                        || flattened.constraints.contains_key(local)
                         || self.schema.get_element(&qname).is_some();
                     if declared {
                         let mut expected_list = expected.join(", ");
@@ -77,13 +81,15 @@ impl DomSchemaValidator {
                                 ValidationErrorType::InvalidContent,
                                 format!(
                                     "element '{}' is not expected here in '{}' (expected: {})",
-                                    qname, node_name, expected_list
+                                    qname,
+                                    node_name(),
+                                    expected_list
                                 ),
                                 &child,
                             )
-                            .with_node_name(&qname)
+                            .with_node_name(qname.as_ref())
                             .with_expected(expected_list)
-                            .with_found(qname.clone())
+                            .with_found(qname.to_string())
                             .with_level(ErrorLevel::Error);
                         self.push_error(errors, error);
                     }
@@ -100,23 +106,28 @@ impl DomSchemaValidator {
                         ValidationErrorType::TooFewOccurrences,
                         format!(
                             "element {} in '{}' occurs {} time(s), but minimum is {}",
-                            name, node_name, found, min
+                            name,
+                            node_name(),
+                            found,
+                            min
                         ),
                         node,
                     )
-                    .with_node_name(&node_name)
+                    .with_node_name(node_name())
                     .with_level(ErrorLevel::Error),
                 FinishError::Missing { expected } => {
+                    let child_counts = self.count_child_elements(node);
                     let occurred = expected
                         .iter()
-                        .any(|n| self.get_total_count(child_counts, n) > 0);
+                        .any(|n| self.get_total_count(&child_counts, n) > 0);
                     let expected_list = expected.join(", ");
                     let (error_type, message) = if occurred {
                         (
                             ValidationErrorType::TooFewOccurrences,
                             format!(
                                 "element '{}' has incomplete content: more of {} required",
-                                node_name, expected_list
+                                node_name(),
+                                expected_list
                             ),
                         )
                     } else {
@@ -124,12 +135,13 @@ impl DomSchemaValidator {
                             ValidationErrorType::MissingRequiredElement,
                             format!(
                                 "element '{}' has incomplete content (expected: {})",
-                                node_name, expected_list
+                                node_name(),
+                                expected_list
                             ),
                         )
                     };
                     self.make_error(error_type, message, node)
-                        .with_node_name(&node_name)
+                        .with_node_name(node_name())
                         .with_expected(expected_list)
                         .with_level(ErrorLevel::Error)
                 }

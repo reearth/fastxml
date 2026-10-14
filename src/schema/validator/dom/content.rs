@@ -1,7 +1,7 @@
 //! Content validation (text content, facets, error helpers) for DOM validation.
 
 use crate::error::{ErrorLevel, StructuredError, ValidationErrorType};
-use crate::node::{NodeType, XmlNode};
+use crate::node::XmlNode;
 use crate::schema::types::{ContentModel, ElementDef, SimpleType, TypeDef};
 use crate::schema::xsd::facets::{FacetConstraints, FacetValidator};
 use crate::schema::xsd::primitive::PrimitiveKind;
@@ -11,18 +11,7 @@ use super::DomSchemaValidator;
 impl DomSchemaValidator {
     /// Collects text content from child nodes.
     pub(crate) fn collect_text_content(&self, node: &XmlNode) -> String {
-        let mut text = String::new();
-        for child in node.get_child_nodes() {
-            match child.get_type() {
-                NodeType::Text | NodeType::CData => {
-                    if let Some(content) = child.get_content() {
-                        text.push_str(&content);
-                    }
-                }
-                _ => {}
-            }
-        }
-        text
+        node.child_text()
     }
 
     /// Validates text content against the element's type. `nilled` is true
@@ -56,11 +45,9 @@ impl DomSchemaValidator {
         // Get type definition
         let type_def = if let Some(ref type_ref) = elem.type_ref {
             // ns-first (compile-time resolved), string fallback.
-            self.schema
-                .type_by_ref(elem.type_ns.as_ref(), type_ref)
-                .cloned()
+            self.schema.type_by_ref(elem.type_ns.as_ref(), type_ref)
         } else {
-            elem.inline_type.clone()
+            elem.inline_type.as_ref()
         };
 
         // Fixed value constraint: non-empty content must match. Empty content
@@ -100,7 +87,7 @@ impl DomSchemaValidator {
                 // resolve to no PrimitiveKind and pass through unchanged.
                 self.validate_simple_type_facets(
                     node,
-                    &simple,
+                    simple,
                     effective_content,
                     nilled,
                     ids,
@@ -112,11 +99,10 @@ impl DomSchemaValidator {
                 if matches!(&complex.content, ContentModel::SimpleContent { .. }) {
                     // ns-first base hops (string fallback inside),
                     // through simpleContent restrictions.
-                    if let Some(simple) = self.schema.simple_content_value_type(&complex) {
-                        let simple = simple.clone();
+                    if let Some(simple) = self.schema.simple_content_value_type(complex) {
                         self.validate_simple_type_facets(
                             node,
-                            &simple,
+                            simple,
                             effective_content,
                             nilled,
                             ids,
@@ -175,8 +161,29 @@ impl DomSchemaValidator {
         // User-declared facets (minLength, pattern, enumeration, …).
         // Empty content is still checked — a pattern or enumeration facet
         // can legitimately reject the empty string.
+        let constraints = self.create_facet_constraints(simple);
+
+        // An unconstrained numeric scalar or list (e.g. `gml:posList`) whose
+        // tokens all scan as numbers passes the checks below, so they are
+        // skipped; any other value takes the canonical path, which reports the
+        // errors (see `numeric`).
+        let fast = match super::super::numeric::classify(&constraints) {
+            Some(super::super::numeric::NumericPlan::Scalar(kind)) => {
+                super::super::numeric::scan_scalar(text_content.as_bytes(), kind)
+            }
+            Some(super::super::numeric::NumericPlan::List(kind)) => {
+                super::super::numeric::scan_list(text_content.as_bytes(), kind)
+            }
+            None => false,
+        };
+        if fast {
+            if let Some(kind) = constraints.value_kind {
+                ids.node_kinds.insert(node.id(), kind);
+            }
+            return;
+        }
+
         {
-            let constraints = self.create_facet_constraints(simple);
             let validator = FacetValidator::new(&constraints);
             if let Err(facet_error) = validator.validate(text_content) {
                 let node_name = node.get_name();
@@ -216,7 +223,8 @@ impl DomSchemaValidator {
 
         // Built-in primitive lexical/value-space check (e.g., xs:integer
         // rejecting "1.5" or "", xs:int rejecting 2147483648).
-        if let Some(kind) = PrimitiveKind::resolve(&self.schema, simple)
+        // The constraints carry the type's resolved primitive kind.
+        if let Some(kind) = constraints.value_kind
             && let Err(prim_error) = kind.validate(text_content)
         {
             let node_name = node.get_name();
