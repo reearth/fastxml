@@ -322,6 +322,7 @@ impl<S> StreamingParser<S> {
             checker: crate::parser::checks::WellformedChecker::new(),
             expander,
             on_event: &mut on_event,
+            utf8: reader.utf8(),
         };
 
         loop {
@@ -457,13 +458,14 @@ impl<S> StreamingParser<S> {
 /// Per-parse state of the streaming loop: well-formedness and entity
 /// bookkeeping plus the event callback, shared by the main loop and the
 /// content fragments of entities that contain markup.
-struct StreamSink<'s, F> {
+struct StreamSink<'s, 'i, F> {
     checker: crate::parser::checks::WellformedChecker,
     expander: &'s mut EntityExpander,
     on_event: &'s mut F,
+    utf8: crate::parser::source::Utf8<'i>,
 }
 
-impl<F> StreamSink<'_, F>
+impl<F> StreamSink<'_, '_, F>
 where
     F: FnMut(&RawEvent<'_>) -> Result<()>,
 {
@@ -472,7 +474,7 @@ where
     fn event(&mut self, event: &Event<'_>, line: usize, column: usize) -> Result<()> {
         match event {
             Event::Start(e) | Event::Empty(e) => {
-                let tag = StartTag::decode(e)?;
+                let tag = StartTag::decode(e, self.utf8)?;
                 self.checker.start(&tag)?;
                 let (name, prefix, attributes, namespace_decls) =
                     split_start_event(&tag, self.expander)?;
@@ -492,7 +494,7 @@ where
             }
             Event::End(e) => {
                 let qname = e.name();
-                let full_name = std::str::from_utf8(qname.as_ref())?;
+                let full_name = self.utf8.str(qname.as_ref())?;
                 self.checker.end(full_name)?;
                 let (prefix, name) = crate::namespace::split_qname(full_name);
                 (self.on_event)(&RawEvent::EndElement { name, prefix })?;
@@ -501,7 +503,7 @@ where
                 // Check the raw (pre-expansion) text: literal characters must
                 // satisfy the Char production, and each character reference
                 // must name a legal XML 1.0 character.
-                let raw = std::str::from_utf8(e.as_ref())?;
+                let raw = self.utf8.str(e.as_ref())?;
                 let raw = self.checker.text(raw)?;
                 self.expander.declare_from(&mut self.checker);
                 match self.expander.expand_text(raw)? {
@@ -517,17 +519,17 @@ where
                 }
             }
             Event::CData(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.cdata(text)?;
                 (self.on_event)(&RawEvent::CData(text))?;
             }
             Event::Comment(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.comment(text)?;
                 (self.on_event)(&RawEvent::Comment(text))?;
             }
             Event::PI(e) => {
-                let content = std::str::from_utf8(e.as_ref())?;
+                let content = self.utf8.str(e.as_ref())?;
                 self.checker.pi(content)?;
                 let mut parts = content.splitn(2, char::is_whitespace);
                 let target = parts.next().unwrap_or("");

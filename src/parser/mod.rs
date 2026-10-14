@@ -202,6 +202,7 @@ fn parse_from_source<'i>(
         ns_stack: NamespaceStack::new(),
         expander: EntityExpander::new(),
         checker: checks::WellformedChecker::new(),
+        utf8: reader.utf8(),
     };
     let mut buf = Vec::with_capacity(options.buffer_size);
 
@@ -248,29 +249,30 @@ fn parse_from_source<'i>(
 /// State of one DOM parse: the document under construction plus the
 /// namespace, entity and well-formedness bookkeeping shared by the main
 /// event loop and the content fragments of entities that contain markup.
-struct DomBuilder<'o> {
+struct DomBuilder<'o, 'i> {
     options: &'o ParserOptions,
     builder: DocumentBuilder,
     memory_used: usize,
     ns_stack: NamespaceStack,
     expander: EntityExpander,
     checker: checks::WellformedChecker,
+    utf8: source::Utf8<'i>,
 }
 
-impl DomBuilder<'_> {
+impl DomBuilder<'_, '_> {
     /// Handles one content event (anything but the XML declaration, the
     /// DOCTYPE and end of input). `line`/`column` locate new elements.
     fn event(&mut self, event: &Event<'_>, line: usize, column: usize) -> Result<()> {
         match event {
             Event::Start(e) => {
                 check_memory(self.options, &mut self.memory_used, e.len())?;
-                let tag = StartTag::decode(e)?;
+                let tag = StartTag::decode(e, self.utf8)?;
                 self.checker.start(&tag)?;
                 self.start_element(&tag, line, column)?;
             }
             Event::Empty(e) => {
                 check_memory(self.options, &mut self.memory_used, e.len())?;
-                let tag = StartTag::decode(e)?;
+                let tag = StartTag::decode(e, self.utf8)?;
                 self.checker.start(&tag)?;
                 self.start_element(&tag, line, column)?;
                 // An empty-element tag opens and immediately closes.
@@ -279,8 +281,7 @@ impl DomBuilder<'_> {
                 self.builder.end_element();
             }
             Event::End(e) => {
-                self.checker
-                    .end(std::str::from_utf8(e.name().into_inner())?)?;
+                self.checker.end(self.utf8.str(e.name().into_inner())?)?;
                 self.ns_stack.pop_scope();
                 self.builder.end_element();
             }
@@ -288,7 +289,7 @@ impl DomBuilder<'_> {
                 // Check the raw (pre-expansion) text: literal characters must
                 // satisfy the Char production, and each character reference
                 // must name a legal XML 1.0 character.
-                let raw = std::str::from_utf8(e.as_ref())?;
+                let raw = self.utf8.str(e.as_ref())?;
                 let raw = self.checker.text(raw)?;
                 self.expander.declare_from(&mut self.checker);
                 match self.expander.expand_text(raw)? {
@@ -304,18 +305,18 @@ impl DomBuilder<'_> {
                 }
             }
             Event::CData(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.cdata(text)?;
                 check_memory(self.options, &mut self.memory_used, text.len())?;
                 self.builder.cdata(text);
             }
             Event::Comment(e) => {
-                let text = std::str::from_utf8(e.as_ref())?;
+                let text = self.utf8.str(e.as_ref())?;
                 self.checker.comment(text)?;
                 self.builder.comment(text);
             }
             Event::PI(e) => {
-                let content = std::str::from_utf8(e.as_ref())?;
+                let content = self.utf8.str(e.as_ref())?;
                 self.checker.pi(content)?;
                 // Parse PI: target followed by content
                 let parts: Vec<&str> = content.splitn(2, char::is_whitespace).collect();
@@ -581,6 +582,10 @@ mod tests {
             b"<r>\n<a x='1' x='2'/></r>",
             b"<r>\n\n  <a>&undefined;</a></r>",
             b"<r>\x01</r>",
+            // Not UTF-8: checked conversions report the same errors.
+            b"<r>ok\xFF</r>",
+            b"<r a='\xC3'/>",
+            b"<\xE6\x97>x</\xE6\x97>",
         ];
         for doc in docs {
             assert_paths_agree(doc);

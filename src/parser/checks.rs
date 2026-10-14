@@ -21,6 +21,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::error::ParseError;
+use super::source::Utf8;
 use super::wellformed::{check_attr_value, check_chars, check_name, check_text};
 use crate::error::Result;
 
@@ -433,16 +434,16 @@ pub(crate) struct StartTag<'a> {
 impl<'a> StartTag<'a> {
     /// Decodes `e`. Fails on a malformed or duplicate attribute and on bytes
     /// that are not UTF-8.
-    pub(crate) fn decode(e: &'a BytesStart<'a>) -> Result<Self> {
-        let qname = std::str::from_utf8(e.name().into_inner())?;
+    pub(crate) fn decode(e: &'a BytesStart<'a>, utf8: Utf8<'_>) -> Result<Self> {
+        let qname = utf8.str(e.name().into_inner())?;
         let mut attrs = SmallVec::new();
         for attr_result in e.attributes() {
             let attr = attr_result.map_err(|e| ParseError::AttributeError {
                 message: e.to_string(),
             })?;
-            let key = std::str::from_utf8(attr.key.into_inner())?;
+            let key = utf8.str(attr.key.into_inner())?;
             let value = match attr.value {
-                Cow::Borrowed(raw) => Cow::Borrowed(std::str::from_utf8(raw)?),
+                Cow::Borrowed(raw) => Cow::Borrowed(utf8.str(raw)?),
                 Cow::Owned(raw) => Cow::Owned(String::from_utf8(raw).map_err(|e| e.utf8_error())?),
             };
             attrs.push((key, value));
