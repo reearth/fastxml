@@ -34,6 +34,14 @@ pub enum FetchError {
         /// The URL that was requested
         url: String,
     },
+    /// The location is not allowed by the fetch policy
+    /// (see [`RestrictedFetcher`](super::RestrictedFetcher))
+    NotAllowed {
+        /// The location that was requested
+        url: String,
+        /// Why the location was rejected
+        reason: String,
+    },
 }
 
 impl fmt::Display for FetchError {
@@ -53,6 +61,9 @@ impl fmt::Display for FetchError {
             }
             FetchError::NetworkDisabled { url } => {
                 write!(f, "network access disabled, cannot fetch: {}", url)
+            }
+            FetchError::NotAllowed { url, reason } => {
+                write!(f, "fetch not allowed by policy: {}: {}", url, reason)
             }
         }
     }

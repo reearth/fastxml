@@ -16,7 +16,9 @@ use clap::Parser;
 use serde::Serialize;
 
 use fastxml::error::StructuredError;
-use fastxml::schema::{DefaultFetcher, FetchResult, Schema, SchemaFetcher, Validator};
+use fastxml::schema::{
+    DefaultFetcher, FetchPolicy, FetchResult, RestrictedFetcher, Schema, SchemaFetcher, Validator,
+};
 
 const AFTER_HELP: &str = "\
 Schemas:
@@ -26,6 +28,13 @@ Schemas:
   directory (or URL). A file whose schema cannot be fetched, parsed or
   compiled, or that names no schema at all, is reported invalid with an
   error saying why.
+
+  Schema locations come from the validated files and from the schemas they
+  import, so by default any local file or URL they name is read. With
+  --allow-url and/or --allow-dir, only locations under those URL prefixes or
+  inside those directories (after resolving `..` and symlinks) are fetched;
+  any other location makes the schema fail to load. This applies to every
+  schema fetch, including --schema and its imports.
 
 Exit codes:
   0  every file is valid
@@ -49,6 +58,16 @@ struct Args {
     /// each file's xsi:schemaLocation
     #[arg(short, long, value_name = "PATH")]
     schema: Option<String>,
+
+    /// Only fetch schemas from URLs under this http(s) prefix (repeatable;
+    /// enables the fetch restriction)
+    #[arg(long = "allow-url", value_name = "PREFIX")]
+    allow_url: Vec<String>,
+
+    /// Only read local schemas inside this directory (repeatable; enables the
+    /// fetch restriction)
+    #[arg(long = "allow-dir", value_name = "DIR")]
+    allow_dir: Vec<PathBuf>,
 
     /// Output as JSON
     #[arg(short, long)]
@@ -129,11 +148,12 @@ fn main() {
 fn run(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
     let mut results = Vec::new();
     let cache = Arc::new(DefaultFetcher::new());
+    let fetcher = schema_fetcher(args, &cache)?;
     let downloaded_urls = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let schema = match &args.schema {
         Some(location) => {
-            Some(Arc::new(load_schema(location, &cache).map_err(|e| {
+            Some(Arc::new(load_schema(location, &fetcher).map_err(|e| {
                 format!("could not load --schema {}: {}", location, e)
             })?))
         }
@@ -146,6 +166,7 @@ fn run(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
             args,
             schema.clone(),
             Arc::clone(&cache),
+            fetcher.clone(),
             Arc::clone(&downloaded_urls),
         )?;
         results.push(result);
@@ -181,9 +202,46 @@ fn run(args: &Args) -> Result<i32, Box<dyn std::error::Error>> {
     if invalid_count > 0 { Ok(1) } else { Ok(0) }
 }
 
+/// The fetcher every schema fetch goes through: the shared cache, wrapped in a
+/// [`RestrictedFetcher`] when `--allow-url` or `--allow-dir` is given.
+fn schema_fetcher(
+    args: &Args,
+    cache: &Arc<DefaultFetcher>,
+) -> Result<SharedFetcher, Box<dyn std::error::Error>> {
+    let open = SharedFetcher(Arc::clone(cache) as Arc<dyn SchemaFetcher>);
+    if args.allow_url.is_empty() && args.allow_dir.is_empty() {
+        return Ok(open);
+    }
+    let mut policy = FetchPolicy::new();
+    for prefix in &args.allow_url {
+        let valid = url::Url::parse(prefix)
+            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some());
+        if !valid {
+            return Err(format!("--allow-url {}: not an http(s) URL", prefix).into());
+        }
+        policy = policy.allow_url_prefix(prefix);
+    }
+    for dir in &args.allow_dir {
+        policy = policy.allow_dir(dir);
+    }
+    Ok(SharedFetcher(Arc::new(RestrictedFetcher::with_policy(
+        open, policy,
+    ))))
+}
+
+/// A cheaply clonable handle to a shared fetcher.
+#[derive(Clone)]
+struct SharedFetcher(Arc<dyn SchemaFetcher>);
+
+impl SchemaFetcher for SharedFetcher {
+    fn fetch(&self, url: &str) -> fastxml::error::Result<FetchResult> {
+        self.0.fetch(url)
+    }
+}
+
 /// Compiles the `--schema` document, resolving its imports/includes relative
 /// to its own location.
-fn load_schema(location: &str, fetcher: &DefaultFetcher) -> fastxml::error::Result<Schema> {
+fn load_schema(location: &str, fetcher: &SharedFetcher) -> fastxml::error::Result<Schema> {
     let location = if is_url(location) {
         location.to_string()
     } else {
@@ -204,6 +262,7 @@ fn validate_file(
     args: &Args,
     schema: Option<Arc<Schema>>,
     cache: Arc<DefaultFetcher>,
+    schema_fetcher: SharedFetcher,
     global_downloaded_urls: Arc<Mutex<Vec<String>>>,
 ) -> Result<FileResult, Box<dyn std::error::Error>> {
     let start = Instant::now();
@@ -244,7 +303,12 @@ fn validate_file(
             .unwrap_or_default();
         Base::Dir(dir)
     };
-    let fetcher = UrlTrackingFetcher::new(Arc::clone(&cache), Arc::clone(&downloaded_urls), base);
+    let fetcher = UrlTrackingFetcher::new(
+        Arc::clone(&cache),
+        schema_fetcher,
+        Arc::clone(&downloaded_urls),
+        base,
+    );
 
     if !args.json && !args.quiet && args.verbose && schema.is_none() {
         println!("  Resolving schemas...");
@@ -444,13 +508,18 @@ enum Base {
     Dir(PathBuf),
 }
 
-/// A fetcher wrapper that tracks downloaded URLs and delegates to a shared DefaultFetcher.
+/// A fetcher wrapper that tracks downloaded URLs and delegates to the shared
+/// schema fetcher.
 ///
 /// This struct adds URL tracking (recording which URLs were freshly downloaded) and
 /// resolution of relative schema locations against the XML document's own
-/// location on top of `DefaultFetcher`, which handles the actual caching.
+/// location on top of the shared fetcher, which goes through the
+/// `DefaultFetcher` cache (and the fetch restriction, when one is configured).
 struct UrlTrackingFetcher {
-    inner: Arc<DefaultFetcher>,
+    /// The shared cache, consulted for its size to detect fresh downloads
+    cache: Arc<DefaultFetcher>,
+    /// What locations are fetched through
+    inner: SharedFetcher,
     downloaded_urls: Arc<Mutex<Vec<String>>>,
     /// Base for resolving relative locations named by the document
     base: Base,
@@ -458,11 +527,13 @@ struct UrlTrackingFetcher {
 
 impl UrlTrackingFetcher {
     fn new(
-        inner: Arc<DefaultFetcher>,
+        cache: Arc<DefaultFetcher>,
+        inner: SharedFetcher,
         downloaded_urls: Arc<Mutex<Vec<String>>>,
         base: Base,
     ) -> Self {
         Self {
+            cache,
             inner,
             downloaded_urls,
             base,
@@ -527,13 +598,13 @@ impl SchemaFetcher for UrlTrackingFetcher {
         let resolved_url = self.resolve_url(url);
 
         // Track cache size before fetch to detect new downloads
-        let cache_size_before = self.inner.len();
+        let cache_size_before = self.cache.len();
 
-        // Delegate to the shared DefaultFetcher (handles caching + actual fetching)
+        // Delegate to the shared fetcher (handles caching + actual fetching)
         let result = self.inner.fetch(&resolved_url)?;
 
         // If the cache grew, this was a fresh download — track the URL
-        if self.inner.len() > cache_size_before {
+        if self.cache.len() > cache_size_before {
             self.downloaded_urls
                 .lock()
                 .unwrap()
@@ -585,6 +656,7 @@ mod tests {
         // Create fetcher with first base URL
         let fetcher1 = UrlTrackingFetcher::new(
             Arc::clone(&cache),
+            SharedFetcher(Arc::clone(&cache) as Arc<dyn SchemaFetcher>),
             Arc::clone(&downloaded_urls),
             Base::Url("https://example.com/dir1/file1.xml".to_string()),
         );
@@ -592,6 +664,7 @@ mod tests {
         // Create fetcher with second base URL
         let fetcher2 = UrlTrackingFetcher::new(
             Arc::clone(&cache),
+            SharedFetcher(Arc::clone(&cache) as Arc<dyn SchemaFetcher>),
             Arc::clone(&downloaded_urls),
             Base::Url("https://example.com/dir2/file2.xml".to_string()),
         );
@@ -607,6 +680,7 @@ mod tests {
         // Different base directories
         let fetcher3 = UrlTrackingFetcher::new(
             Arc::clone(&cache),
+            SharedFetcher(Arc::clone(&cache) as Arc<dyn SchemaFetcher>),
             Arc::clone(&downloaded_urls),
             Base::Url("https://other.com/project/data/file.xml".to_string()),
         );
@@ -622,6 +696,7 @@ mod tests {
 
         let fetcher = UrlTrackingFetcher::new(
             Arc::clone(&cache),
+            SharedFetcher(Arc::clone(&cache) as Arc<dyn SchemaFetcher>),
             Arc::clone(&downloaded_urls),
             Base::Url("https://example.com/assets/abc/project/udx/area/file.xml".to_string()),
         );

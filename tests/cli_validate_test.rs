@@ -142,3 +142,89 @@ fn help_documents_exit_codes() {
     let help = stdout(&out);
     assert!(help.contains("Exit codes"), "{help}");
 }
+
+#[test]
+fn allow_dir_permits_schemas_inside_it() {
+    let f = fixture();
+    let out = cli(f.path(), &["--allow-dir", "schemas", "data/sub/rel_ok.xml"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+}
+
+#[test]
+fn schema_outside_allowed_dirs_fails_to_load() {
+    let f = fixture();
+    // The relative schemaLocation resolves to `<dir>/schemas/s.xsd`, which is
+    // not inside the only allowed directory.
+    let out = cli(
+        f.path(),
+        &["--allow-dir", "elsewhere", "data/sub/rel_ok.xml"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stdout(&out).contains("not allowed"), "{}", stdout(&out));
+
+    // An absolute location outside the allowed directory is rejected too.
+    let secret = f.path().join("elsewhere/secret.xsd");
+    std::fs::write(&secret, SCHEMA).unwrap();
+    std::fs::write(
+        f.path().join("schemas/abs.xml"),
+        format!(
+            r#"<root xmlns="urn:t" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:t {}"><n>1</n></root>"#,
+            secret.display()
+        ),
+    )
+    .unwrap();
+    let out = cli(
+        f.path(),
+        &["-j", "--allow-dir", "schemas", "schemas/abs.xml"],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["files"][0]["valid"], false);
+    let message = json["files"][0]["errors"][0]["message"].as_str().unwrap();
+    assert!(message.contains("not allowed"), "{message}");
+}
+
+#[test]
+fn allow_url_alone_blocks_local_schemas() {
+    let f = fixture();
+    let out = cli(
+        f.path(),
+        &[
+            "--allow-url",
+            "https://schemas.opengis.net/",
+            "data/sub/rel_ok.xml",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stdout(&out).contains("not allowed"), "{}", stdout(&out));
+}
+
+#[test]
+fn restriction_applies_to_schema_option() {
+    let f = fixture();
+    let out = cli(
+        f.path(),
+        &[
+            "--allow-dir",
+            "elsewhere",
+            "--schema",
+            "schemas/s.xsd",
+            "data/nosl_ok.xml",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("not allowed"), "{stderr}");
+}
+
+#[test]
+fn invalid_allow_url_is_a_usage_error() {
+    let f = fixture();
+    let out = cli(
+        f.path(),
+        &["--allow-url", "schemas.opengis.net", "data/sub/rel_ok.xml"],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--allow-url"), "{stderr}");
+}
