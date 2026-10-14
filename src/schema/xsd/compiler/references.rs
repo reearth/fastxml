@@ -26,6 +26,8 @@ use crate::schema::xsd::builtin::is_builtin_xsd_type_local;
 
 use super::facet_checks::{FacetBase, check_facets, classify_builtin_base};
 
+mod base_facets;
+
 /// Namespaces that are always lenient because fastxml provides (partial)
 /// built-in definitions for them rather than compiled schema documents.
 fn is_always_lenient(ns: &str) -> bool {
@@ -577,6 +579,7 @@ impl Checker<'_> {
         if let Some(inline) = &element.inline_type {
             self.check_type_def(inline)?;
         }
+        self.check_element_value(element)?;
         for ic in &element.identity_constraints {
             if let Some(refer) = &ic.refer {
                 let from = format!("keyref '{}'", ic.name);
@@ -739,7 +742,7 @@ impl Checker<'_> {
         if let Some(inline) = &attr.inline_type {
             self.check_simple_type(inline)?;
         }
-        Ok(())
+        self.check_attribute_value(attr)
     }
 
     fn check_type_def(&self, type_def: &XsdTypeDef) -> Result<()> {
@@ -765,6 +768,11 @@ impl Checker<'_> {
                     self.check_simple_type(inline)?;
                 }
                 check_facets(&r.facets, self.facet_base(r.base.as_ref()))?;
+                if let Some(base) = &r.base {
+                    self.check_facets_against_base(&r.facets, base)?;
+                } else if let Some(inline) = &r.inline_base {
+                    self.check_facets_against_inline_base(&r.facets, inline)?;
+                }
             }
             XsdSimpleTypeContent::List(list) => {
                 if let Some(item) = &list.item_type {

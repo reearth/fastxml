@@ -492,6 +492,48 @@ mod tests {
     }
 
     #[test]
+    fn attribute_value_constraint_must_be_valid_for_its_type() {
+        for (decl, ok) in [
+            (
+                r#"<xs:attribute name="a" type="xs:int" default="12"/>"#,
+                true,
+            ),
+            (
+                r#"<xs:attribute name="a" type="xs:int" default=" 12 "/>"#,
+                true,
+            ),
+            (
+                r#"<xs:attribute name="a" type="xs:int" fixed="abc"/>"#,
+                false,
+            ),
+            (
+                r#"<xs:attribute name="a" type="xs:int" default=" 1 2"/>"#,
+                false,
+            ),
+            // Declarations nested in anonymous types are checked too.
+            (
+                r#"<xs:sequence><xs:element name="e" type="xs:int" fixed="7"/></xs:sequence>"#,
+                true,
+            ),
+            (
+                r#"<xs:sequence><xs:element name="e" type="xs:int" fixed="x"/></xs:sequence>"#,
+                false,
+            ),
+            (
+                r#"<xs:sequence><xs:element name="e"><xs:complexType>
+                   <xs:attribute name="a" type="xs:integer" fixed="abc"/>
+                   </xs:complexType></xs:element></xs:sequence>"#,
+                false,
+            ),
+        ] {
+            let result = schema_of(&format!(
+                r#"<xs:complexType name="ct">{decl}</xs:complexType>"#
+            ));
+            assert_eq!(result.is_ok(), ok, "{decl}: {:?}", result.err());
+        }
+    }
+
+    #[test]
     fn rejects_global_id_attribute_with_default() {
         let result = schema_of(r#"<xs:attribute name="a" type="xs:ID" default="x"/>"#);
         assert!(result.is_err());

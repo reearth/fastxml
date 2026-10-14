@@ -204,6 +204,18 @@ fn translate_property_escape(
     }
 }
 
+/// Whether `block` names a Unicode 3.1 block, the blocks XSD 1.0 block
+/// escapes (`\p{IsBlock}`) refer to.
+pub(crate) fn is_xsd_block_name(block: &str) -> bool {
+    // The surrogate blocks have no code points a Rust regex can match, so
+    // they have no ranges below.
+    unicode_block_ranges(block).is_some()
+        || matches!(
+            block,
+            "HighSurrogates" | "HighPrivateUseSurrogates" | "LowSurrogates"
+        )
+}
+
 /// Code-point ranges (as Rust regex class members) for the Unicode 3.1
 /// blocks XSD 1.0 block escapes refer to.
 fn unicode_block_ranges(block: &str) -> Option<&'static str> {

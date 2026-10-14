@@ -278,3 +278,27 @@ fn unprefixed_attribute_is_not_the_declared_xml_one() {
         "required attribute 'lang' is missing",
     );
 }
+
+#[test]
+fn anonymous_attribute_type_in_simple_content_is_enforced() {
+    let xsd = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+      <xs:element name="e">
+        <xs:complexType>
+          <xs:simpleContent>
+            <xs:extension base="xs:string">
+              <xs:attribute name="a">
+                <xs:simpleType>
+                  <xs:restriction base="xs:int">
+                    <xs:maxInclusive value="5"/>
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:attribute>
+            </xs:extension>
+          </xs:simpleContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:schema>"#;
+    assert_valid(xsd, r#"<e a="5">text</e>"#);
+    assert_invalid(xsd, r#"<e a="6">text</e>"#, "6");
+    assert_invalid(xsd, r#"<e a="six">text</e>"#, "six");
+}

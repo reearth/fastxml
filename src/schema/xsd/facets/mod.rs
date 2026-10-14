@@ -36,6 +36,8 @@ use crate::schema::types::{CompiledSchema, SimpleType, TypeDef};
 
 mod pattern;
 
+pub(crate) use pattern::is_xsd_block_name;
+
 use self::pattern::compile_xsd_pattern;
 use super::primitive::PrimitiveKind;
 use super::value_compare::compare_values;

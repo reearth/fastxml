@@ -7,6 +7,7 @@
 //! rules live in `attribute_values.rs` and the content-model rules in
 //! `content_model.rs`.
 
+mod allowed_attributes;
 mod attribute_values;
 mod content_model;
 
@@ -230,6 +231,7 @@ impl XsdParser {
             }
         }
 
+        self.check_allowed_attributes(local, attrs)?;
         self.check_attribute_value_rules(local, attrs)?;
         self.check_content_model_rules(local, attrs)?;
 
