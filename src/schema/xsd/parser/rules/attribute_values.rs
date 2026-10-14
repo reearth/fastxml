@@ -214,6 +214,11 @@ fn check_complex_type_attributes(attrs: &HashMap<String, String>) -> Result<()> 
 
 fn check_schema_attributes(attrs: &HashMap<String, String>) -> Result<()> {
     const LOCAL: &str = "schema";
+    // targetNamespace is an anyURI that must not be empty (no namespace is
+    // written by leaving the attribute out).
+    if attrs.get("targetNamespace").is_some_and(|t| t.is_empty()) {
+        return invalid("targetNamespace cannot be empty".to_string());
+    }
     check_enum(LOCAL, attrs, "elementFormDefault", FORM)?;
     check_enum(LOCAL, attrs, "attributeFormDefault", FORM)?;
     check_derivation_set(

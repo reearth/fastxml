@@ -38,6 +38,7 @@ impl XsdParser {
         };
 
         check_reference_has_no_children(parent, local)?;
+        check_content_order(parent, local)?;
         check_duplicate_attribute_use(parent, local, attrs, attribute_form_qualified)?;
         check_any_attribute_count(parent, local)?;
         check_allowed_child(parent, local, attrs)
@@ -120,6 +121,64 @@ fn not_allowed_inside(local: &str, parent: &str) -> Result<()> {
 
 fn is_particle(local: &str) -> bool {
     matches!(local, "group" | "all" | "choice" | "sequence")
+}
+
+fn is_facet(local: &str) -> bool {
+    matches!(
+        local,
+        "enumeration"
+            | "pattern"
+            | "length"
+            | "minLength"
+            | "maxLength"
+            | "minInclusive"
+            | "maxInclusive"
+            | "minExclusive"
+            | "maxExclusive"
+            | "totalDigits"
+            | "fractionDigits"
+            | "whiteSpace"
+            | "explicitTimezone"
+    )
+}
+
+/// Where a child goes in the ordered content of a complexType or a
+/// restriction/extension: `annotation?, simpleType?, (facets | content),
+/// (attribute | attributeGroup)*, anyAttribute?`. `None` for children the
+/// order does not constrain.
+fn content_phase(local: &str) -> Option<u8> {
+    Some(match local {
+        "simpleType" => 1,
+        "simpleContent" | "complexContent" => 2,
+        l if is_facet(l) || is_particle(l) => 2,
+        "attribute" | "attributeGroup" => 3,
+        "anyAttribute" => 4,
+        _ => return None,
+    })
+}
+
+/// Children of a complexType or restriction/extension must come in the
+/// order the schema for schemas gives.
+fn check_content_order(parent: &mut ChildState, local: &str) -> Result<()> {
+    if !matches!(
+        parent.name.as_str(),
+        "complexType" | "restriction" | "extension"
+    ) {
+        return Ok(());
+    }
+    let Some(phase) = content_phase(local) else {
+        return Ok(());
+    };
+    // Facets after facets, attributes after attributes: only a step back
+    // is out of order (anyAttribute counts are checked separately).
+    if phase < parent.phase {
+        return invalid(format!(
+            "'{local}' is out of order inside '{}'",
+            parent.name
+        ));
+    }
+    parent.phase = phase;
+    Ok(())
 }
 
 /// Required attributes on the element itself.
@@ -240,7 +299,6 @@ fn check_allowed_child(
     match parent.name.as_str() {
         "complexType" => check_complex_type_child(parent, local),
         "simpleContent" | "complexContent" => check_content_derivation_child(parent, local),
-        "extension" | "restriction" => check_derivation_particle_child(parent, local),
         "unique" | "key" | "keyref" => check_identity_constraint_child(parent, local),
         // Elements whose only legal child is annotation.
         "notation" | "import" | "include" | "selector" | "field" | "any" | "anyAttribute" => {
@@ -271,6 +329,9 @@ fn check_allowed_child(
         "element" => check_element_child(parent, local),
         "attribute" => check_attribute_child(parent, local),
         "simpleType" => check_simple_type_child(parent, local),
+        "list" | "union" => check_inline_type_child(parent, local),
+        "restriction" if parent.parent == "simpleType" => check_inline_type_child(parent, local),
+        "extension" | "restriction" => check_derivation_particle_child(parent, local),
         "all" => check_all_child(local, attrs),
         _ => Ok(()),
     }
@@ -321,9 +382,26 @@ fn check_content_derivation_child(parent: &mut ChildState, local: &str) -> Resul
     Ok(())
 }
 
-/// A complex-content extension/restriction admits at most one
-/// particle.
+/// A complex-content extension/restriction admits at most one particle and
+/// no facets; a simple-content one admits no particle, and only its
+/// restriction admits a simpleType and facets.
 fn check_derivation_particle_child(parent: &mut ChildState, local: &str) -> Result<()> {
+    let simple_content = parent.parent == "simpleContent";
+    let complex_content = parent.parent == "complexContent";
+    if simple_content && is_particle(local) {
+        return invalid(format!(
+            "'{local}' is not allowed in a simpleContent {}",
+            parent.name
+        ));
+    }
+    if (complex_content || (simple_content && parent.name == "extension"))
+        && (is_facet(local) || local == "simpleType")
+    {
+        return invalid(format!(
+            "'{local}' is not allowed in a {} {}",
+            parent.parent, parent.name
+        ));
+    }
     if is_particle(local) {
         if parent.particles > 0 {
             return invalid(format!(
@@ -411,6 +489,41 @@ fn check_attribute_child(parent: &mut ChildState, local: &str) -> Result<()> {
         _ => return not_allowed_inside(local, "attribute"),
     }
     Ok(())
+}
+
+/// A simple restriction or a list names its base or item type by attribute
+/// or by one inline simpleType, not both; a union may add any number of
+/// inline member types.
+fn check_inline_type_child(parent: &mut ChildState, local: &str) -> Result<()> {
+    if local == "simpleType" {
+        if parent.name != "union" && (parent.has_base || parent.derivations > 0) {
+            return invalid(format!(
+                "'{}' takes one base or item type, by attribute or by an inline simpleType",
+                parent.name
+            ));
+        }
+        parent.derivations += 1;
+    }
+    Ok(())
+}
+
+/// Content an element must have, checked when it closes.
+pub(in crate::schema::xsd::parser) fn check_required_content(state: &ChildState) -> Result<()> {
+    let missing = match state.name.as_str() {
+        "simpleContent" | "complexContent" => {
+            (state.derivations == 0).then_some("a restriction or extension")
+        }
+        "simpleType" => (state.derivations == 0).then_some("a restriction, list or union"),
+        "list" | "union" => (!state.has_base && state.derivations == 0).then_some("a type"),
+        "restriction" if state.parent == "simpleType" => {
+            (!state.has_base && state.derivations == 0).then_some("a base type")
+        }
+        _ => None,
+    };
+    match missing {
+        Some(what) => invalid(format!("'{}' requires {what}", state.name)),
+        None => Ok(()),
+    }
 }
 
 /// simpleType admits exactly one of restriction | list | union.

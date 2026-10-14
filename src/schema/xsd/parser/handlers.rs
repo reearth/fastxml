@@ -832,7 +832,11 @@ impl XsdParser {
             return Ok(());
         }
 
-        if let Some(state) = self.child_state_stack.pop()
+        let state = self.child_state_stack.pop();
+        if let Some(state) = &state {
+            super::rules::check_required_content(state)?;
+        }
+        if let Some(state) = state
             && matches!(state.name.as_str(), "unique" | "key" | "keyref")
             && (state.selectors != 1 || state.fields == 0)
         {
