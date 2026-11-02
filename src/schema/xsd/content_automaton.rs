@@ -44,9 +44,9 @@ pub enum PosMatcher {
         /// All names that select this position (the declared name, its
         /// local part, and substitution member names + their local parts)
         names: FxHashSet<String>,
-        /// Only the names as declared (qualified): used for UPA overlap
-        /// checks, where local-part fallbacks would cause false positives
-        /// on same-local-name elements from different namespaces
+        /// Only the declared expanded name (`{namespace}local`): used for UPA
+        /// overlap checks, where local-part fallbacks would cause false
+        /// positives on same-local-name elements from different namespaces
         decl_names: FxHashSet<String>,
         /// Identity of the source particle in the schema: positions created
         /// by occurrence expansion of the same particle share one id, so
@@ -434,13 +434,6 @@ impl Builder<'_> {
         for member in (self.subst)(&def.name) {
             add(&member);
         }
-        // UPA comparison uses only the directly declared name: substitution
-        // members and local-part fallbacks lack the namespace information
-        // needed to tell genuine competition from same-local-name elements
-        // in different namespaces (conservative: misses substitution-based
-        // UPA violations, never rejects a valid schema for them).
-        let mut decl_names = FxHashSet::default();
-        decl_names.insert(def.name.clone());
         // Expanded names for the namespace-exact query: a reference carries
         // the referenced element's (namespace, local); a local declaration
         // its own namespace and (unprefixed) name.
@@ -451,6 +444,17 @@ impl Builder<'_> {
                 .map_or(def.name.as_str(), |(_, l)| l);
             NsName::new(def.namespace.as_deref().unwrap_or(""), local)
         });
+        // UPA comparison uses only the directly declared expanded name
+        // (`{namespace}local`): same-local-name elements in different
+        // namespaces, such as a derived type's `urf:validFrom` beside an
+        // inherited `core:validFrom`, never compete. Substitution members
+        // are left out (conservative: misses substitution-based UPA
+        // violations, never rejects a valid schema for them).
+        let mut decl_names = FxHashSet::default();
+        decl_names.insert(format!(
+            "{{{}}}{}",
+            declared.namespace_uri, declared.local_name
+        ));
         let mut exact = ExactNames::default();
         exact.extend((self.subst_ns)(&declared));
         exact.insert(declared);
