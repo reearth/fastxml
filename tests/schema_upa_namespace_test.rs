@@ -10,14 +10,14 @@ const BASE: &str = r#"<?xml version="1.0"?>
   <xs:element name="Thing" type="BaseType"/>
   <xs:complexType name="BaseType">
     <xs:sequence>
-      <xs:element name="validFrom" minOccurs="0" type="xs:dateTime"/>
+      <xs:element name="label" minOccurs="0" type="xs:string"/>
       <xs:element name="other" minOccurs="0" type="xs:string"/>
     </xs:sequence>
   </xs:complexType>
 </xs:schema>"#;
 
-/// Extends `base:BaseType` and declares its own `validFrom`, as i-UR 4.0.2's
-/// `urf:UrbanFunctionAreaType` does beside CityGML 3.0's `core:validFrom`.
+/// Extends `base:BaseType` and declares its own `label` in another
+/// namespace, beside the inherited one.
 const DERIVED: &str = r#"<?xml version="1.0"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:base="urn:base" targetNamespace="urn:derived" elementFormDefault="qualified">
   <xs:import namespace="urn:base"/>
@@ -26,7 +26,7 @@ const DERIVED: &str = r#"<?xml version="1.0"?>
     <xs:complexContent>
       <xs:extension base="base:BaseType">
         <xs:sequence>
-          <xs:element name="validFrom" minOccurs="0" type="xs:date"/>
+          <xs:element name="label" minOccurs="0" type="xs:string"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>

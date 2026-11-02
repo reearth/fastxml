@@ -446,8 +446,8 @@ impl Builder<'_> {
         });
         // UPA comparison uses only the directly declared expanded name
         // (`{namespace}local`): same-local-name elements in different
-        // namespaces, such as a derived type's `urf:validFrom` beside an
-        // inherited `core:validFrom`, never compete. Substitution members
+        // namespaces, such as a derived type's own `label` beside an
+        // inherited one from another namespace, never compete. Substitution members
         // are left out (conservative: misses substitution-based UPA
         // violations, never rejects a valid schema for them).
         let mut decl_names = FxHashSet::default();
