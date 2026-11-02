@@ -62,9 +62,7 @@ fn same_local_name_in_the_same_namespace_is_still_a_upa_clash() {
     let compiled = SchemaBuilder::new()
         .add("urn:clash", SAME_NAMESPACE_CLASH)
         .resolve();
-    let err = compiled
-        .err()
-        .expect("a real UPA violation must be rejected");
+    let err = compiled.expect_err("a real UPA violation must be rejected");
     assert!(
         err.to_string().contains("Unique Particle Attribution"),
         "unexpected error: {err}"
