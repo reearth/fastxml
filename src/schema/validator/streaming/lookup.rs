@@ -7,6 +7,7 @@ use crate::schema::types::{
 };
 use crate::schema::xsd::facets::FacetConstraints;
 
+use super::super::decls::{find_local_declaration, local_declaration_depends_on_namespace};
 use super::OnePassSchemaValidator;
 
 /// Memoized resolution of a child element within a parent's content model
@@ -210,11 +211,14 @@ impl OnePassSchemaValidator {
     /// This searches through inherited elements as well when the parent type uses ComplexExtension.
     /// `child_local_sym` is the child's local-name symbol, used (with the
     /// parent's type symbol) to memoize the resolution across identical
-    /// (parent-type, child) pairs.
+    /// (parent-type, child) pairs. `ns` is the child's namespace: it picks
+    /// between declarations with the same local name in different
+    /// namespaces, and such resolutions are not memoized.
     pub(crate) fn get_inline_element_info(
         &mut self,
         child_local_sym: u32,
         name: &str,
+        ns: Option<&str>,
     ) -> Arc<InlineResolved> {
         // For inline elements, we need to look up the parent's type and find the child element definition
         if self.state.element_stack.len() < 2 {
@@ -234,7 +238,8 @@ impl OnePassSchemaValidator {
         // type and the child's (local) name, so memoize it by (parent type
         // sym, child sym). `parent_type_sym` is derived from the parent's
         // *namespace-resolved* type identity, so same-local-name parent types
-        // in different namespaces key distinctly.
+        // in different namespaces key distinctly. The child's namespace is
+        // not in the key: a resolution it can change is not memoized.
         if let (Some(parent_type_sym), Some(type_ref)) =
             (parent_ctx.type_sym, parent_ctx.type_ref.clone())
         {
@@ -246,9 +251,13 @@ impl OnePassSchemaValidator {
             // Prefer the namespace-resolved parent type; the bare `type_ref`
             // string is a namespace-blind fallback (used only when the parent
             // carried no resolved `type_ns`).
+            let mut cacheable = true;
             let resolved = match self.collect_elements_cached_ns(parent_type_ns.as_ref(), &type_ref)
             {
-                Some(elements) => self.inline_info_from_elements(name, &elements),
+                Some(elements) => {
+                    cacheable = !local_declaration_depends_on_namespace(&elements, name);
+                    self.inline_info_from_elements(name, ns, &elements)
+                }
                 None => InlineResolved::default(),
             };
             // Debug-only: the memoized picture must equal a fresh resolution.
@@ -256,7 +265,7 @@ impl OnePassSchemaValidator {
             {
                 let fresh =
                     match self.collect_elements_cached_ns(parent_type_ns.as_ref(), &type_ref) {
-                        Some(elements) => self.inline_info_from_elements(name, &elements),
+                        Some(elements) => self.inline_info_from_elements(name, ns, &elements),
                         None => InlineResolved::default(),
                     };
                 debug_assert_eq!(
@@ -277,7 +286,9 @@ impl OnePassSchemaValidator {
                 );
             }
             let resolved = Arc::new(resolved);
-            self.inline_cache.insert(key, Arc::clone(&resolved));
+            if cacheable {
+                self.inline_cache.insert(key, Arc::clone(&resolved));
+            }
             return resolved;
         }
         // The parent has an anonymous type (no named-type identity): resolve
@@ -288,88 +299,94 @@ impl OnePassSchemaValidator {
         };
         let schema = Arc::clone(&self.schema);
         let elements = self.runtime_types.elements(&schema, &complex);
-        Arc::new(self.inline_info_from_elements(name, &elements))
+        Arc::new(self.inline_info_from_elements(name, ns, &elements))
     }
 
-    /// Finds `name` in an inherited-element list and resolves its type info
-    /// together with its value constraints (`default`/`fixed`/`nillable`).
-    fn inline_info_from_elements(&mut self, name: &str, elements: &[ElementDef]) -> InlineResolved {
-        // Search from the end to prioritize derived type's elements over base type's
-        // This is important when an element is redefined in a derived type with a different type
-        // (e.g., brid:boundedBy in AbstractBridgeType shadows gml:boundedBy in AbstractFeatureType)
-        for elem in elements.iter().rev() {
-            if elem.name == name {
-                // Found the inline element - get its type info
-                let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
-                let type_ns = elem.type_ns.clone();
-                let inline_type = elem.inline_type.clone();
+    /// Finds the declaration of the child `name` in namespace `ns` in an
+    /// inherited-element list (see [`find_local_declaration`]) and resolves
+    /// its type info together with its value constraints
+    /// (`default`/`fixed`/`nillable`).
+    fn inline_info_from_elements(
+        &mut self,
+        name: &str,
+        ns: Option<&str>,
+        elements: &[ElementDef],
+    ) -> InlineResolved {
+        // Searched from the end so a derived type's redeclaration shadows the
+        // base type's (an element redefined in a derived type with a
+        // different type), skipping declarations in another namespace than
+        // the child's (`gml:boundedBy` in `AbstractFeatureType` and
+        // `brid:boundedBy` in `AbstractBridgeType` are different elements).
+        let Some(elem) = find_local_declaration(elements, name, ns) else {
+            return InlineResolved::default();
+        };
+        // Found the inline element - get its type info
+        let type_ref: Option<Arc<str>> = elem.type_ref.as_deref().map(Arc::from);
+        let type_ns = elem.type_ns.clone();
+        let inline_type = elem.inline_type.clone();
 
-                // Get flattened children for this inline element: the
-                // compile-time resolved type_ns probes the owning-namespace
-                // cache first, then the legacy memoized string path.
-                let flattened_children = if let Some(cached) = elem
-                    .type_ns
-                    .as_ref()
-                    .and_then(|tn| self.schema.ns_type_children_cache.get(tn))
-                {
-                    Some(Arc::clone(cached))
-                } else if let Some(ref tr) = type_ref {
-                    self.resolve_children_for_type_ref(tr)
-                } else if let Some(TypeDef::Complex(child_complex)) = elem.inline_type.as_ref() {
-                    Some(self.runtime_children(child_complex))
-                } else {
-                    None
-                };
+        // Get flattened children for this inline element: the
+        // compile-time resolved type_ns probes the owning-namespace
+        // cache first, then the legacy memoized string path.
+        let flattened_children = if let Some(cached) = elem
+            .type_ns
+            .as_ref()
+            .and_then(|tn| self.schema.ns_type_children_cache.get(tn))
+        {
+            Some(Arc::clone(cached))
+        } else if let Some(ref tr) = type_ref {
+            self.resolve_children_for_type_ref(tr)
+        } else if let Some(TypeDef::Complex(child_complex)) = elem.inline_type.as_ref() {
+            Some(self.runtime_children(child_complex))
+        } else {
+            None
+        };
 
-                // Value constraints are resolved by name, but a content model
-                // may declare the same name at multiple positions with
-                // *differing* value constraints (e.g. a sequence of two
-                // same-name elements with distinct `fixed` values, or a base
-                // `default` shadowed by an extension `fixed`). Then the
-                // constraint is positional: expose every declaration's
-                // constraints in declaration order and let the caller pick by
-                // the child's occurrence index. Type resolution keeps its
-                // derived-first pick.
-                let ambiguous = elements.iter().any(|e| {
-                    e.name == name && (e.default != elem.default || e.fixed != elem.fixed)
-                });
-                let positional = if ambiguous {
-                    Some(Arc::new(
-                        elements
-                            .iter()
-                            .filter(|e| e.name == name)
-                            .map(|e| ValueConstraint {
-                                default: e.default.clone(),
-                                fixed: e.fixed.clone(),
-                                nillable: e.nillable,
-                            })
-                            .collect::<Vec<_>>(),
-                    ))
-                } else {
-                    None
-                };
-                let (default, fixed, nillable) = if ambiguous {
-                    (None, None, false)
-                } else {
-                    (elem.default.clone(), elem.fixed.clone(), elem.nillable)
-                };
+        // Value constraints are resolved by name, but a content model
+        // may declare the same name at multiple positions with
+        // *differing* value constraints (e.g. a sequence of two
+        // same-name elements with distinct `fixed` values, or a base
+        // `default` shadowed by an extension `fixed`). Then the
+        // constraint is positional: expose every declaration's
+        // constraints in declaration order and let the caller pick by
+        // the child's occurrence index. Type resolution keeps its
+        // derived-first pick.
+        let ambiguous = elements
+            .iter()
+            .any(|e| e.name == name && (e.default != elem.default || e.fixed != elem.fixed));
+        let positional = if ambiguous {
+            Some(Arc::new(
+                elements
+                    .iter()
+                    .filter(|e| e.name == name)
+                    .map(|e| ValueConstraint {
+                        default: e.default.clone(),
+                        fixed: e.fixed.clone(),
+                        nillable: e.nillable,
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+        } else {
+            None
+        };
+        let (default, fixed, nillable) = if ambiguous {
+            (None, None, false)
+        } else {
+            (elem.default.clone(), elem.fixed.clone(), elem.nillable)
+        };
 
-                return InlineResolved {
-                    type_ref,
-                    type_ns,
-                    flattened: flattened_children,
-                    inline_type,
-                    found: true,
-                    is_ref: elem.ref_ns.is_some(),
-                    constraints: elem.constraints.clone(),
-                    default,
-                    fixed,
-                    nillable,
-                    positional,
-                };
-            }
+        InlineResolved {
+            type_ref,
+            type_ns,
+            flattened: flattened_children,
+            inline_type,
+            found: true,
+            is_ref: elem.ref_ns.is_some(),
+            constraints: elem.constraints.clone(),
+            default,
+            fixed,
+            nillable,
+            positional,
         }
-
-        InlineResolved::default()
     }
 }

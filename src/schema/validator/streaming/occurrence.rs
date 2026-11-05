@@ -39,9 +39,6 @@ impl OnePassSchemaValidator {
     /// `report` controls whether violations become errors — children
     /// admitted via wildcard modes step silently except for occurrence
     /// overflows.
-    // `local` is consumed only by the cfg(test) equivalence check against
-    // the string-based step; release builds match by symbols alone.
-    #[cfg_attr(not(test), allow(unused_variables))]
     pub(crate) fn step_parent_automaton(
         &mut self,
         qname: &str,
@@ -88,7 +85,8 @@ impl OnePassSchemaValidator {
             // step, both in result and in the resulting configuration set.
             #[cfg(test)]
             let mut st_check = parent.automaton_state.clone();
-            let result = bound.step_syms(&mut parent.automaton_state, qname_sym, local_sym, ns);
+            let result =
+                bound.step_syms(&mut parent.automaton_state, qname_sym, local_sym, local, ns);
             #[cfg(test)]
             {
                 let check = automaton.step(&mut st_check, qname, local, ns);

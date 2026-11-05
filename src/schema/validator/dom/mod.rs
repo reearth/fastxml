@@ -330,9 +330,11 @@ impl DomSchemaValidator {
         // or gen:value as xs:string vs the measure 'value' with required
         // @uom). A reference (`ref=`) falls back to the global declaration
         // it points to. Local declarations are searched from the end so a
-        // derived type's redeclaration shadows the base type's.
-        let inline_def =
-            parent_ctx.and_then(|ctx| ctx.elements.iter().rev().find(|e| e.name == *name));
+        // derived type's redeclaration shadows the base type's, skipping
+        // those in another namespace than the child's.
+        let inline_def = parent_ctx.and_then(|ctx| {
+            super::decls::find_local_declaration(&ctx.elements, name, node_ns.as_deref())
+        });
         let elem_def = match inline_def {
             Some(e) if e.ref_ns.is_none() => Some(e),
             _ => self

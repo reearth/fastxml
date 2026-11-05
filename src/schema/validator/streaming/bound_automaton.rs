@@ -77,17 +77,22 @@ impl BoundAutomaton {
     /// the corresponding strings: both instantiate the same
     /// `step_matched` control flow, differing only in how a position
     /// matches (symbol binary search vs string-set probe).
+    ///
+    /// `local` is the text of `local_sym`, for the namespace check that
+    /// [`ContentAutomaton::step`] applies after a name match.
     pub fn step_syms(
         &self,
         st: &mut AutomatonState,
         qname_sym: SymbolId,
         local_sym: SymbolId,
+        local: &str,
         ns: Option<&str>,
     ) -> StepResult {
         self.auto.step_matched(st, |pos| match &self.bound[pos] {
             BoundMatcher::Element { syms } => {
-                syms.binary_search(&qname_sym).is_ok()
-                    || (local_sym != qname_sym && syms.binary_search(&local_sym).is_ok())
+                (syms.binary_search(&qname_sym).is_ok()
+                    || (local_sym != qname_sym && syms.binary_search(&local_sym).is_ok()))
+                    && !self.auto.excluded_by_namespace(pos, local, ns)
             }
             BoundMatcher::Wildcard(wc) => wc.matches(ns),
         })
@@ -135,7 +140,7 @@ mod tests {
             let local: &str = child.rsplit(':').next().unwrap_or(child);
 
             let r_str = auto.step(&mut st_str, child, local, None);
-            let r_sym = bound.step_syms(&mut st_sym, qsym, lsym, None);
+            let r_sym = bound.step_syms(&mut st_sym, qsym, lsym, local, None);
             assert_eq!(
                 r_str, r_sym,
                 "step vs step_syms diverged on child '{child}'"

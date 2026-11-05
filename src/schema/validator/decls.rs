@@ -189,3 +189,42 @@ pub(crate) fn collect_elements(schema: &CompiledSchema, complex: &ComplexType) -
     let mut visited = HashSet::new();
     crate::schema::xsd::compiler::collect_elements_with_inheritance(complex, schema, &mut visited)
 }
+
+/// Finds the local declaration that a child element named `local` in
+/// namespace `ns` matches in its parent's element list.
+///
+/// The list is searched from the end, so a derived type's declaration
+/// shadows an inherited one with the same name. A declaration in a namespace
+/// other than the child's is a different element and is skipped when both
+/// namespaces are known (a hand-built declaration has none, and a child with
+/// an empty namespace keeps the name-only match). When no declaration is in
+/// the child's namespace, the last one with the name is taken; the content
+/// model then reports the child as unexpected.
+pub(crate) fn find_local_declaration<'a>(
+    elements: &'a [ElementDef],
+    local: &str,
+    ns: Option<&str>,
+) -> Option<&'a ElementDef> {
+    let ns = ns.filter(|ns| !ns.is_empty());
+    let mut named = elements.iter().rev().filter(|e| e.name == local);
+    let last = named.next()?;
+    let admits = |e: &ElementDef| match (e.namespace.as_deref(), ns) {
+        (Some(declared), Some(ns)) => declared == ns,
+        _ => true,
+    };
+    if admits(last) {
+        return Some(last);
+    }
+    Some(named.find(|e| admits(e)).unwrap_or(last))
+}
+
+/// Whether [`find_local_declaration`] can pick a different declaration for
+/// `local` depending on the child's namespace: two declarations with that
+/// name differ in namespace.
+pub(crate) fn local_declaration_depends_on_namespace(elements: &[ElementDef], local: &str) -> bool {
+    let mut named = elements.iter().filter(|e| e.name == local);
+    let Some(first) = named.next() else {
+        return false;
+    };
+    named.any(|e| e.namespace != first.namespace)
+}
