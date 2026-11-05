@@ -1,4 +1,4 @@
-#counts	total=39613	pass=38881	fail=521	unsupported=28	blocked=183	panic=0
+#counts	total=39613	pass=38897	fail=505	unsupported=28	blocked=183	panic=0
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010a.xml	unsupported	indeterminate
 instance-indeterminate	attgC010::msMeta/../msData/attributeGroup/attgC010b.xml	unsupported	indeterminate
 instance-indeterminate	particlesZ026::msMeta/../msData/particles/particlesZ026.xml	unsupported	indeterminate
@@ -149,7 +149,6 @@ instance-invalid	idZ012::msMeta/../msData/identityConstraint/idZ012.xml	fail	exp
 instance-invalid	idZ015::msMeta/../msData/identityConstraint/idZ015.xml	fail	expected invalid but validator accepted it
 instance-invalid	identitytestsuitetest002::sunMeta/../sunData/combined/identity/IdentityTestSuite/002/test.3.n.xml	fail	expected invalid but validator accepted it
 instance-invalid	identitytestsuitetest004::sunMeta/../sunData/combined/identity/IdentityTestSuite/004/test.3.n.xml	fail	expected invalid but validator accepted it
-instance-invalid	mgN003::msMeta/../msData/modelGroups/mgN003.xml	fail	expected invalid but validator accepted it
 instance-invalid	missing001::saxonMeta/../saxonData/Missing/missing001.n1.xml	fail	expected invalid but validator accepted it
 instance-invalid	missing003::saxonMeta/../saxonData/Missing/missing001.n1.xml	fail	expected invalid but validator accepted it
 instance-invalid	missing006::saxonMeta/../saxonData/Missing/missing001.n1.xml	fail	expected invalid but validator accepted it
@@ -157,14 +156,8 @@ instance-invalid	nillable00201m::sunMeta/../sunData/ElemDecl/nillable/nillable00
 instance-invalid	notatH002v::msMeta/../msData/notations/notatH002.xml	fail	expected invalid but validator accepted it
 instance-invalid	notatH003::msMeta/../msData/notations/notatH003.xml	fail	expected invalid but validator accepted it
 instance-invalid	p2::msMeta/../msData/regex/p2.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDa001::msMeta/../msData/particles/particlesDa001.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDa004::msMeta/../msData/particles/particlesDa004.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDb001::msMeta/../msData/particles/particlesDb001.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesDb003::msMeta/../msData/particles/particlesDb003.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDb004::msMeta/../msData/particles/particlesDb004.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDb006::msMeta/../msData/particles/particlesDb006.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesDb008::msMeta/../msData/particles/particlesDb008.xml	fail	expected invalid but validator accepted it
-instance-invalid	particlesDb009::msMeta/../msData/particles/particlesDb009.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesDc004::msMeta/../msData/particles/particlesDc004.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesDc005::msMeta/../msData/particles/particlesDc005.xml	fail	expected invalid but validator accepted it
 instance-invalid	particlesDc006::msMeta/../msData/particles/particlesDc006.xml	fail	expected invalid but validator accepted it
@@ -228,14 +221,9 @@ instance-invalid	stZ064::msMeta/../msData/simpleType/test102159_7.xml	blocked	sc
 instance-invalid	stZ066::msMeta/../msData/simpleType/test102159_9.xml	blocked	schema failed to compile
 instance-invalid	st_basetd00201m::sunMeta/../sunData/SType/ST_baseTD/ST_baseTD00201m/ST_baseTD00201m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	targetns00301m1::sunMeta/../sunData/ElemDecl/targetNS/targetNS00301m/targetNS00301m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	targetns00301m2::sunMeta/../sunData/ElemDecl/targetNS/targetNS00301m/targetNS00301m2_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	targetns00301m3::sunMeta/../sunData/ElemDecl/targetNS/targetNS00301m/targetNS00301m3_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	targetns00302m1::sunMeta/../sunData/ElemDecl/targetNS/targetNS00302m/targetNS00302m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	targetns00302m2::sunMeta/../sunData/ElemDecl/targetNS/targetNS00302m/targetNS00302m2_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	targetns00302m3::sunMeta/../sunData/ElemDecl/targetNS/targetNS00302m/targetNS00302m3_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	targetns00303m1::sunMeta/../sunData/ElemDecl/targetNS/targetNS00303m/targetNS00303m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	targetns00303m2::sunMeta/../sunData/ElemDecl/targetNS/targetNS00303m/targetNS00303m2_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	targetns00303m3::sunMeta/../sunData/ElemDecl/targetNS/targetNS00303m/targetNS00303m3_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	test004::sunMeta/../sunData/combined/004/test.2.n.xml	fail	expected invalid but validator accepted it
 instance-invalid	test004::sunMeta/../sunData/combined/004/test.3.n.xml	fail	expected invalid but validator accepted it
 instance-invalid	test004::sunMeta/../sunData/combined/004/test.4.n.xml	fail	expected invalid but validator accepted it
@@ -253,17 +241,13 @@ instance-invalid	test93160::msMeta/../msData/additional/test93160.xml	fail	expec
 instance-invalid	time016_2024::msMeta/../msData/datatypes/time016.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef00204m::sunMeta/../sunData/ElemDecl/typeDef/typeDef00204m/typeDef00204m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef00401m::sunMeta/../sunData/ElemDecl/typeDef/typeDef00401m/typeDef00401m1_n.xml	fail	expected invalid but validator accepted it
-instance-invalid	typedef00402m::sunMeta/../sunData/ElemDecl/typeDef/typeDef00402m/typeDef00402m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef00801m3::sunMeta/../sunData/ElemDecl/typeDef/typeDef00801m/typeDef00801m3_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef00802m2::sunMeta/../sunData/ElemDecl/typeDef/typeDef00802m/typeDef00802m2_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef01101m1::sunMeta/../sunData/ElemDecl/typeDef/typeDef01101m/typeDef01101m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	typedef01301m1::sunMeta/../sunData/ElemDecl/typeDef/typeDef01301m/typeDef01301m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	valueconstraint00701m1::sunMeta/../sunData/ElemDecl/valueConstraint/valueConstraint00701m/valueConstraint00701m1_n.xml	fail	expected invalid but validator accepted it
 instance-invalid	wildZ011::msMeta/../msData/wildcards/wildZ011.xml	fail	expected invalid but validator accepted it
-instance-invalid	xsd001::sunMeta/../sunData/combined/xsd001/xsd001.n07.xml	fail	expected invalid but validator accepted it
-instance-invalid	xsd002::sunMeta/../sunData/combined/xsd002/xsd002.n00.xml	fail	expected invalid but validator accepted it
 instance-invalid	xsd002::sunMeta/../sunData/combined/xsd002/xsd002.n01.xml	fail	expected invalid but validator accepted it
-instance-invalid	xsd002::sunMeta/../sunData/combined/xsd002/xsd002.n02.xml	fail	expected invalid but validator accepted it
 instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n01.xml	blocked	parse error: not well-formed: character reference '&#xc;' denotes an illegal character in text content
 instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n02.xml	fail	expected invalid but validator accepted it
 instance-invalid	xv009::saxonMeta/../saxonData/XmlVersions/xv009.n03.xml	fail	expected invalid but validator accepted it
