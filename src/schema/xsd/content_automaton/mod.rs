@@ -44,9 +44,10 @@ pub enum PosMatcher {
         /// All names that select this position (the declared name, its
         /// local part, and substitution member names + their local parts)
         names: FxHashSet<String>,
-        /// Only the declared expanded name (`{namespace}local`): used for UPA
-        /// overlap checks, where local-part fallbacks would cause false
-        /// positives on same-local-name elements from different namespaces
+        /// Only the declared name, as an expanded name (`{namespace}local`)
+        /// when the namespace is known: used for UPA overlap checks, where
+        /// local-part fallbacks would cause false positives on
+        /// same-local-name elements from different namespaces
         decl_names: FxHashSet<String>,
         /// Identity of the source particle in the schema: positions created
         /// by occurrence expansion of the same particle share one id, so
@@ -197,7 +198,44 @@ impl ContentAutomaton {
         local: &str,
         ns: Option<&str>,
     ) -> StepResult {
-        self.step_matched(st, |pos| self.matchers[pos].matches(name, local, ns))
+        self.step_matched(st, |pos| {
+            self.matchers[pos].matches(name, local, ns)
+                && !self.excluded_by_namespace(pos, local, ns)
+        })
+    }
+
+    /// Whether the namespace rules out position `pos` for a child whose name
+    /// matched it: the child has the declared local name but a namespace
+    /// other than the declared one, so it is a different element (a derived
+    /// type's own `label` beside an inherited one from another namespace).
+    ///
+    /// Only the declared name is checked: a substitution-group member is
+    /// still matched by name. A namespace that is not known rules nothing
+    /// out: a hand-built declaration has none, and a child with an empty
+    /// namespace keeps the name-only match.
+    pub(crate) fn excluded_by_namespace(&self, pos: usize, local: &str, ns: Option<&str>) -> bool {
+        let PosMatcher::Element { def, .. } = &self.matchers[pos] else {
+            return false;
+        };
+        let (Some(declared_ns), Some(ns)) = (def.namespace.as_deref(), ns) else {
+            return false;
+        };
+        if ns.is_empty() || declared_ns == ns {
+            return false;
+        }
+        let declared_local = def.ref_ns.as_ref().map_or_else(
+            || {
+                def.name
+                    .split_once(':')
+                    .map_or(def.name.as_str(), |(_, l)| l)
+            },
+            |r| &*r.local_name,
+        );
+        declared_local == local
+            && !self.exact[pos].contains(&NsNameRef {
+                namespace_uri: ns,
+                local_name: local,
+            })
     }
 
     /// Feeds one child element with a caller-supplied position matcher.
@@ -444,17 +482,22 @@ impl Builder<'_> {
                 .map_or(def.name.as_str(), |(_, l)| l);
             NsName::new(def.namespace.as_deref().unwrap_or(""), local)
         });
-        // UPA comparison uses only the directly declared expanded name
-        // (`{namespace}local`): same-local-name elements in different
-        // namespaces, such as a derived type's own `label` beside an
-        // inherited one from another namespace, never compete. Substitution members
-        // are left out (conservative: misses substitution-based UPA
-        // violations, never rejects a valid schema for them).
+        // UPA comparison uses only the directly declared name, as an
+        // expanded name (`{namespace}local`) when the namespace is known:
+        // same-local-name elements in different namespaces, such as a
+        // derived type's own `label` beside an inherited one from another
+        // namespace, are different elements (validation tells them apart
+        // too, see `ContentAutomaton::excluded_by_namespace`). A hand-built
+        // definition without a namespace keeps its declared name as is.
+        // Substitution members are left out (conservative: misses
+        // substitution-based UPA violations, never rejects a valid schema
+        // for them).
         let mut decl_names = FxHashSet::default();
-        decl_names.insert(format!(
-            "{{{}}}{}",
-            declared.namespace_uri, declared.local_name
-        ));
+        decl_names.insert(if def.namespace.is_some() || def.ref_ns.is_some() {
+            format!("{{{}}}{}", declared.namespace_uri, declared.local_name)
+        } else {
+            def.name.clone()
+        });
         let mut exact = ExactNames::default();
         exact.extend((self.subst_ns)(&declared));
         exact.insert(declared);
@@ -824,147 +867,4 @@ fn check_upa(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::schema::types::ElementDef;
-
-    fn elem(name: &str, min: u32, max: Option<u32>) -> Particle {
-        let mut def = ElementDef::new(name);
-        def.min_occurs = min;
-        def.max_occurs = max;
-        Particle::Element(def)
-    }
-
-    fn no_subst(_: &str) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn run(automaton: &ContentAutomaton, children: &[&str]) -> Result<(), String> {
-        let mut st = AutomatonState::default();
-        for child in children {
-            match automaton.step(&mut st, child, child, None) {
-                StepResult::Matched => {}
-                StepResult::TooMany { max } => {
-                    return Err(format!("'{child}' too many (max {max})"));
-                }
-                StepResult::NotExpected { expected } => {
-                    return Err(format!("'{child}' not expected ({expected:?})"));
-                }
-            }
-        }
-        automaton
-            .finish(&st)
-            .map_err(|e| format!("incomplete: {e:?}"))
-    }
-
-    #[test]
-    fn sequence_order_and_occurrence() {
-        let p = Particle::Sequence {
-            min: 1,
-            max: Some(1),
-            items: vec![
-                elem("a", 1, Some(1)),
-                elem("b", 0, Some(2)),
-                elem("c", 1, None),
-            ],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        assert!(a.upa_violation.is_none());
-        assert!(run(&a, &["a", "c"]).is_ok());
-        assert!(run(&a, &["a", "b", "b", "c", "c"]).is_ok());
-        assert!(run(&a, &["b", "c"]).is_err(), "missing required a");
-        assert!(run(&a, &["a", "b", "b", "b", "c"]).is_err(), "b too many");
-        assert!(run(&a, &["a", "c", "b"]).is_err(), "b out of order");
-        assert!(run(&a, &["a"]).is_err(), "missing c");
-    }
-
-    #[test]
-    fn choice_totals_across_alternatives() {
-        // (a | b){2,2}: exactly two children, each either a or b.
-        let p = Particle::Choice {
-            min: 2,
-            max: Some(2),
-            items: vec![elem("a", 1, Some(1)), elem("b", 1, Some(1))],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        assert!(run(&a, &["a", "b"]).is_ok());
-        assert!(run(&a, &["b", "b"]).is_ok());
-        assert!(run(&a, &["a"]).is_err(), "only one of two");
-        assert!(run(&a, &["a", "b", "a"]).is_err(), "three of two");
-    }
-
-    #[test]
-    fn sequence_repeats_as_unit() {
-        // (a b){0,unbounded}: pairs only.
-        let p = Particle::Sequence {
-            min: 0,
-            max: None,
-            items: vec![elem("a", 1, Some(1)), elem("b", 1, Some(1))],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        assert!(run(&a, &[]).is_ok());
-        assert!(run(&a, &["a", "b"]).is_ok());
-        assert!(run(&a, &["a", "b", "a", "b"]).is_ok());
-        assert!(run(&a, &["a", "b", "a"]).is_err(), "dangling a");
-        assert!(run(&a, &["a", "a"]).is_err(), "a a is not a pair");
-    }
-
-    #[test]
-    fn nested_choice_in_sequence() {
-        // a (b | c) d
-        let p = Particle::Sequence {
-            min: 1,
-            max: Some(1),
-            items: vec![
-                elem("a", 1, Some(1)),
-                Particle::Choice {
-                    min: 1,
-                    max: Some(1),
-                    items: vec![elem("b", 1, Some(1)), elem("c", 1, Some(1))],
-                },
-                elem("d", 1, Some(1)),
-            ],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        assert!(run(&a, &["a", "b", "d"]).is_ok());
-        assert!(run(&a, &["a", "c", "d"]).is_ok());
-        assert!(run(&a, &["a", "d"]).is_err(), "choice missing");
-        assert!(run(&a, &["a", "b", "c", "d"]).is_err(), "both alternatives");
-    }
-
-    #[test]
-    fn upa_violation_detected() {
-        // (a?, a) is the classic UPA violation.
-        let p = Particle::Sequence {
-            min: 1,
-            max: Some(1),
-            items: vec![elem("a", 0, Some(1)), elem("a", 1, Some(1))],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        assert!(a.upa_violation.is_some());
-    }
-
-    #[test]
-    fn exact_bound_above_the_cap_is_lenient() {
-        // (a b){20,20}: the bound is beyond EXPAND_CAP, so it degrades to
-        // "at least the capped count" and never rejects 20 pairs.
-        let p = Particle::Sequence {
-            min: 20,
-            max: Some(20),
-            items: vec![elem("a", 1, Some(1)), elem("b", 1, Some(1))],
-        };
-        let a = build_automaton(&p, &no_subst).unwrap();
-        let twenty: Vec<&str> = ["a", "b"].iter().copied().cycle().take(40).collect();
-        assert!(run(&a, &twenty).is_ok(), "{:?}", run(&a, &twenty));
-        assert!(run(&a, &["a", "b", "a"]).is_err(), "dangling a");
-    }
-
-    #[test]
-    fn all_yields_no_automaton() {
-        let p = Particle::All {
-            min: 1,
-            elements: vec![],
-        };
-        assert!(build_automaton(&p, &no_subst).is_none());
-    }
-}
+mod tests;

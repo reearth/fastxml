@@ -111,7 +111,7 @@ impl OnePassSchemaValidator {
             // borrows the locally-cloned schema Arc, so it stays valid across
             // the &mut self inline lookup.
             let child_local_sym = self.current_local_sym();
-            let info = self.get_inline_element_info(child_local_sym, name);
+            let info = self.get_inline_element_info(child_local_sym, name, namespace);
 
             // When the child matches a local declaration in the parent's
             // content model, that declaration's value constraints govern.
